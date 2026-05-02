@@ -233,7 +233,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         </div>
         <table id="paramsTable">
           <thead>
-            <tr><th>パラメータ</th><th>中心値</th><th>分散</th><th>サンプル数</th><th>的中率</th></tr>
+            <tr><th>短縮</th><th>パラメータ</th><th>意味</th><th>中心値</th><th>分散</th><th>サンプル数</th><th>的中率</th></tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -396,6 +396,20 @@ def _html(payload: dict, script_nonce: str) -> str:
     };
 
     const charts = {};
+    const paramAlias = {
+      soc_per_kwh_charge: { code: "Cg", label: "充電1kWhあたりSOC上昇率" },
+      soc_per_kwh_discharge: { code: "Dg", label: "放電1kWhあたりSOC低下率" },
+      soc_drift_per_slot: { code: "Sd", label: "30分ごとのSOC自然変動" },
+      battery_round_trip_efficiency: { code: "Ef", label: "蓄電池の往復効率" },
+      battery_usable_capacity_kwh: { code: "Cp", label: "実効蓄電容量[kWh]" },
+      pv_kwh_per_sunhour: { code: "Kp", label: "日照1時間あたりPV発電量[kWh]" },
+      pv_temp_coeff_per_deg: { code: "Kt", label: "気温1℃あたりPV補正係数" },
+      pv_direct_use_ratio: { code: "Kr", label: "朝のPV直接利用率" },
+      pv_to_battery_ratio: { code: "Ks", label: "余剰PVの蓄電寄与率" },
+      pv_self_consumption_ratio: { code: "Sc", label: "PV自家消費率" },
+      battery_temp_coeff_per_deg: { code: "Bt", label: "気温1℃あたり蓄電容量補正係数" },
+      battery_cycle_capacity_fade_per_cycle: { code: "Cf", label: "1サイクルあたり容量劣化率" },
+    };
 
     function mergeRows(map, rows) {
       for (const row of rows || []) {
@@ -457,8 +471,11 @@ def _html(payload: dict, script_nonce: str) -> str:
       for (const p of store.params) {
         const tr = document.createElement("tr");
         const hit = p.hit_rate == null ? "未算出" : `${(n(p.hit_rate) * 100).toFixed(1)}%`;
+        const meta = paramAlias[String(p.name || "")] || { code: "-", label: "補助パラメータ" };
         const values = [
+          String(meta.code),
           String(p.name ?? ""),
+          String(meta.label),
           n(p.mean_value).toFixed(4),
           n(p.variance).toFixed(6),
           String(n(p.sample_count, 0)),
