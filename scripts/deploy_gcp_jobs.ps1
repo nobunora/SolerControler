@@ -10,8 +10,8 @@ param(
     [string]$Job07Name = "solar-battery-07",
     [string]$RunServiceAccountName = "solar-battery-job-sa",
     [string]$SchedulerServiceAccountName = "solar-battery-scheduler-sa",
-    [ValidateSet("sqlite", "postgres")]
-    [string]$DataBackend = "postgres",
+    [ValidateSet("sqlite", "postgres", "firestore")]
+    [string]$DataBackend = "firestore",
     [string]$PgHost = "",
     [string]$PgPort = "5432",
     [string]$PgDatabase = "solar_ops",
@@ -213,7 +213,7 @@ Write-Host "Region: $Region"
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/${ImageName}:latest"
 
 Write-Host "Enable required APIs..."
-Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com --project $ProjectId
+Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com --project $ProjectId
 
 $projectNumber = (Invoke-GCloud projects describe $ProjectId --format "value(projectNumber)").Trim()
 $computeSa = "$projectNumber-compute@developer.gserviceaccount.com"
@@ -225,6 +225,7 @@ $schedulerSa = Ensure-ServiceAccount -AccountId $SchedulerServiceAccountName -Di
 Write-Host "Grant build runtime IAM to $computeSa"
 Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$computeSa" --role "roles/artifactregistry.writer" | Out-Null
 Invoke-GCloud iam service-accounts add-iam-policy-binding $schedulerSa --member "serviceAccount:$cloudSchedulerServiceAgent" --role "roles/iam.serviceAccountTokenCreator" --project $ProjectId | Out-Null
+Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/datastore.user" | Out-Null
 
 Write-Host "Ensure Artifact Registry repository..."
 $repoExists = $true
@@ -347,6 +348,12 @@ if ($DataBackend -eq "postgres") {
         "PGDATABASE=$PgDatabase",
         "PGUSER=$PgUser",
         "PGSSLMODE=$PgSslMode"
+    )
+}
+if ($DataBackend -eq "firestore") {
+    $backendEnv += @(
+        "FIRESTORE_PROJECT_ID=$ProjectId",
+        "FIRESTORE_DATABASE_ID=(default)"
     )
 }
 $commonEnv += $backendEnv

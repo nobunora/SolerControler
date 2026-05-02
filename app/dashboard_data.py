@@ -385,6 +385,160 @@ def _load_postgres_slice(
         conn.close()
 
 
+def _firestore_bounds(client, collection_name: str) -> tuple[str | None, str | None]:
+    col = client.collection(collection_name)
+    min_doc = next(col.order_by("date").limit(1).stream(), None)
+    max_docs = col.order_by("date").limit_to_last(1).get()
+    max_doc = max_docs[0] if max_docs else None
+    min_date = None
+    max_date = None
+    if min_doc is not None:
+        d = min_doc.to_dict() or {}
+        min_date = str(d.get("date", "")).strip() or None
+    if max_doc is not None:
+        d = max_doc.to_dict() or {}
+        max_date = str(d.get("date", "")).strip() or None
+    return min_date, max_date
+
+
+def _firestore_rows_between(
+    client,
+    *,
+    collection_name: str,
+    start_date: str,
+    end_date_iso: str,
+    fields: list[str],
+) -> list[dict[str, Any]]:
+    q = (
+        client.collection(collection_name)
+        .where("date", ">=", start_date)
+        .where("date", "<=", end_date_iso)
+        .order_by("date")
+    )
+    out: list[dict[str, Any]] = []
+    for doc in q.stream():
+        row = doc.to_dict() or {}
+        item = {k: row.get(k) for k in fields}
+        item["date"] = row.get("date", doc.id)
+        out.append(item)
+    return out
+
+
+def _load_firestore_slice(
+    *,
+    end_date: str | None,
+    window_days: int,
+    include_static: bool,
+) -> DashboardSlice:
+    from google.cloud import firestore
+
+    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
+    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
+    client = firestore.Client(project=project_id, database=database_id) if project_id else firestore.Client(database=database_id)
+
+    b1 = _firestore_bounds(client, "sunshine_daily")
+    b2 = _firestore_bounds(client, "cost_daily")
+    b3 = _firestore_bounds(client, "battery_daily_metrics")
+    global_oldest, global_newest = _pick_min_max_dates([b1[0], b1[1], b2[0], b2[1], b3[0], b3[1]])
+    if not global_newest:
+        return DashboardSlice(
+            data=DashboardData([], [], [], [], []),
+            meta={
+                "window_days": window_days,
+                "oldest_loaded_date": None,
+                "newest_loaded_date": None,
+                "global_oldest_date": None,
+                "global_newest_date": None,
+                "has_more_before": False,
+            },
+        )
+
+    end_obj = _to_date_or_none(end_date) or _to_date_or_none(global_newest)
+    if end_obj is None:
+        return DashboardSlice(
+            data=DashboardData([], [], [], [], []),
+            meta={
+                "window_days": window_days,
+                "oldest_loaded_date": None,
+                "newest_loaded_date": None,
+                "global_oldest_date": global_oldest,
+                "global_newest_date": global_newest,
+                "has_more_before": False,
+            },
+        )
+    start_obj = end_obj - timedelta(days=max(1, window_days) - 1)
+    start_date = start_obj.isoformat()
+    end_date_iso = end_obj.isoformat()
+
+    sunshine = _firestore_rows_between(
+        client,
+        collection_name="sunshine_daily",
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        fields=["forecast_hours", "actual_hours", "forecast_temp_c", "actual_temp_c"],
+    )
+    cost_daily = _firestore_rows_between(
+        client,
+        collection_name="cost_daily",
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        fields=["self_consumption_kwh", "savings_yen", "cumulative_kwh", "cumulative_yen"],
+    )
+    battery_daily = _firestore_rows_between(
+        client,
+        collection_name="battery_daily_metrics",
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "end_of_day_soc_percent"],
+    )
+
+    cost_monthly: list[dict[str, Any]] = []
+    params: list[dict[str, Any]] = []
+    if include_static:
+        month_map: dict[str, dict[str, float]] = {}
+        for doc in client.collection("cost_daily").order_by("date").stream():
+            row = doc.to_dict() or {}
+            d = str(row.get("date", doc.id))
+            month = d[:7]
+            acc = month_map.setdefault(month, {"self_consumption_kwh": 0.0, "savings_yen": 0.0})
+            acc["self_consumption_kwh"] += float(row.get("self_consumption_kwh") or 0.0)
+            acc["savings_yen"] += float(row.get("savings_yen") or 0.0)
+        cost_monthly = [
+            {"month": m, "self_consumption_kwh": v["self_consumption_kwh"], "savings_yen": v["savings_yen"]}
+            for m, v in sorted(month_map.items())
+        ]
+        for doc in client.collection("model_parameters").order_by("name").stream():
+            row = doc.to_dict() or {}
+            params.append(
+                {
+                    "name": row.get("name", doc.id),
+                    "mean_value": row.get("mean_value"),
+                    "variance": row.get("variance"),
+                    "sample_count": row.get("sample_count"),
+                    "hit_rate": row.get("hit_rate"),
+                }
+            )
+
+    meta = _meta_from_data(
+        window_days=window_days,
+        global_oldest_date=global_oldest,
+        global_newest_date=global_newest,
+        sunshine_daily=sunshine,
+        cost_daily=cost_daily,
+        battery_daily=battery_daily,
+    )
+    return DashboardSlice(
+        data=DashboardData(
+            sunshine_daily=sunshine,
+            cost_daily=cost_daily,
+            cost_monthly=cost_monthly,
+            battery_daily=battery_daily,
+            model_parameters=params,
+        ),
+        meta=meta,
+    )
+
+
 def load_dashboard_slice(
     db_path: Path,
     *,
@@ -396,6 +550,8 @@ def load_dashboard_slice(
     days = min(max(1, int(window_days)), 365)
     if backend == "postgres":
         return _load_postgres_slice(end_date=end_date, window_days=days, include_static=include_static)
+    if backend == "firestore":
+        return _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
     return _load_sqlite_slice(db_path, end_date=end_date, window_days=days, include_static=include_static)
 
 

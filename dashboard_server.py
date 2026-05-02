@@ -6,6 +6,7 @@ import base64
 import hmac
 import secrets
 import time
+import traceback
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -936,6 +937,8 @@ class Handler(BaseHTTPRequestHandler):
                     "meta": sliced.meta,
                 }
             except Exception:
+                print("dashboard root render error")
+                print(traceback.format_exc())
                 payload = _empty_dashboard_payload()
             script_nonce = secrets.token_urlsafe(16)
             self.send_response(200)
@@ -977,6 +980,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
             except Exception:
+                print("dashboard api error")
+                print(traceback.format_exc())
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self._send_security_headers()

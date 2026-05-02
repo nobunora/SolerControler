@@ -10,6 +10,6 @@ RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
 COPY app ./app
 COPY dashboard_server.py ./
-COPY seed/solar_monitor.db /app/data/solar_monitor.db
+RUN mkdir -p /app/data
 
 ENTRYPOINT ["python", "dashboard_server.py"]

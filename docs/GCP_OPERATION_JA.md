@@ -25,7 +25,7 @@
 - リージョンは US（`us-central1`）を基本
 - 不要なジョブ/サービスは停止し、古いリージョンは「削除せず停止」
 - Artifact Registry は cleanup policy で世代を絞る
-- DBは小さく始める（初期はSQLite、将来はPostgreSQL/Firestoreへ段階移行）
+- DBは `Firestore` を推奨（`(default)` DB を US に作成し `DATA_BACKEND=firestore` で運用）
 
 ## セキュリティ方針
 

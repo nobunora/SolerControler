@@ -14,7 +14,7 @@
 ## 特徴
 
 - ローカル実行とクラウド実行（Cloud Run Jobs + Cloud Scheduler）に対応
-- データはSQLite/ PostgreSQLバックエンドを切替可能
+- データはFirestore/SQLite/PostgreSQLバックエンドを切替可能
 - リプレイモード・再現スクリプト・週次差分バックアップを同梱
 - 公開リポジトリ向けに機密情報を除外（`.env` / 実データ / 認証情報は含めない）
 

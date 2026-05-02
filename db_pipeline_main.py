@@ -212,6 +212,76 @@ def _ingest_postgres(
     print("[db_pipeline] done backend=postgres")
 
 
+def _ingest_firestore(
+    cfg: sqlite_ops.PipelineConfig,
+    *,
+    csv_run_dir: Path | None,
+    settings_run_dir: Path | None,
+    now_iso: str,
+) -> None:
+    from app import firestore_ops
+
+    client = firestore_ops.open_firestore()
+    firestore_ops.ensure_schema(client)
+    csv_rows = 0
+    csv_run_id = csv_run_dir.name if csv_run_dir else ""
+    settings_run_id = settings_run_dir.name if settings_run_dir else ""
+    run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
+    if firestore_ops.pipeline_run_exists(client, run_key=run_key):
+        print(f"[db_pipeline] already ingested: {run_key}")
+        return
+
+    if csv_run_dir is not None:
+        csv_paths = _collect_csv_paths(csv_run_dir)
+        csv_rows = firestore_ops.ingest_monitoring_csvs(client, csv_paths=csv_paths, ingested_at=now_iso)
+
+    if settings_run_dir is not None:
+        summary_path = settings_run_dir / "kpnet_summary.json"
+        firestore_ops.ingest_settings_summary(
+            client,
+            settings_summary_path=summary_path,
+            slot=cfg.slot,
+            ingested_at=now_iso,
+        )
+        if cfg.slot == "23":
+            firestore_ops.record_planned_day_mode(client, settings_summary_path=summary_path, recorded_at=now_iso)
+        firestore_ops.upsert_battery_daily_metrics(client, summary_path=summary_path, updated_at=now_iso)
+
+    night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
+    firestore_ops.ingest_sunshine_from_night_plan(
+        client,
+        night_plan_path=night_plan_path,
+        timezone=cfg.timezone,
+        ingested_at=now_iso,
+    )
+    firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
+    firestore_ops.recalc_cost_daily(
+        client,
+        day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+        updated_at=now_iso,
+        tariff_mode=cfg.cost_tariff_mode,
+        night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+        night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+        night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+        night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+        night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+        night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+        night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+        night8_night_rate_yen=cfg.night8_night_rate_yen,
+    )
+    firestore_ops.upsert_pipeline_run(
+        client,
+        run_key=run_key,
+        slot=cfg.slot,
+        csv_run_id=csv_run_id or None,
+        settings_run_id=settings_run_id or None,
+        csv_rows_upserted=csv_rows,
+        recorded_at=now_iso,
+    )
+    print("[db_pipeline] weekly backup: disabled (firestore backend)")
+    print("[db_pipeline] done backend=firestore")
+
+
 def main() -> int:
     cfg = sqlite_ops.PipelineConfig.from_env()
     now_utc = datetime.now(timezone.utc).replace(microsecond=0)
@@ -239,6 +309,14 @@ def main() -> int:
             settings_run_dir=settings_run_dir,
             now_iso=now_iso,
             now_utc=now_utc,
+        )
+        return 0
+    if cfg.data_backend == "firestore":
+        _ingest_firestore(
+            cfg,
+            csv_run_dir=csv_run_dir,
+            settings_run_dir=settings_run_dir,
+            now_iso=now_iso,
         )
         return 0
 

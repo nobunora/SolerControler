@@ -8,7 +8,7 @@
 - リージョンは **US系** を使う（推奨: `us-central1`）
 - Cloud Scheduler は **2ジョブだけ**（23時/7時）
 - Artifact Registry の世代保持を絞る（`keepCount=2`）
-- DBは当面 `sqlite` で開始（Cloud SQLは使わない）
+- DBは `firestore` を使う（Cloud SQLは使わない）
 - 課金アラート（予算）を必ず設定
 
 ## 1. 事前準備
@@ -33,12 +33,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 config 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 services enable `
   run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com `
-  cloudscheduler.googleapis.com secretmanager.googleapis.com
+  cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com
+```
+
+Firestore（無料枠対象の標準DB）をUSで作成:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 firestore databases create --database="(default)" --location=us-central1 --type=firestore-native
 ```
 
 ## 3. ジョブを無料寄り設定でデプロイ
 
-`sqlite` バックエンド（初期運用向け）でデプロイ:
+`firestore` バックエンド（推奨）でデプロイ:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -46,7 +52,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps
   -Region us-central1 `
   -SchedulerRegion us-central1 `
   -Repository solar-runner `
-  -DataBackend sqlite
+  -DataBackend firestore
 ```
 
 これで以下の2つのCloud Schedulerジョブが作成されます。
@@ -114,4 +120,3 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 artifac
   https://cloud.google.com/billing/docs/how-to/budgets
 - 課金停止の自動化（通知連動）  
   https://cloud.google.com/billing/docs/how-to/disable-billing-with-notifications
-

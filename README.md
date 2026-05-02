@@ -19,11 +19,11 @@
 ## データ保存（段階運用）
 
 - 現在: `artifacts/` に実行ごとの `summary.json` とCSVを保存
-- 追加: `artifacts/history.csv`（可読）と `artifacts/history.db`（SQLite）へ履歴を追記
-- 本番推奨: `DATA_BACKEND=postgres` で Compute Engine 上 PostgreSQL に永続化
+- 推奨本番: `DATA_BACKEND=firestore` で Firestore に永続化（無料枠運用しやすい）
+- 代替本番: `DATA_BACKEND=postgres` で Compute Engine 上 PostgreSQL に永続化
 
 注意: Cloud Run のコンテナファイルシステムはインメモリで、インスタンス停止時に永続化されません。  
-クラウド本番で履歴を残す場合は PostgreSQL などのDB連携を使ってください。  
+クラウド本番で履歴を残す場合は Firestore / PostgreSQL などのDB連携を使ってください。  
 
 ## 1. 事前準備
 
@@ -121,13 +121,14 @@ python kpnet_main.py
 - `NIGHT8_NIGHT_RATE_YEN=28.85`
 - `DAY_RATE_YEN_PER_KWH=31`（`COST_TARIFF_MODE=flat` 時に使用）
 - `DATA_DB_PATH=artifacts/solar_monitor.db`
-- `DATA_BACKEND=sqlite|postgres`
+- `DATA_BACKEND=sqlite|postgres|firestore`
 - `DATA_DB_SYNC_ENABLED=false`（既定。逐次Cloud Storage同期は無効化）
 - `DATA_DB_WRITE_ONLY_23=true`（DB永続化は23時のみ）
 - `DATA_WEEKLY_BACKUP_ENABLED=true`（週1回だけ差分バックアップ）
 - `DATA_WEEKLY_BACKUP_WEEKDAY=5`（土曜）
 - `DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly`
 - `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`（`DATA_BACKEND=postgres` 時）
+- `FIRESTORE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`（`DATA_BACKEND=firestore` 時）
 - `DRY_RUN=true` の間は設定登録は行わず、確認画面到達までを検証
 
 翌日予測から自動で設定登録する手順（ローカル実行）:
@@ -172,10 +173,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
   -ProjectId <PROJECT_ID> `
   -Region us-central1 `
   -SchedulerRegion us-central1 `
-  -DataBackend postgres `
-  -PgHost <COMPUTE_ENGINE_IP_OR_DNS> `
-  -PgDatabase solar_ops `
-  -PgUser solar_app `
+  -DataBackend firestore `
   -RunSmokeTest
 ```
 
@@ -251,7 +249,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
 
 ## 8. DB保存方針（今回の運用）
 
-- DB形式: `DATA_BACKEND=postgres`（本番推奨）または `sqlite`
+- DB形式: `DATA_BACKEND=firestore`（推奨）または `sqlite` / `postgres`
 - 23時ジョブのみ `db_pipeline_main.py` を実行し、以下をDBに反映
   - モニタリングCSVの30分データ
   - 日照（翌日予測、当日実績）
