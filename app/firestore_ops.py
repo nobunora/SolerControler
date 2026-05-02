@@ -456,3 +456,45 @@ def upsert_model_parameters_from_plan(client, *, night_plan_path: Path, updated_
             },
             merge=True,
         )
+
+
+def recalc_model_hit_rates(client, *, updated_at: str) -> float | None:
+    rows = []
+    for doc in client.collection("sunshine_daily").stream():
+        row = doc.to_dict() or {}
+        fh = row.get("forecast_hours")
+        ah = row.get("actual_hours")
+        if fh is None or ah is None:
+            continue
+        rows.append((float(fh), float(ah)))
+    if not rows:
+        return None
+
+    ape_values: list[float] = []
+    for fh, ah in rows:
+        denom = max(abs(ah), 0.5)
+        ape_values.append(abs(ah - fh) / denom)
+    if not ape_values:
+        return None
+
+    mape = sum(ape_values) / len(ape_values)
+    hit_rate = max(0.0, min(1.0, 1.0 - mape))
+    batch = client.batch()
+    count = 0
+    for doc in client.collection("model_parameters").stream():
+        batch.set(
+            doc.reference,
+            {
+                "hit_rate": hit_rate,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        count += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count > 0:
+        batch.commit()
+    return hit_rate

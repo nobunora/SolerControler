@@ -810,3 +810,40 @@ def upsert_model_parameters_from_plan(conn: sqlite3.Connection, *, night_plan_pa
             (name, mean, variance, 1, None, updated_at),
         )
     conn.commit()
+
+
+def recalc_model_hit_rates(conn: sqlite3.Connection, *, updated_at: str) -> float | None:
+    rows = conn.execute(
+        """
+        SELECT forecast_hours, actual_hours
+        FROM sunshine_daily
+        WHERE forecast_hours IS NOT NULL
+          AND actual_hours IS NOT NULL
+        """
+    ).fetchall()
+    if not rows:
+        return None
+
+    ape_values: list[float] = []
+    for row in rows:
+        fh = _to_float_any(row["forecast_hours"])
+        ah = _to_float_any(row["actual_hours"])
+        if fh is None or ah is None:
+            continue
+        denom = max(abs(ah), 0.5)
+        ape_values.append(abs(ah - fh) / denom)
+
+    if not ape_values:
+        return None
+
+    mape = sum(ape_values) / len(ape_values)
+    hit_rate = max(0.0, min(1.0, 1.0 - mape))
+    conn.execute(
+        """
+        UPDATE model_parameters
+        SET hit_rate = ?, updated_at = ?
+        """,
+        (hit_rate, updated_at),
+    )
+    conn.commit()
+    return hit_rate

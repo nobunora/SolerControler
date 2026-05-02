@@ -109,6 +109,8 @@ def _ingest_sqlite(
             ingested_at=now_iso,
         )
         sqlite_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        hit_rate = sqlite_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
+        print(f"[db_pipeline] model hit_rate={hit_rate!r}")
         sqlite_ops.recalc_cost_daily(
             conn,
             day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
@@ -192,6 +194,8 @@ def _ingest_postgres(
             ingested_at=now_iso,
         )
         postgres_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        hit_rate = postgres_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
+        print(f"[db_pipeline] model hit_rate={hit_rate!r}")
         postgres_ops.recalc_cost_daily(
             conn,
             day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
@@ -270,6 +274,8 @@ def _ingest_firestore(
         ingested_at=now_iso,
     )
     firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
+    hit_rate = firestore_ops.recalc_model_hit_rates(client, updated_at=now_iso)
+    print(f"[db_pipeline] model hit_rate={hit_rate!r}")
     firestore_ops.recalc_cost_daily(
         client,
         day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,

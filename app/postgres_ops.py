@@ -556,3 +556,44 @@ def upsert_model_parameters_from_plan(conn, *, night_plan_path: Path, updated_at
                 (name, mean, variance, 1, None, updated_at),
             )
     conn.commit()
+
+
+def recalc_model_hit_rates(conn, *, updated_at: str) -> float | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT forecast_hours, actual_hours
+            FROM sunshine_daily
+            WHERE forecast_hours IS NOT NULL
+              AND actual_hours IS NOT NULL
+            """
+        )
+        rows = cur.fetchall()
+    if not rows:
+        return None
+
+    ape_values: list[float] = []
+    for row in rows:
+        fh = row.get("forecast_hours")
+        ah = row.get("actual_hours")
+        if fh is None or ah is None:
+            continue
+        fh_f = float(fh)
+        ah_f = float(ah)
+        denom = max(abs(ah_f), 0.5)
+        ape_values.append(abs(ah_f - fh_f) / denom)
+    if not ape_values:
+        return None
+
+    mape = sum(ape_values) / len(ape_values)
+    hit_rate = max(0.0, min(1.0, 1.0 - mape))
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE model_parameters
+            SET hit_rate = %s, updated_at = %s
+            """,
+            (hit_rate, updated_at),
+        )
+    conn.commit()
+    return hit_rate

@@ -9,8 +9,10 @@ from app.operations_db import (
     ensure_schema,
     ingest_monitoring_csvs,
     open_db,
+    recalc_model_hit_rates,
     recalc_cost_daily,
     upsert_battery_daily_metrics,
+    upsert_model_parameters_from_plan,
 )
 
 
@@ -149,5 +151,45 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         assert float(row[2]) == pytest.approx(0.0)
         # summaryに無い項目は night_charge_plan.result から補完される
         assert float(row[3]) == pytest.approx(4.7620196164713535)
+    finally:
+        conn.close()
+
+
+def test_recalc_model_hit_rates_updates_all_params(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        night_plan_path = tmp_path / "night_charge_plan.json"
+        night_plan_path.write_text(
+            """
+            {
+              "coefficients": {
+                "pv_kwh_per_sunhour": 1.45,
+                "battery_round_trip_efficiency": 0.93
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+        upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at="2026-05-03T00:00:00Z")
+        conn.execute(
+            """
+            INSERT INTO sunshine_daily(date, forecast_hours, actual_hours, source, updated_at)
+            VALUES
+              ('2026-05-01', 5.0, 4.0, 'test', '2026-05-03T00:00:00Z'),
+              ('2026-05-02', 6.0, 6.0, 'test', '2026-05-03T00:00:00Z')
+            """
+        )
+        conn.commit()
+
+        hit = recalc_model_hit_rates(conn, updated_at="2026-05-03T00:01:00Z")
+        assert hit is not None
+        assert 0.0 <= hit <= 1.0
+
+        rows = conn.execute("SELECT hit_rate FROM model_parameters ORDER BY name").fetchall()
+        assert len(rows) == 2
+        assert rows[0][0] == pytest.approx(hit)
+        assert rows[1][0] == pytest.approx(hit)
     finally:
         conn.close()
