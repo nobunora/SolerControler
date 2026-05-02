@@ -324,10 +324,10 @@ FORCED_CHARGE_PROFILE = ProfileOverrides(
 GREEN_MODE_PROFILE = ProfileOverrides(
     name="green-mode",
     battery_operating_mode="1",
-    soc_safety_mode="50",
+    soc_safety_mode="0",
     soc_economy_mode="0",
     soc_contact_input="0",
-    soc_charge_mode="10",
+    soc_charge_mode="0",
     charge_start_h="23",
     charge_start_m="0",
     charge_end_h="7",
@@ -571,10 +571,14 @@ def _build_dynamic_green_profile(
 
     # ユーザー要件:
     # - 日中はグリーンモード
+    # - SOC下限(安心)は0%
     # - SOC下限(経済/グリーン)は0%
+    # - 充電時間帯SOC上限は0%
+    # - 放電時間帯は 07:00-23:00 を維持
+    night_soc_lower_code = _pick_min_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_min_code(value_maps["SocContactInput"])
-    night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
+    soc_charge_code = _pick_min_code(value_maps["SocChargeMode"])
 
     summary["daytime_mode_plan"] = {
         "mode": "green",
@@ -585,7 +589,7 @@ def _build_dynamic_green_profile(
         "soc_safety_mode": night_soc_lower_code,
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
-        "soc_charge_mode": forced_profile.soc_charge_mode,
+        "soc_charge_mode": soc_charge_code,
     }
 
     return replace(
@@ -593,7 +597,7 @@ def _build_dynamic_green_profile(
         soc_safety_mode=night_soc_lower_code,
         soc_economy_mode=day_soc_lower_code,
         soc_contact_input=contact_soc_lower_code,
-        soc_charge_mode=forced_profile.soc_charge_mode,
+        soc_charge_mode=soc_charge_code,
         charge_start_h=str(night_window_start[0]),
         charge_start_m=str(night_window_start[1]),
         charge_end_h=str(night_window_end[0]),
