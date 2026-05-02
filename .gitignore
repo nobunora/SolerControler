@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.env
+.env.*
+!.env.example
+artifacts/
+*.har
+*.log
+*.sqlite
+*.db
+*.db-*
+*.zip
+*.bak
