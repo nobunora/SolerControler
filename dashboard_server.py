@@ -215,7 +215,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       <article class="card">
         <h2>5. 蓄電池設定値と実績</h2>
-        <p class="desc">目標SOC、夜間充電量、昼のPV蓄電余力、日終SOCを並べて表示します。</p>
+        <p class="desc">左軸はkWh、右軸はSOC(%)。夜間充電量・PV蓄電余力と、目標SOC・日終SOCを分けて表示します。</p>
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
@@ -536,12 +536,18 @@ def _html(payload: dict, script_nonce: str) -> str:
       charts.battery = new Chart(document.getElementById("batteryChart"), {
         type: "line",
         data: { labels: [], datasets: [
-          { label: "設定SOC(%)", data: [], borderColor: "#147efb", tension: 0.25 },
-          { label: "夜間充電量(kWh)", data: [], borderColor: "#ef8e1d", tension: 0.25 },
-          { label: "太陽光 最大蓄電量(kWh)", data: [], borderColor: "#14b86f", tension: 0.25 },
-          { label: "日終SOC(%)", data: [], borderColor: "#e6504f", tension: 0.25 },
+          { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25 },
+          { label: "夜間充電量(kWh)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
+          { label: "太陽光 最大蓄電量(kWh)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
+          { label: "日終SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25 },
         ]},
-        options: { ...commonOptions(), scales: { y: { beginAtZero: true, title: { display: true, text: "kWh / %" }, grid: { color: "#d8e6f2" } } } },
+        options: {
+          ...commonOptions(),
+          scales: {
+            y: { min: 0, max: 1, title: { display: true, text: "kWh" }, grid: { color: "#d8e6f2" } },
+            y2: { min: 0, max: 100, position: "right", title: { display: true, text: "SOC(%)" }, grid: { drawOnChartArea: false } },
+          },
+        },
       });
     }
 
@@ -668,6 +674,29 @@ def _html(payload: dict, script_nonce: str) -> str:
       charts.battery.data.datasets[1].data = labels.map((d) => n(rowByDate(store.battery, d)?.night_charge_kwh));
       charts.battery.data.datasets[2].data = labels.map((d) => n(rowByDate(store.battery, d)?.pv_max_charge_kwh));
       charts.battery.data.datasets[3].data = labels.map((d) => n(rowByDate(store.battery, d)?.end_of_day_soc_percent));
+      const batterySoc = [
+        ...charts.battery.data.datasets[0].data,
+        ...charts.battery.data.datasets[3].data,
+      ];
+      const batteryKwh = [
+        ...charts.battery.data.datasets[1].data,
+        ...charts.battery.data.datasets[2].data,
+      ];
+      const batteryDual = dualScales(batteryKwh, batterySoc, { leftUnit: "kWh", rightUnit: "%"});
+      charts.battery.options.scales.y = {
+        ...batteryDual.y,
+        ticks: { ...batteryDual.y.ticks, color: "#14b86f" },
+        border: { color: "#14b86f" },
+        title: { display: true, text: "kWh", color: "#14b86f" },
+      };
+      charts.battery.options.scales.y2 = {
+        ...batteryDual.y2,
+        min: 0,
+        max: 100,
+        ticks: { ...batteryDual.y2.ticks, color: "#147efb", callback: (v) => `${Math.round(v)}%` },
+        border: { color: "#147efb" },
+        title: { display: true, text: "SOC(%)", color: "#147efb" },
+      };
       charts.battery.update("none");
 
       setStatus(`表示期間: ${labels[0]} 〜 ${labels[labels.length - 1]}`);
