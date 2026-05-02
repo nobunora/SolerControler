@@ -47,3 +47,6 @@
 - Dashboard のAPI応答と描画
 - Artifact Registry 容量（不要イメージ世代の削減）
 
+## 初心者向けの無料運用手順
+
+- [docs/GCP_FREE_BEGINNER_JA.md](GCP_FREE_BEGINNER_JA.md)

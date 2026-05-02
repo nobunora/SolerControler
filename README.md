@@ -13,6 +13,7 @@
 
 - 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
 - Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
+- Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）
