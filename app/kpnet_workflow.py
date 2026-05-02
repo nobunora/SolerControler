@@ -340,8 +340,8 @@ class ProfileOverrides:
 
 
 FORCED_CHARGE_PROFILE = ProfileOverrides(
-    name="night-economy",
-    battery_operating_mode="2",
+    name="night-green",
+    battery_operating_mode="1",
     soc_safety_mode="50",
     soc_economy_mode="0",
     soc_contact_input="100",
@@ -510,8 +510,6 @@ def _build_dynamic_forced_profile(
 
     night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
     night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
-    day_discharge_start = _parse_hhmm(cfg.day_discharge_window_start, name="KP_DAY_DISCHARGE_WINDOW_START")
-    day_discharge_end = _parse_hhmm(cfg.day_discharge_window_end, name="KP_DAY_DISCHARGE_WINDOW_END")
 
     estimated_charge_power_kw = _estimate_charge_power_kw(
         plan.csv_paths,
@@ -525,24 +523,23 @@ def _build_dynamic_forced_profile(
     if estimated_charge_power_kw > 0 and required_night_charge_kwh > 0:
         duration_minutes = int(math.ceil(required_night_charge_kwh / estimated_charge_power_kw * 60.0))
 
-    window_start_minute = night_window_start[0] * 60 + night_window_start[1]
-    window_end_minute = night_window_end[0] * 60 + night_window_end[1]
-    window_duration_minutes = (window_end_minute - window_start_minute) % (24 * 60)
-    if window_duration_minutes == 0:
-        window_duration_minutes = 24 * 60
-
+    # ユーザー要件:
+    # - 23時設定では充電終了を 06:00 に固定
+    # - 0:00 を跨ぐ設定をしない（00:00-06:00 の同日内でのみ設定）
+    # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
+    charge_end_minute = 6 * 60
+    window_duration_minutes = charge_end_minute
     duration_clipped = False
     if duration_minutes > window_duration_minutes:
         duration_minutes = window_duration_minutes
         duration_clipped = True
 
-    charge_end_minute = window_end_minute
-    charge_start_minute = (charge_end_minute - duration_minutes) % (24 * 60)
+    charge_start_minute = max(0, charge_end_minute - duration_minutes)
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
 
     target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
-    night_mode_code = _pick_battery_operating_mode_code(value_maps["BatteryOperatingMode"], prefer="economy")
+    night_mode_code = _pick_battery_operating_mode_code(value_maps["BatteryOperatingMode"], prefer="green")
     night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_max_code(value_maps["SocContactInput"])
@@ -556,6 +553,8 @@ def _build_dynamic_forced_profile(
         "estimated_charge_power_kw": estimated_charge_power_kw,
         "duration_minutes": duration_minutes,
         "duration_clipped_to_window": duration_clipped,
+        "no_cross_midnight": True,
+        "fixed_charge_end_time": "06:00",
         "night_window_start": cfg.night_charge_window_start,
         "night_window_end": cfg.night_charge_window_end,
         "charge_start_time": f"{charge_start_h:02d}:{charge_start_m:02d}",
@@ -565,6 +564,7 @@ def _build_dynamic_forced_profile(
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
         "battery_operating_mode": night_mode_code,
+        "discharge_fixed_window": "07:00-23:00",
     }
 
     LOGGER.info(
@@ -590,10 +590,10 @@ def _build_dynamic_forced_profile(
         charge_start_m=str(charge_start_m),
         charge_end_h=str(charge_end_h),
         charge_end_m=str(charge_end_m),
-        discharge_start_h=str(day_discharge_start[0]),
-        discharge_start_m=str(day_discharge_start[1]),
-        discharge_end_h=str(day_discharge_end[0]),
-        discharge_end_m=str(day_discharge_end[1]),
+        discharge_start_h="7",
+        discharge_start_m="0",
+        discharge_end_h="23",
+        discharge_end_m="0",
     )
 
 
@@ -605,8 +605,6 @@ def _build_dynamic_green_profile(
 ) -> ProfileOverrides:
     night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
     night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
-    day_discharge_start = _parse_hhmm(cfg.day_discharge_window_start, name="KP_DAY_DISCHARGE_WINDOW_START")
-    day_discharge_end = _parse_hhmm(cfg.day_discharge_window_end, name="KP_DAY_DISCHARGE_WINDOW_END")
 
     # ユーザー要件:
     # - 日中はグリーンモード
@@ -625,6 +623,7 @@ def _build_dynamic_green_profile(
         "night_window_end": cfg.night_charge_window_end,
         "day_discharge_window_start": cfg.day_discharge_window_start,
         "day_discharge_window_end": cfg.day_discharge_window_end,
+        "discharge_fixed_window": "07:00-23:00",
         "soc_safety_mode": night_soc_lower_code,
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
@@ -641,10 +640,10 @@ def _build_dynamic_green_profile(
         charge_start_m=str(night_window_start[1]),
         charge_end_h=str(night_window_end[0]),
         charge_end_m=str(night_window_end[1]),
-        discharge_start_h=str(day_discharge_start[0]),
-        discharge_start_m=str(day_discharge_start[1]),
-        discharge_end_h=str(day_discharge_end[0]),
-        discharge_end_m=str(day_discharge_end[1]),
+        discharge_start_h="7",
+        discharge_start_m="0",
+        discharge_end_h="23",
+        discharge_end_m="0",
     )
 
 
@@ -1109,7 +1108,7 @@ def _run_settings_phase(
             FORCED_CHARGE_PROFILE,
             battery_operating_mode=_pick_battery_operating_mode_code(
                 maps["BatteryOperatingMode"],
-                prefer="economy",
+                prefer="green",
             ),
         )
         summary["night_charge_plan"] = {"status": "dynamic-profile-disabled"}

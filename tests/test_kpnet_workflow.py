@@ -122,13 +122,17 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
 
     profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
 
-    assert profile.battery_operating_mode == "2"
+    assert profile.battery_operating_mode == "1"
     assert profile.soc_safety_mode == "100"
     assert profile.soc_economy_mode == "0"
     assert profile.soc_contact_input == "100"
     assert profile.soc_charge_mode == "50"
-    # 2.2kWh / 1.0kW = 132min -> 07:00 終了の132分前 = 04:48
-    assert profile.charge_start_h == "4"
+    # 2.2kWh / 1.0kW = 132min -> 06:00 終了の132分前 = 03:48
+    assert profile.charge_start_h == "3"
     assert profile.charge_start_m == "48"
-    assert profile.charge_end_h == "7"
+    assert profile.charge_end_h == "6"
     assert profile.charge_end_m == "0"
+    assert profile.discharge_start_h == "7"
+    assert profile.discharge_start_m == "0"
+    assert profile.discharge_end_h == "23"
+    assert profile.discharge_end_m == "0"
