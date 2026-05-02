@@ -112,6 +112,7 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     )
     cfg = _build_cfg(plan_path=plan_path)
     value_maps = {
+        "BatteryOperatingMode": {"1": "グリーンモード", "2": "経済モード", "3": "強制充電モード"},
         "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
         "SocEconomyMode": {"0": "0%", "20": "20%"},
         "SocContactInput": {"0": "0%", "100": "100%"},
@@ -121,6 +122,7 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
 
     profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
 
+    assert profile.battery_operating_mode == "2"
     assert profile.soc_safety_mode == "100"
     assert profile.soc_economy_mode == "0"
     assert profile.soc_contact_input == "100"

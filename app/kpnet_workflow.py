@@ -217,6 +217,42 @@ def _pick_ceil_code(value_map: dict[str, str], target: float) -> str:
     return str(values[-1])
 
 
+def _pick_battery_operating_mode_code(
+    value_map: dict[str, str],
+    *,
+    prefer: str,
+) -> str:
+    target_keywords: tuple[str, ...]
+    prefer_norm = prefer.strip().lower()
+    if prefer_norm == "economy":
+        target_keywords = ("経済", "economy")
+    elif prefer_norm == "green":
+        target_keywords = ("グリーン", "green")
+    elif prefer_norm == "forced":
+        target_keywords = ("強制", "forced")
+    else:
+        raise RuntimeError(f"未知の battery operating mode 指定です: {prefer}")
+
+    for code, label in value_map.items():
+        label_text = str(label).strip()
+        label_norm = label_text.lower()
+        if any(keyword in label_text or keyword in label_norm for keyword in target_keywords):
+            return str(code)
+
+    # 既存実装との互換用フォールバック（候補が数字コードの場合のみ）
+    if prefer_norm == "economy" and "2" in value_map:
+        return "2"
+    if prefer_norm == "green" and "1" in value_map:
+        return "1"
+    if prefer_norm == "forced" and "3" in value_map:
+        return "3"
+
+    raise RuntimeError(
+        "BatteryOperatingMode の候補から必要なモードを特定できませんでした "
+        f"(prefer={prefer}, candidates={value_map})"
+    )
+
+
 def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     if not plan_path.exists():
         raise RuntimeError(f"夜間充電計画ファイルが見つかりません: {plan_path}")
@@ -304,8 +340,8 @@ class ProfileOverrides:
 
 
 FORCED_CHARGE_PROFILE = ProfileOverrides(
-    name="forced-charge",
-    battery_operating_mode="3",
+    name="night-economy",
+    battery_operating_mode="2",
     soc_safety_mode="50",
     soc_economy_mode="0",
     soc_contact_input="100",
@@ -506,6 +542,7 @@ def _build_dynamic_forced_profile(
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
 
     target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
+    night_mode_code = _pick_battery_operating_mode_code(value_maps["BatteryOperatingMode"], prefer="economy")
     night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_max_code(value_maps["SocContactInput"])
@@ -527,6 +564,7 @@ def _build_dynamic_forced_profile(
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
+        "battery_operating_mode": night_mode_code,
     }
 
     LOGGER.info(
@@ -543,6 +581,7 @@ def _build_dynamic_forced_profile(
 
     return replace(
         FORCED_CHARGE_PROFILE,
+        battery_operating_mode=night_mode_code,
         soc_safety_mode=night_soc_lower_code,
         soc_economy_mode=day_soc_lower_code,
         soc_contact_input=contact_soc_lower_code,
@@ -1066,7 +1105,13 @@ def _run_settings_phase(
     if cfg.dynamic_forced_profile:
         forced_profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=maps, summary=summary)
     else:
-        forced_profile = FORCED_CHARGE_PROFILE
+        forced_profile = replace(
+            FORCED_CHARGE_PROFILE,
+            battery_operating_mode=_pick_battery_operating_mode_code(
+                maps["BatteryOperatingMode"],
+                prefer="economy",
+            ),
+        )
         summary["night_charge_plan"] = {"status": "dynamic-profile-disabled"}
 
     if cfg.dynamic_forced_profile:
@@ -1084,10 +1129,10 @@ def _run_settings_phase(
         profiles = (forced_profile,)
         summary["time_based_mode_selection"] = {
             "enabled": False,
-            "forced_profile": "forced-charge",
-            "selected_profile": "forced-charge",
+            "forced_profile": forced_profile.name,
+            "selected_profile": forced_profile.name,
         }
-        LOGGER.info("Forced settings profile selected: forced-charge")
+        LOGGER.info("Forced settings profile selected: %s", forced_profile.name)
     elif cfg.force_settings_profile == "green":
         profiles = (green_profile,)
         summary["time_based_mode_selection"] = {
