@@ -94,7 +94,12 @@ def _ingest_sqlite(
             )
             if cfg.slot == "23":
                 _record_planned_day_mode_sqlite(conn, settings_summary_path=summary_path, recorded_at=now_iso)
-            sqlite_ops.upsert_battery_daily_metrics(conn, summary_path=summary_path, updated_at=now_iso)
+            sqlite_ops.upsert_battery_daily_metrics(
+                conn,
+                summary_path=summary_path,
+                updated_at=now_iso,
+                night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+            )
 
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
         sqlite_ops.ingest_sunshine_from_night_plan(
@@ -172,7 +177,12 @@ def _ingest_postgres(
             )
             if cfg.slot == "23":
                 postgres_ops.record_planned_day_mode(conn, settings_summary_path=summary_path, recorded_at=now_iso)
-            postgres_ops.upsert_battery_daily_metrics(conn, summary_path=summary_path, updated_at=now_iso)
+            postgres_ops.upsert_battery_daily_metrics(
+                conn,
+                summary_path=summary_path,
+                updated_at=now_iso,
+                night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+            )
 
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
         postgres_ops.ingest_sunshine_from_night_plan(
@@ -245,7 +255,12 @@ def _ingest_firestore(
         )
         if cfg.slot == "23":
             firestore_ops.record_planned_day_mode(client, settings_summary_path=summary_path, recorded_at=now_iso)
-        firestore_ops.upsert_battery_daily_metrics(client, summary_path=summary_path, updated_at=now_iso)
+        firestore_ops.upsert_battery_daily_metrics(
+            client,
+            summary_path=summary_path,
+            updated_at=now_iso,
+            night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+        )
 
     night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
     firestore_ops.ingest_sunshine_from_night_plan(

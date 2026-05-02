@@ -10,14 +10,15 @@ from typing import Any
 from google.cloud import firestore
 
 from app.operations_db import (
+    _extract_battery_daily_from_summary,
     _env,
     _fetch_open_meteo_today_actual,
     _is_within_window,
     _iter_monitoring_rows,
     _parse_hhmm_to_minute,
+    _read_json_if_exists,
     _read_summary,
     _tiered_day_increment_cost,
-    _to_float,
 )
 
 
@@ -393,20 +394,25 @@ def recalc_cost_daily(
         batch.commit()
 
 
-def upsert_battery_daily_metrics(client, *, summary_path: Path, updated_at: str) -> None:
+def upsert_battery_daily_metrics(
+    client,
+    *,
+    summary_path: Path,
+    updated_at: str,
+    night_plan_path: Path | None = None,
+) -> None:
     if not summary_path.exists():
         return
     summary = _read_summary(summary_path)
-    night_plan = summary.get("night_charge_plan", {}) if isinstance(summary, dict) else {}
-    if not isinstance(night_plan, dict):
+    night_plan = _read_json_if_exists(night_plan_path)
+    metrics = _extract_battery_daily_from_summary(summary=summary, night_plan=night_plan)
+    if metrics is None:
         return
-    date = str(night_plan.get("forecast_date", "")).strip()
-    if not date:
-        return
-    target_soc = _to_float(str(night_plan.get("target_soc_7_percent_raw", "")))
-    night_charge_kwh = _to_float(str(night_plan.get("required_night_charge_kwh", "")))
-    pv_max_charge_kwh = _to_float(str(night_plan.get("predicted_midday_surplus_kwh", "")))
-    end_of_day_soc = _to_float(str(night_plan.get("target_soc_7_percent_raw", "")))
+    date = str(metrics["date"])
+    target_soc = metrics["target_soc"]
+    night_charge_kwh = metrics["night_charge_kwh"]
+    pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
+    end_of_day_soc = metrics["end_of_day_soc"]
     client.collection("battery_daily_metrics").document(date).set(
         {
             "date": date,

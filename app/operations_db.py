@@ -54,6 +54,16 @@ def _to_float(raw: str | None) -> float | None:
         return None
 
 
+def _to_float_any(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return _to_float(value)
+    return _to_float(str(value))
+
+
 def _safe_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -298,6 +308,55 @@ def _latest_run_dirs(artifacts_dir: Path) -> list[Path]:
 
 def _read_summary(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_json_if_exists(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _extract_battery_daily_from_summary(
+    *,
+    summary: dict[str, Any],
+    night_plan: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    np_summary = summary.get("night_charge_plan", {})
+    if not isinstance(np_summary, dict):
+        np_summary = {}
+    np_root = night_plan if isinstance(night_plan, dict) else {}
+    np_result = np_root.get("result", {}) if isinstance(np_root.get("result", {}), dict) else {}
+    np_forecast = np_root.get("forecast", {}) if isinstance(np_root.get("forecast", {}), dict) else {}
+
+    date = str(np_summary.get("forecast_date") or np_forecast.get("date") or "").strip()
+    if not date:
+        return None
+
+    target_soc = _to_float_any(np_summary.get("target_soc_7_percent_raw"))
+    if target_soc is None:
+        target_soc = _to_float_any(np_result.get("target_soc_7_percent"))
+
+    night_charge_kwh = _to_float_any(np_summary.get("required_night_charge_kwh"))
+    if night_charge_kwh is None:
+        night_charge_kwh = _to_float_any(np_result.get("required_night_charge_kwh"))
+
+    pv_max_charge_kwh = _to_float_any(np_summary.get("predicted_midday_surplus_kwh"))
+    if pv_max_charge_kwh is None:
+        pv_max_charge_kwh = _to_float_any(np_result.get("predicted_midday_surplus_kwh"))
+
+    return {
+        "date": date,
+        "target_soc": target_soc,
+        "night_charge_kwh": night_charge_kwh,
+        "pv_max_charge_kwh": pv_max_charge_kwh,
+        "end_of_day_soc": target_soc,
+    }
 
 
 def find_latest_csv_and_settings_runs(artifacts_dir: Path) -> tuple[Path | None, Path | None]:
@@ -689,20 +748,25 @@ def recalc_cost_daily(
     conn.commit()
 
 
-def upsert_battery_daily_metrics(conn: sqlite3.Connection, *, summary_path: Path, updated_at: str) -> None:
+def upsert_battery_daily_metrics(
+    conn: sqlite3.Connection,
+    *,
+    summary_path: Path,
+    updated_at: str,
+    night_plan_path: Path | None = None,
+) -> None:
     if not summary_path.exists():
         return
     summary = _read_summary(summary_path)
-    night_plan = summary.get("night_charge_plan", {}) if isinstance(summary, dict) else {}
-    if not isinstance(night_plan, dict):
+    night_plan = _read_json_if_exists(night_plan_path)
+    metrics = _extract_battery_daily_from_summary(summary=summary, night_plan=night_plan)
+    if metrics is None:
         return
-    date = str(night_plan.get("forecast_date", "")).strip()
-    if not date:
-        return
-    target_soc = _to_float(str(night_plan.get("target_soc_7_percent_raw", "")))
-    night_charge_kwh = _to_float(str(night_plan.get("required_night_charge_kwh", "")))
-    pv_max_charge_kwh = _to_float(str(night_plan.get("predicted_midday_surplus_kwh", "")))
-    end_of_day_soc = _to_float(str(night_plan.get("target_soc_7_percent_raw", "")))
+    date = str(metrics["date"])
+    target_soc = metrics["target_soc"]
+    night_charge_kwh = metrics["night_charge_kwh"]
+    pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
+    end_of_day_soc = metrics["end_of_day_soc"]
     conn.execute(
         """
         INSERT INTO battery_daily_metrics (
