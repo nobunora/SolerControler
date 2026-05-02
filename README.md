@@ -12,6 +12,7 @@
 ## 公開向け説明文と画面イメージ
 
 - 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
+- Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）

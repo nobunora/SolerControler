@@ -22,3 +22,6 @@
 
 ![ダッシュボード例](images/dashboard.png)
 
+## Google Cloud運用前提の説明
+
+- [docs/GCP_OPERATION_JA.md](GCP_OPERATION_JA.md)
