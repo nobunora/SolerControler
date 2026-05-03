@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ProjectId = "",
     [string]$Region = "us-central1",
     [string]$SchedulerRegion = "us-central1",
@@ -7,6 +7,7 @@ param(
     [string]$Repository = "solar-controller",
     [string]$ImageName = "runner",
     [string]$Job23Name = "solar-battery-23",
+    [string]$Job03Name = "solar-battery-03",
     [string]$Job07Name = "solar-battery-07",
     [string]$RunServiceAccountName = "solar-battery-job-sa",
     [string]$SchedulerServiceAccountName = "solar-battery-scheduler-sa",
@@ -282,10 +283,10 @@ $secretEnvList = @(
 if ($DataBackend -eq "postgres") {
     $pgPasswordResolved = Get-PostgresCredentials -EnvMap $envMap
     if (-not $PgHost) {
-        throw "DataBackend=postgres では PgHost (または .env の PGHOST) が必要です。"
+        throw "DataBackend=postgres requires PgHost (or PGHOST in .env)."
     }
     if (-not $pgPasswordResolved) {
-        throw "DataBackend=postgres では PgPassword (または .env の PGPASSWORD) が必要です。"
+        throw "DataBackend=postgres requires PgPassword (or PGPASSWORD in .env)."
     }
     $pgPasswordSecret = "solar-pg-password"
     Upsert-SecretVersion -SecretName $pgPasswordSecret -SecretValue $pgPasswordResolved
@@ -362,10 +363,12 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
 Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23" --set-secrets $secretEnvArg
+Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 2700 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_MAX_ATTEMPTS=3,ADJUST03_WAIT_SECONDS=600,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
 Write-Host "Grant run.invoker to scheduler service account..."
 Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 
 function Upsert-SchedulerRunJob {
@@ -391,11 +394,13 @@ function Upsert-SchedulerRunJob {
 
 Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
+Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "10 3 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
 
 if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
     Write-Host "Pause legacy Tokyo schedulers (keep resources, stop execution)..."
     Pause-SchedulerIfExists -Name "solar-battery-run-23" -Location $LegacySchedulerRegionToPause
+    Pause-SchedulerIfExists -Name "solar-battery-run-03" -Location $LegacySchedulerRegionToPause
     Pause-SchedulerIfExists -Name "solar-battery-run-07" -Location $LegacySchedulerRegionToPause
 }
 
@@ -407,5 +412,5 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00), $Job07Name (07:00)"
-Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-07"
+Write-Host "Jobs: $Job23Name (23:00), $Job03Name (03:10), $Job07Name (07:00)"
+Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"

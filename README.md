@@ -1,6 +1,6 @@
 # Solar Controller Automation (Cloud Run Jobs)
 
-23:00 と 07:00（JST）に以下を自動実行する Python 実装です。
+23:00 / 03:10 / 07:00（JST）に以下を自動実行する Python 実装です。
 
 1. ブラウザで 12 時間先の太陽日射時間を取得  
 2. モニタリングサービスにログインして CSV を取得  
@@ -90,6 +90,10 @@ python kpnet_main.py
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
   - 日中(07:00-23:00): グリーンモード + SOC下限(経済/グリーン)=0%
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
+- 03:10微調整（`CLOUD_JOB_SLOT=03`）:
+  - CSVを1回取得
+  - 予報再取得を最大3回（10分間隔）実施
+  - 最終計画で夜間設定を再適用（同値なら実質ノーオペ）
 
 主な環境変数（`.env`）:
 
@@ -101,6 +105,10 @@ python kpnet_main.py
 - `KP_FORCE_SETTINGS_PROFILE=auto|forced|green`
 - `KP_DYNAMIC_FORCED_PROFILE=true|false`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true|false`
+- `ADJUST03_MAX_ATTEMPTS=3`
+- `ADJUST03_WAIT_SECONDS=600`
+- `ADJUST03_SUN_EPSILON_H=0.05`
+- `ADJUST03_TEMP_EPSILON_C=0.2`
 - `KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json`
 - `KP_NIGHT_CHARGE_WINDOW_START=23:00`
 - `KP_NIGHT_CHARGE_WINDOW_END=07:00`
@@ -167,7 +175,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 
 ## 4. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 07:00 ジョブと Scheduler を一括登録
+推奨: 自動化スクリプトで 23:00 / 03:10 / 07:00 ジョブと Scheduler を一括登録
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -184,8 +192,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Docker build/push
 - Secret Manager に監視ログイン情報登録
 - 実行用 / Scheduler用の専用サービスアカウント作成
-- Cloud Run Job 2本（23時用 / 7時用）デプロイ
-- Cloud Scheduler 2本（`0 23 * * *`, `0 7 * * *` JST）作成/更新
+- Cloud Run Job 3本（23時用 / 3:10微調整用 / 7時用）デプロイ
+- Cloud Scheduler 3本（`0 23 * * *`, `10 3 * * *`, `0 7 * * *` JST）作成/更新
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell
@@ -214,18 +222,33 @@ gcloud run jobs create $JOB_NAME `
   --env-vars-file=.env.prod
 ```
 
-## 5. 07:00/23:00 実行の Scheduler 設定例
+## 5. 07:00/03:10/23:00 実行の Scheduler 設定例
 
 ```powershell
-$SCHEDULER_NAME="solar-battery-controller-7-23"
 $SCHEDULER_REGION="asia-northeast1"
 $PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
 
-gcloud scheduler jobs create http $SCHEDULER_NAME `
+gcloud scheduler jobs create http "solar-battery-run-23" `
   --location=$SCHEDULER_REGION `
-  --schedule="0 7,23 * * *" `
+  --schedule="0 23 * * *" `
   --time-zone="Asia/Tokyo" `
-  --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/$JOB_NAME:run" `
+  --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/solar-battery-23:run" `
+  --http-method=POST `
+  --oauth-service-account-email="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+
+gcloud scheduler jobs create http "solar-battery-run-03" `
+  --location=$SCHEDULER_REGION `
+  --schedule="10 3 * * *" `
+  --time-zone="Asia/Tokyo" `
+  --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/solar-battery-03:run" `
+  --http-method=POST `
+  --oauth-service-account-email="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
+
+gcloud scheduler jobs create http "solar-battery-run-07" `
+  --location=$SCHEDULER_REGION `
+  --schedule="0 7 * * *" `
+  --time-zone="Asia/Tokyo" `
+  --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/solar-battery-07:run" `
   --http-method=POST `
   --oauth-service-account-email="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 ```

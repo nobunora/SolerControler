@@ -6,7 +6,7 @@
 ## 0. 先に結論（無料を外しにくい設定）
 
 - リージョンは **US系** を使う（推奨: `us-central1`）
-- Cloud Scheduler は **2ジョブだけ**（23時/7時）
+- Cloud Scheduler は **3ジョブまで**（23時/3:10/7時）
 - Artifact Registry の世代保持を絞る（`keepCount=2`）
 - DBは `firestore` を使う（Cloud SQLは使わない）
 - 課金アラート（予算）を必ず設定
@@ -55,9 +55,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps
   -DataBackend firestore
 ```
 
-これで以下の2つのCloud Schedulerジョブが作成されます。
+これで以下の3つのCloud Schedulerジョブが作成されます。
 
 - `solar-battery-run-23`（23:00 JST）
+- `solar-battery-run-03`（03:10 JST）
 - `solar-battery-run-07`（07:00 JST）
 
 ## 4. ダッシュボード（任意）
@@ -75,7 +76,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 run ser
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 scheduler jobs list --location us-central1
 ```
 
-- 目安: **2ジョブ**のまま維持
+- 目安: **3ジョブ以内**で維持
 - 注意: **Pausedでもジョブ数として課金対象カウント**されます
 
 ### 5-2. Artifact Registry容量
@@ -102,7 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 artifac
 ## 7. この構成で無料に効く理由
 
 - Cloud Runの無料枠は請求先アカウント単位で毎月リセット
-- Cloud Schedulerは請求先アカウントごとに毎月3ジョブ無料（本構成は2ジョブ）
+- Cloud Schedulerは請求先アカウントごとに毎月3ジョブ無料（本構成は3ジョブ）
 - Artifact Registryは 0.5GB まで無料（超えた分のみ課金）
 - Cloud Storage無料枠は USリージョン（`us-east1/us-west1/us-central1`）で適用
 
