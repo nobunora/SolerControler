@@ -572,7 +572,7 @@ def recalc_model_hit_rates(conn, *, updated_at: str) -> float | None:
     if not rows:
         return None
 
-    ape_values: list[float] = []
+    smape_values: list[float] = []
     for row in rows:
         fh = row.get("forecast_hours")
         ah = row.get("actual_hours")
@@ -580,13 +580,15 @@ def recalc_model_hit_rates(conn, *, updated_at: str) -> float | None:
             continue
         fh_f = float(fh)
         ah_f = float(ah)
-        denom = max(abs(ah_f), 0.5)
-        ape_values.append(abs(ah_f - fh_f) / denom)
-    if not ape_values:
+        # Use sMAPE-like normalization to avoid low-actual-day over-penalty.
+        denom = max((abs(ah_f) + abs(fh_f)) / 2.0, 0.5)
+        smape = abs(ah_f - fh_f) / denom
+        smape_values.append(min(smape, 2.0))
+    if not smape_values:
         return None
 
-    mape = sum(ape_values) / len(ape_values)
-    hit_rate = max(0.0, min(1.0, 1.0 - mape))
+    mean_smape = sum(smape_values) / len(smape_values)
+    hit_rate = max(0.0, min(1.0, 1.0 - (mean_smape / 2.0)))
     with conn.cursor() as cur:
         cur.execute(
             """

@@ -470,15 +470,17 @@ def recalc_model_hit_rates(client, *, updated_at: str) -> float | None:
     if not rows:
         return None
 
-    ape_values: list[float] = []
+    smape_values: list[float] = []
     for fh, ah in rows:
-        denom = max(abs(ah), 0.5)
-        ape_values.append(abs(ah - fh) / denom)
-    if not ape_values:
+        # Use sMAPE-like normalization to avoid low-actual-day over-penalty.
+        denom = max((abs(ah) + abs(fh)) / 2.0, 0.5)
+        smape = abs(ah - fh) / denom
+        smape_values.append(min(smape, 2.0))
+    if not smape_values:
         return None
 
-    mape = sum(ape_values) / len(ape_values)
-    hit_rate = max(0.0, min(1.0, 1.0 - mape))
+    mean_smape = sum(smape_values) / len(smape_values)
+    hit_rate = max(0.0, min(1.0, 1.0 - (mean_smape / 2.0)))
     batch = client.batch()
     count = 0
     for doc in client.collection("model_parameters").stream():

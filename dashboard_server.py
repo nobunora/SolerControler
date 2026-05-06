@@ -231,7 +231,7 @@ def _html(payload: dict, script_nonce: str) -> str:
           条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 23時設定は06:00終了固定で逆算。 条件C: 充電開始は00:00未満にしない。<br>
           条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
           最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
-          的中率: <b>HT = max(0, 1 - MAPE(SH実績, SH予測)) × 100</b>
+          的中率: <b>HT = max(0, 1 - sMAPE(SH実績, SH予測) / 2) × 100</b>
         </div>
         <table id="paramsTable">
           <thead>
