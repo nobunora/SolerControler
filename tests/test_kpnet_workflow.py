@@ -15,6 +15,47 @@ from app.kpnet_workflow import (
 
 
 def _build_cfg(*, plan_path: Path) -> KpNetConfig:
+    conditions_path = plan_path.parent / "operation_conditions.json"
+    if not conditions_path.exists():
+        conditions_path.write_text(
+            json.dumps(
+                {
+                    "fixed": [
+                        {
+                            "id": "forbid_cross_midnight",
+                            "enabled": True,
+                            "priority": 1000,
+                            "target": "charge",
+                            "min_duration_minutes": 30,
+                        },
+                        {
+                            "id": "forbid_same_start_end",
+                            "enabled": True,
+                            "priority": 990,
+                            "target": "charge",
+                            "min_duration_minutes": 30,
+                        },
+                    ],
+                    "variable": [
+                        {
+                            "id": "night_charge_end_time",
+                            "enabled": True,
+                            "priority": 500,
+                            "value": "06:00",
+                        },
+                        {
+                            "id": "day_charge_window",
+                            "enabled": True,
+                            "priority": 400,
+                            "start": "00:00",
+                            "end": "06:00",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
     return KpNetConfig(
         base_url="https://ctrl.kp-net.com/settingcontrol",
         username="user",
@@ -36,6 +77,7 @@ def _build_cfg(*, plan_path: Path) -> KpNetConfig:
         night_charge_window_end="07:00",
         day_discharge_window_start="07:00",
         day_discharge_window_end="23:00",
+        operation_conditions_path=conditions_path,
         timezone_name="Asia/Tokyo",
         use_har_credentials=False,
         har_path=Path("dummy.har"),

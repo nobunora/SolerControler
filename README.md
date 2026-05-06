@@ -14,6 +14,7 @@
 - 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
 - Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
 - Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
+- 運用条件ファイルガイド: [docs/OPERATION_CONDITIONS_GUIDE.md](docs/OPERATION_CONDITIONS_GUIDE.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）
@@ -94,6 +95,10 @@ python kpnet_main.py
   - CSVを1回取得
   - 予報再取得を最大3回（10分間隔）実施
   - 最終計画で夜間設定を再適用（同値なら実質ノーオペ）
+- `KP_OPERATION_CONDITIONS_PATH`:
+  - 固定条件 / 変動条件 / 優先順位 を外部JSONで管理
+  - 既定: `config/operation_conditions.json`
+  - 固定条件「0時跨ぎ禁止」「開始=終了禁止」を最優先で強制
 
 主な環境変数（`.env`）:
 
@@ -105,6 +110,7 @@ python kpnet_main.py
 - `KP_FORCE_SETTINGS_PROFILE=auto|forced|green`
 - `KP_DYNAMIC_FORCED_PROFILE=true|false`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true|false`
+- `KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json`
 - `ADJUST03_MAX_ATTEMPTS=3`
 - `ADJUST03_WAIT_SECONDS=600`
 - `ADJUST03_SUN_EPSILON_H=0.05`

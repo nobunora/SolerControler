@@ -229,6 +229,8 @@ def _html(payload: dict, script_nonce: str) -> str:
           (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
           (5) 夜間充電量: <b>NC = max(0, ((RC - RS)/100 × Cp) / Ef)</b><br>
           条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 23時設定は06:00終了固定で逆算。 条件C: 充電開始は00:00未満にしない。<br>
+          条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
+          最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
           的中率: <b>HT = max(0, 1 - MAPE(SH実績, SH予測)) × 100</b>
         </div>
         <table id="paramsTable">
@@ -558,10 +560,10 @@ def _html(payload: dict, script_nonce: str) -> str:
       charts.battery = new Chart(document.getElementById("batteryChart"), {
         type: "line",
         data: { labels: [], datasets: [
-          { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25 },
+          { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, pointHoverRadius: 4, borderWidth: 2.5 },
           { label: "夜間充電量(kWh)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
           { label: "太陽光 最大蓄電量(kWh)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
-          { label: "日終SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25 },
+          { label: "日終SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
         ]},
         options: {
           ...commonOptions(),
@@ -691,18 +693,40 @@ def _html(payload: dict, script_nonce: str) -> str:
       };
       charts.dailyYen.update("none");
 
+      const toNumOrNull = (v) => (v == null || v === "" ? null : n(v));
+      const batteryTarget = labels.map((d) => {
+        const r = rowByDate(store.battery, d);
+        return r ? toNumOrNull(r.setting_soc_target_percent) : null;
+      });
+      const batteryNight = labels.map((d) => {
+        const r = rowByDate(store.battery, d);
+        return r ? toNumOrNull(r.night_charge_kwh) : null;
+      });
+      const batteryPvMax = labels.map((d) => {
+        const r = rowByDate(store.battery, d);
+        return r ? toNumOrNull(r.pv_max_charge_kwh) : null;
+      });
+      const batteryEndSoc = labels.map((d) => {
+        const r = rowByDate(store.battery, d);
+        if (!r) return null;
+        const endSoc = toNumOrNull(r.end_of_day_soc_percent);
+        if (endSoc != null) return endSoc;
+        return toNumOrNull(r.setting_soc_target_percent);
+      });
+
       charts.battery.data.labels = labels;
-      charts.battery.data.datasets[0].data = labels.map((d) => n(rowByDate(store.battery, d)?.setting_soc_target_percent));
-      charts.battery.data.datasets[1].data = labels.map((d) => n(rowByDate(store.battery, d)?.night_charge_kwh));
-      charts.battery.data.datasets[2].data = labels.map((d) => n(rowByDate(store.battery, d)?.pv_max_charge_kwh));
-      charts.battery.data.datasets[3].data = labels.map((d) => n(rowByDate(store.battery, d)?.end_of_day_soc_percent));
+      charts.battery.data.datasets[0].data = batteryTarget;
+      charts.battery.data.datasets[1].data = batteryNight;
+      charts.battery.data.datasets[2].data = batteryPvMax;
+      charts.battery.data.datasets[3].data = batteryEndSoc;
+      charts.battery.data.datasets[3].hidden = !batteryEndSoc.some((v) => v != null);
       const batterySoc = [
-        ...charts.battery.data.datasets[0].data,
-        ...charts.battery.data.datasets[3].data,
+        ...batteryTarget.filter((v) => v != null),
+        ...batteryEndSoc.filter((v) => v != null),
       ];
       const batteryKwh = [
-        ...charts.battery.data.datasets[1].data,
-        ...charts.battery.data.datasets[2].data,
+        ...batteryNight.filter((v) => v != null),
+        ...batteryPvMax.filter((v) => v != null),
       ];
       const batteryDual = dualScales(batteryKwh, batterySoc, { leftUnit: "kWh", rightUnit: "%"});
       charts.battery.options.scales.y = {

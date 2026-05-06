@@ -309,6 +309,7 @@ $commonEnv = @(
     "KP_FORCE_SETTINGS_PROFILE=auto",
     "KP_DYNAMIC_FORCED_PROFILE=true",
     "KP_DYNAMIC_MODE_SWITCH_BY_TIME=true",
+    "KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json",
     "KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json",
     "KP_DEFAULT_CHARGE_POWER_KW=1.8",
     "KP_NIGHT_CHARGE_WINDOW_START=23:00",

@@ -191,6 +191,102 @@ def _is_night_window_now(
     return _in_time_window(minute_of_day, start_minute, end_minute)
 
 
+def _load_operation_conditions(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise RuntimeError(f"運用条件ファイルが見つかりません: {path}")
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(obj, dict):
+        raise RuntimeError(f"運用条件ファイル形式が不正です: {path}")
+    fixed = obj.get("fixed", [])
+    variable = obj.get("variable", [])
+    if not isinstance(fixed, list) or not isinstance(variable, list):
+        raise RuntimeError(f"運用条件ファイルの fixed/variable が不正です: {path}")
+    return obj
+
+
+def _enabled_sorted_rules(conditions: dict[str, Any], section: str) -> list[dict[str, Any]]:
+    rules = conditions.get(section, [])
+    out: list[dict[str, Any]] = []
+    if not isinstance(rules, list):
+        return out
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if not bool(rule.get("enabled", True)):
+            continue
+        out.append(rule)
+    out.sort(key=lambda x: int(x.get("priority", 0)), reverse=True)
+    return out
+
+
+def _variable_rule(conditions: dict[str, Any], rule_id: str) -> dict[str, Any] | None:
+    for rule in _enabled_sorted_rules(conditions, "variable"):
+        if str(rule.get("id", "")).strip() == rule_id:
+            return rule
+    return None
+
+
+def _resolve_hhmm(conditions: dict[str, Any], rule_id: str, key: str, default_hhmm: str) -> tuple[int, int]:
+    rule = _variable_rule(conditions, rule_id)
+    if rule is None:
+        return _parse_hhmm(default_hhmm, name=f"{rule_id}.{key}")
+    raw = str(rule.get(key, "")).strip()
+    if not raw:
+        return _parse_hhmm(default_hhmm, name=f"{rule_id}.{key}")
+    return _parse_hhmm(raw, name=f"{rule_id}.{key}")
+
+
+def _apply_fixed_time_rules(
+    *,
+    start_minute: int,
+    end_minute: int,
+    window_name: str,
+    conditions: dict[str, Any],
+    summary: dict[str, Any],
+) -> tuple[int, int]:
+    fixed_notes: list[dict[str, Any]] = []
+    for rule in _enabled_sorted_rules(conditions, "fixed"):
+        target = str(rule.get("target", "all")).strip().lower()
+        if target not in {"all", window_name}:
+            continue
+        rule_id = str(rule.get("id", "")).strip()
+        priority = int(rule.get("priority", 0))
+        if rule_id == "forbid_cross_midnight":
+            if start_minute > end_minute:
+                min_duration = int(rule.get("min_duration_minutes", 30))
+                start_minute = max(0, end_minute - min_duration)
+                fixed_notes.append(
+                    {
+                        "id": rule_id,
+                        "priority": priority,
+                        "action": f"{window_name} window cross-midnight を補正",
+                        "result": {"start_minute": start_minute, "end_minute": end_minute},
+                    }
+                )
+        elif rule_id == "forbid_same_start_end":
+            if start_minute == end_minute:
+                min_duration = int(rule.get("min_duration_minutes", 30))
+                start_minute = max(0, end_minute - min_duration)
+                if start_minute == end_minute:
+                    end_minute = min(23 * 60 + 59, start_minute + min_duration)
+                fixed_notes.append(
+                    {
+                        "id": rule_id,
+                        "priority": priority,
+                        "action": f"{window_name} window start=end を補正",
+                        "result": {"start_minute": start_minute, "end_minute": end_minute},
+                    }
+                )
+
+    if start_minute > end_minute:
+        raise RuntimeError(f"{window_name} window が0時跨ぎとなり補正不可です")
+    if start_minute == end_minute:
+        raise RuntimeError(f"{window_name} window の開始/終了が同一となり補正不可です")
+    if fixed_notes:
+        summary.setdefault("fixed_condition_adjustments", []).extend(fixed_notes)
+    return start_minute, end_minute
+
+
 def _candidate_int_values(value_map: dict[str, str]) -> list[int]:
     values: list[int] = []
     for key in value_map:
@@ -398,6 +494,7 @@ class KpNetConfig:
     night_charge_window_end: str
     day_discharge_window_start: str
     day_discharge_window_end: str
+    operation_conditions_path: Path
     timezone_name: str
     use_har_credentials: bool
     har_path: Path
@@ -470,6 +567,9 @@ class KpNetConfig:
 
         artifacts_dir = Path(_env("ARTIFACTS_DIR", "artifacts"))
         night_plan_path = Path(_env("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
+        operation_conditions_path = Path(
+            _env("KP_OPERATION_CONDITIONS_PATH", "config/operation_conditions.json")
+        )
 
         return KpNetConfig(
             base_url=base_url,
@@ -492,6 +592,7 @@ class KpNetConfig:
             night_charge_window_end=night_charge_window_end,
             day_discharge_window_start=day_discharge_window_start,
             day_discharge_window_end=day_discharge_window_end,
+            operation_conditions_path=operation_conditions_path,
             timezone_name=timezone_name,
             use_har_credentials=use_har_credentials,
             har_path=har_path,
@@ -507,6 +608,7 @@ def _build_dynamic_forced_profile(
     summary: dict[str, Any],
 ) -> ProfileOverrides:
     plan = _load_night_charge_plan(cfg.night_plan_path)
+    conditions = _load_operation_conditions(cfg.operation_conditions_path)
 
     night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
     night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
@@ -524,10 +626,16 @@ def _build_dynamic_forced_profile(
         duration_minutes = int(math.ceil(required_night_charge_kwh / estimated_charge_power_kw * 60.0))
 
     # ユーザー要件:
-    # - 23時設定では充電終了を 06:00 に固定
+    # - 23時設定では充電終了を 06:00 に固定（可変条件ファイルで上書き可）
     # - 0:00 を跨ぐ設定をしない（00:00-06:00 の同日内でのみ設定）
     # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
-    charge_end_minute = 6 * 60
+    charge_end_h, charge_end_m = _resolve_hhmm(
+        conditions,
+        rule_id="night_charge_end_time",
+        key="value",
+        default_hhmm="06:00",
+    )
+    charge_end_minute = charge_end_h * 60 + charge_end_m
     window_duration_minutes = charge_end_minute
     duration_clipped = False
     if duration_minutes > window_duration_minutes:
@@ -535,6 +643,13 @@ def _build_dynamic_forced_profile(
         duration_clipped = True
 
     charge_start_minute = max(0, charge_end_minute - duration_minutes)
+    charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
+        start_minute=charge_start_minute,
+        end_minute=charge_end_minute,
+        window_name="charge",
+        conditions=conditions,
+        summary=summary,
+    )
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
 
@@ -554,7 +669,7 @@ def _build_dynamic_forced_profile(
         "duration_minutes": duration_minutes,
         "duration_clipped_to_window": duration_clipped,
         "no_cross_midnight": True,
-        "fixed_charge_end_time": "06:00",
+        "fixed_charge_end_time": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "night_window_start": cfg.night_charge_window_start,
         "night_window_end": cfg.night_charge_window_end,
         "charge_start_time": f"{charge_start_h:02d}:{charge_start_m:02d}",
@@ -565,6 +680,7 @@ def _build_dynamic_forced_profile(
         "soc_charge_mode": soc_charge_code,
         "battery_operating_mode": night_mode_code,
         "discharge_fixed_window": "07:00-23:00",
+        "conditions_source": str(cfg.operation_conditions_path),
     }
 
     LOGGER.info(
@@ -603,8 +719,30 @@ def _build_dynamic_green_profile(
     forced_profile: ProfileOverrides,
     summary: dict[str, Any],
 ) -> ProfileOverrides:
-    night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
-    night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
+    conditions = _load_operation_conditions(cfg.operation_conditions_path)
+    charge_start_hh, charge_start_mm = _resolve_hhmm(
+        conditions,
+        rule_id="day_charge_window",
+        key="start",
+        default_hhmm="00:00",
+    )
+    charge_end_hh, charge_end_mm = _resolve_hhmm(
+        conditions,
+        rule_id="day_charge_window",
+        key="end",
+        default_hhmm="06:00",
+    )
+    charge_start_minute = charge_start_hh * 60 + charge_start_mm
+    charge_end_minute = charge_end_hh * 60 + charge_end_mm
+    charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
+        start_minute=charge_start_minute,
+        end_minute=charge_end_minute,
+        window_name="charge",
+        conditions=conditions,
+        summary=summary,
+    )
+    charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
+    charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
 
     # ユーザー要件:
     # - 日中はグリーンモード
@@ -619,8 +757,8 @@ def _build_dynamic_green_profile(
 
     summary["daytime_mode_plan"] = {
         "mode": "green",
-        "night_window_start": cfg.night_charge_window_start,
-        "night_window_end": cfg.night_charge_window_end,
+        "day_charge_window_start": f"{charge_start_h:02d}:{charge_start_m:02d}",
+        "day_charge_window_end": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "day_discharge_window_start": cfg.day_discharge_window_start,
         "day_discharge_window_end": cfg.day_discharge_window_end,
         "discharge_fixed_window": "07:00-23:00",
@@ -628,6 +766,7 @@ def _build_dynamic_green_profile(
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
+        "conditions_source": str(cfg.operation_conditions_path),
     }
 
     return replace(
@@ -636,10 +775,10 @@ def _build_dynamic_green_profile(
         soc_economy_mode=day_soc_lower_code,
         soc_contact_input=contact_soc_lower_code,
         soc_charge_mode=soc_charge_code,
-        charge_start_h=str(night_window_start[0]),
-        charge_start_m=str(night_window_start[1]),
-        charge_end_h=str(night_window_end[0]),
-        charge_end_m=str(night_window_end[1]),
+        charge_start_h=str(charge_start_h),
+        charge_start_m=str(charge_start_m),
+        charge_end_h=str(charge_end_h),
+        charge_end_m=str(charge_end_m),
         discharge_start_h="7",
         discharge_start_m="0",
         discharge_end_h="23",
@@ -1100,6 +1239,25 @@ def _run_settings_phase(
     client.open_settings_page()
     current = client.read_current_settings()
     maps = client.collect_candidate_maps()
+    conditions = _load_operation_conditions(cfg.operation_conditions_path)
+    summary["operation_conditions"] = {
+        "source": str(cfg.operation_conditions_path),
+        "fixed": [
+            {
+                "id": str(rule.get("id", "")),
+                "priority": int(rule.get("priority", 0)),
+                "target": str(rule.get("target", "all")),
+            }
+            for rule in _enabled_sorted_rules(conditions, "fixed")
+        ],
+        "variable": [
+            {
+                "id": str(rule.get("id", "")),
+                "priority": int(rule.get("priority", 0)),
+            }
+            for rule in _enabled_sorted_rules(conditions, "variable")
+        ],
+    }
 
     if cfg.dynamic_forced_profile:
         forced_profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=maps, summary=summary)

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "description": "KP-NET運用条件。fixed=常に満たす制約、variable=外部条件で調整可能な設定。",
+  "priority_order": [
+    "fixed",
+    "variable"
+  ],
+  "fixed": [
+    {
+      "id": "forbid_cross_midnight",
+      "enabled": true,
+      "priority": 1000,
+      "target": "charge",
+      "min_duration_minutes": 30,
+      "description": "0時をまたぐ時刻設定を禁止。違反時は同日内に補正。"
+    },
+    {
+      "id": "forbid_same_start_end",
+      "enabled": true,
+      "priority": 990,
+      "target": "charge",
+      "min_duration_minutes": 30,
+      "description": "開始時刻と終了時刻が同一になる設定を禁止。違反時は最低30分を確保。"
+    }
+  ],
+  "variable": [
+    {
+      "id": "night_charge_end_time",
+      "enabled": true,
+      "priority": 500,
+      "value": "06:00",
+      "description": "夜間設定の充電終了時刻（23時/03時ジョブ）"
+    },
+    {
+      "id": "day_charge_window",
+      "enabled": true,
+      "priority": 400,
+      "start": "00:00",
+      "end": "06:00",
+      "description": "日中グリーン設定時の充電時間帯（0時跨ぎ禁止条件の対象）"
+    }
+  ]
+}

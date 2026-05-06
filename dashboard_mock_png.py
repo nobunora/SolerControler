@@ -96,70 +96,85 @@ def main() -> int:
         ]
 
     plt.rcParams["font.family"] = ["Yu Gothic", "Meiryo", "DejaVu Sans"]
-    fig = plt.figure(figsize=(18, 12), facecolor="#f3f9ff")
-    gs = fig.add_gridspec(3, 2, height_ratios=[1, 1, 0.95], hspace=0.35, wspace=0.22)
+    fig = plt.figure(figsize=(18, 15), facecolor="#f3f9ff")
+    gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 1, 0.95], hspace=0.35, wspace=0.22)
 
     ax1 = fig.add_subplot(gs[0, 0])
     ax1.plot(days, forecast, label="予測(時間)", color="#147efb", linewidth=2)
     ax1.plot(days, actual, label="実績(時間)", color="#14b86f", linewidth=2)
-    ax1b = ax1.twinx()
-    ax1b.bar(days, diff, alpha=0.3, label="差分(時間)", color="#ef8e1d")
-    ax1.set_title("1) 日照時間 予測と実績")
-    ax1.set_ylabel("時間")
+    ax1.bar(days, diff, alpha=0.3, label="差分(時間)", color="#ef8e1d")
+    ax1.set_title("1) 日照時間（予測と実績）")
+    ax1.set_ylabel("時間 [h]")
     ax1.tick_params(axis="x", rotation=45)
-    _align_dual_axis(ax1, ax1b)
-    lines1 = ax1.get_lines() + ax1b.containers
-    labels1 = ["予測(時間)", "実績(時間)", "差分(時間)"]
-    ax1.legend(lines1, labels1, loc="upper left")
+    ax1.grid(axis="y", alpha=0.35)
+    ax1.legend(loc="upper left")
 
     ax2 = fig.add_subplot(gs[0, 1])
-    ax2.plot(c_days, self_kwh, label="自家消費(kWh)", color="#147efb", linewidth=2)
-    ax2.plot(c_days, c_kwh, label="累計(kWh)", color="#14b86f", linewidth=2, linestyle="--")
-    ax2b = ax2.twinx()
-    ax2b.plot(c_days, yen, label="節約額(円)", color="#ef8e1d", linewidth=2)
-    ax2b.plot(c_days, c_yen, label="累計(円)", color="#e6504f", linewidth=2, linestyle="--")
-    ax2.set_title("2) 自家消費と節約額（日）")
-    ax2.set_ylabel("kWh")
-    ax2b.set_ylabel("円")
+    ax2.bar(c_days, self_kwh, label="日次自家消費(kWh)", color="#147efb", alpha=0.5)
+    ax2.plot(c_days, c_kwh, label="累計(kWh)", color="#14b86f", linewidth=2, linestyle="-")
+    ax2.set_title("2) 自家消費kWh（日）")
+    ax2.set_ylabel("kWh", color="#147efb")
+    ax2.tick_params(axis="y", colors="#147efb")
     ax2.tick_params(axis="x", rotation=45)
+    ax2b = ax2.twinx()
+    ax2b.set_ylabel("kWh", color="#14b86f")
+    ax2b.tick_params(axis="y", colors="#14b86f")
     _align_dual_axis(ax2, ax2b)
-    lines2 = ax2.get_lines() + ax2b.get_lines()
-    ax2.legend(lines2, [l.get_label() for l in lines2], loc="upper left")
+    lines2 = ax2.containers + ax2.get_lines() + ax2b.get_lines()
+    labels2 = ["日次自家消費(kWh)", "累計(kWh)"]
+    ax2.legend(lines2[:2], labels2, loc="upper left")
 
     ax3 = fig.add_subplot(gs[1, 0])
-    ax3.plot(m_labels, m_kwh, marker="o", color="#147efb", label="月間 自家消費(kWh)")
+    ax3.bar(c_days, yen, label="日次節約額(円)", color="#ef8e1d", alpha=0.5)
+    ax3.plot(c_days, c_yen, label="累計(円)", color="#e6504f", linewidth=2, linestyle="-")
+    ax3.set_title("3) 節約額（日）")
+    ax3.set_ylabel("円", color="#ef8e1d")
+    ax3.tick_params(axis="y", colors="#ef8e1d")
+    ax3.tick_params(axis="x", rotation=45)
+    ax2b = ax2.twinx()
     ax3b = ax3.twinx()
-    ax3b.plot(m_labels, m_yen, marker="o", color="#ef8e1d", label="月間 節約額(円)")
-    ax3.set_title("3) 自家消費と節約額（月）")
-    ax3.set_ylabel("kWh")
-    ax3b.set_ylabel("円")
+    ax3b.set_ylabel("円", color="#e6504f")
+    ax3b.tick_params(axis="y", colors="#e6504f")
     _align_dual_axis(ax3, ax3b)
-    lines3 = ax3.get_lines() + ax3b.get_lines()
-    ax3.legend(lines3, [l.get_label() for l in lines3], loc="upper left")
+    lines3 = ax3.containers + ax3.get_lines() + ax3b.get_lines()
+    labels3 = ["日次節約額(円)", "累計(円)"]
+    ax3.legend(lines3[:2], labels3, loc="upper left")
 
     ax4 = fig.add_subplot(gs[1, 1])
-    ax4.plot(b_days, b_night, label="夜間充電量(kWh)", color="#ef8e1d")
-    ax4.plot(b_days, b_pv_max, label="太陽光 最大蓄電量(kWh)", color="#14b86f")
+    ax4.plot(m_labels, m_kwh, marker="o", color="#147efb", label="月間 自家消費(kWh)")
     ax4b = ax4.twinx()
-    ax4b.plot(b_days, b_target, label="設定SOC(%)", color="#147efb")
-    ax4b.plot(b_days, b_end, label="日終SOC(%)", color="#e6504f")
-    ax4.set_title("4) 蓄電池設定値と実績")
+    ax4b.plot(m_labels, m_yen, marker="o", color="#ef8e1d", label="月間 節約額(円)")
+    ax4.set_title("4) 自家消費と節約額（月）")
     ax4.set_ylabel("kWh")
-    ax4b.set_ylabel("%")
-    ax4.tick_params(axis="x", rotation=45)
+    ax4b.set_ylabel("円")
     _align_dual_axis(ax4, ax4b)
     lines4 = ax4.get_lines() + ax4b.get_lines()
     ax4.legend(lines4, [l.get_label() for l in lines4], loc="upper left")
 
     ax5 = fig.add_subplot(gs[2, :])
-    ax5.axis("off")
-    ax5.set_title("5) 蓄電池方程式とパラメータ", loc="left", fontsize=13, fontweight="bold")
+    ax5.plot(b_days, b_night, label="夜間充電量(kWh)", color="#ef8e1d")
+    ax5.plot(b_days, b_pv_max, label="太陽光 最大蓄電量(kWh)", color="#14b86f")
+    ax5b = ax5.twinx()
+    ax5b.plot(b_days, b_target, label="設定SOC(%)", color="#147efb")
+    ax5b.plot(b_days, b_end, label="日終SOC(%)", color="#e6504f")
+    ax5.set_title("5) 蓄電池設定値と実績")
+    ax5.set_ylabel("kWh")
+    ax5b.set_ylabel("%")
+    ax5.tick_params(axis="x", rotation=45)
+    _align_dual_axis(ax5, ax5b)
+    lines5 = ax5.get_lines() + ax5b.get_lines()
+    ax5.legend(lines5, [l.get_label() for l in lines5], loc="upper left")
+
+    ax6 = fig.add_subplot(gs[3, :])
+    ax6.axis("off")
+    ax6.set_title("6) 蓄電池方程式とパラメータ", loc="left", fontsize=13, fontweight="bold")
     equation = (
-        "目標エネルギー = 朝に足りない分 + 昼の余剰分を考慮して決定\n"
-        "夜間充電量(kWh) = max(0, (目標 - 現在) / 充電効率)\n"
-        "太陽光発電(kWh) = 日照時間 × 発電係数 × 温度係数"
+        "変数: SH=日照時間[h], LD=日中負荷[kWh], RS=朝SOC[%], RC=目標SOC[%], NC=夜間充電[kWh]\n"
+        "PV = SH × Kp × Kt,  DF = max(0, RM - PV × Kr),  PS = max(0, (PV - LD) × Ks)\n"
+        "RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)\n"
+        "NC = max(0, ((RC - RS)/100 × Cp) / Ef)"
     )
-    ax5.text(0.01, 0.80, equation, fontsize=10)
+    ax6.text(0.01, 0.80, equation, fontsize=10)
 
     cell_text = []
     for p in params[:8]:
@@ -174,7 +189,7 @@ def main() -> int:
                 hit_text,
             ]
         )
-    table = ax5.table(
+    table = ax6.table(
         cellText=cell_text,
         colLabels=["パラメータ", "中心値", "分散", "サンプル数", "的中率"],
         loc="lower left",
