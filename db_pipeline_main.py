@@ -100,6 +100,8 @@ def _ingest_sqlite(
                 updated_at=now_iso,
                 night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
             )
+        eod_updated = sqlite_ops.recalc_battery_end_of_day_soc(conn, updated_at=now_iso)
+        print(f"[db_pipeline] battery end_of_day_soc updated rows={eod_updated}")
 
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
         sqlite_ops.ingest_sunshine_from_night_plan(
@@ -185,6 +187,8 @@ def _ingest_postgres(
                 updated_at=now_iso,
                 night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
             )
+        eod_updated = postgres_ops.recalc_battery_end_of_day_soc(conn, updated_at=now_iso)
+        print(f"[db_pipeline] battery end_of_day_soc updated rows={eod_updated}")
 
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
         postgres_ops.ingest_sunshine_from_night_plan(
@@ -265,6 +269,8 @@ def _ingest_firestore(
             updated_at=now_iso,
             night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
         )
+    eod_updated = firestore_ops.recalc_battery_end_of_day_soc(client, updated_at=now_iso)
+    print(f"[db_pipeline] battery end_of_day_soc updated rows={eod_updated}")
 
     night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
     firestore_ops.ingest_sunshine_from_night_plan(

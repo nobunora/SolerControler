@@ -529,6 +529,50 @@ def upsert_battery_daily_metrics(
     conn.commit()
 
 
+def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT day, soc_percent
+            FROM (
+                SELECT
+                    substring(ts, 1, 10) AS day,
+                    soc_percent,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY substring(ts, 1, 10)
+                        ORDER BY ts DESC
+                    ) AS rn
+                FROM monitoring_samples
+                WHERE soc_percent IS NOT NULL
+            ) ranked
+            WHERE rn = 1
+            """
+        )
+        rows = cur.fetchall()
+    if not rows:
+        return 0
+
+    updated = 0
+    with conn.cursor() as cur:
+        for row in rows:
+            day = str(row["day"])
+            soc_raw = row.get("soc_percent")
+            if soc_raw is None:
+                continue
+            soc = float(soc_raw)
+            cur.execute(
+                """
+                UPDATE battery_daily_metrics
+                SET end_of_day_soc_percent = %s, updated_at = %s
+                WHERE date = %s
+                """,
+                (soc, updated_at, day),
+            )
+            updated += int(cur.rowcount or 0)
+    conn.commit()
+    return updated
+
+
 def upsert_model_parameters_from_plan(conn, *, night_plan_path: Path, updated_at: str) -> None:
     if not night_plan_path.exists():
         return

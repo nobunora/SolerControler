@@ -426,6 +426,55 @@ def upsert_battery_daily_metrics(
     )
 
 
+def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
+    latest_by_day: dict[str, tuple[str, float]] = {}
+    for doc in client.collection("monitoring_samples").stream():
+        row = doc.to_dict() or {}
+        ts = str(row.get("ts", doc.id)).strip()
+        if len(ts) < 10:
+            continue
+        soc_raw = row.get("soc_percent")
+        if soc_raw is None:
+            continue
+        try:
+            soc = float(soc_raw)
+        except (TypeError, ValueError):
+            continue
+        day = ts[:10]
+        prev = latest_by_day.get(day)
+        if prev is None or ts > prev[0]:
+            latest_by_day[day] = (ts, soc)
+
+    if not latest_by_day:
+        return 0
+
+    batch = client.batch()
+    count = 0
+    updated = 0
+    for day, (_ts, soc) in latest_by_day.items():
+        ref = client.collection("battery_daily_metrics").document(day)
+        snap = ref.get()
+        if not snap.exists:
+            continue
+        batch.set(
+            ref,
+            {
+                "end_of_day_soc_percent": soc,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        count += 1
+        updated += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count > 0:
+        batch.commit()
+    return updated
+
+
 def upsert_model_parameters_from_plan(client, *, night_plan_path: Path, updated_at: str) -> None:
     if not night_plan_path.exists():
         return

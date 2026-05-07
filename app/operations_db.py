@@ -355,7 +355,8 @@ def _extract_battery_daily_from_summary(
         "target_soc": target_soc,
         "night_charge_kwh": night_charge_kwh,
         "pv_max_charge_kwh": pv_max_charge_kwh,
-        "end_of_day_soc": target_soc,
+        # Actual end-of-day SOC must come from monitoring CSV samples.
+        "end_of_day_soc": None,
     }
 
 
@@ -782,6 +783,46 @@ def upsert_battery_daily_metrics(
         (date, target_soc, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc, updated_at),
     )
     conn.commit()
+
+
+def recalc_battery_end_of_day_soc(conn: sqlite3.Connection, *, updated_at: str) -> int:
+    rows = conn.execute(
+        """
+        SELECT day, soc_percent
+        FROM (
+            SELECT
+                substr(ts, 1, 10) AS day,
+                soc_percent,
+                ROW_NUMBER() OVER (
+                    PARTITION BY substr(ts, 1, 10)
+                    ORDER BY ts DESC
+                ) AS rn
+            FROM monitoring_samples
+            WHERE soc_percent IS NOT NULL
+        ) ranked
+        WHERE rn = 1
+        """
+    ).fetchall()
+    if not rows:
+        return 0
+
+    updated = 0
+    for row in rows:
+        day = str(row["day"])
+        soc = _to_float_any(row["soc_percent"])
+        if soc is None:
+            continue
+        cur = conn.execute(
+            """
+            UPDATE battery_daily_metrics
+            SET end_of_day_soc_percent = ?, updated_at = ?
+            WHERE date = ?
+            """,
+            (soc, updated_at, day),
+        )
+        updated += int(cur.rowcount or 0)
+    conn.commit()
+    return updated
 
 
 def upsert_model_parameters_from_plan(conn: sqlite3.Connection, *, night_plan_path: Path, updated_at: str) -> None:

@@ -9,6 +9,7 @@ from app.operations_db import (
     ensure_schema,
     ingest_monitoring_csvs,
     open_db,
+    recalc_battery_end_of_day_soc,
     recalc_model_hit_rates,
     recalc_cost_daily,
     upsert_battery_daily_metrics,
@@ -140,7 +141,7 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         )
         row = conn.execute(
             """
-            SELECT date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh
+            SELECT date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent
             FROM battery_daily_metrics
             WHERE date='2026-05-03'
             """
@@ -151,6 +152,44 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         assert float(row[2]) == pytest.approx(0.0)
         # summaryに無い項目は night_charge_plan.result から補完される
         assert float(row[3]) == pytest.approx(4.7620196164713535)
+        # 日終SOCは実測CSVから再計算するため、ここでは未設定
+        assert row[4] is None
+    finally:
+        conn.close()
+
+
+def test_recalc_battery_end_of_day_soc_uses_latest_sample_per_day(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO battery_daily_metrics(date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent, updated_at)
+            VALUES
+              ('2026-05-01', 20, 1.0, 2.0, NULL, '2026-05-02T00:00:00Z'),
+              ('2026-05-02', 10, 0.5, 1.5, NULL, '2026-05-02T00:00:00Z')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO monitoring_samples(ts, soc_percent, ingested_at)
+            VALUES
+              ('2026-05-01T22:00:00', 40, 'x'),
+              ('2026-05-01T23:30:00', 55, 'x'),
+              ('2026-05-02T21:00:00', 35, 'x'),
+              ('2026-05-02T23:59:00', 25, 'x')
+            """
+        )
+        conn.commit()
+
+        updated = recalc_battery_end_of_day_soc(conn, updated_at="2026-05-03T00:00:00Z")
+        assert updated == 2
+        rows = conn.execute(
+            "SELECT date, end_of_day_soc_percent FROM battery_daily_metrics ORDER BY date"
+        ).fetchall()
+        assert float(rows[0][1]) == pytest.approx(55.0)
+        assert float(rows[1][1]) == pytest.approx(25.0)
     finally:
         conn.close()
 

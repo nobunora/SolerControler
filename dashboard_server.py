@@ -709,9 +709,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const batteryEndSoc = labels.map((d) => {
         const r = rowByDate(store.battery, d);
         if (!r) return null;
-        const endSoc = toNumOrNull(r.end_of_day_soc_percent);
-        if (endSoc != null) return endSoc;
-        return toNumOrNull(r.setting_soc_target_percent);
+        return toNumOrNull(r.end_of_day_soc_percent);
       });
 
       charts.battery.data.labels = labels;
