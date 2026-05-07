@@ -205,6 +205,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
     .bar-plan-night { background: #9ed8f4; color: #0d3d66; }
     .bar-plan-day { background: #ffe08a; color: #704d00; }
+    .bar-forecast { background: #cdeccf; color: #1e5c2f; }
     .bar-fixed-stop { background: #ffe2e2; color: #8f2b2b; }
     .bar-fixed-free { background: #dff3e8; color: #1f6b45; }
     .gantt-notes { margin-top: 8px; color: #5a6f85; font-size: 12px; line-height: 1.5; }
@@ -596,6 +597,34 @@ def _html(payload: dict, script_nonce: str) -> str:
         `放電許可 ${sch.day_discharge_window_start || "07:00"}-${sch.day_discharge_window_end || "23:00"}`
       );
 
+      const pickForecastDate = () => {
+        if (sch.plan_date && store.sunshine.has(sch.plan_date)) return sch.plan_date;
+        let newest = null;
+        for (const d of store.sunshine.keys()) {
+          if (!newest || d > newest) newest = d;
+        }
+        return newest;
+      };
+      const forecastDate = pickForecastDate();
+      const forecastRow = forecastDate ? (store.sunshine.get(forecastDate) || {}) : {};
+      const forecastHoursRaw = forecastRow && forecastRow.forecast_hours != null ? Number(forecastRow.forecast_hours) : null;
+      const forecastHours = Number.isFinite(forecastHoursRaw) ? Math.max(0, forecastHoursRaw) : null;
+      const forecastSegments = [];
+      if (forecastHours != null) {
+        const daySpan = dayEnd > dayStart ? (dayEnd - dayStart) : (1440 - dayStart + dayEnd);
+        const forecastMinutes = Math.round(Math.min(daySpan, forecastHours * 60.0));
+        if (forecastMinutes > 0) {
+          const forecastEnd = (dayStart + forecastMinutes) % 1440;
+          pushRange(
+            forecastSegments,
+            dayStart,
+            forecastEnd,
+            "bar-forecast",
+            `予測日照 ${forecastHours.toFixed(1)}h (${forecastDate})`
+          );
+        }
+      }
+
       const hours = [];
       for (let h = 0; h <= 24; h += 1) {
         const left = (h / 24) * 100;
@@ -622,12 +651,16 @@ def _html(payload: dict, script_nonce: str) -> str:
       const notePlan = chargeStart == null
         ? "夜間充電の開始時刻は未記録のため、最新の夜間充電量からの推定または未表示になる場合があります。"
         : "";
+      const noteForecast = forecastHours == null
+        ? "日照予測データが未取得のため、予測レイヤーは未表示です。"
+        : "";
 
       root.innerHTML = `
         <div class="gantt-axis"><div>時間（JST）</div><div class="gantt-hours">${hours.join("")}</div></div>
         ${renderRow("実行計画", planSegments)}
+        ${renderRow("日照予測", forecastSegments)}
         ${renderRow("制約レイヤー", fixedSegments)}
-        <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}</div>
+        <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}${noteForecast ? `<br>${noteForecast}` : ""}</div>
       `;
     }
 

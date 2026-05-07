@@ -40,6 +40,9 @@
 
 - ダッシュボード更新: `cloudbuild.dashboard.yaml` でビルド後、Cloud Run Service更新
 - バッチ更新: `scripts/deploy_gcp_jobs.ps1` でJobとSchedulerを更新
+  - 更新のたびに `scripts/check_gcp_free_tier_capacity.ps1` を自動実行
+  - 更新のたびに `scripts/prune_artifact_registry.ps1` で旧digestを自動削除
+  - `-FailOnCapacityOverage` を付けると無料枠超過時にデプロイを停止
 - 変更後はCloud Run revisionと実画面を確認
 
 ## 監視ポイント
@@ -48,6 +51,15 @@
 - Scheduler 実行履歴
 - Dashboard のAPI応答と描画
 - Artifact Registry 容量（不要イメージ世代の削減）
+
+### 容量チェック手動実行
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check_gcp_free_tier_capacity.ps1 `
+  -ProjectId project-a36d57fc-79a5-459a-827 `
+  -MaxArtifactRegistryMB 500 `
+  -FailOnOverage
+```
 
 ## 初心者向けの無料運用手順
 

@@ -19,6 +19,12 @@
     [string]$PgUser = "solar_app",
     [string]$PgPassword = "",
     [string]$PgSslMode = "prefer",
+    [double]$MaxArtifactRegistryMB = 500.0,
+    [double]$MaxCloudBuildBucketMB = 5120.0,
+    [double]$MaxAppDataBucketMB = 5120.0,
+    [switch]$SkipArtifactPrune,
+    [switch]$SkipCapacityCheck,
+    [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
     [switch]$RunSmokeTest
 )
@@ -210,6 +216,16 @@ if (-not $ProjectId -or $ProjectId -eq "(unset)") {
 
 Write-Host "Project: $ProjectId"
 Write-Host "Region: $Region"
+
+if (-not $SkipCapacityCheck) {
+    Write-Host "Pre-check storage usage against free-tier limits..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "check_gcp_free_tier_capacity.ps1") `
+        -ProjectId $ProjectId `
+        -MaxArtifactRegistryMB $MaxArtifactRegistryMB `
+        -MaxCloudBuildBucketMB $MaxCloudBuildBucketMB `
+        -MaxAppDataBucketMB $MaxAppDataBucketMB `
+        $(if ($FailOnCapacityOverage) { "-FailOnOverage" })
+}
 
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/${ImageName}:latest"
 
@@ -415,3 +431,22 @@ Write-Host "Done."
 Write-Host "Image: $image"
 Write-Host "Jobs: $Job23Name (23:00), $Job03Name (03:10), $Job07Name (07:00)"
 Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
+
+if (-not $SkipArtifactPrune) {
+    Write-Host ""
+    Write-Host "Prune old Artifact Registry digests..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "prune_artifact_registry.ps1") `
+        -ProjectId $ProjectId `
+        -TargetArtifactRegistryMB $MaxArtifactRegistryMB
+}
+
+if (-not $SkipCapacityCheck) {
+    Write-Host ""
+    Write-Host "Post-check storage usage against free-tier limits..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "check_gcp_free_tier_capacity.ps1") `
+        -ProjectId $ProjectId `
+        -MaxArtifactRegistryMB $MaxArtifactRegistryMB `
+        -MaxCloudBuildBucketMB $MaxCloudBuildBucketMB `
+        -MaxAppDataBucketMB $MaxAppDataBucketMB `
+        $(if ($FailOnCapacityOverage) { "-FailOnOverage" })
+}
