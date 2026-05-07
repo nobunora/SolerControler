@@ -39,6 +39,13 @@ def _run(command: Iterable[str], env_updates: dict[str, str] | None = None) -> N
         raise RuntimeError(f"Command failed (rc={completed.returncode}): {' '.join(cmd)}")
 
 
+def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = None, *, label: str) -> None:
+    try:
+        _run(command, env_updates)
+    except Exception as exc:
+        print(f"[cloud_job_runner] optional step failed ({label}): {exc}", flush=True)
+
+
 def _run_night_23() -> None:
     # 23:00 実行:
     # 1) CSV取得 2) 夜間計画計算 3) 強制充電設定登録
@@ -63,6 +70,13 @@ def _run_night_23() -> None:
         {
             "CLOUD_JOB_SLOT": "23",
         },
+    )
+    _run_optional(
+        [sys.executable, "sheets_export_main.py"],
+        {
+            "CLOUD_JOB_SLOT": "23",
+        },
+        label="sheets-export",
     )
 
 

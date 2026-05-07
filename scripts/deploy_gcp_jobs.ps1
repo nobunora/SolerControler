@@ -19,6 +19,10 @@
     [string]$PgUser = "solar_app",
     [string]$PgPassword = "",
     [string]$PgSslMode = "prefer",
+    [switch]$DisableSheetsExport,
+    [string]$SheetsSpreadsheetId = "",
+    [string]$SheetsSpreadsheetTitle = "SolarController Backup",
+    [string]$SheetsShareEmail = "",
     [double]$MaxArtifactRegistryMB = 500.0,
     [double]$MaxCloudBuildBucketMB = 5120.0,
     [double]$MaxAppDataBucketMB = 5120.0,
@@ -230,7 +234,7 @@ if (-not $SkipCapacityCheck) {
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/${ImageName}:latest"
 
 Write-Host "Enable required APIs..."
-Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com --project $ProjectId
+Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com sheets.googleapis.com drive.googleapis.com --project $ProjectId
 
 $projectNumber = (Invoke-GCloud projects describe $ProjectId --format "value(projectNumber)").Trim()
 $computeSa = "$projectNumber-compute@developer.gserviceaccount.com"
@@ -243,6 +247,7 @@ Write-Host "Grant build runtime IAM to $computeSa"
 Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$computeSa" --role "roles/artifactregistry.writer" | Out-Null
 Invoke-GCloud iam service-accounts add-iam-policy-binding $schedulerSa --member "serviceAccount:$cloudSchedulerServiceAgent" --role "roles/iam.serviceAccountTokenCreator" --project $ProjectId | Out-Null
 Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/datastore.user" | Out-Null
+Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/serviceusage.serviceUsageConsumer" | Out-Null
 
 Write-Host "Ensure Artifact Registry repository..."
 $repoExists = $true
@@ -264,6 +269,22 @@ if (-not $SkipBuild) {
 
 Write-Host "Prepare monitor credentials..."
 $envMap = Read-DotEnv -Path (Join-Path $repoRoot ".env")
+$sheetsExportEnabled = -not $DisableSheetsExport.IsPresent
+$sheetsIdResolved = $SheetsSpreadsheetId
+if (-not $sheetsIdResolved -and $envMap.ContainsKey("SHEETS_SPREADSHEET_ID")) {
+    $sheetsIdResolved = [string]$envMap["SHEETS_SPREADSHEET_ID"]
+}
+$sheetsShareResolved = $SheetsShareEmail
+if (-not $sheetsShareResolved) {
+    if ($envMap.ContainsKey("SHEETS_SHARE_EMAIL")) {
+        $sheetsShareResolved = [string]$envMap["SHEETS_SHARE_EMAIL"]
+    } else {
+        $activeAccount = (Invoke-GCloud config get-value account).Trim()
+        if ($activeAccount -and $activeAccount -ne "(unset)") {
+            $sheetsShareResolved = $activeAccount
+        }
+    }
+}
 $creds = Get-MonitorCredentials
 $usernameSecret = "kp-monitor-username"
 $passwordSecret = "kp-monitor-password"
@@ -356,7 +377,13 @@ $commonEnv = @(
     "NIGHT8_DAY_RATE_TIER1_YEN=31.80",
     "NIGHT8_DAY_RATE_TIER2_YEN=39.10",
     "NIGHT8_DAY_RATE_TIER3_YEN=43.62",
-    "NIGHT8_NIGHT_RATE_YEN=28.85"
+    "NIGHT8_NIGHT_RATE_YEN=28.85",
+    "SHEETS_EXPORT_ENABLED=$sheetsExportEnabled",
+    "SHEETS_EXPORT_SLOT_ONLY=23",
+    "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
+    "SHEETS_SPREADSHEET_ID=$sheetsIdResolved",
+    "SHEETS_SPREADSHEET_TITLE=$SheetsSpreadsheetTitle",
+    "SHEETS_SHARE_EMAIL=$sheetsShareResolved"
 )
 $backendEnv = @()
 if ($DataBackend -eq "postgres") {
