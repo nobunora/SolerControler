@@ -72,6 +72,7 @@ def _empty_dashboard_payload() -> dict:
         "cost_monthly": [],
         "battery_daily": [],
         "model_parameters": [],
+        "latest_schedule": {},
         "meta": {
             "window_days": 31,
             "oldest_loaded_date": None,
@@ -140,6 +141,74 @@ def _html(payload: dict, script_nonce: str) -> str:
     .card h2 { margin: 0 0 6px; font-size: 16px; }
     .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; }
     .chart-box { position: relative; width: 100%; min-width: 0; height: 300px; }
+    .gantt-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #f8fbff; }
+    .gantt-board { min-width: 980px; padding: 10px; }
+    .gantt-axis {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      align-items: center;
+      margin-bottom: 6px;
+      color: #4f667f;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .gantt-hours {
+      position: relative;
+      height: 18px;
+      border-bottom: 1px solid #dae8f5;
+      background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 24 - 1px), #dce8f3 calc(100% / 24 - 1px), #dce8f3 calc(100% / 24));
+    }
+    .gantt-hours span {
+      position: absolute;
+      transform: translateX(-50%);
+      top: 0;
+      font-size: 10px;
+      color: #5a6f85;
+      white-space: nowrap;
+    }
+    .gantt-row {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      align-items: center;
+      min-height: 48px;
+      border-bottom: 1px dashed #d9e5f1;
+      gap: 8px;
+      padding: 6px 0;
+    }
+    .gantt-row:last-child { border-bottom: 0; }
+    .gantt-label { font-size: 13px; font-weight: 700; color: #20415f; padding-left: 2px; }
+    .gantt-track {
+      position: relative;
+      height: 38px;
+      border: 1px solid #d4e3f1;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 24 - 1px), #edf3f8 calc(100% / 24 - 1px), #edf3f8 calc(100% / 24));
+    }
+    .gantt-bar {
+      position: absolute;
+      top: 6px;
+      height: 26px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      border: 1px solid rgba(0,0,0,0.08);
+      padding: 0 6px;
+      box-sizing: border-box;
+    }
+    .bar-plan-night { background: #9ed8f4; color: #0d3d66; }
+    .bar-plan-day { background: #ffe08a; color: #704d00; }
+    .bar-fixed-stop { background: #ffe2e2; color: #8f2b2b; }
+    .bar-fixed-free { background: #dff3e8; color: #1f6b45; }
+    .gantt-notes { margin-top: 8px; color: #5a6f85; font-size: 12px; line-height: 1.5; }
+    .gantt-notes code { background: #eef4fb; padding: 1px 5px; border-radius: 5px; }
     .timeline-scroll {
       overflow-x: auto;
       overflow-y: hidden;
@@ -183,6 +252,12 @@ def _html(payload: dict, script_nonce: str) -> str:
     </section>
 
     <section class="grid">
+      <article class="card full">
+        <h2>0. 制約管理ガントチャート（最新設定）</h2>
+        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。既存グラフはこの下にそのまま表示します。</p>
+        <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
+      </article>
+
       <article class="card full">
         <h2>表示期間スクロール（直近1か月表示）</h2>
         <p class="desc">左へスクロールすると過去データを自動取得します。</p>
@@ -386,6 +461,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       battery: new Map(),
       monthly: [],
       params: [],
+      latestSchedule: null,
       dates: [],
       loadingOlder: false,
     };
@@ -449,9 +525,110 @@ def _html(payload: dict, script_nonce: str) -> str:
       if (includeStatic) {
         store.monthly = payload.cost_monthly || [];
         store.params = payload.model_parameters || [];
+        store.latestSchedule = payload.latest_schedule || store.latestSchedule;
       }
       store.meta = payload.meta || store.meta;
       rebuildDateIndex();
+    }
+
+    function minuteOf(hhmm, fallback) {
+      const m = /^([0-9]{1,2}):([0-9]{2})$/.exec(String(hhmm || ""));
+      if (!m) return fallback;
+      const h = Number(m[1]);
+      const mm = Number(m[2]);
+      if (!Number.isFinite(h) || !Number.isFinite(mm) || h < 0 || h > 23 || mm < 0 || mm > 59) return fallback;
+      return h * 60 + mm;
+    }
+
+    function pushRange(segments, startMin, endMin, cssClass, label) {
+      if (startMin == null || endMin == null) return;
+      if (startMin === endMin) return;
+      if (endMin > startMin) {
+        segments.push({ start: startMin, end: endMin, cssClass, label });
+        return;
+      }
+      segments.push({ start: startMin, end: 1440, cssClass, label });
+      segments.push({ start: 0, end: endMin, cssClass, label });
+    }
+
+    function renderConstraintGantt() {
+      const root = document.getElementById("constraintGantt");
+      if (!root) return;
+      const sch = store.latestSchedule || {};
+      const chargeStart = minuteOf(sch.charge_start_time, null);
+      const chargeEnd = minuteOf(sch.charge_end_time, minuteOf("06:00", 360));
+      const dayStart = minuteOf(sch.day_discharge_window_start, minuteOf("07:00", 420));
+      const dayEnd = minuteOf(sch.day_discharge_window_end, minuteOf("23:00", 1380));
+      const nightStart = minuteOf(sch.night_window_start, minuteOf("23:00", 1380));
+      const nightEnd = minuteOf(sch.night_window_end, minuteOf("07:00", 420));
+
+      const planSegments = [];
+      if (chargeStart != null && chargeEnd != null) {
+        pushRange(
+          planSegments,
+          chargeStart,
+          chargeEnd,
+          "bar-plan-night",
+          `夜間充電 ${sch.charge_start_time || "--:--"}-${sch.charge_end_time || "--:--"}`
+        );
+      }
+      pushRange(
+        planSegments,
+        dayStart,
+        dayEnd,
+        "bar-plan-day",
+        `日中放電 ${sch.day_discharge_window_start || "07:00"}-${sch.day_discharge_window_end || "23:00"}`
+      );
+
+      const fixedSegments = [];
+      pushRange(
+        fixedSegments,
+        nightStart,
+        nightEnd,
+        "bar-fixed-stop",
+        `放電禁止 ${sch.night_window_start || "23:00"}-${sch.night_window_end || "07:00"}`
+      );
+      pushRange(
+        fixedSegments,
+        dayStart,
+        dayEnd,
+        "bar-fixed-free",
+        `放電許可 ${sch.day_discharge_window_start || "07:00"}-${sch.day_discharge_window_end || "23:00"}`
+      );
+
+      const hours = [];
+      for (let h = 0; h <= 24; h += 1) {
+        const left = (h / 24) * 100;
+        const label = `${String(h).padStart(2, "0")}:00`;
+        hours.push(`<span style="left:${left}%">${label}</span>`);
+      }
+
+      const renderRow = (title, segments) => {
+        const bars = segments.map((s) => {
+          const left = (s.start / 1440) * 100;
+          const width = Math.max(0.6, ((s.end - s.start) / 1440) * 100);
+          return `<div class="gantt-bar ${s.cssClass}" style="left:${left}%;width:${width}%">${s.label}</div>`;
+        }).join("");
+        return `<div class="gantt-row"><div class="gantt-label">${title}</div><div class="gantt-track">${bars}</div></div>`;
+      };
+
+      const fixedNotes = ((sch.constraints && sch.constraints.fixed) || [])
+        .filter((x) => x && x.enabled !== false)
+        .slice(0, 4)
+        .map((x) => `<code>${x.id || ""}</code> ${x.description || ""}`)
+        .join(" / ");
+      const noteSoc = `SOC(安心)=${sch.soc_safety_mode ?? "-"} / SOC(経済・グリーン)=${sch.soc_economy_mode ?? "-"} / 充電時間帯SOC上限=${sch.soc_charge_mode ?? "-"}`;
+      const noteMeta = `更新: ${sch.recorded_at || "-"} / スロット: ${sch.slot || "-"} / プロファイル: ${sch.profile || sch.mode || "-"}`;
+      const notePlan = chargeStart == null
+        ? "夜間充電の開始時刻は未記録のため、最新の夜間充電量からの推定または未表示になる場合があります。"
+        : "";
+
+      root.innerHTML = `
+        <div class="gantt-axis"><div>時間（JST）</div><div class="gantt-hours">${hours.join("")}</div></div>
+        ${renderRow("実行計画", planSegments)}
+        ${renderRow("制約レイヤー", fixedSegments)}
+        <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}</div>
+      `;
     }
 
     function ensureTimelineWidth(keepRight = false) {
@@ -827,6 +1004,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
 
       fillParamsTable();
+      renderConstraintGantt();
       renderMonthly();
       ensureTimelineWidth(false);
       timeline.syncing = true;
@@ -837,6 +1015,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       const resizeAll = () => {
         ensureTimelineWidth(true);
+        renderConstraintGantt();
         for (const c of Object.values(charts)) c.resize();
         renderWindow();
       };
