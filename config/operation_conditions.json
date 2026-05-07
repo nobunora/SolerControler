@@ -28,7 +28,7 @@
       "id": "night_charge_end_time",
       "enabled": true,
       "priority": 500,
-      "value": "06:00",
+      "value": "06:30",
       "description": "夜間設定の充電終了時刻（23時/03時ジョブ）"
     },
     {
@@ -36,7 +36,7 @@
       "enabled": true,
       "priority": 400,
       "start": "00:00",
-      "end": "06:00",
+      "end": "06:30",
       "description": "日中グリーン設定時の充電時間帯（0時跨ぎ禁止条件の対象）"
     }
   ]
