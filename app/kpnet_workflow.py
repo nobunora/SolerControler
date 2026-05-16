@@ -140,6 +140,7 @@ def _month_key(month: str) -> tuple[int, int]:
 class NightChargePlan:
     plan_path: Path
     forecast_date: str
+    forecast_sun_hours: float | None
     required_night_charge_kwh: float
     target_soc_7_percent: float
     csv_paths: list[Path]
@@ -234,6 +235,130 @@ def _resolve_hhmm(conditions: dict[str, Any], rule_id: str, key: str, default_hh
     if not raw:
         return _parse_hhmm(default_hhmm, name=f"{rule_id}.{key}")
     return _parse_hhmm(raw, name=f"{rule_id}.{key}")
+
+
+def _resolve_day_discharge_start_hhmm(
+    *,
+    cfg: "KpNetConfig",
+    conditions: dict[str, Any],
+    plan: NightChargePlan | None,
+    summary: dict[str, Any],
+) -> tuple[int, int]:
+    default_hh, default_mm = _parse_hhmm(
+        cfg.day_discharge_window_start,
+        name="KP_DAY_DISCHARGE_WINDOW_START",
+    )
+    rule = _variable_rule(conditions, "day_discharge_start_by_forecast")
+    if rule is None:
+        summary["day_discharge_start_rule"] = {
+            "status": "rule-not-found",
+            "selected": "default",
+            "selected_start": f"{default_hh:02d}:{default_mm:02d}",
+        }
+        return default_hh, default_mm
+
+    threshold_raw = rule.get("sunny_min_sun_hours", 6.0)
+    try:
+        sunny_min_sun_hours = float(threshold_raw)
+    except (TypeError, ValueError):
+        sunny_min_sun_hours = 6.0
+
+    sunny_hh, sunny_mm = _parse_hhmm(
+        str(rule.get("sunny_start", "06:00")),
+        name="day_discharge_start_by_forecast.sunny_start",
+    )
+    cloudy_hh, cloudy_mm = _parse_hhmm(
+        str(rule.get("cloudy_start", "07:00")),
+        name="day_discharge_start_by_forecast.cloudy_start",
+    )
+
+    forecast_sun_hours = plan.forecast_sun_hours if plan is not None else None
+    if forecast_sun_hours is None:
+        selected = "default"
+        resolved_hh, resolved_mm = default_hh, default_mm
+    elif forecast_sun_hours >= sunny_min_sun_hours:
+        selected = "sunny"
+        resolved_hh, resolved_mm = sunny_hh, sunny_mm
+    else:
+        selected = "cloudy"
+        resolved_hh, resolved_mm = cloudy_hh, cloudy_mm
+
+    summary["day_discharge_start_rule"] = {
+        "status": "applied",
+        "selected": selected,
+        "forecast_sun_hours": forecast_sun_hours,
+        "sunny_min_sun_hours": sunny_min_sun_hours,
+        "sunny_start": f"{sunny_hh:02d}:{sunny_mm:02d}",
+        "cloudy_start": f"{cloudy_hh:02d}:{cloudy_mm:02d}",
+        "selected_start": f"{resolved_hh:02d}:{resolved_mm:02d}",
+    }
+    return resolved_hh, resolved_mm
+
+
+def _resolve_night_charge_end_hhmm(
+    *,
+    conditions: dict[str, Any],
+    plan: NightChargePlan,
+    summary: dict[str, Any],
+) -> tuple[int, int]:
+    base_hh, base_mm = _resolve_hhmm(
+        conditions,
+        rule_id="night_charge_end_time",
+        key="value",
+        default_hhmm="06:00",
+    )
+    rule = _variable_rule(conditions, "night_charge_end_by_forecast")
+    if rule is None:
+        summary["night_charge_end_rule"] = {
+            "status": "rule-not-found",
+            "selected": "base",
+            "selected_end": f"{base_hh:02d}:{base_mm:02d}",
+        }
+        return base_hh, base_mm
+
+    threshold_raw = rule.get("sunny_min_sun_hours", 6.0)
+    try:
+        sunny_min_sun_hours = float(threshold_raw)
+    except (TypeError, ValueError):
+        sunny_min_sun_hours = 6.0
+
+    # sunny_end を未指定にした場合、night_charge_end_time をそのまま使う
+    sunny_end_raw = str(rule.get("sunny_end", "")).strip()
+    if sunny_end_raw:
+        sunny_hh, sunny_mm = _parse_hhmm(
+            sunny_end_raw,
+            name="night_charge_end_by_forecast.sunny_end",
+        )
+    else:
+        sunny_hh, sunny_mm = base_hh, base_mm
+
+    cloudy_hh, cloudy_mm = _parse_hhmm(
+        str(rule.get("cloudy_or_rain_end", "07:00")),
+        name="night_charge_end_by_forecast.cloudy_or_rain_end",
+    )
+
+    forecast_sun_hours = plan.forecast_sun_hours
+    if forecast_sun_hours is None:
+        selected = "base"
+        resolved_hh, resolved_mm = base_hh, base_mm
+    elif forecast_sun_hours >= sunny_min_sun_hours:
+        selected = "sunny"
+        resolved_hh, resolved_mm = sunny_hh, sunny_mm
+    else:
+        selected = "cloudy_or_rain"
+        resolved_hh, resolved_mm = cloudy_hh, cloudy_mm
+
+    summary["night_charge_end_rule"] = {
+        "status": "applied",
+        "selected": selected,
+        "forecast_sun_hours": forecast_sun_hours,
+        "sunny_min_sun_hours": sunny_min_sun_hours,
+        "base_end": f"{base_hh:02d}:{base_mm:02d}",
+        "sunny_end": f"{sunny_hh:02d}:{sunny_mm:02d}",
+        "cloudy_or_rain_end": f"{cloudy_hh:02d}:{cloudy_mm:02d}",
+        "selected_end": f"{resolved_hh:02d}:{resolved_mm:02d}",
+    }
+    return resolved_hh, resolved_mm
 
 
 def _apply_fixed_time_rules(
@@ -360,6 +485,13 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     required_night_charge_kwh = float(result.get("required_night_charge_kwh", 0.0))
     target_soc_7_percent = float(result.get("target_soc_7_percent", 0.0))
     forecast_date = str(forecast.get("date", ""))
+    forecast_sun_hours: float | None = None
+    forecast_sun_hours_raw = forecast.get("sun_hours", None)
+    if forecast_sun_hours_raw is not None and str(forecast_sun_hours_raw).strip():
+        try:
+            forecast_sun_hours = float(forecast_sun_hours_raw)
+        except (TypeError, ValueError):
+            LOGGER.warning("Invalid forecast.sun_hours in night plan: %r", forecast_sun_hours_raw)
     csv_paths = [Path(str(p)) for p in raw.get("csv_paths", [])]
     if not csv_paths:
         raise RuntimeError("夜間充電計画にCSVパスが含まれていません")
@@ -367,6 +499,7 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     return NightChargePlan(
         plan_path=plan_path,
         forecast_date=forecast_date,
+        forecast_sun_hours=forecast_sun_hours,
         required_night_charge_kwh=required_night_charge_kwh,
         target_soc_7_percent=target_soc_7_percent,
         csv_paths=csv_paths,
@@ -626,14 +759,14 @@ def _build_dynamic_forced_profile(
         duration_minutes = int(math.ceil(required_night_charge_kwh / estimated_charge_power_kw * 60.0))
 
     # ユーザー要件:
-    # - 23時設定では充電終了を 06:00 に固定（可変条件ファイルで上書き可）
-    # - 0:00 を跨ぐ設定をしない（00:00-06:00 の同日内でのみ設定）
+    # - 夜間設定の充電終了は運用条件で決定
+    # - 曇り/雨予報時は 07:00 に固定（可変条件ファイルで上書き可）
+    # - 0:00 を跨ぐ設定をしない（00:00-終了時刻 の同日内でのみ設定）
     # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
-    charge_end_h, charge_end_m = _resolve_hhmm(
-        conditions,
-        rule_id="night_charge_end_time",
-        key="value",
-        default_hhmm="06:00",
+    charge_end_h, charge_end_m = _resolve_night_charge_end_hhmm(
+        conditions=conditions,
+        plan=plan,
+        summary=summary,
     )
     charge_end_minute = charge_end_h * 60 + charge_end_m
     window_duration_minutes = charge_end_minute
@@ -652,6 +785,16 @@ def _build_dynamic_forced_profile(
     )
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
+    discharge_start_h, discharge_start_m = _resolve_day_discharge_start_hhmm(
+        cfg=cfg,
+        conditions=conditions,
+        plan=plan,
+        summary=summary,
+    )
+    discharge_end_h, discharge_end_m = _parse_hhmm(
+        cfg.day_discharge_window_end,
+        name="KP_DAY_DISCHARGE_WINDOW_END",
+    )
 
     target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
     night_mode_code = _pick_battery_operating_mode_code(value_maps["BatteryOperatingMode"], prefer="green")
@@ -679,7 +822,9 @@ def _build_dynamic_forced_profile(
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
         "battery_operating_mode": night_mode_code,
-        "discharge_fixed_window": "07:00-23:00",
+        "day_discharge_window_start": f"{discharge_start_h:02d}:{discharge_start_m:02d}",
+        "day_discharge_window_end": f"{discharge_end_h:02d}:{discharge_end_m:02d}",
+        "discharge_fixed_window": f"{discharge_start_h:02d}:{discharge_start_m:02d}-{discharge_end_h:02d}:{discharge_end_m:02d}",
         "conditions_source": str(cfg.operation_conditions_path),
     }
 
@@ -706,10 +851,10 @@ def _build_dynamic_forced_profile(
         charge_start_m=str(charge_start_m),
         charge_end_h=str(charge_end_h),
         charge_end_m=str(charge_end_m),
-        discharge_start_h="7",
-        discharge_start_m="0",
-        discharge_end_h="23",
-        discharge_end_m="0",
+        discharge_start_h=str(discharge_start_h),
+        discharge_start_m=str(discharge_start_m),
+        discharge_end_h=str(discharge_end_h),
+        discharge_end_m=str(discharge_end_m),
     )
 
 
@@ -720,6 +865,12 @@ def _build_dynamic_green_profile(
     summary: dict[str, Any],
 ) -> ProfileOverrides:
     conditions = _load_operation_conditions(cfg.operation_conditions_path)
+    plan: NightChargePlan | None = None
+    try:
+        plan = _load_night_charge_plan(cfg.night_plan_path)
+    except Exception as exc:
+        LOGGER.warning("Night charge plan unavailable while building day profile: %s", exc)
+
     charge_start_hh, charge_start_mm = _resolve_hhmm(
         conditions,
         rule_id="day_charge_window",
@@ -743,13 +894,23 @@ def _build_dynamic_green_profile(
     )
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
+    discharge_start_h, discharge_start_m = _resolve_day_discharge_start_hhmm(
+        cfg=cfg,
+        conditions=conditions,
+        plan=plan,
+        summary=summary,
+    )
+    discharge_end_h, discharge_end_m = _parse_hhmm(
+        cfg.day_discharge_window_end,
+        name="KP_DAY_DISCHARGE_WINDOW_END",
+    )
 
     # ユーザー要件:
     # - 日中はグリーンモード
     # - SOC下限(安心)は0%
     # - SOC下限(経済/グリーン)は0%
     # - 充電時間帯SOC上限は0%
-    # - 放電時間帯は 07:00-23:00 を維持
+    # - 放電開始時刻は予報条件ルールで決定
     night_soc_lower_code = _pick_min_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_min_code(value_maps["SocContactInput"])
@@ -759,9 +920,9 @@ def _build_dynamic_green_profile(
         "mode": "green",
         "day_charge_window_start": f"{charge_start_h:02d}:{charge_start_m:02d}",
         "day_charge_window_end": f"{charge_end_h:02d}:{charge_end_m:02d}",
-        "day_discharge_window_start": cfg.day_discharge_window_start,
-        "day_discharge_window_end": cfg.day_discharge_window_end,
-        "discharge_fixed_window": "07:00-23:00",
+        "day_discharge_window_start": f"{discharge_start_h:02d}:{discharge_start_m:02d}",
+        "day_discharge_window_end": f"{discharge_end_h:02d}:{discharge_end_m:02d}",
+        "discharge_fixed_window": f"{discharge_start_h:02d}:{discharge_start_m:02d}-{discharge_end_h:02d}:{discharge_end_m:02d}",
         "soc_safety_mode": night_soc_lower_code,
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
@@ -779,10 +940,10 @@ def _build_dynamic_green_profile(
         charge_start_m=str(charge_start_m),
         charge_end_h=str(charge_end_h),
         charge_end_m=str(charge_end_m),
-        discharge_start_h="7",
-        discharge_start_m="0",
-        discharge_end_h="23",
-        discharge_end_m="0",
+        discharge_start_h=str(discharge_start_h),
+        discharge_start_m=str(discharge_start_m),
+        discharge_end_h=str(discharge_end_h),
+        discharge_end_m=str(discharge_end_m),
     )
 
 

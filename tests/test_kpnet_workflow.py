@@ -178,3 +178,113 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     assert profile.discharge_start_m == "0"
     assert profile.discharge_end_h == "23"
     assert profile.discharge_end_m == "0"
+
+
+@pytest.mark.parametrize(
+    ("sun_hours", "expected_discharge_start_h", "expected_charge_end_h"),
+    [
+        (8.0, "6", "6"),
+        (2.0, "7", "7"),
+    ],
+)
+def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
+    tmp_path: Path,
+    sun_hours: float,
+    expected_discharge_start_h: str,
+    expected_charge_end_h: str,
+) -> None:
+    conditions_path = tmp_path / "operation_conditions.json"
+    conditions_path.write_text(
+        json.dumps(
+            {
+                "fixed": [
+                    {
+                        "id": "forbid_cross_midnight",
+                        "enabled": True,
+                        "priority": 1000,
+                        "target": "charge",
+                        "min_duration_minutes": 30,
+                    },
+                    {
+                        "id": "forbid_same_start_end",
+                        "enabled": True,
+                        "priority": 990,
+                        "target": "charge",
+                        "min_duration_minutes": 30,
+                    },
+                ],
+                "variable": [
+                    {
+                        "id": "night_charge_end_time",
+                        "enabled": True,
+                        "priority": 500,
+                        "value": "06:00",
+                    },
+                    {
+                        "id": "day_charge_window",
+                        "enabled": True,
+                        "priority": 400,
+                        "start": "00:00",
+                        "end": "06:00",
+                    },
+                    {
+                        "id": "night_charge_end_by_forecast",
+                        "enabled": True,
+                        "priority": 450,
+                        "sunny_min_sun_hours": 6.0,
+                        "cloudy_or_rain_end": "07:00",
+                    },
+                    {
+                        "id": "day_discharge_start_by_forecast",
+                        "enabled": True,
+                        "priority": 350,
+                        "sunny_min_sun_hours": 6.0,
+                        "sunny_start": "06:00",
+                        "cloudy_start": "07:00",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,充電電力量[kWh]",
+                "2026/05/01,23:30,0.2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-05-03", "sun_hours": sun_hours},
+                "result": {
+                    "required_night_charge_kwh": 0.0,
+                    "target_soc_7_percent": 0.0,
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cfg = _build_cfg(plan_path=plan_path)
+    value_maps = {
+        "BatteryOperatingMode": {"1": "グリーンモード", "2": "経済モード", "3": "強制充電モード"},
+        "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
+        "SocEconomyMode": {"0": "0%", "20": "20%"},
+        "SocContactInput": {"0": "0%", "100": "100%"},
+        "SocChargeMode": {"0": "0%", "10": "10%", "30": "30%"},
+    }
+    summary: dict[str, object] = {}
+    profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
+
+    assert profile.discharge_start_h == expected_discharge_start_h
+    assert profile.discharge_start_m == "0"
+    assert profile.charge_end_h == expected_charge_end_h

@@ -86,10 +86,11 @@ python kpnet_main.py
   - 7時目標SOC
   - 夜間実測充電レート(kW推定)
   を使って、夜間グリーンモードの `SOC下限` / `SOC上限` / `充電開始時刻` を自動算出
-  - 23時設定時は `充電終了=06:00固定`、逆算で開始時刻を決定（0:00を跨がない）
+  - 23時設定時は `充電終了` を運用条件から決定し、逆算で開始時刻を決定（0:00を跨がない）
+  - 既定条件: 曇り/雨相当（低日照予報）の日は `充電終了=07:00`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true` : 現在時刻で設定先を自動選択
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
-  - 日中(07:00-23:00): グリーンモード + SOC下限(経済/グリーン)=0%
+  - 日中(放電開始は予報連動): 晴れ予報=06:00開始 / 曇り予報=07:00開始（終了は23:00）
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
 - 03:10微調整（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
@@ -120,6 +121,7 @@ python kpnet_main.py
 - `KP_NIGHT_CHARGE_WINDOW_END=07:00`
 - `KP_DAY_DISCHARGE_WINDOW_START=07:00`
 - `KP_DAY_DISCHARGE_WINDOW_END=23:00`
+- `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
 - `KP_DEFAULT_CHARGE_POWER_KW=1.8`（夜間実測が取れない場合のフォールバック）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`
 - `KP_DOWNLOAD_LATEST_MONTH=true`

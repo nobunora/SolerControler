@@ -185,7 +185,7 @@ def main() -> int:
         morning_load_forecast_kwh=hist["avg_morning_load_kwh"],
         morning_pv_ratio=hist["morning_pv_ratio"],
         midday_surplus_ratio=hist["midday_surplus_ratio"],
-        reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "10")),
+        reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
         cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
         battery_temp_c=float(os.getenv("BATTERY_TEMP_C", str(temp_c))),
     )

@@ -32,9 +32,17 @@
 - `night_charge_end_time`
   - `value: "HH:MM"`
   - 23時/03時ジョブで使う夜間充電終了時刻
+- `night_charge_end_by_forecast`
+  - `sunny_min_sun_hours: number`
+  - `cloudy_or_rain_end: "HH:MM"`（任意で `sunny_end: "HH:MM"`）
+  - 翌日予報の日照時間が閾値未満（曇り/雨相当）のとき、夜間充電終了時刻を固定
 - `day_charge_window`
   - `start: "HH:MM"`, `end: "HH:MM"`
   - 07時グリーン設定で使う充電時間帯
+- `day_discharge_start_by_forecast`
+  - `sunny_min_sun_hours: number`
+  - `sunny_start: "HH:MM"`, `cloudy_start: "HH:MM"`
+  - 翌日予報の日照時間で放電開始時刻を切替（晴れ/曇り）
 
 ## 4. 編集時の注意
 
@@ -48,4 +56,3 @@
 2. ローカルで `python kpnet_main.py` を実行  
 3. `artifacts/<run_id>/kpnet_summary.json` の条件適用結果を確認  
 4. 問題なければ Cloud Run Jobs を再デプロイ
-
