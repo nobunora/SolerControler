@@ -249,7 +249,7 @@ candidates += [
 フォールバック予測値は候補値の平均です。
 
 ```text
-fallback(d) = max(0, mean(candidates))
+fallback_raw(d) = max(0, mean(candidates))
 ```
 
 `fallback_window` の既定値は14日です。
@@ -257,6 +257,22 @@ fallback(d) = max(0, mean(candidates))
 ```text
 CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS=14
 ```
+
+### ゼロ予測時の前日実績フォールバック
+
+データ不足時に `fallback_raw(d)` が `0.0 kWh` になる場合は、対象日前日の実績を優先して返します。
+
+```text
+previous_actual(d) = y(d - 1) if y(d - 1) exists
+                   = latest y(d_i) before d otherwise
+
+fallback(d) = previous_actual(d) if fallback_raw(d) <= 0 and previous_actual(d) exists
+            = fallback_raw(d) otherwise
+```
+
+前日実績も存在しない場合は `0.0 kWh` のままです。
+
+この経路を通った場合、出力の `source` は `fallback_previous_actual` になります。
 
 ## 充電予測への接続
 
@@ -315,6 +331,49 @@ predicted_morning_deficit_kwh = max(0, morning_load_forecast_kwh - predicted_mor
 `source` が `hist_gradient_boosting` の場合は統計モデルによる予測です。
 
 `source` が `fallback_rolling_average` の場合は、学習条件を満たさず履歴平均式で予測しています。
+
+`source` が `fallback_previous_actual` の場合は、履歴平均式が `0.0 kWh` になったため、前日または直近の実績値を採用しています。
+
+`source` が `fallback_no_history` の場合は、参照できる消費実績がなく、予測値は `0.0 kWh` です。
+
+## 不在日の表現方針
+
+旅行などで年に数回だけ不在になる日は、通常日とは別の「予定イベント」として表現するのが安全です。
+
+不在日は件数が少ないため、気温・月・曜日・天気だけから統計モデルに自然学習させると、通常日の消費パターンを壊す外れ値になりやすいです。
+
+推奨する表現は、日付範囲を持つカレンダー型のオーバーライドです。
+
+| 変数 | 例 | 説明 |
+|---|---|---|
+| `start_date` | `2026-08-12` | 不在開始日。 |
+| `end_date` | `2026-08-15` | 不在終了日。 |
+| `occupancy_status` | `away` | 在宅状態。通常日は `normal`、不在日は `away`。 |
+| `occupancy_factor` | `0.25` | 通常消費に対する係数。完全不在でも冷蔵庫などの待機消費があるため0にはしないのが基本です。 |
+| `morning_load_override_kwh` | `0.8` | 必要なら朝消費を直接上書きします。 |
+| `daytime_load_override_kwh` | `3.0` | 必要なら日中消費を直接上書きします。 |
+| `include_in_training` | `false` | 通常日モデルの学習に含めるかどうか。原則は `false` 推奨です。 |
+| `reason` | `travel` | 旅行、出張、帰省などのメモ。 |
+
+実装方針としては、次の優先順位が扱いやすいです。
+
+```text
+1. 不在日の明示的な kWh override があれば、それを使う。
+
+2. override がなければ、通常予測値に occupancy_factor を掛ける。
+
+3. ただし最低待機消費量 standby_floor_kwh を下回らないようにする。
+
+4. 不在日は通常日モデルの学習から除外する、または is_away=1 として別特徴量にする。
+```
+
+式で書くと次の形です。
+
+```text
+pred_away(d) = max(standby_floor_kwh, pred_normal(d) * occupancy_factor)
+```
+
+年に数回程度なら、`is_away` を学習特徴量として入れるより、予定ベースのオーバーライドとして扱う方が安定します。
 
 ## 現行実装上の注意
 

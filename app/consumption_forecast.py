@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from statistics import fmean
 from typing import Any, Iterable, Mapping
 
@@ -69,6 +69,12 @@ class _NormalizedWeather:
     sunshine_hours: float
     precipitation: float
     extras: dict[str, float]
+
+
+@dataclass(frozen=True)
+class _FallbackPrediction:
+    value: float
+    source: str
 
 
 class ConsumptionForecaster:
@@ -155,15 +161,23 @@ class ConsumptionForecaster:
             daytime_prediction = self._predict_value(self._daytime_model, daytime_feature_map)
             source = "hist_gradient_boosting"
         else:
-            morning_prediction = self._fallback_prediction(
+            morning_fallback = self._fallback_prediction(
                 normalized_target_date,
                 "morning_load_kwh",
             )
-            daytime_prediction = self._fallback_prediction(
+            daytime_fallback = self._fallback_prediction(
                 normalized_target_date,
                 "daytime_load_kwh",
             )
-            source = "fallback_rolling_average"
+            morning_prediction = morning_fallback.value
+            daytime_prediction = daytime_fallback.value
+            fallback_sources = {morning_fallback.source, daytime_fallback.source}
+            if "fallback_previous_actual" in fallback_sources:
+                source = "fallback_previous_actual"
+            elif "fallback_no_history" in fallback_sources:
+                source = "fallback_no_history"
+            else:
+                source = "fallback_rolling_average"
 
         return ConsumptionForecast(
             target_date=normalized_target_date,
@@ -311,10 +325,21 @@ class ConsumptionForecaster:
             return _normalize_weather_row(weather_row)
         return self._weather_by_date.get(target_date)
 
-    def _fallback_prediction(self, current_date: date, target_field: str) -> float:
+    def _previous_actual(self, current_date: date, target_field: str) -> float | None:
+        previous_day = current_date - timedelta(days=1)
+        previous_values = self._daily_loads.get(previous_day)
+        if previous_values is not None:
+            return previous_values[target_field]
+
         history = self._history_before(current_date, target_field)
         if not history:
-            return 0.0
+            return None
+        return history[-1][1]
+
+    def _fallback_prediction(self, current_date: date, target_field: str) -> _FallbackPrediction:
+        history = self._history_before(current_date, target_field)
+        if not history:
+            return _FallbackPrediction(0.0, "fallback_no_history")
 
         dates = [history_date for history_date, _ in history]
         values = [value for _, value in history]
@@ -335,7 +360,12 @@ class ConsumptionForecaster:
         if same_weekday_values:
             candidates.append(fmean(same_weekday_values))
 
-        return max(0.0, fmean(candidates))
+        prediction = max(0.0, fmean(candidates))
+        if prediction <= 0.0:
+            previous_actual = self._previous_actual(current_date, target_field)
+            if previous_actual is not None:
+                return _FallbackPrediction(max(0.0, previous_actual), "fallback_previous_actual")
+        return _FallbackPrediction(prediction, "fallback_rolling_average")
 
 
 def forecast_daily_consumption(

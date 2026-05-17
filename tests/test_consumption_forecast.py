@@ -136,6 +136,45 @@ def test_consumption_forecaster_falls_back_when_training_days_are_insufficient()
     )
 
 
+def test_consumption_forecaster_uses_previous_actual_when_sparse_fallback_is_zero() -> None:
+    target_date = date(2026, 1, 10)
+    load_rows: list[dict[str, object]] = []
+
+    for days_before in range(1, 10):
+        current_date = target_date - timedelta(days=days_before)
+        if days_before == 1:
+            morning_load = 4.0
+            afternoon_load = 6.0
+        else:
+            # Defensive fixture: if sparse/bad history would collapse the fallback to zero,
+            # the forecaster should still prefer the most recent actual consumption.
+            morning_load = -20.0
+            afternoon_load = -20.0
+        load_rows.append(
+            {
+                "datetime": datetime.combine(current_date, time(hour=7)),
+                "load_kwh": morning_load,
+            }
+        )
+        load_rows.append(
+            {
+                "datetime": datetime.combine(current_date, time(hour=12)),
+                "load_kwh": afternoon_load,
+            }
+        )
+
+    forecast = forecast_daily_consumption(
+        load_rows,
+        [],
+        target_date,
+        min_training_days=45,
+    )
+
+    assert forecast.source == "fallback_previous_actual"
+    assert forecast.morning_load_kwh == pytest.approx(4.0)
+    assert forecast.daytime_load_kwh == pytest.approx(10.0)
+
+
 def _daily_total_for_date(
     load_rows: list[dict[str, object]],
     current_date: date,
