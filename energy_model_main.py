@@ -16,6 +16,11 @@ from app.energy_model import (
     fit_coefficients_from_csv,
     to_dict,
 )
+from app.occupancy_schedule import (
+    apply_occupancy_schedule,
+    filter_training_load_rows,
+    load_occupancy_events_from_env,
+)
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -323,6 +328,12 @@ def _consumption_forecast_to_dict(forecast: ConsumptionForecast) -> dict[str, ob
     }
 
 
+def _occupancy_adjustment_to_dict(adjustment) -> dict[str, object] | None:
+    if adjustment is None:
+        return None
+    return adjustment.to_dict()
+
+
 def main() -> int:
     _load_dotenv_if_present()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
@@ -339,13 +350,20 @@ def main() -> int:
     sun_h = float(forecast["sun_hours"])
     temp_c = float(forecast["temp_c"])
 
-    consumption_forecast = forecast_daily_consumption(
-        _load_rows_for_consumption_forecast(rows),
+    occupancy_events = load_occupancy_events_from_env()
+    load_rows_for_forecast = _load_rows_for_consumption_forecast(rows)
+    training_load_rows = filter_training_load_rows(load_rows_for_forecast, occupancy_events)
+    base_consumption_forecast = forecast_daily_consumption(
+        training_load_rows,
         _archive_weather_rows(rows, lat=lat, lon=lon, timezone=timezone),
         tomorrow_date,
         weather_row=_forecast_weather_row(forecast),
         min_training_days=int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")),
         fallback_window=int(os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")),
+    )
+    consumption_forecast, occupancy_adjustment = apply_occupancy_schedule(
+        base_consumption_forecast,
+        occupancy_events,
     )
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
@@ -368,6 +386,8 @@ def main() -> int:
         "forecast": forecast,
         "historical_profile": hist,
         "consumption_forecast": _consumption_forecast_to_dict(consumption_forecast),
+        "base_consumption_forecast": _consumption_forecast_to_dict(base_consumption_forecast),
+        "occupancy_adjustment": _occupancy_adjustment_to_dict(occupancy_adjustment),
         "coefficients": to_dict(coeff),
         "inputs": to_dict(inp),
         "result": to_dict(result),

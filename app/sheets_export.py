@@ -9,6 +9,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any
 
+from app.occupancy_schedule import OCCUPANCY_SCHEDULE_HEADERS, OCCUPANCY_SCHEDULE_TAB
+
 
 SHEETS_SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -164,6 +166,28 @@ def _write_sheet_table(sheets, spreadsheet_id: str, tab: str, headers: list[str]
         range=f"{tab}!A1",
         valueInputOption="RAW",
         body={"values": values},
+    ).execute()
+
+
+def _ensure_sheet_headers_if_empty(sheets, spreadsheet_id: str, tab: str, headers: list[str]) -> None:
+    try:
+        res = (
+            sheets.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=f"{tab}!A1:ZZ1")
+            .execute()
+        )
+    except Exception as exc:
+        print(f"[sheets_export] schedule header check skipped/failed: {exc}")
+        return
+    values = res.get("values", [])
+    if values and any(str(cell or "").strip() for cell in values[0]):
+        return
+    sheets.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"{tab}!A1",
+        valueInputOption="RAW",
+        body={"values": [headers]},
     ).execute()
 
 
@@ -571,6 +595,102 @@ DATA_DESCRIPTION_ROWS: list[dict[str, str]] = [
         "source": "Pipeline",
         "notes": "パイプライン実行を記録した時刻です。",
     },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "enabled",
+        "description": "予定の有効/無効",
+        "unit": "boolean",
+        "source": "Manual input",
+        "notes": "true の行だけ消費予測補正に使います。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "start_date",
+        "description": "予定開始日",
+        "unit": "date",
+        "source": "Manual input",
+        "notes": "YYYY-MM-DD または YYYY/MM/DD 形式で入力します。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "end_date",
+        "description": "予定終了日",
+        "unit": "date",
+        "source": "Manual input",
+        "notes": "空欄の場合は start_date と同じ1日予定として扱います。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "status",
+        "description": "在宅状態",
+        "unit": "",
+        "source": "Manual input",
+        "notes": "不在日は away を指定します。normal は補正対象外です。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "occupancy_factor",
+        "description": "通常予測に掛ける係数",
+        "unit": "ratio",
+        "source": "Manual input",
+        "notes": "away で空欄なら 0.25 を既定値として使います。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "morning_load_override_kwh",
+        "description": "朝消費予測の直接指定値",
+        "unit": "kWh",
+        "source": "Manual input",
+        "notes": "入力があれば係数補正より優先します。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "daytime_load_override_kwh",
+        "description": "日中消費予測の直接指定値",
+        "unit": "kWh",
+        "source": "Manual input",
+        "notes": "入力があれば係数補正より優先します。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "standby_floor_morning_kwh",
+        "description": "朝の最低待機消費量",
+        "unit": "kWh",
+        "source": "Manual input",
+        "notes": "係数補正後の値がこれを下回らないようにします。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "standby_floor_daytime_kwh",
+        "description": "日中の最低待機消費量",
+        "unit": "kWh",
+        "source": "Manual input",
+        "notes": "係数補正後の値がこれを下回らないようにします。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "include_in_training",
+        "description": "通常モデル学習に含めるか",
+        "unit": "boolean",
+        "source": "Manual input",
+        "notes": "不在日は false 推奨です。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "reason",
+        "description": "予定理由",
+        "unit": "",
+        "source": "Manual input",
+        "notes": "travel/business_trip など自由入力です。",
+    },
+    {
+        "sheet": OCCUPANCY_SCHEDULE_TAB,
+        "column": "note",
+        "description": "メモ",
+        "unit": "",
+        "source": "Manual input",
+        "notes": "人間向けの補足欄です。",
+    },
 ]
 
 
@@ -676,6 +796,7 @@ def run_export(*, slot: str) -> int:
         [
             "meta",
             "data_description",
+            OCCUPANCY_SCHEDULE_TAB,
             "sunshine_daily",
             "cost_daily",
             "battery_daily_metrics",
@@ -683,6 +804,12 @@ def run_export(*, slot: str) -> int:
             "settings_events",
             "pipeline_runs",
         ],
+    )
+    _ensure_sheet_headers_if_empty(
+        sheets,
+        spreadsheet_id,
+        OCCUPANCY_SCHEDULE_TAB,
+        OCCUPANCY_SCHEDULE_HEADERS,
     )
     _share_spreadsheet(drive, spreadsheet_id=spreadsheet_id, email=cfg.share_email)
     _write_sheet_table(

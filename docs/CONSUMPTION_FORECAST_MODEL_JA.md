@@ -336,13 +336,13 @@ predicted_morning_deficit_kwh = max(0, morning_load_forecast_kwh - predicted_mor
 
 `source` が `fallback_no_history` の場合は、参照できる消費実績がなく、予測値は `0.0 kWh` です。
 
-## 不在日の表現方針
+## 不在日の表現と現行実装
 
 旅行などで年に数回だけ不在になる日は、通常日とは別の「予定イベント」として表現するのが安全です。
 
 不在日は件数が少ないため、気温・月・曜日・天気だけから統計モデルに自然学習させると、通常日の消費パターンを壊す外れ値になりやすいです。
 
-推奨する表現は、日付範囲を持つカレンダー型のオーバーライドです。
+現行実装では、Googleスプレッドシートの `occupancy_schedule` タブに入力した日付範囲を読み取り、予測対象日が該当する場合だけ消費電力量予測を補正します。
 
 | 変数 | 例 | 説明 |
 |---|---|---|
@@ -355,7 +355,7 @@ predicted_morning_deficit_kwh = max(0, morning_load_forecast_kwh - predicted_mor
 | `include_in_training` | `false` | 通常日モデルの学習に含めるかどうか。原則は `false` 推奨です。 |
 | `reason` | `travel` | 旅行、出張、帰省などのメモ。 |
 
-実装方針としては、次の優先順位が扱いやすいです。
+現行実装の優先順位は次の通りです。
 
 ```text
 1. 不在日の明示的な kWh override があれば、それを使う。
@@ -374,6 +374,8 @@ pred_away(d) = max(standby_floor_kwh, pred_normal(d) * occupancy_factor)
 ```
 
 年に数回程度なら、`is_away` を学習特徴量として入れるより、予定ベースのオーバーライドとして扱う方が安定します。
+
+入力シートの詳細は `docs/OCCUPANCY_SCHEDULE_JA.md` を参照してください。
 
 ## 現行実装上の注意
 
