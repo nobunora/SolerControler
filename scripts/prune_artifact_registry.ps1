@@ -70,12 +70,15 @@ foreach ($t in $targets) {
     }
     $uniq = @($dedup.Values)
     $sorted = $uniq | Sort-Object -Property @{Expression = { [string]$_.createTime }; Descending = $true}
+    $tagged = @($sorted | Where-Object { $_.tags -and @($_.tags).Count -gt 0 })
+    $untagged = @($sorted | Where-Object { -not ($_.tags -and @($_.tags).Count -gt 0) })
     $keep = [int]$t.keep
     if ($keep -lt 0) { $keep = 0 }
-    $toKeep = @($sorted | Select-Object -First $keep)
+    $untaggedKeep = [Math]::Max(0, $keep - $tagged.Count)
+    $toKeep = @($tagged + ($untagged | Select-Object -First $untaggedKeep))
     $toDelete = @()
-    if ($sorted.Count -gt $keep) {
-        $toDelete = @($sorted | Select-Object -Skip $keep)
+    if ($untagged.Count -gt $untaggedKeep) {
+        $toDelete = @($untagged | Select-Object -Skip $untaggedKeep)
     }
 
     Write-Host ("- {0} : total={1}, keep={2}, delete={3}" -f $imagePath, $sorted.Count, $toKeep.Count, $toDelete.Count)

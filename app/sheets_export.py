@@ -270,10 +270,6 @@ def run_export(*, slot: str) -> int:
     if cfg.slot_only and slot != cfg.slot_only:
         print(f"[sheets_export] skip: slot={slot} target={cfg.slot_only}")
         return 0
-    if not cfg.spreadsheet_id:
-        print("[sheets_export] skip: SHEETS_SPREADSHEET_ID is not configured")
-        return 0
-
     now_utc = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     today_jst = _today_jst_str(cfg.timezone)
     sheets, drive = _google_services()

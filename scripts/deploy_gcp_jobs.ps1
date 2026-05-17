@@ -9,6 +9,8 @@
     [string]$Job23Name = "solar-battery-23",
     [string]$Job03Name = "solar-battery-03",
     [string]$Job07Name = "solar-battery-07",
+    [string]$SheetsJobName = "solar-sheets-export",
+    [string]$SheetsSchedulerName = "solar-sheets-export-daily",
     [string]$RunServiceAccountName = "solar-battery-job-sa",
     [string]$SchedulerServiceAccountName = "solar-battery-scheduler-sa",
     [ValidateSet("sqlite", "postgres", "firestore")]
@@ -380,7 +382,7 @@ $commonEnv = @(
     "NIGHT8_DAY_RATE_TIER2_YEN=39.10",
     "NIGHT8_DAY_RATE_TIER3_YEN=43.62",
     "NIGHT8_NIGHT_RATE_YEN=28.85",
-    "SHEETS_EXPORT_ENABLED=$sheetsExportEnabled",
+    "SHEETS_EXPORT_ENABLED=false",
     "SHEETS_EXPORT_SLOT_ONLY=23",
     "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
     "SHEETS_SPREADSHEET_ID=$sheetsIdResolved",
@@ -412,10 +414,34 @@ Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region -
 Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 2700 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_MAX_ATTEMPTS=3,ADJUST03_WAIT_SECONDS=600,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
+$deploySheetsJob = $sheetsExportEnabled -and [bool]$sheetsIdResolved
+if ($deploySheetsJob) {
+    $sheetsEnv = @(
+        "TIMEZONE=Asia/Tokyo",
+        "DATA_BACKEND=$DataBackend",
+        "DATA_DB_PATH=artifacts/solar_monitor.db",
+        "SHEETS_EXPORT_ENABLED=true",
+        "SHEETS_EXPORT_SLOT_ONLY=23",
+        "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
+        "SHEETS_SPREADSHEET_ID=$sheetsIdResolved",
+        "SHEETS_SPREADSHEET_TITLE=$SheetsSpreadsheetTitle",
+        "SHEETS_SHARE_EMAIL=$sheetsShareResolved",
+        "CLOUD_JOB_SLOT=23"
+    )
+    $sheetsEnv += $backendEnv
+    $sheetsEnvArg = [string]::Join(",", $sheetsEnv)
+    Invoke-GCloud run jobs deploy $SheetsJobName --project $ProjectId --region $Region --image $image --service-account $runSa --command python --args sheets_export_main.py --task-timeout 900 --max-retries 1 --set-env-vars $sheetsEnvArg
+} elseif ($sheetsExportEnabled) {
+    Write-Warning "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. Skipping $SheetsJobName deployment and scheduler."
+}
+
 Write-Host "Grant run.invoker to scheduler service account..."
 Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+if ($deploySheetsJob) {
+    Invoke-GCloud run jobs add-iam-policy-binding $SheetsJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+}
 
 function Upsert-SchedulerRunJob {
     param(
@@ -442,6 +468,9 @@ Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "10 3 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
+if ($deploySheetsJob) {
+    Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
+}
 
 if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
     Write-Host "Pause legacy Tokyo schedulers (keep resources, stop execution)..."
@@ -459,7 +488,13 @@ Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
 Write-Host "Jobs: $Job23Name (23:00), $Job03Name (03:10), $Job07Name (07:00)"
-Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
+if ($deploySheetsJob) {
+    Write-Host "Sheets backup job: $SheetsJobName (00:20)"
+    Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"
+} else {
+    Write-Host "Sheets backup job: skipped (SHEETS_SPREADSHEET_ID is empty)"
+    Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
+}
 
 if (-not $SkipArtifactPrune) {
     Write-Host ""
