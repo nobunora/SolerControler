@@ -9,6 +9,7 @@ from typing import Iterable
 
 import requests
 
+from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
 from app.energy_model import (
     NightChargeInputs,
     compute_night_charge_target,
@@ -133,12 +134,55 @@ def _historical_profile(rows: list[dict[str, float | datetime]]) -> dict[str, fl
     }
 
 
-def _tomorrow_forecast(lat: float, lon: float, timezone: str) -> tuple[str, float, float]:
+def _to_optional_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_optional_int(value) -> int | None:
+    as_float = _to_optional_float(value)
+    if as_float is None:
+        return None
+    return int(as_float)
+
+
+def _list_value(values, index: int):
+    if not isinstance(values, list) or index >= len(values):
+        return None
+    return values[index]
+
+
+def _weather_class(weather_code: int | None) -> str:
+    if weather_code is None:
+        return "unknown"
+    if weather_code == 0:
+        return "clear"
+    if 1 <= weather_code <= 3:
+        return "cloudy"
+    if weather_code in {45, 48}:
+        return "fog"
+    if 51 <= weather_code <= 67 or 80 <= weather_code <= 82:
+        return "rain"
+    if 71 <= weather_code <= 77 or 85 <= weather_code <= 86:
+        return "snow"
+    if 95 <= weather_code <= 99:
+        return "storm"
+    return "other"
+
+
+def _tomorrow_forecast(lat: float, lon: float, timezone: str) -> dict[str, object]:
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
-        "daily": "sunshine_duration,temperature_2m_mean",
+        "daily": (
+            "sunshine_duration,temperature_2m_mean,weather_code,"
+            "precipitation_sum,precipitation_probability_mean,shortwave_radiation_sum"
+        ),
         "timezone": timezone,
         "forecast_days": 3,
     }
@@ -150,16 +194,133 @@ def _tomorrow_forecast(lat: float, lon: float, timezone: str) -> tuple[str, floa
     temp = obj["daily"]["temperature_2m_mean"]
     if len(times) < 2:
         raise RuntimeError("翌日予報を取得できませんでした")
-    return times[1], (sunshine[1] or 0) / 3600.0, float(temp[1] or 0.0)
+    daily = obj.get("daily", {})
+    weather_code = _to_optional_int(_list_value(daily.get("weather_code"), 1))
+    return {
+        "date": times[1],
+        "sun_hours": (_to_optional_float(_list_value(sunshine, 1)) or 0.0) / 3600.0,
+        "temp_c": _to_optional_float(_list_value(temp, 1)) or 0.0,
+        "weather_code": weather_code,
+        "weather_class": _weather_class(weather_code),
+        "precipitation_sum_mm": _to_optional_float(_list_value(daily.get("precipitation_sum"), 1)),
+        "precipitation_probability_mean": _to_optional_float(
+            _list_value(daily.get("precipitation_probability_mean"), 1)
+        ),
+        "shortwave_radiation_sum_mj_m2": _to_optional_float(_list_value(daily.get("shortwave_radiation_sum"), 1)),
+    }
 
 
-def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> tuple[str, float, float]:
+def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[str, object]:
     sun_override = os.getenv("FORECAST_SUN_HOURS_OVERRIDE", "").strip()
     if sun_override:
         date_override = os.getenv("FORECAST_DATE_OVERRIDE", "").strip() or datetime.now().date().isoformat()
         temp_override = os.getenv("FORECAST_TEMP_C_OVERRIDE", "").strip() or "20"
-        return date_override, float(sun_override), float(temp_override)
+        weather_code = _to_optional_int(os.getenv("FORECAST_WEATHER_CODE_OVERRIDE", "").strip() or None)
+        return {
+            "date": date_override,
+            "sun_hours": float(sun_override),
+            "temp_c": float(temp_override),
+            "weather_code": weather_code,
+            "weather_class": _weather_class(weather_code),
+            "precipitation_sum_mm": _to_optional_float(os.getenv("FORECAST_PRECIPITATION_SUM_MM_OVERRIDE", "").strip() or None),
+            "precipitation_probability_mean": _to_optional_float(
+                os.getenv("FORECAST_PRECIPITATION_PROBABILITY_MEAN_OVERRIDE", "").strip() or None
+            ),
+            "shortwave_radiation_sum_mj_m2": _to_optional_float(
+                os.getenv("FORECAST_SHORTWAVE_RADIATION_SUM_MJ_M2_OVERRIDE", "").strip() or None
+            ),
+        }
     return _tomorrow_forecast(lat=lat, lon=lon, timezone=timezone)
+
+
+def _archive_weather_rows(
+    rows: list[dict[str, float | datetime]],
+    *,
+    lat: float,
+    lon: float,
+    timezone: str,
+) -> list[dict[str, object]]:
+    dates = sorted(
+        {
+            r["dt"].date()
+            for r in rows
+            if isinstance(r.get("dt"), datetime)
+        }
+    )
+    if not dates:
+        return []
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": dates[0].isoformat(),
+        "end_date": dates[-1].isoformat(),
+        "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum",
+        "timezone": timezone,
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        daily = resp.json().get("daily", {})
+    except Exception:
+        return []
+
+    out: list[dict[str, object]] = []
+    times = daily.get("time", [])
+    for idx, raw_day in enumerate(times if isinstance(times, list) else []):
+        weather_code = _to_optional_int(_list_value(daily.get("weather_code"), idx))
+        sunshine_s = _to_optional_float(_list_value(daily.get("sunshine_duration"), idx))
+        out.append(
+            {
+                "date": raw_day,
+                "temp": _to_optional_float(_list_value(daily.get("temperature_2m_mean"), idx)) or 0.0,
+                "weather_code": weather_code if weather_code is not None else "unknown",
+                "sunshine_hours": (sunshine_s / 3600.0) if sunshine_s is not None else 0.0,
+                "precipitation": _to_optional_float(_list_value(daily.get("precipitation_sum"), idx)) or 0.0,
+                "shortwave_radiation_sum_mj_m2": _to_optional_float(
+                    _list_value(daily.get("shortwave_radiation_sum"), idx)
+                )
+                or 0.0,
+            }
+        )
+    return out
+
+
+def _forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
+    precip = _to_optional_float(forecast.get("precipitation_sum_mm"))
+    if precip is None:
+        # Probability is not the same unit as precipitation, but this keeps a weak rain signal
+        # for fallback forecast APIs that do not return a daily precipitation sum.
+        probability = _to_optional_float(forecast.get("precipitation_probability_mean"))
+        precip = (probability / 100.0) if probability is not None else 0.0
+    return {
+        "date": forecast["date"],
+        "temp": _to_optional_float(forecast.get("temp_c")) or 0.0,
+        "weather_code": forecast.get("weather_code") if forecast.get("weather_code") is not None else "unknown",
+        "sunshine_hours": _to_optional_float(forecast.get("sun_hours")) or 0.0,
+        "precipitation": precip,
+    }
+
+
+def _load_rows_for_consumption_forecast(rows: list[dict[str, float | datetime]]) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for row in rows:
+        dt = row.get("dt")
+        if not isinstance(dt, datetime):
+            continue
+        out.append({"dt": dt, "load": float(row.get("load", 0.0) or 0.0)})
+    return out
+
+
+def _consumption_forecast_to_dict(forecast: ConsumptionForecast) -> dict[str, object]:
+    return {
+        "target_date": forecast.target_date.isoformat(),
+        "morning_load_kwh": forecast.morning_load_kwh,
+        "daytime_load_kwh": forecast.daytime_load_kwh,
+        "source": forecast.source,
+        "sample_count": forecast.sample_count,
+        "features": forecast.features,
+    }
 
 
 def main() -> int:
@@ -169,11 +330,22 @@ def main() -> int:
     rows = _read_rows(csv_paths)
     coeff = fit_coefficients_from_csv(csv_paths)
     hist = _historical_profile(rows)
+    lat = float(os.getenv("FORECAST_LATITUDE", "35.67452"))
+    lon = float(os.getenv("FORECAST_LONGITUDE", "139.48216"))
+    timezone = os.getenv("TIMEZONE", "Asia/Tokyo")
 
-    tomorrow_date, sun_h, temp_c = _forecast_from_env_or_api(
-        lat=float(os.getenv("FORECAST_LATITUDE", "35.67452")),
-        lon=float(os.getenv("FORECAST_LONGITUDE", "139.48216")),
-        timezone=os.getenv("TIMEZONE", "Asia/Tokyo"),
+    forecast = _forecast_from_env_or_api(lat=lat, lon=lon, timezone=timezone)
+    tomorrow_date = str(forecast["date"])
+    sun_h = float(forecast["sun_hours"])
+    temp_c = float(forecast["temp_c"])
+
+    consumption_forecast = forecast_daily_consumption(
+        _load_rows_for_consumption_forecast(rows),
+        _archive_weather_rows(rows, lat=lat, lon=lon, timezone=timezone),
+        tomorrow_date,
+        weather_row=_forecast_weather_row(forecast),
+        min_training_days=int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")),
+        fallback_window=int(os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")),
     )
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
@@ -181,8 +353,8 @@ def main() -> int:
         soc_now_percent=latest_soc,
         sun_hours_forecast=sun_h,
         temp_forecast_c=temp_c,
-        daytime_load_forecast_kwh=hist["avg_day_load_kwh"],
-        morning_load_forecast_kwh=hist["avg_morning_load_kwh"],
+        daytime_load_forecast_kwh=consumption_forecast.daytime_load_kwh,
+        morning_load_forecast_kwh=consumption_forecast.morning_load_kwh,
         morning_pv_ratio=hist["morning_pv_ratio"],
         midday_surplus_ratio=hist["midday_surplus_ratio"],
         reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
@@ -193,8 +365,9 @@ def main() -> int:
 
     payload = {
         "csv_paths": [str(p) for p in csv_paths],
-        "forecast": {"date": tomorrow_date, "sun_hours": sun_h, "temp_c": temp_c},
+        "forecast": forecast,
         "historical_profile": hist,
+        "consumption_forecast": _consumption_forecast_to_dict(consumption_forecast),
         "coefficients": to_dict(coeff),
         "inputs": to_dict(inp),
         "result": to_dict(result),

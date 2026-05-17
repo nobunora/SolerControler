@@ -64,6 +64,13 @@ def _to_float_any(value: Any) -> float | None:
     return _to_float(str(value))
 
 
+def _to_int_any(value: Any) -> int | None:
+    as_float = _to_float_any(value)
+    if as_float is None:
+        return None
+    return int(as_float)
+
+
 def _safe_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -297,7 +304,27 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_sqlite_columns(
+        conn,
+        "sunshine_daily",
+        {
+            "forecast_weather_code": "INTEGER",
+            "actual_weather_code": "INTEGER",
+            "forecast_precipitation_sum_mm": "REAL",
+            "forecast_precipitation_probability_mean": "REAL",
+            "actual_precipitation_sum_mm": "REAL",
+            "forecast_shortwave_radiation_sum_mj_m2": "REAL",
+            "actual_shortwave_radiation_sum_mj_m2": "REAL",
+        },
+    )
     conn.commit()
+
+
+def _ensure_sqlite_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def _latest_run_dirs(artifacts_dir: Path) -> list[Path]:
@@ -440,35 +467,53 @@ def ingest_monitoring_csvs(
     return upserted
 
 
-def _fetch_open_meteo_today_actual(*, lat: float, lon: float, date_ymd: str, timezone: str) -> tuple[float | None, float | None]:
+def _first_float(values: Any) -> float | None:
+    if not values:
+        return None
+    try:
+        value = values[0]
+    except Exception:
+        return None
+    return _to_float_any(value)
+
+
+def _first_int(values: Any) -> int | None:
+    value = _first_float(values)
+    if value is None:
+        return None
+    return int(value)
+
+
+def _fetch_open_meteo_daily_actual(*, lat: float, lon: float, date_ymd: str, timezone: str) -> dict[str, float | int | None]:
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
         "latitude": lat,
         "longitude": lon,
         "start_date": date_ymd,
         "end_date": date_ymd,
-        "daily": "sunshine_duration,temperature_2m_mean",
+        "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum",
         "timezone": timezone,
     }
     resp = requests.get(url, params=params, timeout=30)
     resp.raise_for_status()
     obj = resp.json()
     daily = obj.get("daily", {})
-    sunshine = daily.get("sunshine_duration", [])
-    temp = daily.get("temperature_2m_mean", [])
-    hours = None
-    temp_c = None
-    if sunshine:
-        try:
-            hours = float(sunshine[0] or 0) / 3600.0
-        except (TypeError, ValueError):
-            hours = None
-    if temp:
-        try:
-            temp_c = float(temp[0])
-        except (TypeError, ValueError):
-            temp_c = None
-    return hours, temp_c
+    sunshine_s = _first_float(daily.get("sunshine_duration", []))
+    return {
+        "actual_hours": (sunshine_s / 3600.0) if sunshine_s is not None else None,
+        "actual_temp_c": _first_float(daily.get("temperature_2m_mean", [])),
+        "actual_weather_code": _first_int(daily.get("weather_code", [])),
+        "actual_precipitation_sum_mm": _first_float(daily.get("precipitation_sum", [])),
+        "actual_shortwave_radiation_sum_mj_m2": _first_float(daily.get("shortwave_radiation_sum", [])),
+    }
+
+
+def _fetch_open_meteo_today_actual(*, lat: float, lon: float, date_ymd: str, timezone: str) -> tuple[float | None, float | None]:
+    actual = _fetch_open_meteo_daily_actual(lat=lat, lon=lon, date_ymd=date_ymd, timezone=timezone)
+    return (
+        _to_float_any(actual.get("actual_hours")),
+        _to_float_any(actual.get("actual_temp_c")),
+    )
 
 
 def ingest_sunshine_from_night_plan(
@@ -485,17 +530,31 @@ def ingest_sunshine_from_night_plan(
     forecast_date = str(forecast.get("date", "")).strip()
     tomorrow_hours = forecast.get("sun_hours")
     tomorrow_temp = forecast.get("temp_c")
+    tomorrow_weather_code = forecast.get("weather_code")
+    tomorrow_precip_sum = forecast.get("precipitation_sum_mm")
+    tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
+    tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
     if forecast_date:
         conn.execute(
             """
-            INSERT INTO sunshine_daily (date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c, source, updated_at)
-            VALUES (?, ?, NULL, ?, NULL, ?, ?)
+            INSERT INTO sunshine_daily (
+                date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c,
+                forecast_weather_code, actual_weather_code,
+                forecast_precipitation_sum_mm, forecast_precipitation_probability_mean, actual_precipitation_sum_mm,
+                forecast_shortwave_radiation_sum_mj_m2, actual_shortwave_radiation_sum_mj_m2,
+                source, updated_at
+            )
+            VALUES (?, ?, NULL, ?, NULL, ?, NULL, ?, ?, NULL, ?, NULL, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 forecast_hours=excluded.forecast_hours,
                 forecast_temp_c=excluded.forecast_temp_c,
+                forecast_weather_code=excluded.forecast_weather_code,
+                forecast_precipitation_sum_mm=excluded.forecast_precipitation_sum_mm,
+                forecast_precipitation_probability_mean=excluded.forecast_precipitation_probability_mean,
+                forecast_shortwave_radiation_sum_mj_m2=excluded.forecast_shortwave_radiation_sum_mj_m2,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
@@ -503,39 +562,54 @@ def ingest_sunshine_from_night_plan(
                 forecast_date,
                 float(tomorrow_hours) if tomorrow_hours is not None else None,
                 float(tomorrow_temp) if tomorrow_temp is not None else None,
+                _to_int_any(tomorrow_weather_code),
+                _to_float_any(tomorrow_precip_sum),
+                _to_float_any(tomorrow_precip_probability),
+                _to_float_any(tomorrow_shortwave),
                 "open-meteo-forecast",
                 ingested_at,
             ),
         )
 
     today_date = datetime.now().date().isoformat()
-    actual_hours = None
-    actual_temp = None
+    actual_weather: dict[str, float | int | None] = {}
     try:
-        actual_hours, actual_temp = _fetch_open_meteo_today_actual(
+        actual_weather = _fetch_open_meteo_daily_actual(
             lat=lat,
             lon=lon,
             date_ymd=today_date,
             timezone=timezone,
         )
     except Exception:
-        actual_hours, actual_temp = None, None
+        actual_weather = {}
 
-    if actual_hours is not None or actual_temp is not None:
+    if any(actual_weather.get(key) is not None for key in actual_weather):
         conn.execute(
             """
-            INSERT INTO sunshine_daily (date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c, source, updated_at)
-            VALUES (?, NULL, ?, NULL, ?, ?, ?)
+            INSERT INTO sunshine_daily (
+                date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c,
+                forecast_weather_code, actual_weather_code,
+                forecast_precipitation_sum_mm, forecast_precipitation_probability_mean, actual_precipitation_sum_mm,
+                forecast_shortwave_radiation_sum_mj_m2, actual_shortwave_radiation_sum_mj_m2,
+                source, updated_at
+            )
+            VALUES (?, NULL, ?, NULL, ?, NULL, ?, NULL, NULL, ?, NULL, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 actual_hours=excluded.actual_hours,
                 actual_temp_c=excluded.actual_temp_c,
+                actual_weather_code=excluded.actual_weather_code,
+                actual_precipitation_sum_mm=excluded.actual_precipitation_sum_mm,
+                actual_shortwave_radiation_sum_mj_m2=excluded.actual_shortwave_radiation_sum_mj_m2,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
             (
                 today_date,
-                actual_hours,
-                actual_temp,
+                _to_float_any(actual_weather.get("actual_hours")),
+                _to_float_any(actual_weather.get("actual_temp_c")),
+                _to_int_any(actual_weather.get("actual_weather_code")),
+                _to_float_any(actual_weather.get("actual_precipitation_sum_mm")),
+                _to_float_any(actual_weather.get("actual_shortwave_radiation_sum_mj_m2")),
                 "open-meteo-archive",
                 ingested_at,
             ),

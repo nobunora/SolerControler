@@ -262,7 +262,7 @@ if (-not $repoExists) {
 
 if (-not $SkipBuild) {
     Write-Host "Build container image..."
-    Invoke-GCloud builds submit --tag $image --project $ProjectId .
+    Invoke-GCloud builds submit --region $Region --tag $image --project $ProjectId .
 } else {
     Write-Host "Skip build (using existing image): $image"
 }
@@ -358,6 +358,8 @@ $commonEnv = @(
     "FORECAST_LATITUDE=35.67452",
     "FORECAST_LONGITUDE=139.48216",
     "NIGHT_RESERVE_SOC_PERCENT=0",
+    "CONSUMPTION_MODEL_MIN_TRAINING_DAYS=45",
+    "CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS=14",
     "BATTERY_CYCLE_COUNT=0",
     "KP_ENFORCE_HTTPS=true",
     "KP_ALLOWED_HOSTS=ctrl.kp-net.com",

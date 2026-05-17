@@ -306,7 +306,26 @@ def run_export(*, slot: str) -> int:
 
     tables = _load_tables(cfg)
     specs: list[tuple[str, str, list[str]]] = [
-        ("sunshine_daily", "sunshine_daily", ["date", "forecast_hours", "actual_hours", "forecast_temp_c", "actual_temp_c", "source", "updated_at"]),
+        (
+            "sunshine_daily",
+            "sunshine_daily",
+            [
+                "date",
+                "forecast_hours",
+                "actual_hours",
+                "forecast_temp_c",
+                "actual_temp_c",
+                "forecast_weather_code",
+                "actual_weather_code",
+                "forecast_precipitation_sum_mm",
+                "forecast_precipitation_probability_mean",
+                "actual_precipitation_sum_mm",
+                "forecast_shortwave_radiation_sum_mj_m2",
+                "actual_shortwave_radiation_sum_mj_m2",
+                "source",
+                "updated_at",
+            ],
+        ),
         ("cost_daily", "cost_daily", ["date", "self_consumption_kwh", "savings_yen", "cumulative_kwh", "cumulative_yen", "updated_at"]),
         ("battery_daily_metrics", "battery_daily_metrics", ["date", "setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "end_of_day_soc_percent", "updated_at"]),
         ("model_parameters", "model_parameters", ["name", "mean_value", "variance", "sample_count", "hit_rate", "updated_at"]),

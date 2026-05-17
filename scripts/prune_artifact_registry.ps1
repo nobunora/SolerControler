@@ -29,10 +29,10 @@ if (-not $ProjectId -or $ProjectId -eq "(unset)") {
 }
 
 $targets = @(
-    # Cloud Run revisions keep resolved digests at deploy-time, so we can keep 0 digests
-    # in Artifact Registry to minimize storage cost.
-    @{ location = "us-central1"; repository = "solar-runner"; image = "runner"; keep = 0 },
-    @{ location = "us-central1"; repository = "solar-dashboard"; image = "dashboard"; keep = 0 },
+    # Keep the latest digest for each active Cloud Run image so cold starts and
+    # redeployments have an Artifact Registry source to pull from.
+    @{ location = "us-central1"; repository = "solar-controller"; image = "runner"; keep = 1 },
+    @{ location = "us-central1"; repository = "solar-dashboard"; image = "dashboard"; keep = 1 },
     # Legacy Tokyo image repository: also keep 0 digests (repo itself is kept).
     @{ location = "asia-northeast1"; repository = "solar-controller"; image = "runner"; keep = 0 }
 )

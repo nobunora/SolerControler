@@ -12,13 +12,15 @@ from google.cloud import firestore
 from app.operations_db import (
     _extract_battery_daily_from_summary,
     _env,
-    _fetch_open_meteo_today_actual,
+    _fetch_open_meteo_daily_actual,
     _is_within_window,
     _iter_monitoring_rows,
     _parse_hhmm_to_minute,
     _read_json_if_exists,
     _read_summary,
     _tiered_day_increment_cost,
+    _to_float_any,
+    _to_int_any,
 )
 
 
@@ -106,6 +108,10 @@ def ingest_sunshine_from_night_plan(
     forecast_date = str(forecast.get("date", "")).strip()
     tomorrow_hours = forecast.get("sun_hours")
     tomorrow_temp = forecast.get("temp_c")
+    tomorrow_weather_code = forecast.get("weather_code")
+    tomorrow_precip_sum = forecast.get("precipitation_sum_mm")
+    tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
+    tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
@@ -115,6 +121,10 @@ def ingest_sunshine_from_night_plan(
                 "date": forecast_date,
                 "forecast_hours": float(tomorrow_hours) if tomorrow_hours is not None else None,
                 "forecast_temp_c": float(tomorrow_temp) if tomorrow_temp is not None else None,
+                "forecast_weather_code": _to_int_any(tomorrow_weather_code),
+                "forecast_precipitation_sum_mm": _to_float_any(tomorrow_precip_sum),
+                "forecast_precipitation_probability_mean": _to_float_any(tomorrow_precip_probability),
+                "forecast_shortwave_radiation_sum_mj_m2": _to_float_any(tomorrow_shortwave),
                 "source": "open-meteo-forecast",
                 "updated_at": ingested_at,
             },
@@ -122,24 +132,26 @@ def ingest_sunshine_from_night_plan(
         )
 
     today_date = datetime.now().date().isoformat()
-    actual_hours = None
-    actual_temp = None
+    actual_weather: dict[str, float | int | None] = {}
     try:
-        actual_hours, actual_temp = _fetch_open_meteo_today_actual(
+        actual_weather = _fetch_open_meteo_daily_actual(
             lat=lat,
             lon=lon,
             date_ymd=today_date,
             timezone=timezone,
         )
     except Exception:
-        actual_hours, actual_temp = None, None
+        actual_weather = {}
 
-    if actual_hours is not None or actual_temp is not None:
+    if any(actual_weather.get(key) is not None for key in actual_weather):
         client.collection("sunshine_daily").document(today_date).set(
             {
                 "date": today_date,
-                "actual_hours": actual_hours,
-                "actual_temp_c": actual_temp,
+                "actual_hours": actual_weather.get("actual_hours"),
+                "actual_temp_c": actual_weather.get("actual_temp_c"),
+                "actual_weather_code": actual_weather.get("actual_weather_code"),
+                "actual_precipitation_sum_mm": actual_weather.get("actual_precipitation_sum_mm"),
+                "actual_shortwave_radiation_sum_mj_m2": actual_weather.get("actual_shortwave_radiation_sum_mj_m2"),
                 "source": "open-meteo-archive",
                 "updated_at": ingested_at,
             },
