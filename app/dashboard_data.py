@@ -17,6 +17,7 @@ class DashboardData:
     cost_monthly: list[dict[str, Any]]
     battery_daily: list[dict[str, Any]]
     model_parameters: list[dict[str, Any]]
+    energy_daily: list[dict[str, Any]] = field(default_factory=list)
     latest_schedule: dict[str, Any] = field(default_factory=dict)
 
 
@@ -99,6 +100,102 @@ def _to_float_or_none(value: Any) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _date_add_iso(date_text: str, delta_days: int) -> str | None:
+    d = _to_date_or_none(date_text)
+    if d is None:
+        return None
+    return (d + timedelta(days=delta_days)).isoformat()
+
+
+def _model_param_value(params: list[dict[str, Any]], name: str, default: float) -> float:
+    for row in params:
+        if str(row.get("name", "")).strip() != name:
+            continue
+        value = _to_float_or_none(row.get("mean_value"))
+        if value is not None:
+            return value
+    return default
+
+
+def _forecast_pv_kwh(
+    sunshine_row: dict[str, Any] | None,
+    *,
+    pv_kwh_per_sunhour: float,
+    pv_temp_coeff_per_deg: float,
+) -> float | None:
+    if not sunshine_row:
+        return None
+    sun_hours = _to_float_or_none(sunshine_row.get("forecast_hours"))
+    if sun_hours is None:
+        return None
+    temp_c = _to_float_or_none(sunshine_row.get("forecast_temp_c"))
+    if temp_c is None:
+        temp_c = 25.0
+    factor = max(0.0, 1.0 + pv_temp_coeff_per_deg * (temp_c - 25.0))
+    return max(0.0, pv_kwh_per_sunhour * sun_hours * factor)
+
+
+def _rolling_load_forecast(
+    day: str,
+    actual_by_day: dict[str, dict[str, Any]],
+    *,
+    lookback_days: int = 14,
+) -> float | None:
+    day_obj = _to_date_or_none(day)
+    if day_obj is None:
+        return None
+    values: list[float] = []
+    for prev_day in sorted(actual_by_day):
+        prev_obj = _to_date_or_none(prev_day)
+        if prev_obj is None or prev_obj >= day_obj:
+            continue
+        if (day_obj - prev_obj).days > lookback_days:
+            continue
+        value = _to_float_or_none(actual_by_day[prev_day].get("actual_load_kwh"))
+        if value is not None:
+            values.append(value)
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def _build_energy_daily(
+    *,
+    start_date: str,
+    end_date_iso: str,
+    sunshine_daily: list[dict[str, Any]],
+    monitoring_daily: list[dict[str, Any]],
+    model_parameters: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    pv_kwh_per_sunhour = _model_param_value(model_parameters, "pv_kwh_per_sunhour", 1.45)
+    pv_temp_coeff_per_deg = _model_param_value(model_parameters, "pv_temp_coeff_per_deg", -0.0035)
+    sunshine_by_day = {str(row.get("date")): row for row in sunshine_daily if row.get("date")}
+    actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
+    dates = {
+        d
+        for d in set(sunshine_by_day) | set(actual_by_day)
+        if start_date <= d <= end_date_iso
+    }
+    out: list[dict[str, Any]] = []
+    for day in sorted(dates):
+        actual = actual_by_day.get(day, {})
+        forecast_pv = _forecast_pv_kwh(
+            sunshine_by_day.get(day),
+            pv_kwh_per_sunhour=pv_kwh_per_sunhour,
+            pv_temp_coeff_per_deg=pv_temp_coeff_per_deg,
+        )
+        out.append(
+            {
+                "date": day,
+                "forecast_pv_kwh": forecast_pv,
+                "actual_pv_kwh": actual.get("actual_pv_kwh"),
+                "forecast_load_kwh": _rolling_load_forecast(day, actual_by_day),
+                "actual_load_kwh": actual.get("actual_load_kwh"),
+            }
+        )
+    return out
 
 
 def _parse_hhmm_minutes(raw: str | None) -> int | None:
@@ -237,6 +334,10 @@ def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str
     for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics"):
         row = conn.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}").fetchone()
         candidates.extend([row["min_date"], row["max_date"]])
+    row = conn.execute(
+        "SELECT MIN(substr(ts,1,10)) AS min_date, MAX(substr(ts,1,10)) AS max_date FROM monitoring_samples"
+    ).fetchone()
+    candidates.extend([row["min_date"], row["max_date"]])
     return _pick_min_max_dates(candidates)
 
 
@@ -246,6 +347,9 @@ def _get_global_bounds_postgres(cur) -> tuple[str | None, str | None]:
         cur.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}")
         row = cur.fetchone()
         candidates.extend([row.get("min_date"), row.get("max_date")])
+    cur.execute("SELECT MIN(substring(ts,1,10)) AS min_date, MAX(substring(ts,1,10)) AS max_date FROM monitoring_samples")
+    row = cur.fetchone()
+    candidates.extend([row.get("min_date"), row.get("max_date")])
     return _pick_min_max_dates(candidates)
 
 
@@ -257,11 +361,13 @@ def _meta_from_data(
     sunshine_daily: list[dict[str, Any]],
     cost_daily: list[dict[str, Any]],
     battery_daily: list[dict[str, Any]],
+    energy_daily: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     all_dates: list[str] = []
     all_dates.extend([str(x.get("date", "")) for x in sunshine_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in cost_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in battery_daily if x.get("date")])
+    all_dates.extend([str(x.get("date", "")) for x in energy_daily or [] if x.get("date")])
     oldest_loaded = min(all_dates) if all_dates else None
     newest_loaded = max(all_dates) if all_dates else None
     has_more_before = False
@@ -364,6 +470,37 @@ def _load_sqlite_slice(
                 (start_date, end_date_iso),
             ).fetchall()
         )
+        history_start = (start_obj - timedelta(days=14)).isoformat()
+        monitoring_daily = _rows_to_dicts(
+            conn.execute(
+                """
+                SELECT substr(ts,1,10) AS date,
+                       COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
+                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
+                FROM monitoring_samples
+                WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+                GROUP BY substr(ts,1,10)
+                ORDER BY date
+                """,
+                (history_start, end_date_iso),
+            ).fetchall()
+        )
+        params_for_energy = _rows_to_dicts(
+            conn.execute(
+                """
+                SELECT name, mean_value
+                FROM model_parameters
+                ORDER BY name
+                """
+            ).fetchall()
+        )
+        energy_daily = _build_energy_daily(
+            start_date=start_date,
+            end_date_iso=end_date_iso,
+            sunshine_daily=sunshine,
+            monitoring_daily=monitoring_daily,
+            model_parameters=params_for_energy,
+        )
 
         cost_monthly: list[dict[str, Any]] = []
         params: list[dict[str, Any]] = []
@@ -421,6 +558,7 @@ def _load_sqlite_slice(
             sunshine_daily=sunshine,
             cost_daily=cost_daily,
             battery_daily=battery_daily,
+            energy_daily=energy_daily,
         )
         return DashboardSlice(
             data=DashboardData(
@@ -429,6 +567,7 @@ def _load_sqlite_slice(
                 cost_monthly=cost_monthly,
                 battery_daily=battery_daily,
                 model_parameters=params,
+                energy_daily=energy_daily,
                 latest_schedule=latest_schedule,
             ),
             meta=meta,
@@ -543,6 +682,37 @@ def _load_postgres_slice(
             )
             battery_daily = _rows_to_dicts(cur.fetchall())
 
+            history_start = (start_obj - timedelta(days=14)).isoformat()
+            cur.execute(
+                """
+                SELECT substring(ts,1,10) AS date,
+                       COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
+                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
+                FROM monitoring_samples
+                WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
+                GROUP BY substring(ts,1,10)
+                ORDER BY date
+                """,
+                (history_start, end_date_iso),
+            )
+            monitoring_daily = _rows_to_dicts(cur.fetchall())
+
+            cur.execute(
+                """
+                SELECT name, mean_value
+                FROM model_parameters
+                ORDER BY name
+                """
+            )
+            params_for_energy = _rows_to_dicts(cur.fetchall())
+            energy_daily = _build_energy_daily(
+                start_date=start_date,
+                end_date_iso=end_date_iso,
+                sunshine_daily=sunshine,
+                monitoring_daily=monitoring_daily,
+                model_parameters=params_for_energy,
+            )
+
             cost_monthly: list[dict[str, Any]] = []
             params: list[dict[str, Any]] = []
             latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
@@ -600,6 +770,7 @@ def _load_postgres_slice(
                 sunshine_daily=sunshine,
                 cost_daily=cost_daily,
                 battery_daily=battery_daily,
+                energy_daily=energy_daily,
             )
             return DashboardSlice(
                 data=DashboardData(
@@ -608,6 +779,7 @@ def _load_postgres_slice(
                     cost_monthly=cost_monthly,
                     battery_daily=battery_daily,
                     model_parameters=params,
+                    energy_daily=energy_daily,
                     latest_schedule=latest_schedule,
                 ),
                 meta=meta,
@@ -653,6 +825,32 @@ def _firestore_rows_between(
         item["date"] = row.get("date", doc.id)
         out.append(item)
     return out
+
+
+def _firestore_monitoring_daily(
+    client,
+    *,
+    start_date: str,
+    end_date_iso: str,
+) -> list[dict[str, Any]]:
+    end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
+    q = (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", start_date)
+        .where("ts", "<", end_next)
+        .order_by("ts")
+    )
+    by_day: dict[str, dict[str, float]] = {}
+    for doc in q.stream():
+        row = doc.to_dict() or {}
+        ts = str(row.get("ts", doc.id))
+        day = ts[:10]
+        if not day:
+            continue
+        acc = by_day.setdefault(day, {"actual_pv_kwh": 0.0, "actual_load_kwh": 0.0})
+        acc["actual_pv_kwh"] += float(row.get("pv_kwh") or 0.0)
+        acc["actual_load_kwh"] += float(row.get("load_kwh") or 0.0)
+    return [{"date": day, **values} for day, values in sorted(by_day.items())]
 
 
 def _load_firestore_slice(
@@ -723,6 +921,28 @@ def _load_firestore_slice(
         end_date_iso=end_date_iso,
         fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "end_of_day_soc_percent"],
     )
+    history_start = (start_obj - timedelta(days=14)).isoformat()
+    monitoring_daily = _firestore_monitoring_daily(
+        client,
+        start_date=history_start,
+        end_date_iso=end_date_iso,
+    )
+    params_for_energy: list[dict[str, Any]] = []
+    for doc in client.collection("model_parameters").order_by("name").stream():
+        row = doc.to_dict() or {}
+        params_for_energy.append(
+            {
+                "name": row.get("name", doc.id),
+                "mean_value": row.get("mean_value"),
+            }
+        )
+    energy_daily = _build_energy_daily(
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        sunshine_daily=sunshine,
+        monitoring_daily=monitoring_daily,
+        model_parameters=params_for_energy,
+    )
 
     cost_monthly: list[dict[str, Any]] = []
     params: list[dict[str, Any]] = []
@@ -782,6 +1002,7 @@ def _load_firestore_slice(
         sunshine_daily=sunshine,
         cost_daily=cost_daily,
         battery_daily=battery_daily,
+        energy_daily=energy_daily,
     )
     return DashboardSlice(
         data=DashboardData(
@@ -790,6 +1011,7 @@ def _load_firestore_slice(
             cost_monthly=cost_monthly,
             battery_daily=battery_daily,
             model_parameters=params,
+            energy_daily=energy_daily,
             latest_schedule=latest_schedule,
         ),
         meta=meta,

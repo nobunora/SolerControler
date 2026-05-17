@@ -68,6 +68,7 @@ def _verify_session(token: str) -> bool:
 def _empty_dashboard_payload() -> dict:
     return {
         "sunshine_daily": [],
+        "energy_daily": [],
         "cost_daily": [],
         "cost_monthly": [],
         "battery_daily": [],
@@ -266,9 +267,21 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>1. 日照時間（予測と実績）</h2>
+        <h2>1.1 日照時間（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="sunChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2>1.2 発電量（予測と実績）</h2>
+        <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
+        <div class="chart-box"><canvas id="pvChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2>1.3 消費量（予測と実績）</h2>
+        <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
+        <div class="chart-box"><canvas id="loadChart"></canvas></div>
       </article>
 
       <article class="card">
@@ -356,6 +369,13 @@ def _html(payload: dict, script_nonce: str) -> str:
         if (x > m) m = x;
       }
       return m;
+    }
+
+    function formatChartValue(value) {
+      const x = n(value);
+      if (Math.abs(x) >= 100) return Math.round(x).toString();
+      if (Math.abs(x) >= 10) return x.toFixed(1);
+      return x.toFixed(2);
     }
 
     function dualScales(leftValues, rightValues, options = {}) {
@@ -458,6 +478,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     const store = {
       meta: null,
       sunshine: new Map(),
+      energy: new Map(),
       cost: new Map(),
       battery: new Map(),
       monthly: [],
@@ -500,6 +521,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     function rebuildDateIndex() {
       const all = new Set();
       for (const k of store.sunshine.keys()) all.add(k);
+      for (const k of store.energy.keys()) all.add(k);
       for (const k of store.cost.keys()) all.add(k);
       for (const k of store.battery.keys()) all.add(k);
       const today = todayIsoJst();
@@ -521,6 +543,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     function absorbSlice(payload, includeStatic) {
       mergeRows(store.sunshine, payload.sunshine_daily || []);
+      mergeRows(store.energy, payload.energy_daily || []);
       mergeRows(store.cost, payload.cost_daily || []);
       mergeRows(store.battery, payload.battery_daily || []);
       if (includeStatic) {
@@ -715,7 +738,7 @@ def _html(payload: dict, script_nonce: str) -> str:
             callbacks: {
               label: (ctx) => {
                 const label = ctx.dataset && ctx.dataset.label ? ctx.dataset.label : "";
-                const value = Math.round(n(ctx.parsed && ctx.parsed.y));
+                const value = formatChartValue(ctx.parsed && ctx.parsed.y);
                 return label ? `${label}: ${value}` : `${value}`;
               },
             },
@@ -737,6 +760,36 @@ def _html(payload: dict, script_nonce: str) -> str:
         options: {
           ...commonOptions(),
           scales: { y: { min: -1, max: 1, title: { display: true, text: "h" }, grid: { color: "#d8e6f2" } } },
+        },
+      });
+
+      charts.pv = new Chart(document.getElementById("pvChart"), {
+        data: {
+          labels: [],
+          datasets: [
+            { type: "line", label: "予測(kWh)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25 },
+            { type: "line", label: "実績(kWh)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
+            { type: "bar", label: "差分(kWh)", data: [], backgroundColor: "#ef8e1d66", borderColor: "#ef8e1d" },
+          ],
+        },
+        options: {
+          ...commonOptions(),
+          scales: { y: { min: -1, max: 1, title: { display: true, text: "kWh" }, grid: { color: "#d8e6f2" } } },
+        },
+      });
+
+      charts.load = new Chart(document.getElementById("loadChart"), {
+        data: {
+          labels: [],
+          datasets: [
+            { type: "line", label: "予測(kWh)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25 },
+            { type: "line", label: "実績(kWh)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
+            { type: "bar", label: "差分(kWh)", data: [], backgroundColor: "#ef8e1d66", borderColor: "#ef8e1d" },
+          ],
+        },
+        options: {
+          ...commonOptions(),
+          scales: { y: { min: -1, max: 1, title: { display: true, text: "kWh" }, grid: { color: "#d8e6f2" } } },
         },
       });
 
@@ -822,6 +875,29 @@ def _html(payload: dict, script_nonce: str) -> str:
       return out;
     }
 
+    function diffOrNull(actual, forecast) {
+      if (actual == null || forecast == null) return null;
+      return n(actual) - n(forecast);
+    }
+
+    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit) {
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = forecast;
+      chart.data.datasets[1].data = actual;
+      chart.data.datasets[2].data = diff;
+      const values = [...forecast, ...actual, ...diff].filter((v) => v != null);
+      const axisMax = niceCeil(Math.max(1, maxPos(values)));
+      const axisMin = Math.min(-axisMax, Math.floor(Math.min(...diff.filter((v) => v != null), 0)));
+      chart.options.scales.y.min = axisMin;
+      chart.options.scales.y.max = axisMax;
+      chart.options.scales.y.grid = {
+        color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
+        lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
+      };
+      chart.options.scales.y.ticks = { callback: (v) => `${v}${unit}` };
+      chart.update("none");
+    }
+
     function renderWindow() {
       const labels = selectedWindowDates();
       if (!labels.length) {
@@ -841,20 +917,29 @@ def _html(payload: dict, script_nonce: str) -> str:
         return n(r && r.actual_hours) - n(r && r.forecast_hours);
       });
 
-      charts.sun.data.labels = labels;
-      charts.sun.data.datasets[0].data = sunForecast;
-      charts.sun.data.datasets[1].data = sunActual;
-      charts.sun.data.datasets[2].data = sunDiff;
-      const sunAxisMax = niceCeil(Math.max(1, maxPos([...sunForecast.filter((v) => v != null), ...sunActual.filter((v) => v != null), ...sunDiff])));
-      const sunAxisMin = Math.min(-sunAxisMax, Math.floor(Math.min(...sunDiff, 0)));
-      charts.sun.options.scales.y.min = sunAxisMin;
-      charts.sun.options.scales.y.max = sunAxisMax;
-      charts.sun.options.scales.y.grid = {
-        color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
-        lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
-      };
-      charts.sun.options.scales.y.ticks = { callback: (v) => `${v}h` };
-      charts.sun.update("none");
+      updateForecastActualChart(charts.sun, labels, sunForecast, sunActual, sunDiff, "h");
+
+      const pvForecast = labels.map((d) => {
+        const r = rowByDate(store.energy, d);
+        return r && r.forecast_pv_kwh != null ? n(r.forecast_pv_kwh) : null;
+      });
+      const pvActual = labels.map((d) => {
+        const r = rowByDate(store.energy, d);
+        return r && r.actual_pv_kwh != null ? n(r.actual_pv_kwh) : null;
+      });
+      const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
+      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh");
+
+      const loadForecast = labels.map((d) => {
+        const r = rowByDate(store.energy, d);
+        return r && r.forecast_load_kwh != null ? n(r.forecast_load_kwh) : null;
+      });
+      const loadActual = labels.map((d) => {
+        const r = rowByDate(store.energy, d);
+        return r && r.actual_load_kwh != null ? n(r.actual_load_kwh) : null;
+      });
+      const loadDiff = labels.map((_d, i) => diffOrNull(loadActual[i], loadForecast[i]));
+      updateForecastActualChart(charts.load, labels, loadForecast, loadActual, loadDiff, "kWh");
 
       const dailySelf = labels.map((d) => n(rowByDate(store.cost, d)?.self_consumption_kwh));
       const dailyYen = labels.map((d) => n(rowByDate(store.cost, d)?.savings_yen));
@@ -1019,6 +1104,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const initialPayload = window.__DASHBOARD_DATA__ || {};
       const hasInitialRows =
         (initialPayload.sunshine_daily && initialPayload.sunshine_daily.length) ||
+        (initialPayload.energy_daily && initialPayload.energy_daily.length) ||
         (initialPayload.cost_daily && initialPayload.cost_daily.length) ||
         (initialPayload.battery_daily && initialPayload.battery_daily.length);
       if (hasInitialRows) {
