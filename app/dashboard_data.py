@@ -127,6 +127,9 @@ def _forecast_pv_kwh(
 ) -> float | None:
     if not sunshine_row:
         return None
+    array_forecast = _to_float_or_none(sunshine_row.get("forecast_pv_total_kwh"))
+    if array_forecast is not None:
+        return max(0.0, array_forecast)
     sun_hours = _to_float_or_none(sunshine_row.get("forecast_hours"))
     if sun_hours is None:
         return None
@@ -181,8 +184,9 @@ def _build_energy_daily(
     out: list[dict[str, Any]] = []
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
+        sunshine = sunshine_by_day.get(day)
         forecast_pv = _forecast_pv_kwh(
-            sunshine_by_day.get(day),
+            sunshine,
             pv_kwh_per_sunhour=pv_kwh_per_sunhour,
             pv_temp_coeff_per_deg=pv_temp_coeff_per_deg,
         )
@@ -190,6 +194,10 @@ def _build_energy_daily(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
+                "forecast_pv_morning_kwh": (sunshine or {}).get("forecast_pv_morning_kwh"),
+                "forecast_pv_midday_kwh": (sunshine or {}).get("forecast_pv_midday_kwh"),
+                "forecast_pv_evening_kwh": (sunshine or {}).get("forecast_pv_evening_kwh"),
+                "forecast_pv_calibration_factor": (sunshine or {}).get("forecast_pv_calibration_factor"),
                 "actual_pv_kwh": actual.get("actual_pv_kwh"),
                 "forecast_load_kwh": _rolling_load_forecast(day, actual_by_day),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
@@ -440,7 +448,7 @@ def _load_sqlite_slice(
         sunshine = _rows_to_dicts(
             conn.execute(
                 """
-                SELECT date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c
+                SELECT *
                 FROM sunshine_daily
                 WHERE date >= ? AND date <= ?
                 ORDER BY date
@@ -651,7 +659,7 @@ def _load_postgres_slice(
 
             cur.execute(
                 """
-                SELECT date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c
+                SELECT *
                 FROM sunshine_daily
                 WHERE date >= %s AND date <= %s
                 ORDER BY date
@@ -905,7 +913,17 @@ def _load_firestore_slice(
         collection_name="sunshine_daily",
         start_date=start_date,
         end_date_iso=end_date_iso,
-        fields=["forecast_hours", "actual_hours", "forecast_temp_c", "actual_temp_c"],
+        fields=[
+            "forecast_hours",
+            "actual_hours",
+            "forecast_temp_c",
+            "actual_temp_c",
+            "forecast_pv_total_kwh",
+            "forecast_pv_morning_kwh",
+            "forecast_pv_midday_kwh",
+            "forecast_pv_evening_kwh",
+            "forecast_pv_calibration_factor",
+        ],
     )
     cost_daily = _firestore_rows_between(
         client,

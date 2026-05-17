@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "description": "PV arrays are modeled separately by roof orientation and summed after hourly GTI forecasting.",
+  "arrays": [
+    {
+      "name": "east",
+      "azimuth_deg": -90,
+      "tilt_deg": 20,
+      "capacity_kw": 1.0,
+      "performance_ratio": 0.82,
+      "shading_factor": 1.0,
+      "temp_coeff_per_deg": -0.0035
+    },
+    {
+      "name": "south",
+      "azimuth_deg": 0,
+      "tilt_deg": 20,
+      "capacity_kw": 1.0,
+      "performance_ratio": 0.84,
+      "shading_factor": 1.0,
+      "temp_coeff_per_deg": -0.0035
+    },
+    {
+      "name": "west",
+      "azimuth_deg": 90,
+      "tilt_deg": 20,
+      "capacity_kw": 1.0,
+      "performance_ratio": 0.82,
+      "shading_factor": 1.0,
+      "temp_coeff_per_deg": -0.0035
+    }
+  ]
+}

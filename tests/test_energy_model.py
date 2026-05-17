@@ -69,6 +69,31 @@ def test_compute_night_charge_target() -> None:
     assert result.target_soc_7_percent == pytest.approx(20.0)
 
 
+def test_compute_night_charge_target_accepts_hourly_pv_overrides() -> None:
+    coeff = _coeff()
+    inp = NightChargeInputs(
+        soc_now_percent=0.0,
+        sun_hours_forecast=5.0,
+        temp_forecast_c=25.0,
+        daytime_load_forecast_kwh=8.0,
+        morning_load_forecast_kwh=3.0,
+        morning_pv_ratio=0.2,
+        midday_surplus_ratio=0.3,
+        reserve_soc_percent=10.0,
+        cycle_count=0.0,
+        battery_temp_c=25.0,
+        predicted_pv_kwh_override=12.0,
+        predicted_morning_pv_kwh_override=3.0,
+        predicted_midday_surplus_kwh_override=5.0,
+    )
+    result = compute_night_charge_target(coeff, inp)
+
+    assert result.predicted_pv_kwh == pytest.approx(12.0)
+    assert result.predicted_morning_pv_kwh == pytest.approx(3.0)
+    assert result.predicted_morning_deficit_kwh == pytest.approx(0.0)
+    assert result.predicted_midday_surplus_kwh == pytest.approx(5.0)
+
+
 def test_fit_coefficients_from_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "fit.csv"
     csv_path.write_text(

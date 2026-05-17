@@ -21,6 +21,7 @@ from app.occupancy_schedule import (
     filter_training_load_rows,
     load_occupancy_events_from_env,
 )
+from app.pv_array_forecast import build_pv_array_forecast, load_pv_array_configs
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -153,6 +154,13 @@ def _to_optional_int(value) -> int | None:
     if as_float is None:
         return None
     return int(as_float)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "y", "on"}
 
 
 def _list_value(values, index: int):
@@ -334,6 +342,63 @@ def _occupancy_adjustment_to_dict(adjustment) -> dict[str, object] | None:
     return adjustment.to_dict()
 
 
+def _build_pv_forecast_or_disabled(
+    *,
+    rows: list[dict[str, float | datetime]],
+    target_date: str,
+    lat: float,
+    lon: float,
+    timezone: str,
+) -> dict[str, object] | None:
+    if not _env_bool("PV_ARRAY_FORECAST_ENABLED", True):
+        return {"enabled": False, "source": "disabled"}
+    arrays = load_pv_array_configs()
+    if not arrays:
+        return {"enabled": False, "source": "no_pv_array_config"}
+    try:
+        return build_pv_array_forecast(
+            arrays=arrays,
+            rows=rows,
+            target_date=target_date,
+            lat=lat,
+            lon=lon,
+            timezone=timezone,
+        )
+    except Exception as exc:
+        return {"enabled": False, "source": "pv_array_forecast_failed", "error": str(exc)}
+
+
+def _pv_forecast_totals(pv_forecast: dict[str, object] | None) -> dict[str, object]:
+    if not pv_forecast or not pv_forecast.get("enabled"):
+        return {}
+    totals = pv_forecast.get("totals", {})
+    return totals if isinstance(totals, dict) else {}
+
+
+def _estimate_midday_surplus_from_pv_forecast(
+    *,
+    pv_forecast: dict[str, object] | None,
+    consumption_forecast: ConsumptionForecast,
+) -> float | None:
+    totals = _pv_forecast_totals(pv_forecast)
+    midday_pv = _to_optional_float(totals.get("midday_kwh"))
+    if midday_pv is None:
+        return None
+
+    non_morning_load = max(
+        0.0,
+        consumption_forecast.daytime_load_kwh - consumption_forecast.morning_load_kwh,
+    )
+    # Midday is 10:00-16:00. The remaining daytime load window is 10:00-23:00.
+    default_fraction = 6.0 / 13.0
+    midday_load_fraction = _to_optional_float(os.getenv("PV_MIDDAY_LOAD_FRACTION", "").strip())
+    if midday_load_fraction is None:
+        midday_load_fraction = default_fraction
+    midday_load_fraction = max(0.0, min(1.0, midday_load_fraction))
+    estimated_midday_load = non_morning_load * midday_load_fraction
+    return max(0.0, midday_pv - estimated_midday_load)
+
+
 def main() -> int:
     _load_dotenv_if_present()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
@@ -365,6 +430,26 @@ def main() -> int:
         base_consumption_forecast,
         occupancy_events,
     )
+    pv_array_forecast = _build_pv_forecast_or_disabled(
+        rows=rows,
+        target_date=tomorrow_date,
+        lat=lat,
+        lon=lon,
+        timezone=timezone,
+    )
+    pv_totals = _pv_forecast_totals(pv_array_forecast)
+    predicted_pv_override = _to_optional_float(pv_totals.get("total_kwh"))
+    predicted_morning_pv_override = _to_optional_float(pv_totals.get("morning_kwh"))
+    predicted_midday_surplus_override = _estimate_midday_surplus_from_pv_forecast(
+        pv_forecast=pv_array_forecast,
+        consumption_forecast=consumption_forecast,
+    )
+    if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
+        pv_array_forecast["surplus_estimate"] = {
+            "midday_surplus_kwh": predicted_midday_surplus_override,
+            "method": "midday_pv_minus_proportional_non_morning_load",
+            "midday_load_fraction": _to_optional_float(os.getenv("PV_MIDDAY_LOAD_FRACTION", "").strip()) or (6.0 / 13.0),
+        }
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
     inp = NightChargeInputs(
@@ -378,17 +463,32 @@ def main() -> int:
         reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
         cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
         battery_temp_c=float(os.getenv("BATTERY_TEMP_C", str(temp_c))),
+        predicted_pv_kwh_override=predicted_pv_override,
+        predicted_morning_pv_kwh_override=predicted_morning_pv_override,
+        predicted_midday_surplus_kwh_override=predicted_midday_surplus_override,
     )
     result = compute_night_charge_target(coeff, inp)
+    coefficients = to_dict(coeff)
+    if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
+        calibration = pv_array_forecast.get("calibration", {})
+        arrays = pv_array_forecast.get("arrays", [])
+        if isinstance(calibration, dict):
+            factor = _to_optional_float(calibration.get("factor"))
+            if factor is not None:
+                coefficients["pv_array_calibration_factor"] = factor
+        if isinstance(arrays, list):
+            total_capacity = sum(_to_optional_float(a.get("capacity_kw")) or 0.0 for a in arrays if isinstance(a, dict))
+            coefficients["pv_array_total_capacity_kw"] = total_capacity
 
     payload = {
         "csv_paths": [str(p) for p in csv_paths],
         "forecast": forecast,
+        "pv_array_forecast": pv_array_forecast,
         "historical_profile": hist,
         "consumption_forecast": _consumption_forecast_to_dict(consumption_forecast),
         "base_consumption_forecast": _consumption_forecast_to_dict(base_consumption_forecast),
         "occupancy_adjustment": _occupancy_adjustment_to_dict(occupancy_adjustment),
-        "coefficients": to_dict(coeff),
+        "coefficients": coefficients,
         "inputs": to_dict(inp),
         "result": to_dict(result),
     }

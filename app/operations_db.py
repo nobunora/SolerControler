@@ -315,6 +315,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "actual_precipitation_sum_mm": "REAL",
             "forecast_shortwave_radiation_sum_mj_m2": "REAL",
             "actual_shortwave_radiation_sum_mj_m2": "REAL",
+            "forecast_pv_total_kwh": "REAL",
+            "forecast_pv_morning_kwh": "REAL",
+            "forecast_pv_midday_kwh": "REAL",
+            "forecast_pv_evening_kwh": "REAL",
+            "forecast_pv_calibration_factor": "REAL",
         },
     )
     conn.commit()
@@ -534,6 +539,9 @@ def ingest_sunshine_from_night_plan(
     tomorrow_precip_sum = forecast.get("precipitation_sum_mm")
     tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
     tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
+    pv_forecast = data.get("pv_array_forecast", {})
+    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
@@ -545,9 +553,11 @@ def ingest_sunshine_from_night_plan(
                 forecast_weather_code, actual_weather_code,
                 forecast_precipitation_sum_mm, forecast_precipitation_probability_mean, actual_precipitation_sum_mm,
                 forecast_shortwave_radiation_sum_mj_m2, actual_shortwave_radiation_sum_mj_m2,
+                forecast_pv_total_kwh, forecast_pv_morning_kwh, forecast_pv_midday_kwh,
+                forecast_pv_evening_kwh, forecast_pv_calibration_factor,
                 source, updated_at
             )
-            VALUES (?, ?, NULL, ?, NULL, ?, NULL, ?, ?, NULL, ?, NULL, ?, ?)
+            VALUES (?, ?, NULL, ?, NULL, ?, NULL, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 forecast_hours=excluded.forecast_hours,
                 forecast_temp_c=excluded.forecast_temp_c,
@@ -555,6 +565,11 @@ def ingest_sunshine_from_night_plan(
                 forecast_precipitation_sum_mm=excluded.forecast_precipitation_sum_mm,
                 forecast_precipitation_probability_mean=excluded.forecast_precipitation_probability_mean,
                 forecast_shortwave_radiation_sum_mj_m2=excluded.forecast_shortwave_radiation_sum_mj_m2,
+                forecast_pv_total_kwh=excluded.forecast_pv_total_kwh,
+                forecast_pv_morning_kwh=excluded.forecast_pv_morning_kwh,
+                forecast_pv_midday_kwh=excluded.forecast_pv_midday_kwh,
+                forecast_pv_evening_kwh=excluded.forecast_pv_evening_kwh,
+                forecast_pv_calibration_factor=excluded.forecast_pv_calibration_factor,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
@@ -566,6 +581,11 @@ def ingest_sunshine_from_night_plan(
                 _to_float_any(tomorrow_precip_sum),
                 _to_float_any(tomorrow_precip_probability),
                 _to_float_any(tomorrow_shortwave),
+                _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                _to_float_any(pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None),
                 "open-meteo-forecast",
                 ingested_at,
             ),

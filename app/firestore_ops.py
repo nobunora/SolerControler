@@ -112,6 +112,9 @@ def ingest_sunshine_from_night_plan(
     tomorrow_precip_sum = forecast.get("precipitation_sum_mm")
     tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
     tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
+    pv_forecast = data.get("pv_array_forecast", {})
+    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
@@ -125,6 +128,13 @@ def ingest_sunshine_from_night_plan(
                 "forecast_precipitation_sum_mm": _to_float_any(tomorrow_precip_sum),
                 "forecast_precipitation_probability_mean": _to_float_any(tomorrow_precip_probability),
                 "forecast_shortwave_radiation_sum_mj_m2": _to_float_any(tomorrow_shortwave),
+                "forecast_pv_total_kwh": _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_morning_kwh": _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_midday_kwh": _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_evening_kwh": _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_calibration_factor": _to_float_any(
+                    pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None
+                ),
                 "source": "open-meteo-forecast",
                 "updated_at": ingested_at,
             },

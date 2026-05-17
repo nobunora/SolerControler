@@ -15,6 +15,7 @@
 - Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
 - Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
 - 運用条件ファイルガイド: [docs/OPERATION_CONDITIONS_GUIDE.md](docs/OPERATION_CONDITIONS_GUIDE.md)
+- 東・南・西アレイ発電予測: [docs/PV_ARRAY_FORECAST_JA.md](docs/PV_ARRAY_FORECAST_JA.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）
@@ -121,6 +122,9 @@ python kpnet_main.py
 - `KP_NIGHT_CHARGE_WINDOW_END=07:00`
 - `KP_DAY_DISCHARGE_WINDOW_START=07:00`
 - `KP_DAY_DISCHARGE_WINDOW_END=23:00`
+- `PV_ARRAY_FORECAST_ENABLED=true`（`config/pv_arrays.json` の東・南・西などの面別アレイをOpen-Meteo hourly GTIで予測）
+- `PV_ARRAY_CONFIG_PATH=config/pv_arrays.json`
+- `PV_ARRAY_CALIBRATION_LOOKBACK_DAYS=45`（実測発電量でperformance_ratioを補正する履歴日数）
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
 - `KP_DEFAULT_CHARGE_POWER_KW=1.8`（夜間実測が取れない場合のフォールバック）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`

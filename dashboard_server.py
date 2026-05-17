@@ -311,10 +311,10 @@ def _html(payload: dict, script_nonce: str) -> str:
       <article class="card full">
         <h2>6. 蓄電池方程式とパラメータ</h2>
         <div class="equation">
-          変数: <b>SH</b>=日照時間[h], <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh], <b>HT</b>=的中率[%]<br>
-          (1) PV予測: <b>PV = SH × Kp × Kt</b><br>
-          (2) 朝不足: <b>DF = max(0, RM - PV × Kr)</b><br>
-          (3) 日中余剰: <b>PS = max(0, (PV - LD) × Ks)</b><br>
+          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh], <b>HT</b>=的中率[%]<br>
+          (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
+          (2) 朝不足: <b>DF = max(0, RM - PV<sub>07-10</sub>)</b><br>
+          (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
           (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
           (5) 夜間充電量: <b>NC = max(0, ((RC - RS)/100 × Cp) / Ef)</b><br>
           条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 23時設定は06:00終了固定で逆算。 条件C: 充電開始は00:00未満にしない。<br>
@@ -507,6 +507,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       pv_direct_use_ratio: { code: "Kr", label: "朝のPV直接利用率" },
       pv_to_battery_ratio: { code: "Ks", label: "余剰PVの蓄電寄与率" },
       pv_self_consumption_ratio: { code: "Sc", label: "PV自家消費率" },
+      pv_array_calibration_factor: { code: "Pa", label: "面別PV予測の実績補正係数" },
+      pv_array_total_capacity_kw: { code: "Pc", label: "面別PV設定の合計容量[kW]" },
       battery_temp_coeff_per_deg: { code: "Bt", label: "気温1℃あたり蓄電容量補正係数" },
       battery_cycle_capacity_fade_per_cycle: { code: "Cf", label: "1サイクルあたり容量劣化率" },
     };

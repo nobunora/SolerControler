@@ -21,6 +21,7 @@ from app.operations_db import (
     _read_summary,
     _safe_json,
     _tiered_day_increment_cost,
+    _to_float_any,
 )
 
 
@@ -77,6 +78,11 @@ def ensure_schema(conn) -> None:
             actual_hours DOUBLE PRECISION,
             forecast_temp_c DOUBLE PRECISION,
             actual_temp_c DOUBLE PRECISION,
+            forecast_pv_total_kwh DOUBLE PRECISION,
+            forecast_pv_morning_kwh DOUBLE PRECISION,
+            forecast_pv_midday_kwh DOUBLE PRECISION,
+            forecast_pv_evening_kwh DOUBLE PRECISION,
+            forecast_pv_calibration_factor DOUBLE PRECISION,
             source TEXT,
             updated_at TEXT NOT NULL
         )
@@ -137,6 +143,14 @@ def ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         for sql in ddl:
             cur.execute(sql)
+        for column_sql in [
+            "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_total_kwh DOUBLE PRECISION",
+            "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_morning_kwh DOUBLE PRECISION",
+            "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_midday_kwh DOUBLE PRECISION",
+            "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_evening_kwh DOUBLE PRECISION",
+            "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_calibration_factor DOUBLE PRECISION",
+        ]:
+            cur.execute(column_sql)
     conn.commit()
 
 
@@ -200,6 +214,9 @@ def ingest_sunshine_from_night_plan(
     forecast_date = str(forecast.get("date", "")).strip()
     tomorrow_hours = forecast.get("sun_hours")
     tomorrow_temp = forecast.get("temp_c")
+    pv_forecast = data.get("pv_array_forecast", {})
+    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
@@ -207,11 +224,21 @@ def ingest_sunshine_from_night_plan(
         if forecast_date:
             cur.execute(
                 """
-                INSERT INTO sunshine_daily (date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c, source, updated_at)
-                VALUES (%s, %s, NULL, %s, NULL, %s, %s)
+                INSERT INTO sunshine_daily (
+                    date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c,
+                    forecast_pv_total_kwh, forecast_pv_morning_kwh, forecast_pv_midday_kwh,
+                    forecast_pv_evening_kwh, forecast_pv_calibration_factor,
+                    source, updated_at
+                )
+                VALUES (%s, %s, NULL, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(date) DO UPDATE SET
                     forecast_hours=excluded.forecast_hours,
                     forecast_temp_c=excluded.forecast_temp_c,
+                    forecast_pv_total_kwh=excluded.forecast_pv_total_kwh,
+                    forecast_pv_morning_kwh=excluded.forecast_pv_morning_kwh,
+                    forecast_pv_midday_kwh=excluded.forecast_pv_midday_kwh,
+                    forecast_pv_evening_kwh=excluded.forecast_pv_evening_kwh,
+                    forecast_pv_calibration_factor=excluded.forecast_pv_calibration_factor,
                     source=excluded.source,
                     updated_at=excluded.updated_at
                 """,
@@ -219,6 +246,11 @@ def ingest_sunshine_from_night_plan(
                     forecast_date,
                     float(tomorrow_hours) if tomorrow_hours is not None else None,
                     float(tomorrow_temp) if tomorrow_temp is not None else None,
+                    _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                    _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                    _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                    _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                    _to_float_any(pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None),
                     "open-meteo-forecast",
                     ingested_at,
                 ),

@@ -42,6 +42,9 @@ class NightChargeInputs:
     reserve_soc_percent: float
     cycle_count: float
     battery_temp_c: float
+    predicted_pv_kwh_override: float | None = None
+    predicted_morning_pv_kwh_override: float | None = None
+    predicted_midday_surplus_kwh_override: float | None = None
 
 
 @dataclass(frozen=True)
@@ -183,14 +186,24 @@ def compute_night_charge_target(
     e_now = cap_eff * inp.soc_now_percent / 100.0
     e_reserve = cap_eff * inp.reserve_soc_percent / 100.0
 
-    e_pv = forecast_pv_energy_kwh(
-        sun_hours=inp.sun_hours_forecast,
-        temp_c=inp.temp_forecast_c,
-        coeff=coeff,
-    )
-    e_morning_pv = max(0.0, e_pv * inp.morning_pv_ratio)
+    if inp.predicted_pv_kwh_override is None:
+        e_pv = forecast_pv_energy_kwh(
+            sun_hours=inp.sun_hours_forecast,
+            temp_c=inp.temp_forecast_c,
+            coeff=coeff,
+        )
+    else:
+        e_pv = max(0.0, inp.predicted_pv_kwh_override)
+
+    if inp.predicted_morning_pv_kwh_override is None:
+        e_morning_pv = max(0.0, e_pv * inp.morning_pv_ratio)
+    else:
+        e_morning_pv = max(0.0, inp.predicted_morning_pv_kwh_override)
     e_morning_def = max(0.0, inp.morning_load_forecast_kwh - e_morning_pv)
-    e_midday_surplus = max(0.0, e_pv * inp.midday_surplus_ratio)
+    if inp.predicted_midday_surplus_kwh_override is None:
+        e_midday_surplus = max(0.0, e_pv * inp.midday_surplus_ratio)
+    else:
+        e_midday_surplus = max(0.0, inp.predicted_midday_surplus_kwh_override)
 
     # 7時時点の目標エネルギー:
     # - 下限: 早朝不足 + 予備
@@ -215,6 +228,8 @@ def compute_night_charge_target(
     )
 
 
-def to_dict(obj: EnergyModelCoefficients | NightChargeResult) -> dict[str, float]:
-    return {k: float(v) for k, v in asdict(obj).items()}
-
+def to_dict(obj: EnergyModelCoefficients | NightChargeInputs | NightChargeResult) -> dict[str, float | None]:
+    out: dict[str, float | None] = {}
+    for key, value in asdict(obj).items():
+        out[key] = None if value is None else float(value)
+    return out
