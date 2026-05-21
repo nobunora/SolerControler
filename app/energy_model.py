@@ -52,6 +52,7 @@ class NightChargeResult:
     predicted_pv_kwh: float
     predicted_morning_pv_kwh: float
     predicted_morning_deficit_kwh: float
+    predicted_daytime_deficit_kwh: float
     predicted_midday_surplus_kwh: float
     effective_capacity_kwh: float
     target_soc_7_percent: float
@@ -200,15 +201,23 @@ def compute_night_charge_target(
     else:
         e_morning_pv = max(0.0, inp.predicted_morning_pv_kwh_override)
     e_morning_def = max(0.0, inp.morning_load_forecast_kwh - e_morning_pv)
+    e_daytime_def = max(0.0, inp.daytime_load_forecast_kwh - e_pv)
     if inp.predicted_midday_surplus_kwh_override is None:
         e_midday_surplus = max(0.0, e_pv * inp.midday_surplus_ratio)
     else:
         e_midday_surplus = max(0.0, inp.predicted_midday_surplus_kwh_override)
 
     # 7時時点の目標エネルギー:
-    # - 下限: 早朝不足 + 予備
+    # - 下限: 早朝不足 + 予備, かつ日中の総不足分もカバー
     # - 上限: 昼の余剰PVを受けるヘッドルームを確保
-    e_lower = min(cap_eff, max(e_reserve, e_morning_def + e_reserve))
+    e_lower = min(
+        cap_eff,
+        max(
+            e_reserve,
+            e_morning_def + e_reserve,
+            e_daytime_def + e_reserve,
+        ),
+    )
     e_upper = max(e_lower, cap_eff - e_midday_surplus)
     e_target = min(e_lower, e_upper) if e_lower <= e_upper else e_lower
 
@@ -221,6 +230,7 @@ def compute_night_charge_target(
         predicted_pv_kwh=e_pv,
         predicted_morning_pv_kwh=e_morning_pv,
         predicted_morning_deficit_kwh=e_morning_def,
+        predicted_daytime_deficit_kwh=e_daytime_def,
         predicted_midday_surplus_kwh=e_midday_surplus,
         effective_capacity_kwh=cap_eff,
         target_soc_7_percent=target_soc,

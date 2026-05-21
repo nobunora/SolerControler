@@ -52,3 +52,15 @@ def test_decide_battery_setting_keeps_non_forced_when_charge_target_is_below_thr
     result = decide_battery_setting(_forecast(7.0), _metrics(60.0), cfg)
     assert result.charge_limit_percent == 45
     assert result.mode == "mid"
+
+
+def test_decide_battery_setting_uses_force_when_forecast_is_near_zero() -> None:
+    cfg = _cfg(
+        forecast_low_hours=2.0,
+        charge_limit_high=95,
+        charge_limit_low=40,
+        green_mode_max_charge_percent=50.0,
+    )
+    result = decide_battery_setting(_forecast(0.0), _metrics(60.0), cfg)
+    assert result.charge_limit_percent == 95
+    assert result.mode == "forced"

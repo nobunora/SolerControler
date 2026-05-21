@@ -10,6 +10,7 @@ def decide_battery_setting(
     cfg: AppConfig,
 ) -> DesiredBatterySetting:
     latest_soc = metrics.latest_soc
+    near_zero_sun_threshold_h = max(0.05, min(0.5, cfg.forecast_low_hours * 0.2))
 
     decision: DesiredBatterySetting
     if forecast.hours_12h >= cfg.forecast_high_hours:
@@ -29,10 +30,17 @@ def decide_battery_setting(
                 reason=f"日射予報が高い({forecast.hours_12h:.2f}h) ため通常運転",
             )
     elif forecast.hours_12h <= cfg.forecast_low_hours:
+        near_zero_sun = forecast.hours_12h <= near_zero_sun_threshold_h
+        charge_limit = cfg.charge_limit_high if near_zero_sun else cfg.charge_limit_low
+        reason_tail = (
+            f"日射予報がほぼ0({forecast.hours_12h:.2f}h)のため夜間充電を優先"
+            if near_zero_sun
+            else f"日射予報が低い({forecast.hours_12h:.2f}h)ため節電優先"
+        )
         decision = DesiredBatterySetting(
-            charge_limit_percent=cfg.charge_limit_low,
+            charge_limit_percent=charge_limit,
             mode=cfg.mode_low_sun,
-            reason=f"日射予報が低い({forecast.hours_12h:.2f}h)ため節電優先",
+            reason=reason_tail,
         )
     elif latest_soc is not None and latest_soc >= cfg.high_soc_threshold:
         decision = DesiredBatterySetting(

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -46,6 +49,197 @@ def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = N
         print(f"[cloud_job_runner] optional step failed ({label}): {exc}", flush=True)
 
 
+def _to_float_or_none(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
+    obj = json.loads(plan_path.read_text(encoding="utf-8"))
+    forecast = obj.get("forecast", {})
+    result = obj.get("result", {})
+    inputs = obj.get("inputs", {})
+    return {
+        "date": str(forecast.get("date", "")).strip(),
+        "sun_hours": _to_float_or_none(forecast.get("sun_hours", 0.0)) or 0.0,
+        "temp_c": _to_float_or_none(forecast.get("temp_c", 0.0)) or 0.0,
+        "target_soc_7_percent": _to_float_or_none(result.get("target_soc_7_percent", 0.0)) or 0.0,
+        "required_night_charge_kwh": _to_float_or_none(result.get("required_night_charge_kwh", 0.0)) or 0.0,
+        "soc_now_percent": _to_float_or_none(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None,
+        "effective_capacity_kwh": _to_float_or_none(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None,
+    }
+
+
+def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
+    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
+    soc_now_raw = plan_meta.get("soc_now_percent", None)
+    if isinstance(soc_now_raw, (int, float)):
+        soc_now = max(0.0, min(100.0, float(soc_now_raw)))
+        return max(0.0, target_soc - soc_now)
+
+    cap_raw = plan_meta.get("effective_capacity_kwh", None)
+    required_raw = plan_meta.get("required_night_charge_kwh", 0.0)
+    if isinstance(cap_raw, (int, float)) and isinstance(required_raw, (int, float)) and cap_raw > 0 and required_raw > 0:
+        return max(0.0, 100.0 * float(required_raw) / float(cap_raw))
+    return target_soc
+
+
+def _force_partial_soc_window() -> tuple[float, float]:
+    partial_min = float(os.getenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51").strip() or "51")
+    partial_max = float(os.getenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "99").strip() or "99")
+    return partial_min, partial_max
+
+
+def _should_stage_partial_forced(
+    *,
+    plan_meta: dict[str, float | str | None],
+    green_mode_max_charge_percent: float,
+) -> tuple[bool, float, float]:
+    required_charge_percent = _required_charge_percent_from_plan(plan_meta)
+    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
+    partial_min, partial_max = _force_partial_soc_window()
+    force_charge = required_charge_percent >= green_mode_max_charge_percent
+    stage_partial_forced = force_charge and partial_min <= target_soc <= partial_max
+    return stage_partial_forced, required_charge_percent, target_soc
+
+
+def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
+    run_dirs = [p for p in artifacts_dir.glob("*") if p.is_dir() and p.name[:8].isdigit()]
+    run_dirs.sort(key=lambda p: p.name, reverse=True)
+    for run_dir in run_dirs:
+        csv_dir = run_dir / "csv"
+        csvs = sorted(csv_dir.glob("*.csv"))
+        if csvs:
+            return csvs
+    return []
+
+
+def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
+    latest_dt: datetime | None = None
+    latest_soc: float | None = None
+    for csv_path in csv_paths:
+        if not csv_path.exists():
+            continue
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                date_text = (row.get("年月日") or "").strip()
+                time_text = (row.get("時刻") or "").strip()
+                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
+                if not date_text or not time_text or not soc_text:
+                    continue
+                try:
+                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
+                    soc = float(soc_text)
+                except (TypeError, ValueError):
+                    continue
+                if latest_dt is None or dt > latest_dt:
+                    latest_dt = dt
+                    latest_soc = soc
+    return latest_soc
+
+
+def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
+    hhmm = cutoff_hhmm.strip()
+    if not hhmm or ":" not in hhmm:
+        return 0
+    hh_text, mm_text = hhmm.split(":", 1)
+    hh = int(hh_text)
+    mm = int(mm_text)
+    now = datetime.now(ZoneInfo(timezone_name))
+    cutoff = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    return max(0, int((cutoff - now).total_seconds()))
+
+
+def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None:
+    _run(
+        [sys.executable, "kpnet_main.py"],
+        {
+            "KP_WORKFLOW_MODE": "settings",
+            "KP_FORCE_SETTINGS_PROFILE": profile,
+            "KP_DYNAMIC_FORCED_PROFILE": "true" if dynamic_forced_profile else "false",
+            "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
+        },
+    )
+
+
+def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
+    if not plan_path.exists():
+        print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
+        return
+
+    green_mode_max = float(os.getenv("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50").strip() or "50")
+    plan_meta = _read_plan_meta(plan_path)
+    stage_partial, required_charge_percent, target_soc = _should_stage_partial_forced(
+        plan_meta=plan_meta,
+        green_mode_max_charge_percent=green_mode_max,
+    )
+    if not stage_partial:
+        print(
+            "[cloud_job_runner] 03-monitor skip "
+            f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%",
+            flush=True,
+        )
+        return
+
+    default_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8").strip() or "1.8")
+    if default_power_kw <= 0:
+        default_power_kw = 1.8
+    required_kwh = max(0.0, float(plan_meta.get("required_night_charge_kwh", 0.0) or 0.0))
+    estimated_charge_minutes = 0
+    if required_kwh > 0:
+        estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999)
+    timer_buffer_minutes = max(0, int(os.getenv("ADJUST03_FORCE_TIMER_BUFFER_MINUTES", "20").strip() or "20"))
+    poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "600").strip() or "600"))
+    soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
+    timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
+    cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
+    cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
+    timer_seconds = max(0, (estimated_charge_minutes + timer_buffer_minutes) * 60)
+    monitor_seconds = min(cutoff_seconds, timer_seconds) if cutoff_seconds > 0 else timer_seconds
+    if monitor_seconds <= 0:
+        print("[cloud_job_runner] 03-monitor stop timer is zero; switch to green immediately.", flush=True)
+        _run_settings_profile(profile="green", dynamic_forced_profile=False)
+        return
+
+    print(
+        "[cloud_job_runner] 03-monitor start "
+        f"target_soc={target_soc:.2f}% required={required_kwh:.3f}kWh "
+        f"estimated={estimated_charge_minutes}min buffer={timer_buffer_minutes}min "
+        f"poll={poll_seconds}s monitor={monitor_seconds}s cutoff={cutoff_hhmm}",
+        flush=True,
+    )
+    started_at = time.time()
+    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+
+    while time.time() - started_at < monitor_seconds:
+        _run([sys.executable, "kpnet_main.py"], {"KP_WORKFLOW_MODE": "csv"})
+        csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
+        latest_soc = _latest_soc_percent(csv_paths)
+        if latest_soc is not None:
+            print(
+                f"[cloud_job_runner] 03-monitor latest_soc={latest_soc:.2f}% "
+                f"target={target_soc:.2f}% margin={soc_margin:.2f}%",
+                flush=True,
+            )
+            if latest_soc >= (target_soc - soc_margin):
+                print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
+                _run_settings_profile(profile="green", dynamic_forced_profile=False)
+                return
+        else:
+            print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
+
+        remaining = monitor_seconds - int(time.time() - started_at)
+        if remaining <= poll_seconds:
+            break
+        time.sleep(poll_seconds)
+
+    print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
+    _run_settings_profile(profile="green", dynamic_forced_profile=False)
+
+
 def _run_night_23() -> None:
     # 23:00 実行:
     # 1) CSV取得 2) 夜間計画計算 3) 強制充電設定登録
@@ -56,15 +250,35 @@ def _run_night_23() -> None:
         },
     )
     _run([sys.executable, "energy_model_main.py"])
-    _run(
-        [sys.executable, "kpnet_main.py"],
-        {
-            "KP_WORKFLOW_MODE": "settings",
-            "KP_FORCE_SETTINGS_PROFILE": "forced",
-            "KP_DYNAMIC_FORCED_PROFILE": "true",
-            "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
-        },
-    )
+    plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
+    profile = "forced"
+    dynamic_forced_profile = True
+    if plan_path.exists():
+        try:
+            green_mode_max = float(os.getenv("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50").strip() or "50")
+            plan_meta = _read_plan_meta(plan_path)
+            stage_partial, required_charge_percent, target_soc = _should_stage_partial_forced(
+                plan_meta=plan_meta,
+                green_mode_max_charge_percent=green_mode_max,
+            )
+            if stage_partial:
+                # 強制充電モードは設定直後に充電開始するため、
+                # 51-99% の部分強制充電は 23時にはグリーン待機へ寄せ、
+                # 03時の再設定 + 監視停止処理で制御する。
+                profile = "green"
+                dynamic_forced_profile = True
+            print(
+                "[cloud_job_runner] 23-night plan "
+                f"target_soc={target_soc:.2f}% required={required_charge_percent:.2f}% "
+                f"stage_partial={stage_partial} profile={profile}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[cloud_job_runner] 23-night partial-force staging skipped: {exc}", flush=True)
+    else:
+        print(f"[cloud_job_runner] 23-night plan missing: {plan_path}", flush=True)
+
+    _run_settings_profile(profile=profile, dynamic_forced_profile=dynamic_forced_profile)
     _run(
         [sys.executable, "db_pipeline_main.py"],
         {
@@ -161,29 +375,14 @@ def _run_adjust_03() -> None:
             )
             time.sleep(wait_seconds)
 
-    _run(
-        [sys.executable, "kpnet_main.py"],
-        {
-            "KP_WORKFLOW_MODE": "settings",
-            "KP_FORCE_SETTINGS_PROFILE": "forced",
-            "KP_DYNAMIC_FORCED_PROFILE": "true",
-            "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
-        },
-    )
+    _run_settings_profile(profile="forced", dynamic_forced_profile=True)
+    _monitor_partial_forced_and_stop(plan_path)
 
 
 def _run_day_07() -> None:
     # 07:00 実行:
     # 日中運用向けにグリーンモード設定のみ登録
-    _run(
-        [sys.executable, "kpnet_main.py"],
-        {
-            "KP_WORKFLOW_MODE": "settings",
-            "KP_FORCE_SETTINGS_PROFILE": "green",
-            "KP_DYNAMIC_FORCED_PROFILE": "false",
-            "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
-        },
-    )
+    _run_settings_profile(profile="green", dynamic_forced_profile=False)
 
 
 def main() -> int:
