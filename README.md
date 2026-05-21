@@ -58,25 +58,6 @@ python main.py
 初期値では `DRY_RUN=true` のため、設定変更は実行されません（ローカルでは疑似更新扱い）。  
 本番サイトまで含めて動かすときは `LOCAL_DEV_MODE=false` にして、`MONITOR_*` とセレクタを実値に設定してください。
 
-## 2.1 Remote Codex での Git 認証セットアップ
-
-Remote Codex で `git push` する場合は、Environment Secret を設定してから次を実行します。
-
-前提 Secret（いずれか）:
-- 推奨: `SSH_PRIVATE_KEY`
-- 代替: `GH_TOKEN` または `REPO_WRITE_TOKEN`（repo write 権限）
-
-実行コマンド:
-
-```bash
-bash scripts/setup_git_auth_remote_codex.sh .
-```
-
-このスクリプトは以下を自動実行します。
-- `SSH_PRIVATE_KEY` がある場合: `origin` を `git@github.com:owner/repo.git` に設定し、`core.sshCommand` を構成
-- トークン系 Secret のみある場合: `origin` を `https://github.com/owner/repo.git` に設定し、`GIT_ASKPASS` を構成
-- 最後に `git ls-remote --heads origin` で疎通確認
-
 ## 3. KP-NET実機フロー（ログイン→CSV→設定変更→ログアウト）
 
 HAR解析ベースで、以下の実フローを自動実行するエントリを追加しています。
