@@ -107,6 +107,8 @@ class AppConfig:
     mode_high_sun: str
     mode_mid_sun: str
     mode_low_sun: str
+    mode_force_charge: str
+    green_mode_max_charge_percent: float
 
     @staticmethod
     def from_env() -> "AppConfig":
@@ -209,4 +211,6 @@ class AppConfig:
             mode_high_sun=_env_optional("MODE_HIGH_SUN", "charge-priority"),
             mode_mid_sun=_env_optional("MODE_MID_SUN", "balanced"),
             mode_low_sun=_env_optional("MODE_LOW_SUN", "economy"),
+            mode_force_charge=_env_optional("MODE_FORCE_CHARGE", "forced-charge"),
+            green_mode_max_charge_percent=_env_float("GREEN_MODE_MAX_CHARGE_PERCENT", 50.0),
         )

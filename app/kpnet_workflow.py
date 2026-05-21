@@ -63,6 +63,15 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _to_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _clean_filename(name: str) -> str:
     return re.sub(r"[\\/:*?\"<>|]", "_", name).strip() or "download.csv"
 
@@ -143,6 +152,8 @@ class NightChargePlan:
     forecast_sun_hours: float | None
     required_night_charge_kwh: float
     target_soc_7_percent: float
+    soc_now_percent: float | None
+    effective_capacity_kwh: float | None
     csv_paths: list[Path]
 
 
@@ -481,9 +492,12 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     raw = json.loads(plan_path.read_text(encoding="utf-8"))
     result = raw.get("result", {})
     forecast = raw.get("forecast", {})
+    inputs = raw.get("inputs", {})
 
     required_night_charge_kwh = float(result.get("required_night_charge_kwh", 0.0))
     target_soc_7_percent = float(result.get("target_soc_7_percent", 0.0))
+    soc_now_percent = _to_optional_float(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None
+    effective_capacity_kwh = _to_optional_float(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None
     forecast_date = str(forecast.get("date", ""))
     forecast_sun_hours: float | None = None
     forecast_sun_hours_raw = forecast.get("sun_hours", None)
@@ -502,6 +516,8 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         forecast_sun_hours=forecast_sun_hours,
         required_night_charge_kwh=required_night_charge_kwh,
         target_soc_7_percent=target_soc_7_percent,
+        soc_now_percent=soc_now_percent,
+        effective_capacity_kwh=effective_capacity_kwh,
         csv_paths=csv_paths,
     )
 
@@ -546,6 +562,28 @@ def _estimate_charge_power_kw(
     if charge_kwh_per_30m:
         return statistics.median(charge_kwh_per_30m) * 2.0
     return fallback_kw
+
+
+def _required_charge_percent(plan: NightChargePlan) -> float:
+    target_soc = max(0.0, plan.target_soc_7_percent)
+    soc_now = plan.soc_now_percent
+    if soc_now is not None:
+        return max(0.0, target_soc - max(0.0, min(100.0, soc_now)))
+    cap = plan.effective_capacity_kwh
+    if cap is not None and cap > 0 and plan.required_night_charge_kwh > 0:
+        return max(0.0, 100.0 * plan.required_night_charge_kwh / cap)
+    return max(0.0, target_soc)
+
+
+def _pick_night_mode_preference(
+    *,
+    plan: NightChargePlan,
+    green_mode_max_charge_percent: float,
+) -> tuple[str, float, bool]:
+    required_charge_percent = _required_charge_percent(plan)
+    force_charge = required_charge_percent >= green_mode_max_charge_percent
+    return ("forced" if force_charge else "green"), required_charge_percent, force_charge
+
 
 @dataclass(frozen=True)
 class ProfileOverrides:
@@ -623,6 +661,7 @@ class KpNetConfig:
     dynamic_mode_switch_by_time: bool
     night_plan_path: Path
     default_charge_power_kw: float
+    green_mode_max_charge_percent: float
     night_charge_window_start: str
     night_charge_window_end: str
     day_discharge_window_start: str
@@ -687,6 +726,9 @@ class KpNetConfig:
         default_charge_power_kw = float(_env("KP_DEFAULT_CHARGE_POWER_KW", "1.8"))
         if default_charge_power_kw <= 0:
             raise RuntimeError("KP_DEFAULT_CHARGE_POWER_KW は 0 より大きい値を指定してください")
+        green_mode_max_charge_percent = float(_env("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50"))
+        if green_mode_max_charge_percent < 0:
+            raise RuntimeError("KP_GREEN_MODE_MAX_CHARGE_PERCENT は 0 以上を指定してください")
 
         base_url = _env("KP_BASE_URL", "https://ctrl.kp-net.com/settingcontrol").strip()
         enforce_https = _env_bool("KP_ENFORCE_HTTPS", True)
@@ -721,6 +763,7 @@ class KpNetConfig:
             dynamic_mode_switch_by_time=dynamic_mode_switch_by_time,
             night_plan_path=night_plan_path,
             default_charge_power_kw=default_charge_power_kw,
+            green_mode_max_charge_percent=green_mode_max_charge_percent,
             night_charge_window_start=night_charge_window_start,
             night_charge_window_end=night_charge_window_end,
             day_discharge_window_start=day_discharge_window_start,
@@ -797,7 +840,14 @@ def _build_dynamic_forced_profile(
     )
 
     target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
-    night_mode_code = _pick_battery_operating_mode_code(value_maps["BatteryOperatingMode"], prefer="green")
+    night_mode_preference, required_charge_percent, force_charge_mode = _pick_night_mode_preference(
+        plan=plan,
+        green_mode_max_charge_percent=cfg.green_mode_max_charge_percent,
+    )
+    night_mode_code = _pick_battery_operating_mode_code(
+        value_maps["BatteryOperatingMode"],
+        prefer=night_mode_preference,
+    )
     night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_max_code(value_maps["SocContactInput"])
@@ -807,6 +857,11 @@ def _build_dynamic_forced_profile(
         "plan_path": str(plan.plan_path),
         "forecast_date": plan.forecast_date,
         "required_night_charge_kwh": required_night_charge_kwh,
+        "required_charge_percent": required_charge_percent,
+        "green_mode_max_charge_percent": cfg.green_mode_max_charge_percent,
+        "force_charge_mode": force_charge_mode,
+        "soc_now_percent": plan.soc_now_percent,
+        "effective_capacity_kwh": plan.effective_capacity_kwh,
         "target_soc_7_percent_raw": target_soc_7_percent,
         "estimated_charge_power_kw": estimated_charge_power_kw,
         "duration_minutes": duration_minutes,
@@ -821,6 +876,7 @@ def _build_dynamic_forced_profile(
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
+        "battery_operating_mode_preference": night_mode_preference,
         "battery_operating_mode": night_mode_code,
         "day_discharge_window_start": f"{discharge_start_h:02d}:{discharge_start_m:02d}",
         "day_discharge_window_end": f"{discharge_end_h:02d}:{discharge_end_m:02d}",
@@ -1423,14 +1479,32 @@ def _run_settings_phase(
     if cfg.dynamic_forced_profile:
         forced_profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=maps, summary=summary)
     else:
+        mode_preference = "green"
+        required_charge_percent = None
+        force_charge_mode = False
+        try:
+            plan = _load_night_charge_plan(cfg.night_plan_path)
+            mode_preference, required_charge_percent, force_charge_mode = _pick_night_mode_preference(
+                plan=plan,
+                green_mode_max_charge_percent=cfg.green_mode_max_charge_percent,
+            )
+        except Exception as exc:
+            LOGGER.warning("Night charge plan unavailable while selecting legacy forced profile mode: %s", exc)
+
         forced_profile = replace(
             FORCED_CHARGE_PROFILE,
             battery_operating_mode=_pick_battery_operating_mode_code(
                 maps["BatteryOperatingMode"],
-                prefer="green",
+                prefer=mode_preference,
             ),
         )
-        summary["night_charge_plan"] = {"status": "dynamic-profile-disabled"}
+        summary["night_charge_plan"] = {
+            "status": "dynamic-profile-disabled",
+            "legacy_mode_preference": mode_preference,
+            "required_charge_percent": required_charge_percent,
+            "green_mode_max_charge_percent": cfg.green_mode_max_charge_percent,
+            "force_charge_mode": force_charge_mode,
+        }
 
     if cfg.dynamic_forced_profile:
         green_profile = _build_dynamic_green_profile(

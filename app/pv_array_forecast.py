@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
 import requests
 
 
@@ -42,6 +43,25 @@ def _to_optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _to_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    text = raw.strip().lower()
+    if not text:
+        return default
+    return text in {"1", "true", "yes", "on", "y"}
 
 
 def _parse_time(raw: Any) -> datetime | None:
@@ -234,6 +254,83 @@ def _daily_actual_pv(rows: list[dict[str, Any]], *, target_date: str, lookback_d
     return dict(out)
 
 
+def _normalize_weather_class(value: str | None) -> str:
+    if value is None:
+        return "unknown"
+    text = str(value).strip().lower()
+    if not text:
+        return "unknown"
+    if text in {"clear", "sunny"}:
+        return "clear"
+    if text in {"cloud", "cloudy", "overcast"}:
+        return "cloudy"
+    if text in {"rain", "rainy", "drizzle", "showers"}:
+        return "rain"
+    if text in {"storm", "thunder", "thunderstorm"}:
+        return "storm"
+    return text
+
+
+def _weather_class_from_code(weather_code: int | None) -> str:
+    if weather_code is None:
+        return "unknown"
+    if weather_code == 0:
+        return "clear"
+    if 1 <= weather_code <= 3:
+        return "cloudy"
+    if weather_code in {45, 48}:
+        return "fog"
+    if 51 <= weather_code <= 67 or 80 <= weather_code <= 82:
+        return "rain"
+    if 71 <= weather_code <= 77 or 85 <= weather_code <= 86:
+        return "snow"
+    if 95 <= weather_code <= 99:
+        return "storm"
+    return "other"
+
+
+def _fetch_archive_weather_daily_by_day(
+    *,
+    lat: float,
+    lon: float,
+    timezone: str,
+    start_date: str,
+    end_date: str,
+    http_get: HttpGet,
+) -> dict[str, str]:
+    resp = http_get(
+        "https://archive-api.open-meteo.com/v1/archive",
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": start_date,
+            "end_date": end_date,
+            "daily": "weather_code,sunshine_duration,precipitation_sum",
+            "timezone": timezone,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    daily = resp.json().get("daily", {})
+    times = daily.get("time", [])
+    weather_codes = daily.get("weather_code", [])
+    sunshine_values = daily.get("sunshine_duration", [])
+    precipitation_values = daily.get("precipitation_sum", [])
+    out: dict[str, dict[str, float | str | None]] = {}
+    for idx, day in enumerate(times if isinstance(times, list) else []):
+        weather_code = _to_optional_int(weather_codes[idx] if idx < len(weather_codes) else None)
+        sunshine_hours = _to_optional_float(sunshine_values[idx] if idx < len(sunshine_values) else None)
+        precipitation_sum = _to_optional_float(
+            precipitation_values[idx] if idx < len(precipitation_values) else None
+        )
+        out[str(day)] = {
+            "weather_class": _weather_class_from_code(weather_code),
+            "sunshine_hours": (sunshine_hours / 3600.0) if sunshine_hours is not None else None,
+            "precipitation_sum_mm": precipitation_sum,
+        }
+    return out
+
+
 def calibrate_performance_ratio(
     *,
     arrays: list[PVArrayConfig],
@@ -305,6 +402,113 @@ def calibrate_performance_ratio(
 
     raw_factor = actual_total / modeled_total
     factor = max(min_factor, min(max_factor, raw_factor))
+
+    weather_adjustments: dict[str, dict[str, float | int | None]] = {}
+    weather_regression: dict[str, Any] = {}
+    if _env_bool("PV_ARRAY_WEATHER_CALIBRATION_ENABLED", True):
+        try:
+            weather_by_day = _fetch_archive_weather_daily_by_day(
+                lat=lat,
+                lon=lon,
+                timezone=timezone,
+                start_date=start_date,
+                end_date=end_date,
+                http_get=http_get,
+            )
+
+            by_class: dict[str, dict[str, float]] = defaultdict(
+                lambda: {"actual": 0.0, "modeled": 0.0, "days": 0.0}
+            )
+            for day in common_days:
+                weather_row = weather_by_day.get(day, {})
+                weather_class = _normalize_weather_class(
+                    weather_row.get("weather_class") if isinstance(weather_row, dict) else None
+                )
+                slot = by_class[weather_class]
+                slot["actual"] += actual_by_day.get(day, 0.0)
+                slot["modeled"] += modeled_by_day.get(day, 0.0)
+                slot["days"] += 1.0
+
+            min_days_by_class = max(1, int(os.getenv("PV_ARRAY_WEATHER_CALIBRATION_MIN_DAYS", "2")))
+            min_ratio = float(os.getenv("PV_ARRAY_WEATHER_ADJUSTMENT_MIN_RATIO", "0.7"))
+            max_ratio = float(os.getenv("PV_ARRAY_WEATHER_ADJUSTMENT_MAX_RATIO", "1.3"))
+            if min_ratio > max_ratio:
+                min_ratio, max_ratio = max_ratio, min_ratio
+
+            for weather_class, values in by_class.items():
+                sample_days = int(values["days"])
+                modeled_kwh = values["modeled"]
+                actual_kwh = values["actual"]
+                if sample_days < min_days_by_class or modeled_kwh <= 0:
+                    continue
+                raw_class_factor = actual_kwh / modeled_kwh
+                class_factor = max(min_factor, min(max_factor, raw_class_factor))
+                raw_ratio = class_factor / factor if factor > 0 else 1.0
+                ratio = max(min_ratio, min(max_ratio, raw_ratio))
+                weather_adjustments[weather_class] = {
+                    "sample_days": sample_days,
+                    "actual_kwh": _round(actual_kwh),
+                    "modeled_kwh": _round(modeled_kwh),
+                    "raw_factor": _round(raw_class_factor),
+                    "factor": _round(class_factor),
+                    "raw_multiplier": _round(raw_ratio),
+                    "multiplier": _round(ratio),
+                }
+
+            if _env_bool("PV_ARRAY_WEATHER_REGRESSION_ENABLED", True):
+                regression_rows: list[tuple[float, float, float]] = []
+                for day in common_days:
+                    modeled_kwh = modeled_by_day.get(day, 0.0)
+                    weather_row = weather_by_day.get(day, {})
+                    if (
+                        modeled_kwh <= 0
+                        or not isinstance(weather_row, dict)
+                    ):
+                        continue
+                    weather_class = _normalize_weather_class(weather_row.get("weather_class"))
+                    if weather_class not in {"cloudy", "rain"}:
+                        continue
+                    sunshine_hours = _to_optional_float(weather_row.get("sunshine_hours"))
+                    precipitation_sum_mm = _to_optional_float(weather_row.get("precipitation_sum_mm"))
+                    if sunshine_hours is None or precipitation_sum_mm is None:
+                        continue
+                    y = actual_by_day.get(day, 0.0) / modeled_kwh
+                    y = max(min_factor, min(max_factor, y))
+                    regression_rows.append((sunshine_hours, precipitation_sum_mm, y))
+
+                regression_min_days = max(3, int(os.getenv("PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS", "7")))
+                regression_blend = _to_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "0.1"), 0.1)
+                regression_blend = max(0.0, min(1.0, regression_blend))
+                regression_ridge = _to_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_RIDGE", "0.01"), 0.01)
+                regression_ridge = max(0.0, regression_ridge)
+                weather_regression = {
+                    "enabled": True,
+                    "sample_days": len(regression_rows),
+                    "blend": _round(regression_blend),
+                    "ridge": _round(regression_ridge),
+                    "min_factor": _round(min_factor),
+                    "max_factor": _round(max_factor),
+                    "target_classes": ["cloudy", "rain"],
+                }
+                if len(regression_rows) >= regression_min_days:
+                    x = np.asarray([[1.0, row[0], row[1]] for row in regression_rows], dtype=float)
+                    y = np.asarray([row[2] for row in regression_rows], dtype=float)
+                    xtx = x.T @ x
+                    ridge = regression_ridge * np.eye(xtx.shape[0], dtype=float)
+                    beta = np.linalg.solve(xtx + ridge, x.T @ y)
+                    weather_regression["coefficients"] = {
+                        "intercept": _round(float(beta[0])),
+                        "sunshine_hours": _round(float(beta[1])),
+                        "precipitation_sum_mm": _round(float(beta[2])),
+                    }
+                    weather_regression["status"] = "fitted"
+                else:
+                    weather_regression["status"] = "insufficient_days"
+        except Exception:
+            # 天候別補正は補助情報なので、失敗時は全体補正のみで継続する
+            weather_adjustments = {}
+            weather_regression = {"enabled": False, "status": "failed"}
+
     return {
         "factor": _round(factor),
         "raw_factor": _round(raw_factor),
@@ -312,6 +516,8 @@ def calibrate_performance_ratio(
         "actual_kwh": _round(actual_total),
         "modeled_kwh": _round(modeled_total),
         "source": "actual_pv_vs_open_meteo_gti",
+        "weather_adjustments": weather_adjustments,
+        "weather_regression": weather_regression,
     }
 
 
@@ -396,6 +602,9 @@ def build_pv_array_forecast(
     lat: float,
     lon: float,
     timezone: str,
+    target_weather_class: str | None = None,
+    target_sun_hours: float | None = None,
+    target_precipitation_sum_mm: float | None = None,
     http_get: HttpGet = requests.get,
 ) -> dict[str, Any] | None:
     if not arrays:
@@ -413,15 +622,58 @@ def build_pv_array_forecast(
         max_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MAX_FACTOR", "5.0")),
         http_get=http_get,
     )
+    base_factor = _to_float(calibration.get("factor"), 1.0)
+    weather_class = _normalize_weather_class(target_weather_class)
+    weather_adjustments = calibration.get("weather_adjustments")
+    weather_multiplier = 1.0
+    adjustment_strategy = "base"
+    if isinstance(weather_adjustments, dict):
+        entry = weather_adjustments.get(weather_class)
+        if isinstance(entry, dict):
+            weather_multiplier = _to_float(entry.get("multiplier"), 1.0)
+            adjustment_strategy = "class_multiplier"
+    effective_factor = max(0.0, base_factor * weather_multiplier)
+
+    weather_regression = calibration.get("weather_regression")
+    if (
+        weather_class in {"cloudy", "rain"}
+        and isinstance(weather_regression, dict)
+        and str(weather_regression.get("status")) == "fitted"
+        and target_sun_hours is not None
+        and target_precipitation_sum_mm is not None
+    ):
+        coefficients = weather_regression.get("coefficients")
+        if isinstance(coefficients, dict):
+            intercept = _to_float(coefficients.get("intercept"), base_factor)
+            coef_sun = _to_float(coefficients.get("sunshine_hours"), 0.0)
+            coef_precip = _to_float(coefficients.get("precipitation_sum_mm"), 0.0)
+            blend = _to_float(weather_regression.get("blend"), 0.1)
+            blend = max(0.0, min(1.0, blend))
+            reg_factor_raw = intercept + coef_sun * target_sun_hours + coef_precip * target_precipitation_sum_mm
+            reg_min = _to_float(weather_regression.get("min_factor"), 0.2)
+            reg_max = _to_float(weather_regression.get("max_factor"), 5.0)
+            if reg_min > reg_max:
+                reg_min, reg_max = reg_max, reg_min
+            reg_factor = max(reg_min, min(reg_max, reg_factor_raw))
+            effective_factor = max(0.0, base_factor * (1.0 - blend) + reg_factor * blend)
+            weather_multiplier = (effective_factor / base_factor) if base_factor > 0 else 1.0
+            adjustment_strategy = "regression_blend"
+
     forecast = forecast_pv_arrays(
         arrays=arrays,
         target_date=target_date,
         lat=lat,
         lon=lon,
         timezone=timezone,
-        calibration_factor=_to_float(calibration.get("factor"), 1.0),
+        calibration_factor=effective_factor,
         http_get=http_get,
     )
+    calibration["target_weather_class"] = weather_class
+    calibration["target_sun_hours"] = _round(target_sun_hours)
+    calibration["target_precipitation_sum_mm"] = _round(target_precipitation_sum_mm)
+    calibration["adjustment_strategy"] = adjustment_strategy
+    calibration["weather_multiplier"] = _round(weather_multiplier)
+    calibration["effective_factor"] = _round(effective_factor)
+    forecast["calibration_factor"] = _round(effective_factor)
     forecast["calibration"] = calibration
     return forecast
-

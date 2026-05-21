@@ -349,6 +349,9 @@ def _build_pv_forecast_or_disabled(
     lat: float,
     lon: float,
     timezone: str,
+    target_weather_class: str | None,
+    target_sun_hours: float | None,
+    target_precipitation_sum_mm: float | None,
 ) -> dict[str, object] | None:
     if not _env_bool("PV_ARRAY_FORECAST_ENABLED", True):
         return {"enabled": False, "source": "disabled"}
@@ -363,6 +366,9 @@ def _build_pv_forecast_or_disabled(
             lat=lat,
             lon=lon,
             timezone=timezone,
+            target_weather_class=target_weather_class,
+            target_sun_hours=target_sun_hours,
+            target_precipitation_sum_mm=target_precipitation_sum_mm,
         )
     except Exception as exc:
         return {"enabled": False, "source": "pv_array_forecast_failed", "error": str(exc)}
@@ -436,6 +442,9 @@ def main() -> int:
         lat=lat,
         lon=lon,
         timezone=timezone,
+        target_weather_class=str(forecast.get("weather_class") or ""),
+        target_sun_hours=_to_optional_float(forecast.get("sun_hours")),
+        target_precipitation_sum_mm=_to_optional_float(forecast.get("precipitation_sum_mm")),
     )
     pv_totals = _pv_forecast_totals(pv_array_forecast)
     predicted_pv_override = _to_optional_float(pv_totals.get("total_kwh"))
@@ -473,7 +482,9 @@ def main() -> int:
         calibration = pv_array_forecast.get("calibration", {})
         arrays = pv_array_forecast.get("arrays", [])
         if isinstance(calibration, dict):
-            factor = _to_optional_float(calibration.get("factor"))
+            factor = _to_optional_float(calibration.get("effective_factor"))
+            if factor is None:
+                factor = _to_optional_float(calibration.get("factor"))
             if factor is not None:
                 coefficients["pv_array_calibration_factor"] = factor
         if isinstance(arrays, list):

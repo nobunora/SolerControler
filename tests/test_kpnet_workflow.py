@@ -73,6 +73,7 @@ def _build_cfg(*, plan_path: Path) -> KpNetConfig:
         dynamic_mode_switch_by_time=True,
         night_plan_path=plan_path,
         default_charge_power_kw=1.8,
+        green_mode_max_charge_percent=50.0,
         night_charge_window_start="23:00",
         night_charge_window_end="07:00",
         day_discharge_window_start="07:00",
@@ -288,3 +289,51 @@ def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
     assert profile.discharge_start_h == expected_discharge_start_h
     assert profile.discharge_start_m == "0"
     assert profile.charge_end_h == expected_charge_end_h
+
+
+def test_build_dynamic_forced_profile_switches_to_forced_mode_when_charge_need_is_high(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,充電電力量[kWh]",
+                "2026/05/01,23:30,0.5",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-05-03"},
+                "inputs": {"soc_now_percent": 10.0},
+                "result": {
+                    "required_night_charge_kwh": 4.0,
+                    "effective_capacity_kwh": 8.0,
+                    "target_soc_7_percent": 70.0,
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cfg = _build_cfg(plan_path=plan_path)
+    value_maps = {
+        "BatteryOperatingMode": {"1": "グリーンモード", "2": "経済モード", "3": "強制充電モード"},
+        "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
+        "SocEconomyMode": {"0": "0%", "20": "20%"},
+        "SocContactInput": {"0": "0%", "100": "100%"},
+        "SocChargeMode": {"10": "10%", "30": "30%", "50": "50%", "80": "80%"},
+    }
+    summary: dict[str, object] = {}
+
+    profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
+
+    assert profile.battery_operating_mode == "3"
+    night_plan_summary = summary.get("night_charge_plan", {})
+    assert isinstance(night_plan_summary, dict)
+    assert night_plan_summary.get("force_charge_mode") is True

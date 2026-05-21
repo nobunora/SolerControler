@@ -6,6 +6,7 @@ import pytest
 
 from app.pv_array_forecast import (
     PVArrayConfig,
+    build_pv_array_forecast,
     calibrate_performance_ratio,
     forecast_pv_arrays,
 )
@@ -99,3 +100,130 @@ def test_calibration_uses_actual_generation_history() -> None:
 
     assert calibration["factor"] == pytest.approx(2.0)
     assert calibration["sample_days"] == 3
+
+
+def test_build_pv_array_forecast_applies_weather_multiplier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = [PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0)]
+    rows = [
+        {"dt": datetime(2026, 5, 15, 12), "pv": 1.0},
+        {"dt": datetime(2026, 5, 16, 12), "pv": 2.0},
+    ]
+
+    monkeypatch.setenv("PV_ARRAY_WEATHER_CALIBRATION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_ADJUSTMENT_MIN_RATIO", "0.5")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_ADJUSTMENT_MAX_RATIO", "1.5")
+    monkeypatch.setenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "1")
+
+    def fake_get(url, *, params, timeout):
+        if "archive-api.open-meteo.com" in url:
+            if "weather_code" in str(params.get("daily", "")):
+                return _FakeResponse(
+                    {
+                        "daily": {
+                            "time": ["2026-05-15", "2026-05-16"],
+                            "weather_code": [0, 3],
+                        }
+                    }
+                )
+            return _FakeResponse(
+                {
+                    "hourly": {
+                        "time": ["2026-05-15T12:00", "2026-05-16T12:00"],
+                        "global_tilted_irradiance": [1000.0, 1000.0],
+                        "temperature_2m": [25.0, 25.0],
+                    }
+                }
+            )
+        return _FakeResponse(
+            {
+                "hourly": {
+                    "time": ["2026-05-17T12:00"],
+                    "global_tilted_irradiance": [1000.0],
+                    "temperature_2m": [25.0],
+                }
+            }
+        )
+
+    forecast = build_pv_array_forecast(
+        arrays=arrays,
+        rows=rows,
+        target_date="2026-05-17",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        target_weather_class="cloudy",
+        http_get=fake_get,
+    )
+    assert forecast is not None
+    assert forecast["totals"]["total_kwh"] == pytest.approx(2.0, rel=1e-3)
+    calibration = forecast["calibration"]
+    assert calibration["target_weather_class"] == "cloudy"
+    assert calibration["weather_multiplier"] == pytest.approx(1.3333, rel=1e-4)
+
+
+def test_build_pv_array_forecast_prefers_regression_blend_for_cloudy_or_rain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = [PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0)]
+    rows = [
+        {"dt": datetime(2026, 5, 15, 12), "pv": 1.0},
+        {"dt": datetime(2026, 5, 16, 12), "pv": 1.5},
+        {"dt": datetime(2026, 5, 17, 12), "pv": 2.0},
+    ]
+
+    monkeypatch.setenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_CALIBRATION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "1.0")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_RIDGE", "0.01")
+
+    def fake_get(url, *, params, timeout):
+        if "archive-api.open-meteo.com" in url:
+            if "weather_code" in str(params.get("daily", "")):
+                return _FakeResponse(
+                    {
+                        "daily": {
+                            "time": ["2026-05-15", "2026-05-16", "2026-05-17"],
+                            "weather_code": [3, 3, 3],
+                            "sunshine_duration": [3600.0, 7200.0, 10800.0],
+                            "precipitation_sum": [0.0, 0.0, 0.0],
+                        }
+                    }
+                )
+            return _FakeResponse(
+                {
+                    "hourly": {
+                        "time": ["2026-05-15T12:00", "2026-05-16T12:00", "2026-05-17T12:00"],
+                        "global_tilted_irradiance": [1000.0, 1000.0, 1000.0],
+                        "temperature_2m": [25.0, 25.0, 25.0],
+                    }
+                }
+            )
+        return _FakeResponse(
+            {
+                "hourly": {
+                    "time": ["2026-05-18T12:00"],
+                    "global_tilted_irradiance": [1000.0],
+                    "temperature_2m": [25.0],
+                }
+            }
+        )
+
+    forecast = build_pv_array_forecast(
+        arrays=arrays,
+        rows=rows,
+        target_date="2026-05-18",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        target_weather_class="cloudy",
+        target_sun_hours=4.0,
+        target_precipitation_sum_mm=0.0,
+        http_get=fake_get,
+    )
+    assert forecast is not None
+    assert forecast["totals"]["total_kwh"] > 2.0
+    calibration = forecast["calibration"]
+    assert calibration["adjustment_strategy"] == "regression_blend"
