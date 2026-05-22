@@ -431,7 +431,7 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
 Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23" --set-secrets $secretEnvArg
-Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 18000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_MAX_ATTEMPTS=3,ADJUST03_WAIT_SECONDS=600,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_FORCE_MONITOR_POLL_SECONDS=600,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_TIMER_BUFFER_MINUTES=20,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
+Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 18000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_MAX_ATTEMPTS=3,ADJUST03_WAIT_SECONDS=600,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
 $deploySheetsJob = $sheetsExportEnabled -and [bool]$sheetsIdResolved

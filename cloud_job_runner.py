@@ -153,6 +153,31 @@ def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
     return max(0, int((cutoff - now).total_seconds()))
 
 
+def _compute_force_activation_delay_seconds(
+    *,
+    cutoff_seconds: int,
+    estimated_charge_minutes: int,
+    start_advance_minutes: int,
+) -> int:
+    lead_seconds = max(0, (estimated_charge_minutes + start_advance_minutes) * 60)
+    return max(0, cutoff_seconds - lead_seconds)
+
+
+def _sleep_with_progress(total_seconds: int, *, label: str, chunk_seconds: int = 300) -> None:
+    remaining = max(0, int(total_seconds))
+    if remaining <= 0:
+        return
+    chunk = max(30, int(chunk_seconds))
+    while remaining > 0:
+        current = min(chunk, remaining)
+        print(
+            f"[cloud_job_runner] {label} sleep={current}s remaining_after={max(0, remaining - current)}s",
+            flush=True,
+        )
+        time.sleep(current)
+        remaining -= current
+
+
 def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None:
     _run(
         [sys.executable, "kpnet_main.py"],
@@ -182,6 +207,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%",
             flush=True,
         )
+        _run_settings_profile(profile="forced", dynamic_forced_profile=True)
         return
 
     default_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8").strip() or "1.8")
@@ -191,24 +217,44 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     estimated_charge_minutes = 0
     if required_kwh > 0:
         estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999)
-    timer_buffer_minutes = max(0, int(os.getenv("ADJUST03_FORCE_TIMER_BUFFER_MINUTES", "20").strip() or "20"))
-    poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "600").strip() or "600"))
+    start_advance_minutes = max(0, int(os.getenv("ADJUST03_FORCE_START_ADVANCE_MINUTES", "0").strip() or "0"))
+    poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
     soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
     cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
-    timer_seconds = max(0, (estimated_charge_minutes + timer_buffer_minutes) * 60)
-    monitor_seconds = min(cutoff_seconds, timer_seconds) if cutoff_seconds > 0 else timer_seconds
-    if monitor_seconds <= 0:
-        print("[cloud_job_runner] 03-monitor stop timer is zero; switch to green immediately.", flush=True)
+    delay_seconds = _compute_force_activation_delay_seconds(
+        cutoff_seconds=cutoff_seconds,
+        estimated_charge_minutes=estimated_charge_minutes,
+        start_advance_minutes=start_advance_minutes,
+    )
+    if cutoff_seconds <= 0:
+        print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
         _run_settings_profile(profile="green", dynamic_forced_profile=False)
         return
 
     print(
-        "[cloud_job_runner] 03-monitor start "
+        "[cloud_job_runner] 03-monitor schedule "
         f"target_soc={target_soc:.2f}% required={required_kwh:.3f}kWh "
-        f"estimated={estimated_charge_minutes}min buffer={timer_buffer_minutes}min "
-        f"poll={poll_seconds}s monitor={monitor_seconds}s cutoff={cutoff_hhmm}",
+        f"estimated={estimated_charge_minutes}min advance={start_advance_minutes}min "
+        f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
+        flush=True,
+    )
+    if delay_seconds > 0:
+        _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")
+
+    # 強制充電モードは時間設定を無視して即時充電を開始するため、
+    # 7時逆算時刻でのみ強制モードへ切り替える。
+    _run_settings_profile(profile="forced", dynamic_forced_profile=True)
+
+    monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
+    if monitor_seconds <= 0:
+        print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
+        _run_settings_profile(profile="green", dynamic_forced_profile=False)
+        return
+
+    print(
+        f"[cloud_job_runner] 03-monitor forced-started monitor={monitor_seconds}s until cutoff={cutoff_hhmm}",
         flush=True,
     )
     started_at = time.time()
@@ -375,7 +421,6 @@ def _run_adjust_03() -> None:
             )
             time.sleep(wait_seconds)
 
-    _run_settings_profile(profile="forced", dynamic_forced_profile=True)
     _monitor_partial_forced_and_stop(plan_path)
 
 

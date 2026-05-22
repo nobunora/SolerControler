@@ -1,6 +1,6 @@
 # 現在の判定ルール（条件木）
 
-最終更新: 2026-05-17 (JST)  
+最終更新: 2026-05-23 (JST)  
 対象コード: `cloud_job_runner.py`, `app/kpnet_workflow.py`, `energy_model_main.py`, `config/operation_conditions.json`
 
 この文書は、現在実装されている「設定適用の判定ロジック」を条件木として整理したものです。
@@ -29,10 +29,16 @@ ROOT: CLOUD_JOB_SLOT
 │  │  │  ├─ |sun_hours差| >= ADJUST03_SUN_EPSILON_H
 │  │  │  └─ |temp_c差| >= ADJUST03_TEMP_EPSILON_C
 │  │  └─ 更新なしなら ADJUST03_WAIT_SECONDS 待って再試行
-│  └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
-│                   KP_FORCE_SETTINGS_PROFILE=forced,
-│                   KP_DYNAMIC_FORCED_PROFILE=true,
-│                   KP_DYNAMIC_MODE_SWITCH_BY_TIME=false)
+│  └─ 部分強制充電(51-99%)のときのみ:
+│     ├─ 07:00 逆算で「強制モード開始時刻」を算出
+│     ├─ 03時台は green 待機のまま遅延タイマー待機
+│     ├─ 逆算時刻で kpnet_main.py(settings, forced, dynamic=true) を実行
+│     └─ cutoff(07:00)までSOC監視し、目標到達/時間切れで green へ戻す
+│  └─ それ以外:
+│     └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
+│                      KP_FORCE_SETTINGS_PROFILE=forced,
+│                      KP_DYNAMIC_FORCED_PROFILE=true,
+│                      KP_DYNAMIC_MODE_SWITCH_BY_TIME=false)
 └─ in {"7", "07", "day", "day07"}
    └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
                     KP_FORCE_SETTINGS_PROFILE=green,

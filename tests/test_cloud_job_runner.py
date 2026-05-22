@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from cloud_job_runner import (
+    _compute_force_activation_delay_seconds,
     _forecast_changed,
     _mask_env_updates,
+    _monitor_partial_forced_and_stop,
     _required_charge_percent_from_plan,
     _should_stage_partial_forced,
 )
@@ -63,3 +65,85 @@ def test_stage_partial_forced_enabled_for_51_to_99(monkeypatch) -> None:
     assert staged is True
     assert required_pct == 60.0
     assert target_soc == 80.0
+
+
+def test_compute_force_activation_delay_seconds() -> None:
+    delay = _compute_force_activation_delay_seconds(
+        cutoff_seconds=3 * 60 * 60,
+        estimated_charge_minutes=90,
+        start_advance_minutes=0,
+    )
+    # 3h先のcutoffに対して、90分前に強制開始
+    assert delay == 90 * 60
+
+
+def test_compute_force_activation_delay_seconds_immediate_when_late() -> None:
+    delay = _compute_force_activation_delay_seconds(
+        cutoff_seconds=30 * 60,
+        estimated_charge_minutes=90,
+        start_advance_minutes=0,
+    )
+    assert delay == 0
+
+
+def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(
+        "cloud_job_runner._should_stage_partial_forced",
+        lambda **kwargs: (False, 10.0, 40.0),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 40.0},
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_settings_profile",
+        lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
+    )
+
+    _monitor_partial_forced_and_stop(plan_path)
+
+    assert calls == [("forced", True)]
+
+
+def test_monitor_partial_forced_delays_forced_start_then_switches_green(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, bool]] = []
+    sleeps: list[int] = []
+    cutoff_values = iter([3600, 0])
+
+    monkeypatch.setattr(
+        "cloud_job_runner._should_stage_partial_forced",
+        lambda **kwargs: (True, 60.0, 80.0),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 80.0},
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._seconds_until_cutoff",
+        lambda **kwargs: next(cutoff_values),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._sleep_with_progress",
+        lambda total_seconds, *, label, chunk_seconds=300: sleeps.append(total_seconds),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_settings_profile",
+        lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
+    )
+
+    _monitor_partial_forced_and_stop(plan_path)
+
+    assert sleeps and sleeps[0] > 0
+    assert calls == [("forced", True), ("green", False)]

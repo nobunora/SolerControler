@@ -303,8 +303,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>5. 蓄電池設定値と実績</h2>
-        <p class="desc">左軸はkWh、右軸はSOC(%)。夜間充電量・PV蓄電余力と、目標SOC・日終SOCを分けて表示します。</p>
+        <h2>5. 蓄電池計画値と実績（日次）</h2>
+        <p class="desc">左軸はkWh/日、右軸はSOC(%)。夜間充電・PV蓄電余力は「日次の計画/予測値」で、瞬時充電電力(kW)ではありません。</p>
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
@@ -826,9 +826,9 @@ def _html(payload: dict, script_nonce: str) -> str:
         type: "line",
         data: { labels: [], datasets: [
           { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, pointHoverRadius: 4, borderWidth: 2.5 },
-          { label: "夜間充電量(kWh)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
-          { label: "太陽光 最大蓄電量(kWh)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
-          { label: "日終SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
+          { label: "夜間充電計画(kWh/日)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
+          { label: "太陽光蓄電余力予測(kWh/日)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
+          { label: "日終SOC実績(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
         ]},
         options: {
           ...commonOptions(),
