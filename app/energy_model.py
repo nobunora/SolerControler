@@ -59,6 +59,16 @@ class NightChargeResult:
     required_night_charge_kwh: float
 
 
+@dataclass(frozen=True)
+class DaytimeSocOptimizationResult:
+    target_soc_7_percent: float
+    target_energy_kwh: float
+    required_night_charge_kwh: float
+    predicted_daytime_buy_kwh: float
+    predicted_sunset_soc_percent: float
+    predicted_sunset_energy_kwh: float
+
+
 def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, float | str | datetime]]:
     rows: list[dict[str, float | str | datetime]] = []
     for path in csv_paths:
@@ -175,6 +185,104 @@ def effective_capacity_kwh(
     return coeff.battery_usable_capacity_kwh * cycle_factor * temp_factor
 
 
+def _simulate_daytime(
+    *,
+    start_energy_kwh: float,
+    capacity_kwh: float,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    sunset_hour: int,
+) -> tuple[float, float]:
+    energy = max(0.0, min(capacity_kwh, start_energy_kwh))
+    buy_kwh = 0.0
+    sunset_energy_kwh = energy
+    hours = sorted(set(hourly_load_kwh.keys()) | set(hourly_pv_kwh.keys()))
+    for hour in hours:
+        if hour < 7 or hour >= 23:
+            continue
+        load = max(0.0, hourly_load_kwh.get(hour, 0.0))
+        pv = max(0.0, hourly_pv_kwh.get(hour, 0.0))
+        net = load - pv
+        if net >= 0:
+            discharge = min(energy, net)
+            energy -= discharge
+            buy_kwh += max(0.0, net - discharge)
+        else:
+            charge = min(capacity_kwh - energy, -net)
+            energy += charge
+        if hour <= sunset_hour:
+            sunset_energy_kwh = energy
+    return buy_kwh, sunset_energy_kwh
+
+
+def optimize_target_soc_for_daytime(
+    *,
+    effective_capacity_kwh_value: float,
+    soc_now_percent: float,
+    reserve_soc_percent: float,
+    battery_round_trip_efficiency: float,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    sunset_hour: int,
+    soc_step_percent: float = 1.0,
+) -> DaytimeSocOptimizationResult | None:
+    cap = max(0.0, effective_capacity_kwh_value)
+    if cap <= 0:
+        return None
+    hours = [h for h in sorted(set(hourly_load_kwh.keys()) | set(hourly_pv_kwh.keys())) if 7 <= h < 23]
+    if not hours:
+        return None
+
+    reserve_soc = max(0.0, min(100.0, reserve_soc_percent))
+    soc_now = max(0.0, min(100.0, soc_now_percent))
+    step = min(10.0, max(0.5, soc_step_percent))
+    eta_ch = max(0.7, battery_round_trip_efficiency)
+
+    best_target_soc = reserve_soc
+    best_target_energy = cap * reserve_soc / 100.0
+    best_buy = float("inf")
+    best_sunset_energy = -1.0
+
+    cursor = reserve_soc
+    while cursor <= 100.0 + 1e-9:
+        target_soc = min(100.0, cursor)
+        start_energy = cap * target_soc / 100.0
+        buy_kwh, sunset_energy = _simulate_daytime(
+            start_energy_kwh=start_energy,
+            capacity_kwh=cap,
+            hourly_load_kwh=hourly_load_kwh,
+            hourly_pv_kwh=hourly_pv_kwh,
+            sunset_hour=sunset_hour,
+        )
+        better = False
+        if buy_kwh < best_buy - 1e-9:
+            better = True
+        elif abs(buy_kwh - best_buy) <= 1e-9:
+            if sunset_energy > best_sunset_energy + 1e-9:
+                better = True
+            elif abs(sunset_energy - best_sunset_energy) <= 1e-9 and start_energy < best_target_energy - 1e-9:
+                better = True
+
+        if better:
+            best_target_soc = target_soc
+            best_target_energy = start_energy
+            best_buy = buy_kwh
+            best_sunset_energy = sunset_energy
+        cursor += step
+
+    e_now = cap * soc_now / 100.0
+    required_night_charge_kwh = max(0.0, (best_target_energy - e_now) / eta_ch)
+    sunset_soc = 100.0 * best_sunset_energy / cap if cap > 0 else 0.0
+    return DaytimeSocOptimizationResult(
+        target_soc_7_percent=max(0.0, min(100.0, best_target_soc)),
+        target_energy_kwh=best_target_energy,
+        required_night_charge_kwh=required_night_charge_kwh,
+        predicted_daytime_buy_kwh=max(0.0, best_buy),
+        predicted_sunset_soc_percent=max(0.0, min(100.0, sunset_soc)),
+        predicted_sunset_energy_kwh=max(0.0, best_sunset_energy),
+    )
+
+
 def compute_night_charge_target(
     coeff: EnergyModelCoefficients,
     inp: NightChargeInputs,
@@ -238,7 +346,9 @@ def compute_night_charge_target(
     )
 
 
-def to_dict(obj: EnergyModelCoefficients | NightChargeInputs | NightChargeResult) -> dict[str, float | None]:
+def to_dict(
+    obj: EnergyModelCoefficients | NightChargeInputs | NightChargeResult | DaytimeSocOptimizationResult,
+) -> dict[str, float | None]:
     out: dict[str, float | None] = {}
     for key, value in asdict(obj).items():
         out[key] = None if value is None else float(value)

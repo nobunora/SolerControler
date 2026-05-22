@@ -11,6 +11,7 @@ from app.energy_model import (
     effective_capacity_kwh,
     fit_coefficients_from_csv,
     forecast_pv_energy_kwh,
+    optimize_target_soc_for_daytime,
 )
 
 
@@ -139,3 +140,36 @@ def test_fit_coefficients_from_csv(tmp_path: Path) -> None:
     assert coeff.soc_per_kwh_discharge > 0
     assert 0 < coeff.battery_round_trip_efficiency <= 1.5
     assert coeff.battery_usable_capacity_kwh > 0
+
+
+def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_sunset() -> None:
+    result = optimize_target_soc_for_daytime(
+        effective_capacity_kwh_value=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        battery_round_trip_efficiency=1.0,
+        hourly_load_kwh={7: 2.0, 8: 2.0, 9: 2.0, 10: 1.0, 11: 1.0},
+        hourly_pv_kwh={10: 3.0, 11: 3.0},
+        sunset_hour=11,
+        soc_step_percent=1.0,
+    )
+    assert result is not None
+    assert result.predicted_daytime_buy_kwh == pytest.approx(0.0)
+    assert result.target_soc_7_percent == pytest.approx(100.0)
+
+
+def test_optimize_target_soc_for_daytime_prefers_lower_soc_when_sunset_tied() -> None:
+    result = optimize_target_soc_for_daytime(
+        effective_capacity_kwh_value=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        battery_round_trip_efficiency=1.0,
+        hourly_load_kwh={7: 1.0, 10: 0.0},
+        hourly_pv_kwh={10: 6.0},
+        sunset_hour=10,
+        soc_step_percent=1.0,
+    )
+    assert result is not None
+    assert result.predicted_daytime_buy_kwh == pytest.approx(0.0)
+    # sunset SOC=100% を達成できる最小開始SOCを選択
+    assert result.target_soc_7_percent == pytest.approx(50.0)

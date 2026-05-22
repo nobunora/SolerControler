@@ -11,9 +11,11 @@ import requests
 
 from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
 from app.energy_model import (
+    DaytimeSocOptimizationResult,
     NightChargeInputs,
     compute_night_charge_target,
     fit_coefficients_from_csv,
+    optimize_target_soc_for_daytime,
     to_dict,
 )
 from app.occupancy_schedule import (
@@ -381,6 +383,120 @@ def _pv_forecast_totals(pv_forecast: dict[str, object] | None) -> dict[str, obje
     return totals if isinstance(totals, dict) else {}
 
 
+def _hourly_pv_kwh_from_forecast(
+    pv_forecast: dict[str, object] | None,
+    *,
+    target_date: str,
+) -> dict[int, float]:
+    out: dict[int, float] = {}
+    if not isinstance(pv_forecast, dict) or not pv_forecast.get("enabled"):
+        return out
+    hourly = pv_forecast.get("hourly", [])
+    if not isinstance(hourly, list):
+        return out
+    for row in hourly:
+        if not isinstance(row, dict):
+            continue
+        raw_time = str(row.get("time") or "").strip()
+        if not raw_time:
+            continue
+        try:
+            dt = datetime.fromisoformat(raw_time)
+        except ValueError:
+            continue
+        if dt.date().isoformat() != target_date:
+            continue
+        if dt.hour < 7 or dt.hour >= 23:
+            continue
+        kwh = _to_optional_float(row.get("total_kwh")) or 0.0
+        out[dt.hour] = out.get(dt.hour, 0.0) + max(0.0, kwh)
+    return out
+
+
+def _historical_hourly_profile(
+    rows: list[dict[str, float | datetime]],
+    *,
+    key: str,
+    start_hour: int,
+    end_hour_exclusive: int,
+) -> dict[int, float]:
+    sums: dict[int, float] = {}
+    counts: dict[int, int] = {}
+    for row in rows:
+        dt = row.get("dt")
+        if not isinstance(dt, datetime):
+            continue
+        if dt.hour < start_hour or dt.hour >= end_hour_exclusive:
+            continue
+        val = max(0.0, float(row.get(key, 0.0) or 0.0))
+        sums[dt.hour] = sums.get(dt.hour, 0.0) + val
+        counts[dt.hour] = counts.get(dt.hour, 0) + 1
+    out: dict[int, float] = {}
+    for hour in range(start_hour, end_hour_exclusive):
+        c = counts.get(hour, 0)
+        out[hour] = (sums.get(hour, 0.0) / c) if c > 0 else 0.0
+    return out
+
+
+def _normalize_profile(profile: dict[int, float], *, hours: list[int]) -> dict[int, float]:
+    values = {h: max(0.0, profile.get(h, 0.0)) for h in hours}
+    total = sum(values.values())
+    if total <= 0:
+        uniform = 1.0 / len(hours) if hours else 0.0
+        return {h: uniform for h in hours}
+    return {h: values[h] / total for h in hours}
+
+
+def _build_hourly_load_forecast(
+    rows: list[dict[str, float | datetime]],
+    *,
+    daytime_load_kwh: float,
+    morning_load_kwh: float,
+) -> dict[int, float]:
+    morning_hours = [7, 8, 9]
+    daytime_rest_hours = list(range(10, 23))
+    morning_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=7, end_hour_exclusive=10)
+    rest_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=10, end_hour_exclusive=23)
+    morning_profile = _normalize_profile(morning_profile_raw, hours=morning_hours)
+    rest_profile = _normalize_profile(rest_profile_raw, hours=daytime_rest_hours)
+
+    morning_total = max(0.0, morning_load_kwh)
+    daytime_total = max(0.0, daytime_load_kwh)
+    rest_total = max(0.0, daytime_total - morning_total)
+
+    out: dict[int, float] = {}
+    for h in morning_hours:
+        out[h] = morning_total * morning_profile[h]
+    for h in daytime_rest_hours:
+        out[h] = rest_total * rest_profile[h]
+    return out
+
+
+def _build_hourly_pv_forecast(
+    rows: list[dict[str, float | datetime]],
+    *,
+    pv_forecast: dict[str, object] | None,
+    target_date: str,
+    fallback_total_kwh: float,
+) -> dict[int, float]:
+    from_forecast = _hourly_pv_kwh_from_forecast(pv_forecast, target_date=target_date)
+    if from_forecast:
+        return from_forecast
+
+    hours = list(range(7, 23))
+    pv_profile_raw = _historical_hourly_profile(rows, key="pv", start_hour=7, end_hour_exclusive=23)
+    pv_profile = _normalize_profile(pv_profile_raw, hours=hours)
+    total = max(0.0, fallback_total_kwh)
+    return {h: total * pv_profile[h] for h in hours}
+
+
+def _estimate_sunset_hour(hourly_pv_kwh: dict[int, float]) -> int:
+    active_hours = [h for h, v in hourly_pv_kwh.items() if h >= 7 and h < 23 and v > 0.03]
+    if not active_hours:
+        return 18
+    return max(active_hours)
+
+
 def _estimate_midday_surplus_from_pv_forecast(
     *,
     pv_forecast: dict[str, object] | None,
@@ -477,6 +593,43 @@ def main() -> int:
         predicted_midday_surplus_kwh_override=predicted_midday_surplus_override,
     )
     result = compute_night_charge_target(coeff, inp)
+    result_payload = to_dict(result)
+
+    hourly_load_forecast = _build_hourly_load_forecast(
+        rows,
+        daytime_load_kwh=consumption_forecast.daytime_load_kwh,
+        morning_load_kwh=consumption_forecast.morning_load_kwh,
+    )
+    hourly_pv_forecast = _build_hourly_pv_forecast(
+        rows,
+        pv_forecast=pv_array_forecast if isinstance(pv_array_forecast, dict) else None,
+        target_date=tomorrow_date,
+        fallback_total_kwh=result.predicted_pv_kwh,
+    )
+    sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
+    daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
+        effective_capacity_kwh_value=result.effective_capacity_kwh,
+        soc_now_percent=latest_soc,
+        reserve_soc_percent=inp.reserve_soc_percent,
+        battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
+        hourly_load_kwh=hourly_load_forecast,
+        hourly_pv_kwh=hourly_pv_forecast,
+        sunset_hour=sunset_hour,
+        soc_step_percent=float(os.getenv("DAYTIME_SOC_OPT_STEP_PERCENT", "1.0").strip() or "1.0"),
+    )
+    optimization_payload: dict[str, object] | None = None
+    if daytime_optimization is not None:
+        result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
+        result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
+        result_payload["target_soc_7_percent"] = daytime_optimization.target_soc_7_percent
+        result_payload["required_night_charge_kwh"] = daytime_optimization.required_night_charge_kwh
+        optimization_payload = {
+            **to_dict(daytime_optimization),
+            "sunset_hour": sunset_hour,
+            "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
+            "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
+        }
+
     coefficients = to_dict(coeff)
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
         calibration = pv_array_forecast.get("calibration", {})
@@ -501,7 +654,8 @@ def main() -> int:
         "occupancy_adjustment": _occupancy_adjustment_to_dict(occupancy_adjustment),
         "coefficients": coefficients,
         "inputs": to_dict(inp),
-        "result": to_dict(result),
+        "result": result_payload,
+        "daytime_soc_optimization": optimization_payload,
     }
     out = artifacts_dir / "night_charge_plan.json"
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
