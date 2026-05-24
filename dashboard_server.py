@@ -276,7 +276,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         <p class="desc">集計月は「前月15日〜当月14日」を当月分として扱います。締め日は `DASHBOARD_AGGREGATION_CLOSE_DAY` で変更できます。</p>
         <div class="period-panel" aria-label="表示期間切り替え">
           <button id="periodMonthBtn" class="period-button" type="button">1ヶ月(日)</button>
-          <button id="periodYearBtn" class="period-button" type="button">年(12ヶ月)</button>
+          <button id="periodYearBtn" class="period-button" type="button">年(週)</button>
           <button id="periodAllBtn" class="period-button" type="button">全て(日)</button>
           <button id="periodPrevBtn" class="period-button" type="button">前</button>
           <button id="periodNextBtn" class="period-button" type="button">後</button>
@@ -303,14 +303,14 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>2. 自家消費kWh（日）</h2>
-        <p class="desc">青の棒: 日次自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。</p>
+        <h2 id="dailyKwhTitle">2. 自家消費kWh（日）</h2>
+        <p id="dailyKwhDesc" class="desc">青の棒: 日次自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyKwhChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>3. 節約額（日）</h2>
-        <p class="desc">橙の棒: 日次節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。</p>
+        <h2 id="dailyYenTitle">3. 節約額（日）</h2>
+        <p id="dailyYenDesc" class="desc">橙の棒: 日次節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyYenChart"></canvas></div>
       </article>
 
@@ -321,8 +321,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>5. 蓄電池計画値と実績（日次）</h2>
-        <p class="desc">左軸はkWh/日、右軸はSOC(%)。夜間充電・PV蓄電余力は「日次の計画/予測値」で、瞬時充電電力(kW)ではありません。</p>
+        <h2 id="batteryTitle">5. 蓄電池計画値と実績（日次）</h2>
+        <p id="batteryDesc" class="desc">左軸はkWh/日、右軸はSOC(%)。夜間充電・PV蓄電余力は「日次の計画/予測値」で、瞬時充電電力(kW)ではありません。</p>
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
@@ -566,7 +566,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     };
 
     const periodState = {
-      mode: "month",
+      mode: "all",
       month: null,
       year: null,
       initialized: false,
@@ -610,6 +610,20 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
     }
 
+    function displayCutoffDate() {
+      const today = todayIsoJst();
+      const scheduleDate = store.latestSchedule && store.latestSchedule.plan_date
+        ? String(store.latestSchedule.plan_date)
+        : "";
+      const hasScheduleForecast =
+        scheduleDate &&
+        (store.sunshine.has(scheduleDate) ||
+          store.hourly.has(scheduleDate) ||
+          store.energy.has(scheduleDate) ||
+          store.battery.has(scheduleDate));
+      return hasScheduleForecast && scheduleDate > today ? scheduleDate : today;
+    }
+
     function rebuildDateIndex() {
       const all = new Set();
       for (const k of store.sunshine.keys()) all.add(k);
@@ -617,8 +631,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       for (const k of store.energy.keys()) all.add(k);
       for (const k of store.cost.keys()) all.add(k);
       for (const k of store.battery.keys()) all.add(k);
-      const today = todayIsoJst();
-      store.dates = Array.from(all).filter((d) => d <= today).sort();
+      const cutoff = displayCutoffDate();
+      store.dates = Array.from(all).filter((d) => d <= cutoff).sort();
     }
 
     async function fetchSlice(options = {}) {
@@ -750,10 +764,10 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
 
     function latestAvailableDate() {
-      const today = todayIsoJst();
+      const cutoff = displayCutoffDate();
       const newest = store.meta && store.meta.global_newest_date ? String(store.meta.global_newest_date) : null;
-      if (newest && newest < today) return newest;
-      return today;
+      if (newest && newest < cutoff) return newest;
+      return cutoff;
     }
 
     function oldestAvailableDate() {
@@ -793,6 +807,42 @@ def _html(payload: dict, script_nonce: str) -> str:
       const range = currentPeriodRange();
       if (!range || !range.start || !range.end || range.start > range.end) return [];
       return buildDateRange(range.start, range.end);
+    }
+
+    function weekStartDate(dateStr) {
+      const p = isoParts(dateStr);
+      if (!p) return dateStr;
+      const base = new Date(Date.UTC(p.year, p.month - 1, p.day));
+      const mondayOffset = (base.getUTCDay() + 6) % 7;
+      return isoDateAdd(dateStr, -mondayOffset);
+    }
+
+    function compactDate(dateStr) {
+      const p = isoParts(dateStr);
+      if (!p) return String(dateStr || "");
+      return `${String(p.month).padStart(2, "0")}/${String(p.day).padStart(2, "0")}`;
+    }
+
+    function selectedWindowBuckets() {
+      const dates = selectedWindowDates();
+      if (periodState.mode !== "year") {
+        return dates.map((date) => ({ label: date, start: date, end: date, dates: [date] }));
+      }
+      const byWeek = new Map();
+      for (const date of dates) {
+        const key = weekStartDate(date);
+        const bucket = byWeek.get(key) || { start: date, end: date, dates: [] };
+        bucket.start = bucket.start < date ? bucket.start : date;
+        bucket.end = bucket.end > date ? bucket.end : date;
+        bucket.dates.push(date);
+        byWeek.set(key, bucket);
+      }
+      return Array.from(byWeek.values())
+        .sort((a, b) => a.start.localeCompare(b.start))
+        .map((bucket) => ({
+          ...bucket,
+          label: `${compactDate(bucket.start)}〜${compactDate(bucket.end)}`,
+        }));
     }
 
     function updatePeriodControls() {
@@ -1037,20 +1087,51 @@ def _html(payload: dict, script_nonce: str) -> str:
       return map.get(day) || null;
     }
 
-    function buildContinuousCumulativeSeries(labels, valueByDay) {
-      const allDates = store.dates;
-      if (!allDates.length || !labels.length) {
-        return labels.map(() => 0);
+    function valueOrNull(value) {
+      if (value === null || value === undefined || value === "") return null;
+      const x = Number(value);
+      return Number.isFinite(x) ? x : null;
+    }
+
+    function sumBucket(bucket, map, key) {
+      let total = 0;
+      let seen = false;
+      for (const day of bucket.dates) {
+        const value = valueOrNull(rowByDate(map, day)?.[key]);
+        if (value === null) continue;
+        total += value;
+        seen = true;
       }
-      const firstLabel = labels[0];
+      return seen ? total : null;
+    }
+
+    function averageBucket(bucket, map, key) {
+      let total = 0;
+      let count = 0;
+      for (const day of bucket.dates) {
+        const value = valueOrNull(rowByDate(map, day)?.[key]);
+        if (value === null) continue;
+        total += value;
+        count += 1;
+      }
+      return count ? total / count : null;
+    }
+
+    function buildBucketCumulativeSeries(buckets, valueByDay) {
+      if (!store.dates.length || !buckets.length) {
+        return buckets.map(() => 0);
+      }
+      const firstDate = buckets[0].start;
       let running = 0;
-      for (const d of allDates) {
-        if (d >= firstLabel) break;
+      for (const d of store.dates) {
+        if (d >= firstDate) break;
         running += n(valueByDay.get(d));
       }
       const out = [];
-      for (const d of labels) {
-        running += n(valueByDay.get(d));
+      for (const bucket of buckets) {
+        for (const d of bucket.dates) {
+          running += n(valueByDay.get(d));
+        }
         out.push(running);
       }
       return out;
@@ -1126,60 +1207,49 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
 
     function renderWindow() {
-      const labels = selectedWindowDates();
-      if (!labels.length) {
+      const buckets = selectedWindowBuckets();
+      const labels = buckets.map((bucket) => bucket.label);
+      if (!buckets.length) {
         setStatus("データがまだありません。23時ジョブ実行後に表示されます。", "#e6504f");
         return;
       }
-      const sunForecast = labels.map((d) => {
-        const r = rowByDate(store.sunshine, d);
-        return r && r.forecast_hours != null ? n(r.forecast_hours) : null;
-      });
-      const sunActual = labels.map((d) => {
-        const r = rowByDate(store.sunshine, d);
-        return r && r.actual_hours != null ? n(r.actual_hours) : null;
-      });
-      const sunDiff = labels.map((d) => {
-        const r = rowByDate(store.sunshine, d);
-        return n(r && r.actual_hours) - n(r && r.forecast_hours);
-      });
+      const isWeekly = periodState.mode === "year";
+      const bucketLabel = isWeekly ? "週次" : "日次";
+      const perUnit = isWeekly ? "週" : "日";
+      const sunForecast = buckets.map((bucket) => sumBucket(bucket, store.sunshine, "forecast_hours"));
+      const sunActual = buckets.map((bucket) => sumBucket(bucket, store.sunshine, "actual_hours"));
+      const sunDiff = buckets.map((_bucket, i) => diffOrNull(sunActual[i], sunForecast[i]));
 
       updateForecastActualChart(charts.sun, labels, sunForecast, sunActual, sunDiff, "h");
 
-      const pvForecast = labels.map((d) => {
-        const r = rowByDate(store.energy, d);
-        return r && r.forecast_pv_kwh != null ? n(r.forecast_pv_kwh) : null;
-      });
-      const pvActual = labels.map((d) => {
-        const r = rowByDate(store.energy, d);
-        return r && r.actual_pv_kwh != null ? n(r.actual_pv_kwh) : null;
-      });
+      const pvForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_pv_kwh"));
+      const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
       updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh");
 
-      const loadForecast = labels.map((d) => {
-        const r = rowByDate(store.energy, d);
-        return r && r.forecast_load_kwh != null ? n(r.forecast_load_kwh) : null;
-      });
-      const loadActual = labels.map((d) => {
-        const r = rowByDate(store.energy, d);
-        return r && r.actual_load_kwh != null ? n(r.actual_load_kwh) : null;
-      });
+      const loadForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_load_kwh"));
+      const loadActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_load_kwh"));
       const loadDiff = labels.map((_d, i) => diffOrNull(loadActual[i], loadForecast[i]));
       updateForecastActualChart(charts.load, labels, loadForecast, loadActual, loadDiff, "kWh");
 
-      const dailySelf = labels.map((d) => n(rowByDate(store.cost, d)?.self_consumption_kwh));
-      const dailyYen = labels.map((d) => n(rowByDate(store.cost, d)?.savings_yen));
+      const dailySelf = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "self_consumption_kwh")));
+      const dailyYen = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "savings_yen")));
       const selfByDay = new Map();
       const yenByDay = new Map();
       for (const [d, row] of store.cost.entries()) {
         selfByDay.set(d, n(row && row.self_consumption_kwh));
         yenByDay.set(d, n(row && row.savings_yen));
       }
-      const cumKwh = buildContinuousCumulativeSeries(labels, selfByDay);
-      const cumYen = buildContinuousCumulativeSeries(labels, yenByDay);
+      const cumKwh = buildBucketCumulativeSeries(buckets, selfByDay);
+      const cumYen = buildBucketCumulativeSeries(buckets, yenByDay);
+
+      const dailyKwhTitle = document.getElementById("dailyKwhTitle");
+      const dailyKwhDesc = document.getElementById("dailyKwhDesc");
+      if (dailyKwhTitle) dailyKwhTitle.textContent = `2. 自家消費kWh（${isWeekly ? "週" : "日"}）`;
+      if (dailyKwhDesc) dailyKwhDesc.textContent = `青の棒: ${bucketLabel}自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。`;
 
       charts.dailyKwh.data.labels = labels;
+      charts.dailyKwh.data.datasets[0].label = `${bucketLabel} 自家消費(kWh)`;
       charts.dailyKwh.data.datasets[0].data = dailySelf;
       charts.dailyKwh.data.datasets[1].data = cumKwh;
       const dailyKwhDual = dualScales(dailySelf, cumKwh, { leftUnit: "kWh", rightUnit: "kWh" });
@@ -1187,7 +1257,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         ...dailyKwhDual.y,
         ticks: { ...dailyKwhDual.y.ticks, color: "#147efb" },
         border: { color: "#147efb" },
-        title: { display: true, text: "日次 kWh", color: "#147efb" },
+        title: { display: true, text: `${bucketLabel} kWh`, color: "#147efb" },
       };
       charts.dailyKwh.options.scales.y2 = {
         ...dailyKwhDual.y2,
@@ -1197,7 +1267,13 @@ def _html(payload: dict, script_nonce: str) -> str:
       };
       charts.dailyKwh.update("none");
 
+      const dailyYenTitle = document.getElementById("dailyYenTitle");
+      const dailyYenDesc = document.getElementById("dailyYenDesc");
+      if (dailyYenTitle) dailyYenTitle.textContent = `3. 節約額（${isWeekly ? "週" : "日"}）`;
+      if (dailyYenDesc) dailyYenDesc.textContent = `橙の棒: ${bucketLabel}節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。`;
+
       charts.dailyYen.data.labels = labels;
+      charts.dailyYen.data.datasets[0].label = `${bucketLabel} 節約額(円)`;
       charts.dailyYen.data.datasets[0].data = dailyYen;
       charts.dailyYen.data.datasets[1].data = cumYen;
       const dailyYenDual = dualScales(dailyYen, cumYen, { leftUnit: "円", rightUnit: "円" });
@@ -1205,7 +1281,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         ...dailyYenDual.y,
         ticks: { ...dailyYenDual.y.ticks, color: "#ef8e1d" },
         border: { color: "#ef8e1d" },
-        title: { display: true, text: "日次 円", color: "#ef8e1d" },
+        title: { display: true, text: `${bucketLabel} 円`, color: "#ef8e1d" },
       };
       charts.dailyYen.options.scales.y2 = {
         ...dailyYenDual.y2,
@@ -1215,26 +1291,23 @@ def _html(payload: dict, script_nonce: str) -> str:
       };
       charts.dailyYen.update("none");
 
-      const toNumOrNull = (v) => (v == null || v === "" ? null : n(v));
-      const batteryTarget = labels.map((d) => {
-        const r = rowByDate(store.battery, d);
-        return r ? toNumOrNull(r.setting_soc_target_percent) : null;
-      });
-      const batteryNight = labels.map((d) => {
-        const r = rowByDate(store.battery, d);
-        return r ? toNumOrNull(r.night_charge_kwh) : null;
-      });
-      const batteryPvMax = labels.map((d) => {
-        const r = rowByDate(store.battery, d);
-        return r ? toNumOrNull(r.pv_max_charge_kwh) : null;
-      });
-      const batteryEndSoc = labels.map((d) => {
-        const r = rowByDate(store.battery, d);
-        if (!r) return null;
-        return toNumOrNull(r.end_of_day_soc_percent);
-      });
+      const batteryTarget = buckets.map((bucket) => averageBucket(bucket, store.battery, "setting_soc_target_percent"));
+      const batteryNight = buckets.map((bucket) => sumBucket(bucket, store.battery, "night_charge_kwh"));
+      const batteryPvMax = buckets.map((bucket) => sumBucket(bucket, store.battery, "pv_max_charge_kwh"));
+      const batteryEndSoc = buckets.map((bucket) => averageBucket(bucket, store.battery, "end_of_day_soc_percent"));
+
+      const batteryTitle = document.getElementById("batteryTitle");
+      const batteryDesc = document.getElementById("batteryDesc");
+      if (batteryTitle) batteryTitle.textContent = `5. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
+      if (batteryDesc) {
+        batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。夜間充電・PV蓄電余力は「${bucketLabel}の計画/予測値」で、瞬時充電電力(kW)ではありません。`;
+      }
 
       charts.battery.data.labels = labels;
+      charts.battery.data.datasets[0].label = isWeekly ? "平均設定SOC(%)" : "設定SOC(%)";
+      charts.battery.data.datasets[1].label = `夜間充電計画(kWh/${perUnit})`;
+      charts.battery.data.datasets[2].label = `太陽光蓄電余力予測(kWh/${perUnit})`;
+      charts.battery.data.datasets[3].label = isWeekly ? "平均日終SOC実績(%)" : "日終SOC実績(%)";
       charts.battery.data.datasets[0].data = batteryTarget;
       charts.battery.data.datasets[1].data = batteryNight;
       charts.battery.data.datasets[2].data = batteryPvMax;
@@ -1265,7 +1338,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       };
       charts.battery.update("none");
 
-      setStatus(`表示期間: ${labels[0]} 〜 ${labels[labels.length - 1]}`);
+      setStatus(`表示期間: ${buckets[0].start} 〜 ${buckets[buckets.length - 1].end}${isWeekly ? "（週単位）" : ""}`);
     }
 
     function renderMonthly() {
