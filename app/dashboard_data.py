@@ -4,6 +4,7 @@ import os
 import json
 import math
 import sqlite3
+from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -107,6 +108,80 @@ def _date_add_iso(date_text: str, delta_days: int) -> str | None:
     if d is None:
         return None
     return (d + timedelta(days=delta_days)).isoformat()
+
+
+def _aggregation_close_day() -> int:
+    raw = os.getenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 14
+    return max(1, min(31, value))
+
+
+def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
+    index = (year * 12) + (month - 1) + delta
+    return index // 12, (index % 12) + 1
+
+
+def _month_end_day(year: int, month: int, close_day: int) -> int:
+    return min(close_day, monthrange(year, month)[1])
+
+
+def _accounting_month_label(day_text: str, *, close_day: int) -> str | None:
+    day = _to_date_or_none(day_text)
+    if day is None:
+        return None
+    effective_close = _month_end_day(day.year, day.month, close_day)
+    year = day.year
+    month = day.month
+    if day.day > effective_close:
+        year, month = _add_months(year, month, 1)
+    return f"{year:04d}-{month:02d}"
+
+
+def _accounting_period_bounds(month_label: str, *, close_day: int) -> tuple[str, str] | None:
+    try:
+        year_text, month_text = month_label.split("-", 1)
+        year = int(year_text)
+        month = int(month_text)
+    except Exception:
+        return None
+    if month < 1 or month > 12:
+        return None
+    end_day = _month_end_day(year, month, close_day)
+    end = date(year, month, end_day)
+    prev_year, prev_month = _add_months(year, month, -1)
+    prev_end_day = _month_end_day(prev_year, prev_month, close_day)
+    start = date(prev_year, prev_month, prev_end_day) + timedelta(days=1)
+    return start.isoformat(), end.isoformat()
+
+
+def _build_cost_monthly(cost_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    close_day = _aggregation_close_day()
+    by_month: dict[str, dict[str, float]] = {}
+    for row in cost_rows:
+        label = _accounting_month_label(str(row.get("date", "")), close_day=close_day)
+        if label is None:
+            continue
+        acc = by_month.setdefault(label, {"self_consumption_kwh": 0.0, "savings_yen": 0.0})
+        acc["self_consumption_kwh"] += float(row.get("self_consumption_kwh") or 0.0)
+        acc["savings_yen"] += float(row.get("savings_yen") or 0.0)
+
+    out: list[dict[str, Any]] = []
+    for month, values in sorted(by_month.items()):
+        bounds = _accounting_period_bounds(month, close_day=close_day)
+        period_start, period_end = bounds if bounds is not None else (None, None)
+        out.append(
+            {
+                "month": month,
+                "period_start": period_start,
+                "period_end": period_end,
+                "self_consumption_kwh": values["self_consumption_kwh"],
+                "savings_yen": values["savings_yen"],
+            }
+        )
+    return out
 
 
 def _model_param_value(params: list[dict[str, Any]], name: str, default: float) -> float:
@@ -383,6 +458,7 @@ def _meta_from_data(
         has_more_before = global_oldest_date < oldest_loaded
     return {
         "window_days": window_days,
+        "aggregation_close_day": _aggregation_close_day(),
         "oldest_loaded_date": oldest_loaded,
         "newest_loaded_date": newest_loaded,
         "global_oldest_date": global_oldest_date,
@@ -514,18 +590,16 @@ def _load_sqlite_slice(
         params: list[dict[str, Any]] = []
         latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
         if include_static:
-            cost_monthly = _rows_to_dicts(
+            all_cost_daily = _rows_to_dicts(
                 conn.execute(
                     """
-                    SELECT substr(date,1,7) AS month,
-                           SUM(self_consumption_kwh) AS self_consumption_kwh,
-                           SUM(savings_yen) AS savings_yen
+                    SELECT date, self_consumption_kwh, savings_yen
                     FROM cost_daily
-                    GROUP BY substr(date,1,7)
-                    ORDER BY month
+                    ORDER BY date
                     """
                 ).fetchall()
             )
+            cost_monthly = _build_cost_monthly(all_cost_daily)
             params = _rows_to_dicts(
                 conn.execute(
                     """
@@ -727,15 +801,12 @@ def _load_postgres_slice(
             if include_static:
                 cur.execute(
                     """
-                    SELECT substring(date,1,7) AS month,
-                           SUM(self_consumption_kwh) AS self_consumption_kwh,
-                           SUM(savings_yen) AS savings_yen
+                    SELECT date, self_consumption_kwh, savings_yen
                     FROM cost_daily
-                    GROUP BY substring(date,1,7)
-                    ORDER BY month
+                    ORDER BY date
                     """
                 )
-                cost_monthly = _rows_to_dicts(cur.fetchall())
+                cost_monthly = _build_cost_monthly(_rows_to_dicts(cur.fetchall()))
 
                 cur.execute(
                     """
@@ -966,18 +1037,18 @@ def _load_firestore_slice(
     params: list[dict[str, Any]] = []
     latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
     if include_static:
-        month_map: dict[str, dict[str, float]] = {}
+        all_cost_daily: list[dict[str, Any]] = []
         for doc in client.collection("cost_daily").order_by("date").stream():
             row = doc.to_dict() or {}
             d = str(row.get("date", doc.id))
-            month = d[:7]
-            acc = month_map.setdefault(month, {"self_consumption_kwh": 0.0, "savings_yen": 0.0})
-            acc["self_consumption_kwh"] += float(row.get("self_consumption_kwh") or 0.0)
-            acc["savings_yen"] += float(row.get("savings_yen") or 0.0)
-        cost_monthly = [
-            {"month": m, "self_consumption_kwh": v["self_consumption_kwh"], "savings_yen": v["savings_yen"]}
-            for m, v in sorted(month_map.items())
-        ]
+            all_cost_daily.append(
+                {
+                    "date": d,
+                    "self_consumption_kwh": row.get("self_consumption_kwh"),
+                    "savings_yen": row.get("savings_yen"),
+                }
+            )
+        cost_monthly = _build_cost_monthly(all_cost_daily)
         for doc in client.collection("model_parameters").order_by("name").stream():
             row = doc.to_dict() or {}
             params.append(

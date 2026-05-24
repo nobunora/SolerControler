@@ -211,18 +211,22 @@ def _html(payload: dict, script_nonce: str) -> str:
     .bar-fixed-free { background: #dff3e8; color: #1f6b45; }
     .gantt-notes { margin-top: 8px; color: #5a6f85; font-size: 12px; line-height: 1.5; }
     .gantt-notes code { background: #eef4fb; padding: 1px 5px; border-radius: 5px; }
-    .timeline-scroll {
-      overflow-x: auto;
-      overflow-y: hidden;
-      height: 20px;
+    .period-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .period-button {
+      appearance: none;
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: 999px;
       background: #f8fbff;
+      color: var(--ink);
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
     }
-    .timeline-track {
-      height: 1px;
-      min-width: 100%;
-    }
+    .period-button:hover:not(:disabled) { transform: translateY(-1px); border-color: #9cc8ed; }
+    .period-button.active { background: #16314f; border-color: #16314f; color: #fff; }
+    .period-button:disabled { cursor: not-allowed; color: #a1afbd; background: #f1f5f9; }
+    .period-label { color: var(--sub); font-size: 13px; font-weight: 700; margin-left: 4px; }
     canvas { display: block; width: 100% !important; height: 100% !important; }
     .equation {
       background: #f6fbff;
@@ -249,7 +253,7 @@ def _html(payload: dict, script_nonce: str) -> str:
   <div class="wrap">
     <section class="hero">
       <h1>おうち発電ダッシュボード</h1>
-      <p>初期表示は直近1か月。横スクロールで過去データを必要な分だけ読み込みます。</p>
+      <p>期間ボタンで、日次・月次・蓄電池グラフの表示範囲をまとめて切り替えます。</p>
       <p id="statusMsg" class="desc"></p>
     </section>
 
@@ -261,9 +265,16 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card full">
-        <h2>表示期間スクロール（直近1か月表示）</h2>
-        <p class="desc">左へスクロールすると過去データを自動取得します。</p>
-        <div id="timelineScroll" class="timeline-scroll"><div id="timelineTrack" class="timeline-track"></div></div>
+        <h2>表示期間</h2>
+        <p class="desc">集計月は「前月15日〜当月14日」を当月分として扱います。締め日は `DASHBOARD_AGGREGATION_CLOSE_DAY` で変更できます。</p>
+        <div class="period-panel" aria-label="表示期間切り替え">
+          <button id="periodMonthBtn" class="period-button" type="button">1ヶ月(日)</button>
+          <button id="periodYearBtn" class="period-button" type="button">年(12ヶ月)</button>
+          <button id="periodAllBtn" class="period-button" type="button">全て(日)</button>
+          <button id="periodPrevBtn" class="period-button" type="button">前</button>
+          <button id="periodNextBtn" class="period-button" type="button">後</button>
+          <span id="periodLabel" class="period-label"></span>
+        </div>
       </article>
 
       <article class="card">
@@ -337,7 +348,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     const WINDOW_DAYS = 31;
     const CHUNK_DAYS = 120;
-    const PX_PER_DAY = 20;
+    const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
 
     function n(v, d = 0) {
       const x = Number(v);
@@ -440,12 +451,70 @@ def _html(payload: dict, script_nonce: str) -> str:
     function buildDateRange(startDate, endDate) {
       const out = [];
       let cur = startDate;
-      for (let i = 0; i < 380; i += 1) {
+      for (let i = 0; i < 5000; i += 1) {
         out.push(cur);
         if (cur >= endDate) break;
         cur = isoDateAdd(cur, 1);
       }
       return out;
+    }
+
+    function isoParts(dateStr) {
+      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(dateStr || ""));
+      if (!m) return null;
+      return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
+    }
+
+    function isoFromParts(year, month, day) {
+      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+
+    function addMonthsParts(year, month, delta) {
+      const index = year * 12 + (month - 1) + delta;
+      return { year: Math.floor(index / 12), month: (index % 12) + 1 };
+    }
+
+    function daysInMonth(year, month) {
+      return new Date(Date.UTC(year, month, 0)).getUTCDate();
+    }
+
+    function aggregationCloseDay() {
+      const raw = Number(store.meta && store.meta.aggregation_close_day);
+      if (Number.isFinite(raw)) return Math.max(1, Math.min(31, Math.round(raw)));
+      return DEFAULT_AGGREGATION_CLOSE_DAY;
+    }
+
+    function effectiveCloseDay(year, month) {
+      return Math.min(aggregationCloseDay(), daysInMonth(year, month));
+    }
+
+    function accountingMonthLabel(dateStr) {
+      const p = isoParts(dateStr);
+      if (!p) return null;
+      let year = p.year;
+      let month = p.month;
+      if (p.day > effectiveCloseDay(year, month)) {
+        const next = addMonthsParts(year, month, 1);
+        year = next.year;
+        month = next.month;
+      }
+      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
+    }
+
+    function accountingMonthBounds(monthLabel) {
+      const p = isoParts(`${monthLabel}-01`);
+      if (!p) return null;
+      const end = isoFromParts(p.year, p.month, effectiveCloseDay(p.year, p.month));
+      const prev = addMonthsParts(p.year, p.month, -1);
+      const prevEnd = isoFromParts(prev.year, prev.month, effectiveCloseDay(prev.year, prev.month));
+      return { start: isoDateAdd(prevEnd, 1), end };
+    }
+
+    function accountingYearBounds(year) {
+      const start = accountingMonthBounds(`${String(year).padStart(4, "0")}-01`);
+      const end = accountingMonthBounds(`${String(year).padStart(4, "0")}-12`);
+      if (!start || !end) return null;
+      return { start: start.start, end: end.end };
     }
 
     function qs(params) {
@@ -488,11 +557,11 @@ def _html(payload: dict, script_nonce: str) -> str:
       loadingOlder: false,
     };
 
-    const timeline = {
-      scroll: null,
-      track: null,
-      syncing: false,
-      raf: 0,
+    const periodState = {
+      mode: "month",
+      month: null,
+      year: null,
+      initialized: false,
     };
 
     const charts = {};
@@ -689,16 +758,133 @@ def _html(payload: dict, script_nonce: str) -> str:
       `;
     }
 
-    function ensureTimelineWidth(keepRight = false) {
-      const scroll = timeline.scroll;
-      const track = timeline.track;
-      if (!scroll || !track) return;
-      const oldRightGap = keepRight ? (scroll.scrollWidth - scroll.clientWidth - scroll.scrollLeft) : 0;
-      const logicalDays = Math.max(WINDOW_DAYS + 1, store.dates.length);
-      track.style.width = `${Math.max(scroll.clientWidth + 2, logicalDays * PX_PER_DAY)}px`;
-      if (keepRight) {
-        const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
-        scroll.scrollLeft = Math.max(0, maxLeft - oldRightGap);
+    function latestAvailableDate() {
+      const today = todayIsoJst();
+      const newest = store.meta && store.meta.global_newest_date ? String(store.meta.global_newest_date) : null;
+      if (newest && newest < today) return newest;
+      return today;
+    }
+
+    function oldestAvailableDate() {
+      return store.meta && store.meta.global_oldest_date ? String(store.meta.global_oldest_date) : (store.dates[0] || null);
+    }
+
+    function initializePeriodState() {
+      if (periodState.initialized) return;
+      const latest = latestAvailableDate();
+      periodState.month = accountingMonthLabel(latest);
+      periodState.year = Number((periodState.month || latest).slice(0, 4));
+      periodState.initialized = true;
+    }
+
+    function currentPeriodRange() {
+      initializePeriodState();
+      const oldest = oldestAvailableDate();
+      const latest = latestAvailableDate();
+      if (!oldest || !latest) return null;
+      if (periodState.mode === "all") {
+        return { start: oldest, end: latest, label: "全期間" };
+      }
+      if (periodState.mode === "year") {
+        const bounds = accountingYearBounds(periodState.year);
+        if (!bounds) return null;
+        const end = bounds.end > latest ? latest : bounds.end;
+        return { start: bounds.start, end, label: `${periodState.year}年分` };
+      }
+      const month = periodState.month || accountingMonthLabel(latest);
+      const bounds = accountingMonthBounds(month);
+      if (!bounds) return null;
+      const end = bounds.end > latest ? latest : bounds.end;
+      return { start: bounds.start, end, label: `${month}分` };
+    }
+
+    function selectedWindowDates() {
+      const range = currentPeriodRange();
+      if (!range || !range.start || !range.end || range.start > range.end) return [];
+      return buildDateRange(range.start, range.end);
+    }
+
+    function updatePeriodControls() {
+      initializePeriodState();
+      const modeButtons = {
+        month: document.getElementById("periodMonthBtn"),
+        year: document.getElementById("periodYearBtn"),
+        all: document.getElementById("periodAllBtn"),
+      };
+      for (const [mode, button] of Object.entries(modeButtons)) {
+        if (!button) continue;
+        button.classList.toggle("active", periodState.mode === mode);
+      }
+
+      const latest = latestAvailableDate();
+      const oldest = oldestAvailableDate();
+      const latestMonth = latest ? accountingMonthLabel(latest) : null;
+      const oldestMonth = oldest ? accountingMonthLabel(oldest) : null;
+      const latestYear = latestMonth ? Number(latestMonth.slice(0, 4)) : null;
+      const oldestYear = oldestMonth ? Number(oldestMonth.slice(0, 4)) : null;
+
+      const prev = document.getElementById("periodPrevBtn");
+      const next = document.getElementById("periodNextBtn");
+      let canPrev = false;
+      let canNext = false;
+      if (periodState.mode === "month") {
+        canPrev = !!(oldestMonth && periodState.month && periodState.month > oldestMonth);
+        canNext = !!(latestMonth && periodState.month && periodState.month < latestMonth);
+      } else if (periodState.mode === "year") {
+        canPrev = Number.isFinite(oldestYear) && periodState.year > oldestYear;
+        canNext = Number.isFinite(latestYear) && periodState.year < latestYear;
+      }
+      if (prev) prev.disabled = !canPrev;
+      if (next) next.disabled = !canNext;
+
+      const range = currentPeriodRange();
+      const label = document.getElementById("periodLabel");
+      if (label && range) {
+        const close = aggregationCloseDay();
+        label.textContent = `${range.label}: ${range.start} 〜 ${range.end}（締め日 ${close}日）`;
+      }
+    }
+
+    function moveAccountingMonth(monthLabel, delta) {
+      const p = isoParts(`${monthLabel}-01`);
+      if (!p) return monthLabel;
+      const moved = addMonthsParts(p.year, p.month, delta);
+      return `${String(moved.year).padStart(4, "0")}-${String(moved.month).padStart(2, "0")}`;
+    }
+
+    function clampAccountingMonth(monthLabel) {
+      const latest = latestAvailableDate();
+      const oldest = oldestAvailableDate();
+      const latestMonth = latest ? accountingMonthLabel(latest) : null;
+      const oldestMonth = oldest ? accountingMonthLabel(oldest) : null;
+      let month = monthLabel;
+      if (latestMonth && month > latestMonth) month = latestMonth;
+      if (oldestMonth && month < oldestMonth) month = oldestMonth;
+      return month;
+    }
+
+    async function ensureDataForRange(startDate) {
+      while (
+        !store.loadingOlder &&
+        store.meta &&
+        store.meta.has_more_before &&
+        store.meta.oldest_loaded_date &&
+        store.meta.oldest_loaded_date > startDate
+      ) {
+        store.loadingOlder = true;
+        const prevOldest = store.meta.oldest_loaded_date;
+        try {
+          setStatus("必要な過去データを読み込んでいます...");
+          const endDate = isoDateAdd(prevOldest, -1);
+          const payload = await fetchSlice({ window_days: CHUNK_DAYS, end_date: endDate, include_static: false });
+          absorbSlice(payload, false);
+          if (!store.meta || !store.meta.oldest_loaded_date || store.meta.oldest_loaded_date >= prevOldest) break;
+        } catch (_err) {
+          setStatus("過去データの読込に失敗しました", "#e6504f");
+          break;
+        } finally {
+          store.loadingOlder = false;
+        }
       }
     }
 
@@ -838,20 +1024,6 @@ def _html(payload: dict, script_nonce: str) -> str:
           },
         },
       });
-    }
-
-    function selectedWindowDates() {
-      const dates = store.dates;
-      if (!dates.length) return [];
-      const scroll = timeline.scroll;
-      const maxStart = Math.max(0, dates.length - WINDOW_DAYS);
-      const maxLeft = Math.max(1, scroll.scrollWidth - scroll.clientWidth);
-      const ratio = maxLeft > 0 ? (scroll.scrollLeft / maxLeft) : 1;
-      const startIdx = Math.max(0, Math.min(maxStart, Math.round(ratio * maxStart)));
-      const endAnchor = dates[Math.min(dates.length - 1, startIdx + WINDOW_DAYS - 1)];
-      const startDate = isoDateAdd(endAnchor, -(WINDOW_DAYS - 1));
-      const today = todayIsoJst();
-      return buildDateRange(startDate, endAnchor).filter((d) => d <= today);
     }
 
     function rowByDate(map, day) {
@@ -1044,9 +1216,17 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
 
     function renderMonthly() {
-      const monthLabels = store.monthly.map((x) => x.month);
-      const monthKwh = store.monthly.map((x) => n(x.self_consumption_kwh));
-      const monthYen = store.monthly.map((x) => n(x.savings_yen));
+      const range = currentPeriodRange();
+      const rows = range
+        ? store.monthly.filter((x) => {
+            const start = String(x.period_start || `${x.month || ""}-01`);
+            const end = String(x.period_end || `${x.month || ""}-31`);
+            return start <= range.end && end >= range.start;
+          })
+        : store.monthly;
+      const monthLabels = rows.map((x) => x.month);
+      const monthKwh = rows.map((x) => n(x.self_consumption_kwh));
+      const monthYen = rows.map((x) => n(x.savings_yen));
       charts.monthly.data.labels = monthLabels;
       charts.monthly.data.datasets[0].data = monthKwh;
       charts.monthly.data.datasets[1].data = monthYen;
@@ -1066,42 +1246,64 @@ def _html(payload: dict, script_nonce: str) -> str:
       charts.monthly.update("none");
     }
 
-    async function loadOlderIfNeeded() {
-      if (store.loadingOlder || !store.meta || !store.meta.has_more_before || !store.meta.oldest_loaded_date) {
-        return;
+    async function refreshDashboard() {
+      initializePeriodState();
+      const range = currentPeriodRange();
+      if (range && range.start) {
+        await ensureDataForRange(range.start);
       }
-      const left = timeline.scroll.scrollLeft;
-      if (left > 24) return;
-      store.loadingOlder = true;
-      const prevOldest = store.meta.oldest_loaded_date;
-      try {
-        const endDate = isoDateAdd(prevOldest, -1);
-        const payload = await fetchSlice({ window_days: CHUNK_DAYS, end_date: endDate, include_static: false });
-        absorbSlice(payload, false);
-        ensureTimelineWidth(true);
-        renderWindow();
-      } catch (_err) {
-        setStatus("過去データの読込に失敗しました", "#e6504f");
-      } finally {
-        store.loadingOlder = false;
-      }
+      updatePeriodControls();
+      renderConstraintGantt();
+      renderWindow();
+      renderMonthly();
     }
 
-    function onTimelineScroll() {
-      if (timeline.syncing) return;
-      if (timeline.raf) {
-        cancelAnimationFrame(timeline.raf);
-      }
-      timeline.raf = requestAnimationFrame(async () => {
-        renderWindow();
-        await loadOlderIfNeeded();
+    function bindPeriodControls() {
+      const setMode = async (mode) => {
+        initializePeriodState();
+        const previousMode = periodState.mode;
+        if (mode === "year" && previousMode === "month" && periodState.month) {
+          periodState.year = Number(periodState.month.slice(0, 4));
+        }
+        if (mode === "month" && previousMode === "year" && Number.isFinite(periodState.year)) {
+          const latest = latestAvailableDate();
+          const latestMonth = latest ? accountingMonthLabel(latest) : null;
+          const candidate = `${String(periodState.year).padStart(4, "0")}-12`;
+          periodState.month = clampAccountingMonth(latestMonth && candidate > latestMonth ? latestMonth : candidate);
+        }
+        periodState.mode = mode;
+        await refreshDashboard();
+      };
+      const byId = (id) => document.getElementById(id);
+      byId("periodMonthBtn")?.addEventListener("click", () => setMode("month"));
+      byId("periodYearBtn")?.addEventListener("click", () => setMode("year"));
+      byId("periodAllBtn")?.addEventListener("click", () => setMode("all"));
+      byId("periodPrevBtn")?.addEventListener("click", async () => {
+        initializePeriodState();
+        if (periodState.mode === "month" && periodState.month) {
+          periodState.month = moveAccountingMonth(periodState.month, -1);
+        } else if (periodState.mode === "year") {
+          periodState.year -= 1;
+        }
+        await refreshDashboard();
+      });
+      byId("periodNextBtn")?.addEventListener("click", async () => {
+        initializePeriodState();
+        const latest = latestAvailableDate();
+        const latestMonth = latest ? accountingMonthLabel(latest) : null;
+        const latestYear = latestMonth ? Number(latestMonth.slice(0, 4)) : null;
+        if (periodState.mode === "month" && periodState.month && latestMonth && periodState.month < latestMonth) {
+          periodState.month = moveAccountingMonth(periodState.month, 1);
+        } else if (periodState.mode === "year" && Number.isFinite(latestYear) && periodState.year < latestYear) {
+          periodState.year += 1;
+        }
+        await refreshDashboard();
       });
     }
 
     async function main() {
-      timeline.scroll = document.getElementById("timelineScroll");
-      timeline.track = document.getElementById("timelineTrack");
       buildCharts();
+      bindPeriodControls();
 
       const initialPayload = window.__DASHBOARD_DATA__ || {};
       const hasInitialRows =
@@ -1125,20 +1327,14 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
 
       fillParamsTable();
-      renderConstraintGantt();
-      renderMonthly();
-      ensureTimelineWidth(false);
-      timeline.syncing = true;
-      timeline.scroll.scrollLeft = Math.max(0, timeline.scroll.scrollWidth - timeline.scroll.clientWidth);
-      timeline.syncing = false;
-      renderWindow();
-      timeline.scroll.addEventListener("scroll", onTimelineScroll, { passive: true });
+      await refreshDashboard();
 
       const resizeAll = () => {
-        ensureTimelineWidth(true);
         renderConstraintGantt();
         for (const c of Object.values(charts)) c.resize();
         renderWindow();
+        renderMonthly();
+        updatePeriodControls();
       };
       window.addEventListener("orientationchange", () => setTimeout(resizeAll, 120));
       window.addEventListener("resize", () => setTimeout(resizeAll, 80));
