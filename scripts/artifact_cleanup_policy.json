@@ -1,12 +1,12 @@
 [
   {
-    "name": "delete-untagged-older-than-2d",
+    "name": "delete-untagged-older-than-1d",
     "action": {
       "type": "Delete"
     },
     "condition": {
       "tagState": "untagged",
-      "olderThan": "2d"
+      "olderThan": "1d"
     }
   },
   {
@@ -20,12 +20,12 @@
     }
   },
   {
-    "name": "keep-recent-3",
+    "name": "keep-latest-1",
     "action": {
       "type": "Keep"
     },
     "mostRecentVersions": {
-      "keepCount": 2
+      "keepCount": 1
     }
   }
 ]
