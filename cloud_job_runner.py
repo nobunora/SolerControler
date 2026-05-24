@@ -88,7 +88,7 @@ def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None])
 
 def _force_partial_soc_window() -> tuple[float, float]:
     partial_min = float(os.getenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51").strip() or "51")
-    partial_max = float(os.getenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "99").strip() or "99")
+    partial_max = float(os.getenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "100").strip() or "100")
     return partial_min, partial_max
 
 
@@ -103,6 +103,20 @@ def _should_stage_partial_forced(
     force_charge = required_charge_percent >= green_mode_max_charge_percent
     stage_partial_forced = force_charge and partial_min <= target_soc <= partial_max
     return stage_partial_forced, required_charge_percent, target_soc
+
+
+def _estimate_required_charge_kwh(
+    *,
+    plan_meta: dict[str, float | str | None],
+    latest_soc_percent: float | None,
+) -> float:
+    target_soc = max(0.0, min(100.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0)))
+    cap_raw = plan_meta.get("effective_capacity_kwh")
+    if latest_soc_percent is not None and isinstance(cap_raw, (int, float)) and cap_raw > 0:
+        soc_now = max(0.0, min(100.0, latest_soc_percent))
+        eta = max(0.7, float(os.getenv("KP_NIGHT_CHARGE_EFFICIENCY", "0.93").strip() or "0.93"))
+        return max(0.0, ((target_soc - soc_now) / 100.0 * float(cap_raw)) / eta)
+    return max(0.0, float(plan_meta.get("required_night_charge_kwh", 0.0) or 0.0))
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -207,13 +221,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%",
             flush=True,
         )
-        _run_settings_profile(profile="forced", dynamic_forced_profile=True)
         return
 
     default_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8").strip() or "1.8")
     if default_power_kw <= 0:
         default_power_kw = 1.8
-    required_kwh = max(0.0, float(plan_meta.get("required_night_charge_kwh", 0.0) or 0.0))
+    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+    csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
+    latest_soc = _latest_soc_percent(csv_paths)
+    required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     estimated_charge_minutes = 0
     if required_kwh > 0:
         estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999)
@@ -235,11 +251,37 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
     print(
         "[cloud_job_runner] 03-monitor schedule "
-        f"target_soc={target_soc:.2f}% required={required_kwh:.3f}kWh "
+        f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
+        f"required={required_kwh:.3f}kWh "
         f"estimated={estimated_charge_minutes}min advance={start_advance_minutes}min "
         f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
+    refresh_hhmm = os.getenv("ADJUST03_REFRESH_HHMM", "03:10").strip() or "03:10"
+    refresh_enabled = os.getenv("ADJUST03_REFRESH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if refresh_enabled and delay_seconds > 0:
+        refresh_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=refresh_hhmm)
+        if 0 < refresh_seconds < delay_seconds:
+            _sleep_with_progress(refresh_seconds, label="03-monitor wait-for-refresh")
+            _refresh_plan_for_same_date_if_changed(plan_path)
+            plan_meta = _read_plan_meta(plan_path)
+            csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
+            latest_soc = _latest_soc_percent(csv_paths)
+            required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
+            estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999) if required_kwh > 0 else 0
+            cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
+            delay_seconds = _compute_force_activation_delay_seconds(
+                cutoff_seconds=cutoff_seconds,
+                estimated_charge_minutes=estimated_charge_minutes,
+                start_advance_minutes=start_advance_minutes,
+            )
+            target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
+            print(
+                "[cloud_job_runner] 03-monitor refreshed schedule "
+                f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
+                f"required={required_kwh:.3f}kWh delay_before_force={delay_seconds}s",
+                flush=True,
+            )
     if delay_seconds > 0:
         _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")
 
@@ -258,8 +300,6 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         flush=True,
     )
     started_at = time.time()
-    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-
     while time.time() - started_at < monitor_seconds:
         _run([sys.executable, "kpnet_main.py"], {"KP_WORKFLOW_MODE": "csv"})
         csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
@@ -271,9 +311,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
             if latest_soc >= (target_soc - soc_margin):
-                print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
-                _run_settings_profile(profile="green", dynamic_forced_profile=False)
-                return
+                if target_soc >= 100.0:
+                    print("[cloud_job_runner] 03-monitor target reached at 100%. keep forced until cutoff.", flush=True)
+                else:
+                    print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
+                    _run_settings_profile(profile="green", dynamic_forced_profile=False)
+                    return
         else:
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
 
@@ -349,6 +392,23 @@ def _read_plan_snapshot(plan_path: Path) -> tuple[str, float, float]:
     return date, sun_h, temp_c
 
 
+def _read_plan_signature(plan_path: Path) -> dict[str, float | str]:
+    obj = json.loads(plan_path.read_text(encoding="utf-8"))
+    forecast = obj.get("forecast", {}) if isinstance(obj.get("forecast"), dict) else {}
+    result = obj.get("result", {}) if isinstance(obj.get("result"), dict) else {}
+    pv_forecast = obj.get("pv_array_forecast", {}) if isinstance(obj.get("pv_array_forecast"), dict) else {}
+    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast.get("totals"), dict) else {}
+    return {
+        "date": str(forecast.get("date", "")).strip(),
+        "sun_hours": float(forecast.get("sun_hours", 0.0) or 0.0),
+        "temp_c": float(forecast.get("temp_c", 0.0) or 0.0),
+        "target_soc_7_percent": float(result.get("target_soc_7_percent", 0.0) or 0.0),
+        "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0) or 0.0),
+        "predicted_midday_surplus_kwh": float(result.get("predicted_midday_surplus_kwh", 0.0) or 0.0),
+        "forecast_pv_total_kwh": float(pv_totals.get("total_kwh", 0.0) or 0.0),
+    }
+
+
 def _forecast_changed(
     base: tuple[str, float, float],
     current: tuple[str, float, float],
@@ -365,62 +425,74 @@ def _forecast_changed(
     return False
 
 
+def _plan_signature_changed(
+    base: dict[str, float | str],
+    current: dict[str, float | str],
+    *,
+    sun_epsilon_h: float,
+    temp_epsilon_c: float,
+    soc_epsilon_percent: float,
+    kwh_epsilon: float,
+) -> bool:
+    if str(base.get("date", "")) != str(current.get("date", "")):
+        return True
+    if abs(float(base.get("sun_hours", 0.0)) - float(current.get("sun_hours", 0.0))) >= sun_epsilon_h:
+        return True
+    if abs(float(base.get("temp_c", 0.0)) - float(current.get("temp_c", 0.0))) >= temp_epsilon_c:
+        return True
+    if abs(float(base.get("target_soc_7_percent", 0.0)) - float(current.get("target_soc_7_percent", 0.0))) >= soc_epsilon_percent:
+        return True
+    for key in ("required_night_charge_kwh", "predicted_midday_surplus_kwh", "forecast_pv_total_kwh"):
+        if abs(float(base.get(key, 0.0)) - float(current.get(key, 0.0))) >= kwh_epsilon:
+            return True
+    return False
+
+
+def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
+    if not plan_path.exists():
+        return False
+    base = _read_plan_signature(plan_path)
+    target_date = str(base.get("date", "")).strip()
+    if not target_date:
+        return False
+
+    _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": target_date})
+    current = _read_plan_signature(plan_path)
+    changed = _plan_signature_changed(
+        base,
+        current,
+        sun_epsilon_h=max(0.0, float(os.getenv("ADJUST03_SUN_EPSILON_H", "0.05").strip() or "0.05")),
+        temp_epsilon_c=max(0.0, float(os.getenv("ADJUST03_TEMP_EPSILON_C", "0.2").strip() or "0.2")),
+        soc_epsilon_percent=max(0.0, float(os.getenv("ADJUST03_SOC_EPSILON_PERCENT", "1.0").strip() or "1.0")),
+        kwh_epsilon=max(0.0, float(os.getenv("ADJUST03_KWH_EPSILON", "0.2").strip() or "0.2")),
+    )
+    print(f"[cloud_job_runner] 03-refresh target_date={target_date} changed={changed}", flush=True)
+    if changed:
+        _run(
+            [sys.executable, "db_pipeline_main.py"],
+            {
+                "CLOUD_JOB_SLOT": "03",
+                "DATA_DB_WRITE_ONLY_23": "false",
+                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+            },
+        )
+    return changed
+
+
 def _run_adjust_03() -> None:
-    # 03:10 実行:
-    # 1) CSVを1回取得
-    # 2) 予報更新を確認しながら energy_model を最大3回再取得(10分間隔)
-    # 3) 最終計画で夜間設定を再適用
+    # 夜間コントローラ:
+    # 1) 00時台にCSVを取得して現在SOCを把握
+    # 2) 必要なら3時台に23時計画と同じ対象日の予報だけ再確認
+    # 3) 7時から逆算した時刻に強制充電を開始し、目標/7時まで監視
     _run(
         [sys.executable, "kpnet_main.py"],
         {
             "KP_WORKFLOW_MODE": "csv",
         },
     )
-
-    attempts_raw = os.getenv("ADJUST03_MAX_ATTEMPTS", "3").strip() or "3"
-    wait_raw = os.getenv("ADJUST03_WAIT_SECONDS", "600").strip() or "600"
-    sun_eps_raw = os.getenv("ADJUST03_SUN_EPSILON_H", "0.05").strip() or "0.05"
-    temp_eps_raw = os.getenv("ADJUST03_TEMP_EPSILON_C", "0.2").strip() or "0.2"
-    attempts = max(1, int(attempts_raw))
-    wait_seconds = max(0, int(wait_raw))
-    sun_epsilon_h = max(0.0, float(sun_eps_raw))
-    temp_epsilon_c = max(0.0, float(temp_eps_raw))
-
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    baseline: tuple[str, float, float] | None = None
-    latest: tuple[str, float, float] | None = None
-
-    for attempt in range(1, attempts + 1):
-        _run([sys.executable, "energy_model_main.py"])
-        if not plan_path.exists():
-            raise RuntimeError(f"night charge plan not found: {plan_path}")
-
-        latest = _read_plan_snapshot(plan_path)
-        print(
-            "[cloud_job_runner] 03-adjust forecast "
-            f"attempt={attempt}/{attempts} "
-            f"date={latest[0]} sun_h={latest[1]:.3f} temp_c={latest[2]:.2f}",
-            flush=True,
-        )
-
-        if baseline is None:
-            baseline = latest
-        elif _forecast_changed(
-            baseline,
-            latest,
-            sun_epsilon_h=sun_epsilon_h,
-            temp_epsilon_c=temp_epsilon_c,
-        ):
-            print("[cloud_job_runner] 03-adjust forecast updated. stop retry.", flush=True)
-            break
-
-        if attempt < attempts:
-            print(
-                f"[cloud_job_runner] 03-adjust no update. sleep {wait_seconds}s before retry.",
-                flush=True,
-            )
-            time.sleep(wait_seconds)
-
+    if not plan_path.exists():
+        raise RuntimeError(f"night charge plan not found: {plan_path}")
     _monitor_partial_forced_and_stop(plan_path)
 
 

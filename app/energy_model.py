@@ -65,6 +65,7 @@ class DaytimeSocOptimizationResult:
     target_energy_kwh: float
     required_night_charge_kwh: float
     predicted_daytime_buy_kwh: float
+    predicted_daytime_sell_kwh: float
     predicted_sunset_soc_percent: float
     predicted_sunset_energy_kwh: float
 
@@ -192,9 +193,10 @@ def _simulate_daytime(
     hourly_load_kwh: dict[int, float],
     hourly_pv_kwh: dict[int, float],
     sunset_hour: int,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     energy = max(0.0, min(capacity_kwh, start_energy_kwh))
     buy_kwh = 0.0
+    sell_kwh = 0.0
     sunset_energy_kwh = energy
     hours = sorted(set(hourly_load_kwh.keys()) | set(hourly_pv_kwh.keys()))
     for hour in hours:
@@ -210,9 +212,10 @@ def _simulate_daytime(
         else:
             charge = min(capacity_kwh - energy, -net)
             energy += charge
+            sell_kwh += max(0.0, -net - charge)
         if hour <= sunset_hour:
             sunset_energy_kwh = energy
-    return buy_kwh, sunset_energy_kwh
+    return buy_kwh, sell_kwh, sunset_energy_kwh
 
 
 def optimize_target_soc_for_daytime(
@@ -241,13 +244,14 @@ def optimize_target_soc_for_daytime(
     best_target_soc = reserve_soc
     best_target_energy = cap * reserve_soc / 100.0
     best_buy = float("inf")
+    best_sell = float("inf")
     best_sunset_energy = -1.0
 
     cursor = reserve_soc
     while cursor <= 100.0 + 1e-9:
         target_soc = min(100.0, cursor)
         start_energy = cap * target_soc / 100.0
-        buy_kwh, sunset_energy = _simulate_daytime(
+        buy_kwh, sell_kwh, sunset_energy = _simulate_daytime(
             start_energy_kwh=start_energy,
             capacity_kwh=cap,
             hourly_load_kwh=hourly_load_kwh,
@@ -258,15 +262,19 @@ def optimize_target_soc_for_daytime(
         if buy_kwh < best_buy - 1e-9:
             better = True
         elif abs(buy_kwh - best_buy) <= 1e-9:
-            if sunset_energy > best_sunset_energy + 1e-9:
+            if sell_kwh < best_sell - 1e-9:
                 better = True
-            elif abs(sunset_energy - best_sunset_energy) <= 1e-9 and start_energy < best_target_energy - 1e-9:
-                better = True
+            elif abs(sell_kwh - best_sell) <= 1e-9:
+                if sunset_energy > best_sunset_energy + 1e-9:
+                    better = True
+                elif abs(sunset_energy - best_sunset_energy) <= 1e-9 and start_energy < best_target_energy - 1e-9:
+                    better = True
 
         if better:
             best_target_soc = target_soc
             best_target_energy = start_energy
             best_buy = buy_kwh
+            best_sell = sell_kwh
             best_sunset_energy = sunset_energy
         cursor += step
 
@@ -278,6 +286,7 @@ def optimize_target_soc_for_daytime(
         target_energy_kwh=best_target_energy,
         required_night_charge_kwh=required_night_charge_kwh,
         predicted_daytime_buy_kwh=max(0.0, best_buy),
+        predicted_daytime_sell_kwh=max(0.0, best_sell),
         predicted_sunset_soc_percent=max(0.0, min(100.0, sunset_soc)),
         predicted_sunset_energy_kwh=max(0.0, best_sunset_energy),
     )

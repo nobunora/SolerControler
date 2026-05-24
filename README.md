@@ -93,10 +93,11 @@ python kpnet_main.py
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
   - 日中(放電開始は予報連動): 晴れ予報=06:00開始 / 曇り予報=07:00開始（終了は23:00）
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
-- 03:10微調整（`CLOUD_JOB_SLOT=03`）:
+- 00:05夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
-  - 予報再取得を最大3回（10分間隔）実施
-  - 最終計画で夜間設定を再適用（同値なら実質ノーオペ）
+  - 23時計画と同じ対象日のまま、必要時だけ3時台に予報を再確認
+  - 7時から逆算した時刻に強制充電を開始
+  - 3時台の再計算で内容が変わった場合だけDB/ダッシュボードを更新
 - `KP_OPERATION_CONDITIONS_PATH`:
   - 固定条件 / 変動条件 / 優先順位 を外部JSONで管理
   - 既定: `config/operation_conditions.json`
@@ -113,10 +114,12 @@ python kpnet_main.py
 - `KP_DYNAMIC_FORCED_PROFILE=true|false`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true|false`
 - `KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json`
-- `ADJUST03_MAX_ATTEMPTS=3`
-- `ADJUST03_WAIT_SECONDS=600`
+- `ADJUST03_REFRESH_ENABLED=true`
+- `ADJUST03_REFRESH_HHMM=03:10`
 - `ADJUST03_SUN_EPSILON_H=0.05`
 - `ADJUST03_TEMP_EPSILON_C=0.2`
+- `ADJUST03_SOC_EPSILON_PERCENT=1.0`
+- `ADJUST03_KWH_EPSILON=0.2`
 - `KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json`
 - `KP_NIGHT_CHARGE_WINDOW_START=23:00`
 - `KP_NIGHT_CHARGE_WINDOW_END=07:00`
@@ -187,7 +190,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 
 ## 4. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 03:10 / 07:00 ジョブと Scheduler を一括登録
+推奨: 自動化スクリプトで 23:00 / 00:05夜間コントローラ / 07:00 ジョブと Scheduler を一括登録
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -204,8 +207,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Docker build/push
 - Secret Manager に監視ログイン情報登録
 - 実行用 / Scheduler用の専用サービスアカウント作成
-- Cloud Run Job 3本（23時用 / 3:10微調整用 / 7時用）デプロイ
-- Cloud Scheduler 3本（`0 23 * * *`, `10 3 * * *`, `0 7 * * *` JST）作成/更新
+- Cloud Run Job 3本（23時用 / 00:05夜間コントローラ用 / 7時用）デプロイ
+- Cloud Scheduler 3本（`0 23 * * *`, `5 0 * * *`, `0 7 * * *` JST）作成/更新
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell

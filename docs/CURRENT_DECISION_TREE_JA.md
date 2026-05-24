@@ -1,6 +1,6 @@
 # 現在の判定ルール（条件木）
 
-最終更新: 2026-05-23 (JST)  
+最終更新: 2026-05-24 (JST)  
 対象コード: `cloud_job_runner.py`, `app/kpnet_workflow.py`, `energy_model_main.py`, `config/operation_conditions.json`
 
 この文書は、現在実装されている「設定適用の判定ロジック」を条件木として整理したものです。
@@ -22,23 +22,17 @@ ROOT: CLOUD_JOB_SLOT
 │  └─ sheets_export_main.py (optional)
 ├─ in {"3", "03", "adjust", "adjust03"}
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
-│  ├─ energy_model_main.py を最大 ADJUST03_MAX_ATTEMPTS 回
-│  │  ├─ 初回を baseline として記録
-│  │  ├─ 2回目以降で以下のいずれかなら「予報更新あり」で打ち切り
-│  │  │  ├─ forecast.date が変化
-│  │  │  ├─ |sun_hours差| >= ADJUST03_SUN_EPSILON_H
-│  │  │  └─ |temp_c差| >= ADJUST03_TEMP_EPSILON_C
-│  │  └─ 更新なしなら ADJUST03_WAIT_SECONDS 待って再試行
-│  └─ 部分強制充電(51-99%)のときのみ:
-│     ├─ 07:00 逆算で「強制モード開始時刻」を算出
-│     ├─ 03時台は green 待機のまま遅延タイマー待機
-│     ├─ 逆算時刻で kpnet_main.py(settings, forced, dynamic=true) を実行
-│     └─ cutoff(07:00)までSOC監視し、目標到達/時間切れで green へ戻す
-│  └─ それ以外:
-│     └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
-│                      KP_FORCE_SETTINGS_PROFILE=forced,
-│                      KP_DYNAMIC_FORCED_PROFILE=true,
-│                      KP_DYNAMIC_MODE_SWITCH_BY_TIME=false)
+│  ├─ 23時に作成した night_charge_plan.json を維持
+│  ├─ 00時台の最新SOCから必要充電kWhを再見積もり
+│  ├─ 強制充電が必要(必要SOC差 >= KP_GREEN_MODE_MAX_CHARGE_PERCENT)なら:
+│  │  ├─ 07:00 逆算で「強制モード開始時刻」を算出
+│  │  ├─ 逆算時刻まで待機
+│  │  ├─ 待機中に ADJUST03_REFRESH_HHMM を跨ぐ場合のみ同じ対象日の予報を再取得
+│  │  ├─ 内容変化ありなら db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_PREFER_NIGHT_PLAN_METRICS=true)
+│  │  ├─ 逆算時刻で kpnet_main.py(settings, forced, dynamic=true) を実行
+│  │  └─ cutoff(07:00)までSOC監視
+│  └─ 100%目標:
+│     └─ 目標到達後も07:00まで強制モードを維持し、早朝放電を避ける
 └─ in {"7", "07", "day", "day07"}
    └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
                     KP_FORCE_SETTINGS_PROFILE=green,
@@ -113,6 +107,10 @@ ROOT: charge_start_time
 ├─ duration_minutes > charge_end_minute の場合は clip
 └─ charge_start = max(0, charge_end - duration)
 ```
+
+03側の夜間コントローラでは、23時計画の `required_night_charge_kwh` をそのまま使わず、
+00時台に取り込んだ最新SOCと有効容量から必要充電kWhを再計算します。
+これにより、23時計画時点のSOC推定が古い場合でも、開始時刻を7時から再逆算します。
 
 ### 3-3. 放電開始時刻（日中側境界）
 

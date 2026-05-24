@@ -353,7 +353,7 @@ $commonEnv = @(
     "KP_DEFAULT_CHARGE_POWER_KW=1.8",
     "KP_GREEN_MODE_MAX_CHARGE_PERCENT=50",
     "KP_FORCE_PARTIAL_SOC_MIN_PERCENT=51",
-    "KP_FORCE_PARTIAL_SOC_MAX_PERCENT=99",
+    "KP_FORCE_PARTIAL_SOC_MAX_PERCENT=100",
     "KP_NIGHT_CHARGE_WINDOW_START=23:00",
     "KP_NIGHT_CHARGE_WINDOW_END=07:00",
     "KP_DAY_DISCHARGE_WINDOW_START=07:00",
@@ -376,6 +376,10 @@ $commonEnv = @(
     "PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS=7",
     "PV_ARRAY_WEATHER_REGRESSION_BLEND=0.1",
     "PV_ARRAY_WEATHER_REGRESSION_RIDGE=0.01",
+    "PV_CHARGE_OPPORTUNITY_FLOOR_RATIO=0.30",
+    "PV_CHARGE_OPPORTUNITY_FLOOR_MIN_PV_KWH=3.0",
+    "DAYTIME_PV_HEADROOM_CAP_ENABLED=true",
+    "DAYTIME_PV_HEADROOM_CAP_MIN_KWH=0.5",
     "NIGHT_RESERVE_SOC_PERCENT=0",
     "CONSUMPTION_MODEL_MIN_TRAINING_DAYS=45",
     "CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS=14",
@@ -431,7 +435,7 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
 Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23" --set-secrets $secretEnvArg
-Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 18000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_MAX_ATTEMPTS=3,ADJUST03_WAIT_SECONDS=600,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
+Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REFRESH_ENABLED=true,ADJUST03_REFRESH_HHMM=03:10,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
 $deploySheetsJob = $sheetsExportEnabled -and [bool]$sheetsIdResolved
@@ -486,7 +490,7 @@ function Upsert-SchedulerRunJob {
 
 Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "10 3 * * *" -TargetJobName $Job03Name
+Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "5 0 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
 if ($deploySheetsJob) {
     Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
@@ -507,7 +511,7 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00), $Job03Name (03:10), $Job07Name (07:00)"
+Write-Host "Jobs: $Job23Name (23:00), $Job03Name (00:05 night controller), $Job07Name (07:00)"
 if ($deploySheetsJob) {
     Write-Host "Sheets backup job: $SheetsJobName (00:20)"
     Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"

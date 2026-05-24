@@ -149,13 +149,14 @@ def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_sunset() -> None
         reserve_soc_percent=0.0,
         battery_round_trip_efficiency=1.0,
         hourly_load_kwh={7: 2.0, 8: 2.0, 9: 2.0, 10: 1.0, 11: 1.0},
-        hourly_pv_kwh={10: 3.0, 11: 3.0},
+        hourly_pv_kwh={10: 6.0, 11: 6.0},
         sunset_hour=11,
         soc_step_percent=1.0,
     )
     assert result is not None
     assert result.predicted_daytime_buy_kwh == pytest.approx(0.0)
-    assert result.target_soc_7_percent == pytest.approx(100.0)
+    assert result.predicted_daytime_sell_kwh == pytest.approx(0.0)
+    assert result.target_soc_7_percent == pytest.approx(60.0)
 
 
 def test_optimize_target_soc_for_daytime_prefers_lower_soc_when_sunset_tied() -> None:

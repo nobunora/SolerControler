@@ -365,20 +365,32 @@ def _extract_battery_daily_from_summary(
     np_root = night_plan if isinstance(night_plan, dict) else {}
     np_result = np_root.get("result", {}) if isinstance(np_root.get("result", {}), dict) else {}
     np_forecast = np_root.get("forecast", {}) if isinstance(np_root.get("forecast", {}), dict) else {}
+    prefer_night_plan = _env("DATA_PREFER_NIGHT_PLAN_METRICS", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     date = str(np_summary.get("forecast_date") or np_forecast.get("date") or "").strip()
     if not date:
         return None
 
-    target_soc = _to_float_any(np_summary.get("target_soc_7_percent_raw"))
+    target_soc = _to_float_any(np_result.get("target_soc_7_percent")) if prefer_night_plan else None
+    if target_soc is None:
+        target_soc = _to_float_any(np_summary.get("target_soc_7_percent_raw"))
     if target_soc is None:
         target_soc = _to_float_any(np_result.get("target_soc_7_percent"))
 
-    night_charge_kwh = _to_float_any(np_summary.get("required_night_charge_kwh"))
+    night_charge_kwh = _to_float_any(np_result.get("required_night_charge_kwh")) if prefer_night_plan else None
+    if night_charge_kwh is None:
+        night_charge_kwh = _to_float_any(np_summary.get("required_night_charge_kwh"))
     if night_charge_kwh is None:
         night_charge_kwh = _to_float_any(np_result.get("required_night_charge_kwh"))
 
-    pv_max_charge_kwh = _to_float_any(np_summary.get("predicted_midday_surplus_kwh"))
+    pv_max_charge_kwh = _to_float_any(np_result.get("predicted_midday_surplus_kwh")) if prefer_night_plan else None
+    if pv_max_charge_kwh is None:
+        pv_max_charge_kwh = _to_float_any(np_summary.get("predicted_midday_surplus_kwh"))
     if pv_max_charge_kwh is None:
         pv_max_charge_kwh = _to_float_any(np_result.get("predicted_midday_surplus_kwh"))
 

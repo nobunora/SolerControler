@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from cloud_job_runner import (
     _compute_force_activation_delay_seconds,
+    _estimate_required_charge_kwh,
     _forecast_changed,
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
@@ -67,6 +68,37 @@ def test_stage_partial_forced_enabled_for_51_to_99(monkeypatch) -> None:
     assert target_soc == 80.0
 
 
+def test_stage_partial_forced_includes_100_percent(monkeypatch) -> None:
+    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
+    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "100")
+    staged, required_pct, target_soc = _should_stage_partial_forced(
+        plan_meta={
+            "target_soc_7_percent": 100.0,
+            "soc_now_percent": 30.0,
+            "effective_capacity_kwh": 9.0,
+            "required_night_charge_kwh": 6.0,
+        },
+        green_mode_max_charge_percent=50.0,
+    )
+    assert staged is True
+    assert required_pct == 70.0
+    assert target_soc == 100.0
+
+
+def test_estimate_required_charge_kwh_uses_latest_soc(monkeypatch) -> None:
+    monkeypatch.setenv("KP_NIGHT_CHARGE_EFFICIENCY", "0.9")
+    required = _estimate_required_charge_kwh(
+        plan_meta={
+            "target_soc_7_percent": 100.0,
+            "soc_now_percent": 0.0,
+            "effective_capacity_kwh": 9.0,
+            "required_night_charge_kwh": 9.0,
+        },
+        latest_soc_percent=60.0,
+    )
+    assert required == 4.0
+
+
 def test_compute_force_activation_delay_seconds() -> None:
     delay = _compute_force_activation_delay_seconds(
         cutoff_seconds=3 * 60 * 60,
@@ -109,7 +141,7 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert calls == [("forced", True)]
+    assert calls == []
 
 
 def test_monitor_partial_forced_delays_forced_start_then_switches_green(
@@ -120,7 +152,7 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_green(
     plan_path.write_text("{}", encoding="utf-8")
     calls: list[tuple[str, bool]] = []
     sleeps: list[int] = []
-    cutoff_values = iter([3600, 0])
+    cutoff_values = iter([3600, 0, 0])
 
     monkeypatch.setattr(
         "cloud_job_runner._should_stage_partial_forced",
@@ -128,7 +160,15 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_green(
     )
     monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
-        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 80.0},
+        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 80.0, "effective_capacity_kwh": 10.0},
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._latest_kpnet_csv_paths",
+        lambda _: [],
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._latest_soc_percent",
+        lambda _: None,
     )
     monkeypatch.setattr(
         "cloud_job_runner._seconds_until_cutoff",
