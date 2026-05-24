@@ -71,6 +71,47 @@ def _to_int_any(value: Any) -> int | None:
     return int(as_float)
 
 
+def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, Any]]:
+    forecast = data.get("forecast", {})
+    forecast_date = str(forecast.get("date", "")).strip() if isinstance(forecast, dict) else ""
+    if not forecast_date:
+        return []
+    optimization = data.get("daytime_soc_optimization", {})
+    if not isinstance(optimization, dict):
+        return []
+    pv_by_hour = optimization.get("hourly_pv_forecast_kwh", {})
+    load_by_hour = optimization.get("hourly_load_forecast_kwh", {})
+    if not isinstance(pv_by_hour, dict):
+        pv_by_hour = {}
+    if not isinstance(load_by_hour, dict):
+        load_by_hour = {}
+
+    hours: set[int] = set()
+    for source in (pv_by_hour, load_by_hour):
+        for raw_hour in source:
+            try:
+                hour = int(raw_hour)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23:
+                hours.add(hour)
+
+    rows: list[dict[str, Any]] = []
+    for hour in sorted(hours):
+        pv_kwh = _to_float_any(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
+        load_kwh = _to_float_any(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
+        rows.append(
+            {
+                "date": forecast_date,
+                "hour": hour,
+                "forecast_pv_kwh": round(max(0.0, pv_kwh), 4),
+                "forecast_load_kwh": round(max(0.0, load_kwh), 4),
+                "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4),
+            }
+        )
+    return rows
+
+
 def _safe_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -301,6 +342,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             settings_run_id TEXT,
             csv_rows_upserted INTEGER NOT NULL,
             recorded_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS forecast_hourly (
+            date TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            forecast_pv_kwh REAL,
+            forecast_load_kwh REAL,
+            forecast_charge_kwh REAL,
+            source TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(date, hour)
         );
         """
     )
@@ -601,6 +653,30 @@ def ingest_sunshine_from_night_plan(
                 "open-meteo-forecast",
                 ingested_at,
             ),
+        )
+        hourly_rows = _extract_hourly_forecast_from_plan(data)
+        conn.execute("DELETE FROM forecast_hourly WHERE date = ?", (forecast_date,))
+        conn.executemany(
+            """
+            INSERT INTO forecast_hourly (
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+            )
+            VALUES (:date, :hour, :forecast_pv_kwh, :forecast_load_kwh, :forecast_charge_kwh, :source, :updated_at)
+            ON CONFLICT(date, hour) DO UPDATE SET
+                forecast_pv_kwh=excluded.forecast_pv_kwh,
+                forecast_load_kwh=excluded.forecast_load_kwh,
+                forecast_charge_kwh=excluded.forecast_charge_kwh,
+                source=excluded.source,
+                updated_at=excluded.updated_at
+            """,
+            [
+                {
+                    **row,
+                    "source": "night-charge-plan-hourly",
+                    "updated_at": ingested_at,
+                }
+                for row in hourly_rows
+            ],
         )
 
     today_date = datetime.now().date().isoformat()

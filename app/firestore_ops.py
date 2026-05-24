@@ -11,6 +11,7 @@ from google.cloud import firestore
 
 from app.operations_db import (
     _extract_battery_daily_from_summary,
+    _extract_hourly_forecast_from_plan,
     _env,
     _fetch_open_meteo_daily_actual,
     _is_within_window,
@@ -140,6 +141,35 @@ def ingest_sunshine_from_night_plan(
             },
             merge=True,
         )
+        hourly_rows = _extract_hourly_forecast_from_plan(data)
+        batch = client.batch()
+        batch_count = 0
+        for doc in client.collection("forecast_hourly").where("date", "==", forecast_date).stream():
+            batch.delete(doc.reference)
+            batch_count += 1
+            if batch_count >= 450:
+                batch.commit()
+                batch = client.batch()
+                batch_count = 0
+        for row in hourly_rows:
+            doc_id = f"{forecast_date}-{int(row['hour']):02d}"
+            doc_ref = client.collection("forecast_hourly").document(doc_id)
+            batch.set(
+                doc_ref,
+                {
+                    **row,
+                    "source": "night-charge-plan-hourly",
+                    "updated_at": ingested_at,
+                },
+                merge=True,
+            )
+            batch_count += 1
+            if batch_count >= 450:
+                batch.commit()
+                batch = client.batch()
+                batch_count = 0
+        if batch_count > 0:
+            batch.commit()
 
     today_date = datetime.now().date().isoformat()
     actual_weather: dict[str, float | int | None] = {}

@@ -19,6 +19,7 @@ class DashboardData:
     battery_daily: list[dict[str, Any]]
     model_parameters: list[dict[str, Any]]
     energy_daily: list[dict[str, Any]] = field(default_factory=list)
+    forecast_hourly: list[dict[str, Any]] = field(default_factory=list)
     latest_schedule: dict[str, Any] = field(default_factory=dict)
 
 
@@ -414,7 +415,7 @@ def _build_latest_schedule_from_events(
 
 def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
     candidates: list[str | None] = []
-    for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics"):
+    for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics", "forecast_hourly"):
         row = conn.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}").fetchone()
         candidates.extend([row["min_date"], row["max_date"]])
     row = conn.execute(
@@ -426,7 +427,7 @@ def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str
 
 def _get_global_bounds_postgres(cur) -> tuple[str | None, str | None]:
     candidates: list[str | None] = []
-    for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics"):
+    for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics", "forecast_hourly"):
         cur.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}")
         row = cur.fetchone()
         candidates.extend([row.get("min_date"), row.get("max_date")])
@@ -445,12 +446,14 @@ def _meta_from_data(
     cost_daily: list[dict[str, Any]],
     battery_daily: list[dict[str, Any]],
     energy_daily: list[dict[str, Any]] | None = None,
+    forecast_hourly: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     all_dates: list[str] = []
     all_dates.extend([str(x.get("date", "")) for x in sunshine_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in cost_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in battery_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in energy_daily or [] if x.get("date")])
+    all_dates.extend([str(x.get("date", "")) for x in forecast_hourly or [] if x.get("date")])
     oldest_loaded = min(all_dates) if all_dates else None
     newest_loaded = max(all_dates) if all_dates else None
     has_more_before = False
@@ -554,6 +557,17 @@ def _load_sqlite_slice(
                 (start_date, end_date_iso),
             ).fetchall()
         )
+        forecast_hourly = _rows_to_dicts(
+            conn.execute(
+                """
+                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                FROM forecast_hourly
+                WHERE date >= ? AND date <= ?
+                ORDER BY date, hour
+                """,
+                (start_date, end_date_iso),
+            ).fetchall()
+        )
         history_start = (start_obj - timedelta(days=14)).isoformat()
         monitoring_daily = _rows_to_dicts(
             conn.execute(
@@ -641,6 +655,7 @@ def _load_sqlite_slice(
             cost_daily=cost_daily,
             battery_daily=battery_daily,
             energy_daily=energy_daily,
+            forecast_hourly=forecast_hourly,
         )
         return DashboardSlice(
             data=DashboardData(
@@ -650,6 +665,7 @@ def _load_sqlite_slice(
                 battery_daily=battery_daily,
                 model_parameters=params,
                 energy_daily=energy_daily,
+                forecast_hourly=forecast_hourly,
                 latest_schedule=latest_schedule,
             ),
             meta=meta,
@@ -764,6 +780,17 @@ def _load_postgres_slice(
             )
             battery_daily = _rows_to_dicts(cur.fetchall())
 
+            cur.execute(
+                """
+                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                FROM forecast_hourly
+                WHERE date >= %s AND date <= %s
+                ORDER BY date, hour
+                """,
+                (start_date, end_date_iso),
+            )
+            forecast_hourly = _rows_to_dicts(cur.fetchall())
+
             history_start = (start_obj - timedelta(days=14)).isoformat()
             cur.execute(
                 """
@@ -850,6 +877,7 @@ def _load_postgres_slice(
                 cost_daily=cost_daily,
                 battery_daily=battery_daily,
                 energy_daily=energy_daily,
+                forecast_hourly=forecast_hourly,
             )
             return DashboardSlice(
                 data=DashboardData(
@@ -859,6 +887,7 @@ def _load_postgres_slice(
                     battery_daily=battery_daily,
                     model_parameters=params,
                     energy_daily=energy_daily,
+                    forecast_hourly=forecast_hourly,
                     latest_schedule=latest_schedule,
                 ),
                 meta=meta,
@@ -948,7 +977,8 @@ def _load_firestore_slice(
     b1 = _firestore_bounds(client, "sunshine_daily")
     b2 = _firestore_bounds(client, "cost_daily")
     b3 = _firestore_bounds(client, "battery_daily_metrics")
-    global_oldest, global_newest = _pick_min_max_dates([b1[0], b1[1], b2[0], b2[1], b3[0], b3[1]])
+    b4 = _firestore_bounds(client, "forecast_hourly")
+    global_oldest, global_newest = _pick_min_max_dates([b1[0], b1[1], b2[0], b2[1], b3[0], b3[1], b4[0], b4[1]])
     if not global_newest:
         return DashboardSlice(
             data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
@@ -1010,6 +1040,14 @@ def _load_firestore_slice(
         end_date_iso=end_date_iso,
         fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "end_of_day_soc_percent"],
     )
+    forecast_hourly = _firestore_rows_between(
+        client,
+        collection_name="forecast_hourly",
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        fields=["hour", "forecast_pv_kwh", "forecast_load_kwh", "forecast_charge_kwh", "source", "updated_at"],
+    )
+    forecast_hourly.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
     history_start = (start_obj - timedelta(days=14)).isoformat()
     monitoring_daily = _firestore_monitoring_daily(
         client,
@@ -1092,6 +1130,7 @@ def _load_firestore_slice(
         cost_daily=cost_daily,
         battery_daily=battery_daily,
         energy_daily=energy_daily,
+        forecast_hourly=forecast_hourly,
     )
     return DashboardSlice(
         data=DashboardData(
@@ -1101,6 +1140,7 @@ def _load_firestore_slice(
             battery_daily=battery_daily,
             model_parameters=params,
             energy_daily=energy_daily,
+            forecast_hourly=forecast_hourly,
             latest_schedule=latest_schedule,
         ),
         meta=meta,

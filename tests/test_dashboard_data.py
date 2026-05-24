@@ -80,6 +80,33 @@ def test_dashboard_uses_pv_array_forecast_when_present(tmp_path: Path) -> None:
     assert row["forecast_pv_kwh"] == pytest.approx(8.4)
 
 
+def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.executemany(
+            """
+            INSERT INTO forecast_hourly(
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'test', '2026-05-02T00:00:00')
+            """,
+            [
+                ("2026-05-02", 7, 1.2, 0.8, 0.4),
+                ("2026-05-02", 8, 0.3, 0.9, 0.0),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-05-02", window_days=1, include_static=True)
+
+    assert [row["hour"] for row in sliced.data.forecast_hourly] == [7, 8]
+    assert sliced.data.forecast_hourly[0]["forecast_charge_kwh"] == pytest.approx(0.4)
+
+
 def test_dashboard_monthly_cost_uses_configurable_close_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14")
     db_path = tmp_path / "solar.db"

@@ -66,6 +66,7 @@ def create_weekly_diff_backup(
         "settings_events": ("SELECT * FROM settings_events WHERE recorded_at >= {p}", (since,)),
         "cost_daily": ("SELECT * FROM cost_daily WHERE updated_at >= {p}", (since,)),
         "battery_daily_metrics": ("SELECT * FROM battery_daily_metrics WHERE updated_at >= {p}", (since,)),
+        "forecast_hourly": ("SELECT * FROM forecast_hourly WHERE updated_at >= {p}", (since,)),
         "model_parameters": ("SELECT * FROM model_parameters WHERE updated_at >= {p}", (since,)),
         "pipeline_runs": ("SELECT * FROM pipeline_runs WHERE recorded_at >= {p}", (since,)),
     }

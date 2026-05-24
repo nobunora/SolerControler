@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from app import operations_db as ops
 from app.operations_db import (
     ensure_schema,
     ingest_monitoring_csvs,
+    ingest_sunshine_from_night_plan,
     open_db,
     recalc_battery_end_of_day_soc,
     recalc_model_hit_rates,
@@ -190,6 +192,52 @@ def test_recalc_battery_end_of_day_soc_uses_latest_sample_per_day(tmp_path: Path
         ).fetchall()
         assert float(rows[0][1]) == pytest.approx(55.0)
         assert float(rows[1][1]) == pytest.approx(25.0)
+    finally:
+        conn.close()
+
+
+def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops, "_fetch_open_meteo_daily_actual", lambda **_kwargs: {})
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        night_plan_path = tmp_path / "night_charge_plan.json"
+        night_plan_path.write_text(
+            """
+            {
+              "forecast": {"date": "2026-05-03", "sun_hours": 3.5, "temp_c": 22.0},
+              "daytime_soc_optimization": {
+                "hourly_pv_forecast_kwh": {"7": 1.2, "8": 0.3},
+                "hourly_load_forecast_kwh": {"7": 0.8, "8": 0.9}
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+
+        ingest_sunshine_from_night_plan(
+            conn,
+            night_plan_path=night_plan_path,
+            timezone="Asia/Tokyo",
+            ingested_at="2026-05-02T23:00:00Z",
+        )
+
+        rows = conn.execute(
+            """
+            SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh
+            FROM forecast_hourly
+            ORDER BY hour
+            """
+        ).fetchall()
+        assert [(r["date"], r["hour"]) for r in rows] == [("2026-05-03", 7), ("2026-05-03", 8)]
+        assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.2)
+        assert rows[0]["forecast_load_kwh"] == pytest.approx(0.8)
+        assert rows[0]["forecast_charge_kwh"] == pytest.approx(0.4)
+        assert rows[1]["forecast_charge_kwh"] == pytest.approx(0.0)
     finally:
         conn.close()
 

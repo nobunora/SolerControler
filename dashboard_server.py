@@ -68,6 +68,7 @@ def _verify_session(token: str) -> bool:
 def _empty_dashboard_payload() -> dict:
     return {
         "sunshine_daily": [],
+        "forecast_hourly": [],
         "energy_daily": [],
         "cost_daily": [],
         "cost_monthly": [],
@@ -260,8 +261,14 @@ def _html(payload: dict, script_nonce: str) -> str:
     <section class="grid">
       <article class="card full">
         <h2>0. 制約管理ガントチャート（最新設定）</h2>
-        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。既存グラフはこの下にそのまま表示します。</p>
+        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。時間別の日中予測は下の折れ線グラフに分離しています。</p>
         <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
+      </article>
+
+      <article class="card full">
+        <h2>0.1 時間別予測（最新計画）</h2>
+        <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・予想消費電量を表示します。</p>
+        <div class="chart-box"><canvas id="hourlyForecastChart"></canvas></div>
       </article>
 
       <article class="card full">
@@ -547,6 +554,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     const store = {
       meta: null,
       sunshine: new Map(),
+      hourly: new Map(),
       energy: new Map(),
       cost: new Map(),
       battery: new Map(),
@@ -589,9 +597,23 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
     }
 
+    function mergeHourlyRows(rows) {
+      for (const row of rows || []) {
+        if (!row || !row.date) continue;
+        const date = String(row.date);
+        const bucket = store.hourly.get(date) || [];
+        const hour = Number(row.hour);
+        const next = bucket.filter((x) => Number(x.hour) !== hour);
+        next.push(row);
+        next.sort((a, b) => Number(a.hour) - Number(b.hour));
+        store.hourly.set(date, next);
+      }
+    }
+
     function rebuildDateIndex() {
       const all = new Set();
       for (const k of store.sunshine.keys()) all.add(k);
+      for (const k of store.hourly.keys()) all.add(k);
       for (const k of store.energy.keys()) all.add(k);
       for (const k of store.cost.keys()) all.add(k);
       for (const k of store.battery.keys()) all.add(k);
@@ -614,6 +636,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     function absorbSlice(payload, includeStatic) {
       mergeRows(store.sunshine, payload.sunshine_daily || []);
+      mergeHourlyRows(payload.forecast_hourly || []);
       mergeRows(store.energy, payload.energy_daily || []);
       mergeRows(store.cost, payload.cost_daily || []);
       mergeRows(store.battery, payload.battery_daily || []);
@@ -691,34 +714,6 @@ def _html(payload: dict, script_nonce: str) -> str:
         `放電許可 ${sch.day_discharge_window_start || "07:00"}-${sch.day_discharge_window_end || "23:00"}`
       );
 
-      const pickForecastDate = () => {
-        if (sch.plan_date && store.sunshine.has(sch.plan_date)) return sch.plan_date;
-        let newest = null;
-        for (const d of store.sunshine.keys()) {
-          if (!newest || d > newest) newest = d;
-        }
-        return newest;
-      };
-      const forecastDate = pickForecastDate();
-      const forecastRow = forecastDate ? (store.sunshine.get(forecastDate) || {}) : {};
-      const forecastHoursRaw = forecastRow && forecastRow.forecast_hours != null ? Number(forecastRow.forecast_hours) : null;
-      const forecastHours = Number.isFinite(forecastHoursRaw) ? Math.max(0, forecastHoursRaw) : null;
-      const forecastSegments = [];
-      if (forecastHours != null) {
-        const daySpan = dayEnd > dayStart ? (dayEnd - dayStart) : (1440 - dayStart + dayEnd);
-        const forecastMinutes = Math.round(Math.min(daySpan, forecastHours * 60.0));
-        if (forecastMinutes > 0) {
-          const forecastEnd = (dayStart + forecastMinutes) % 1440;
-          pushRange(
-            forecastSegments,
-            dayStart,
-            forecastEnd,
-            "bar-forecast",
-            `予測日照 ${forecastHours.toFixed(1)}h (${forecastDate})`
-          );
-        }
-      }
-
       const hours = [];
       for (let h = 0; h <= 24; h += 1) {
         const left = (h / 24) * 100;
@@ -745,16 +740,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       const notePlan = chargeStart == null
         ? "夜間充電の開始時刻は未記録のため、最新の夜間充電量からの推定または未表示になる場合があります。"
         : "";
-      const noteForecast = forecastHours == null
-        ? "日照予測データが未取得のため、予測レイヤーは未表示です。"
-        : "";
 
       root.innerHTML = `
         <div class="gantt-axis"><div>時間（JST）</div><div class="gantt-hours">${hours.join("")}</div></div>
         ${renderRow("実行計画", planSegments)}
-        ${renderRow("日照予測", forecastSegments)}
         ${renderRow("制約レイヤー", fixedSegments)}
-        <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}${noteForecast ? `<br>${noteForecast}` : ""}</div>
+        <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}</div>
       `;
     }
 
@@ -936,6 +927,22 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
 
     function buildCharts() {
+      charts.hourlyForecast = new Chart(document.getElementById("hourlyForecastChart"), {
+        type: "line",
+        data: {
+          labels: [],
+          datasets: [
+            { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
+            { label: "予想充電量(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
+            { label: "予想消費電量(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
+          ],
+        },
+        options: {
+          ...commonOptions(),
+          scales: { y: { min: 0, max: 1, title: { display: true, text: "kWh/h" }, grid: { color: "#d8e6f2" } } },
+        },
+      });
+
       charts.sun = new Chart(document.getElementById("sunChart"), {
         data: {
           labels: [],
@@ -1069,6 +1076,52 @@ def _html(payload: dict, script_nonce: str) -> str:
         lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
       };
       chart.options.scales.y.ticks = { callback: (v) => `${v}${unit}` };
+      chart.update("none");
+    }
+
+    function hourlyForecastDate() {
+      const sch = store.latestSchedule || {};
+      if (sch.plan_date && store.hourly.has(String(sch.plan_date))) return String(sch.plan_date);
+      let newest = null;
+      for (const date of store.hourly.keys()) {
+        if (!newest || date > newest) newest = date;
+      }
+      return newest;
+    }
+
+    function renderHourlyForecast() {
+      const chart = charts.hourlyForecast;
+      if (!chart) return;
+      const note = document.getElementById("hourlyForecastNote");
+      const date = hourlyForecastDate();
+      const rows = date ? (store.hourly.get(date) || []) : [];
+      if (!rows.length) {
+        chart.data.labels = [];
+        chart.data.datasets[0].data = [];
+        chart.data.datasets[1].data = [];
+        chart.data.datasets[2].data = [];
+        if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
+        chart.update("none");
+        return;
+      }
+      const labels = rows.map((row) => `${String(Number(row.hour)).padStart(2, "0")}:00`);
+      const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
+      const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
+      const load = rows.map((row) => row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh));
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = pv;
+      chart.data.datasets[1].data = charge;
+      chart.data.datasets[2].data = load;
+      const axisMax = niceCeil(Math.max(1, maxPos([...pv, ...charge, ...load].filter((v) => v != null))));
+      chart.options.scales.y.min = 0;
+      chart.options.scales.y.max = axisMax;
+      chart.options.scales.y.ticks = { callback: (v) => `${v}kWh` };
+      if (note) {
+        const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
+        const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
+        const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
+        note.textContent = `${date} の1時間予測。発電 ${totalPv.toFixed(2)}kWh / 充電 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh`;
+      }
       chart.update("none");
     }
 
@@ -1254,6 +1307,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
       updatePeriodControls();
       renderConstraintGantt();
+      renderHourlyForecast();
       renderWindow();
       renderMonthly();
     }
@@ -1332,6 +1386,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const resizeAll = () => {
         renderConstraintGantt();
         for (const c of Object.values(charts)) c.resize();
+        renderHourlyForecast();
         renderWindow();
         renderMonthly();
         updatePeriodControls();

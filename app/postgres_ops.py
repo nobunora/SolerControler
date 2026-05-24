@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 from app.operations_db import (
     _extract_battery_daily_from_summary,
+    _extract_hourly_forecast_from_plan,
     _env,
     _fetch_open_meteo_today_actual,
     _is_within_window,
@@ -139,6 +140,18 @@ def ensure_schema(conn) -> None:
             recorded_at TEXT NOT NULL
         )
         """,
+        """
+        CREATE TABLE IF NOT EXISTS forecast_hourly (
+            date TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            forecast_pv_kwh DOUBLE PRECISION,
+            forecast_load_kwh DOUBLE PRECISION,
+            forecast_charge_kwh DOUBLE PRECISION,
+            source TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(date, hour)
+        )
+        """,
     ]
     with conn.cursor() as cur:
         for sql in ddl:
@@ -254,6 +267,33 @@ def ingest_sunshine_from_night_plan(
                     "open-meteo-forecast",
                     ingested_at,
                 ),
+            )
+            hourly_rows = _extract_hourly_forecast_from_plan(data)
+            cur.execute("DELETE FROM forecast_hourly WHERE date = %s", (forecast_date,))
+            cur.executemany(
+                """
+                INSERT INTO forecast_hourly (
+                    date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                )
+                VALUES (
+                    %(date)s, %(hour)s, %(forecast_pv_kwh)s, %(forecast_load_kwh)s,
+                    %(forecast_charge_kwh)s, %(source)s, %(updated_at)s
+                )
+                ON CONFLICT(date, hour) DO UPDATE SET
+                    forecast_pv_kwh=excluded.forecast_pv_kwh,
+                    forecast_load_kwh=excluded.forecast_load_kwh,
+                    forecast_charge_kwh=excluded.forecast_charge_kwh,
+                    source=excluded.source,
+                    updated_at=excluded.updated_at
+                """,
+                [
+                    {
+                        **row,
+                        "source": "night-charge-plan-hourly",
+                        "updated_at": ingested_at,
+                    }
+                    for row in hourly_rows
+                ],
             )
 
         today_date = datetime.now().date().isoformat()
