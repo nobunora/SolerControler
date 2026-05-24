@@ -302,6 +302,15 @@ function Upsert-SecretVersion {
     if (-not $exists) {
         Invoke-GCloud secrets create $SecretName --replication-policy automatic --project $ProjectId | Out-Null
     }
+    try {
+        $currentValue = (Invoke-GCloud secrets versions access latest --secret $SecretName --project $ProjectId) -join "`n"
+        if ($currentValue -eq $SecretValue) {
+            Write-Host "Secret unchanged: $SecretName"
+            return
+        }
+    } catch {
+        Write-Warning "Could not compare latest secret version for $SecretName; adding a new version."
+    }
     $tmp = New-TemporaryFile
     try {
         $utf8NoBom = New-Object System.Text.UTF8Encoding($false)

@@ -204,7 +204,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 上記は以下を実施します:
 - API有効化
 - Artifact Registry 作成
-- Docker build/push
+- Docker build/push（Cloud Run Jobs runner は `requirements-runner.txt` を使い、未使用のPlaywright/Chromiumは含めない）
 - Secret Manager に監視ログイン情報登録
 - 実行用 / Scheduler用の専用サービスアカウント作成
 - Cloud Run Job 3本（23時用 / 00:05夜間コントローラ用 / 7時用）デプロイ

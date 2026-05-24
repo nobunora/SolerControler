@@ -1,0 +1,12 @@
+# Cloud Run Jobs runner dependencies.
+# Keep Playwright/Chromium out of the production image; the active KP-NET
+# workflow uses requests + BeautifulSoup via kpnet_main.py.
+requests>=2.32,<3
+beautifulsoup4>=4.12,<5
+matplotlib>=3.9,<4
+numpy>=2.0,<3
+scikit-learn>=1.6,<2
+google-cloud-storage>=2.18,<3
+psycopg[binary]>=3.2,<4
+google-cloud-firestore>=2.20,<3
+google-api-python-client>=2.170,<3
