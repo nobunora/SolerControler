@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -204,6 +204,42 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
     )
 
 
+def _parse_hhmm_minutes(value: str, *, default: str) -> int:
+    text = value.strip() or default
+    if ":" not in text:
+        text = default
+    hh_text, mm_text = text.split(":", 1)
+    try:
+        hh = max(0, min(23, int(hh_text)))
+        mm = max(0, min(59, int(mm_text)))
+    except ValueError:
+        hh_text, mm_text = default.split(":", 1)
+        hh = max(0, min(23, int(hh_text)))
+        mm = max(0, min(59, int(mm_text)))
+    return hh * 60 + mm
+
+
+def _night23_target_date(*, now: datetime | None = None) -> str:
+    explicit = os.getenv("FORECAST_DATE_OVERRIDE", "").strip()
+    if explicit:
+        return explicit
+    timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
+    current = now or datetime.now(ZoneInfo(timezone_name))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=ZoneInfo(timezone_name))
+    else:
+        current = current.astimezone(ZoneInfo(timezone_name))
+
+    recovery_cutoff = _parse_hhmm_minutes(
+        os.getenv("NIGHT23_TARGET_TODAY_UNTIL_HHMM", "07:00"),
+        default="07:00",
+    )
+    current_minutes = current.hour * 60 + current.minute
+    if current_minutes < recovery_cutoff:
+        return current.date().isoformat()
+    return (current.date() + timedelta(days=1)).isoformat()
+
+
 def _run_db_pipeline_slot(
     slot: str,
     *,
@@ -357,7 +393,9 @@ def _run_night_23() -> None:
     # Forecast providers can fail transiently. Keep dashboard actuals moving even
     # when the later planning phase cannot complete.
     _run_db_pipeline_slot("23", include_csv=True, include_settings=False)
-    _run([sys.executable, "energy_model_main.py"])
+    target_date = _night23_target_date()
+    print(f"[cloud_job_runner] 23-night target_date={target_date}", flush=True)
+    _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": target_date})
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
     profile = "forced"
     dynamic_forced_profile = True
