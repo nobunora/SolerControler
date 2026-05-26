@@ -9,6 +9,13 @@ from app import operations_db as sqlite_ops
 from app.weekly_backup import create_weekly_diff_backup
 
 
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _collect_csv_paths(csv_run_dir: Path) -> list[Path]:
     summary = json.loads((csv_run_dir / "kpnet_summary.json").read_text(encoding="utf-8"))
     entries = summary.get("csv_downloads", [])
@@ -318,7 +325,13 @@ def main() -> int:
         print(f"[db_pipeline] skip write: slot={cfg.slot} and DATA_DB_WRITE_ONLY_23=true")
         return 0
 
+    include_csv = _env_bool("DATA_PIPELINE_INCLUDE_CSV", True)
+    include_settings = _env_bool("DATA_PIPELINE_INCLUDE_SETTINGS", True)
     csv_run_dir, settings_run_dir = sqlite_ops.find_latest_csv_and_settings_runs(cfg.artifacts_dir)
+    if not include_csv:
+        csv_run_dir = None
+    if not include_settings:
+        settings_run_dir = None
     if csv_run_dir is None and settings_run_dir is None:
         print("[db_pipeline] no eligible run dirs found")
         return 0

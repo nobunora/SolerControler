@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -201,8 +202,27 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         "timezone": timezone,
         "forecast_days": 7,
     }
-    resp = requests.get(url, params=params, timeout=20)
-    resp.raise_for_status()
+    attempts = max(1, int(os.getenv("FORECAST_API_RETRIES", "4").strip() or "4"))
+    backoff_seconds = max(0.0, float(os.getenv("FORECAST_API_RETRY_BACKOFF_SECONDS", "5").strip() or "5"))
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=20)
+            resp.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            sleep_seconds = min(60.0, backoff_seconds * (2 ** (attempt - 1)))
+            print(
+                f"[energy_model] forecast API failed attempt={attempt}/{attempts}: {exc}; retry in {sleep_seconds:.1f}s",
+                flush=True,
+            )
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+    else:
+        raise RuntimeError("forecast API request failed") from last_error
     obj = resp.json()
     times = obj["daily"]["time"]
     sunshine = obj["daily"]["sunshine_duration"]

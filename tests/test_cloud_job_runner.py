@@ -7,6 +7,7 @@ from cloud_job_runner import (
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _required_charge_percent_from_plan,
+    _run_night_23,
     _should_stage_partial_forced,
 )
 
@@ -187,3 +188,36 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_green(
 
     assert sleeps and sleeps[0] > 0
     assert calls == [("forced", True), ("green", False)]
+
+
+def test_run_night_23_ingests_csv_before_forecast(monkeypatch, tmp_path) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def fake_run(command, env_updates=None):
+        script = list(command)[-1]
+        calls.append((script, dict(env_updates or {})))
+        if script == "energy_model_main.py":
+            raise RuntimeError("forecast unavailable")
+
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(tmp_path / "night_charge_plan.json"))
+    monkeypatch.setattr("cloud_job_runner._run", fake_run)
+
+    try:
+        _run_night_23()
+    except RuntimeError as exc:
+        assert "forecast unavailable" in str(exc)
+    else:
+        raise AssertionError("_run_night_23 should fail when forecast fails")
+
+    assert calls[:3] == [
+        ("kpnet_main.py", {"KP_WORKFLOW_MODE": "csv"}),
+        (
+            "db_pipeline_main.py",
+            {
+                "CLOUD_JOB_SLOT": "23",
+                "DATA_PIPELINE_INCLUDE_CSV": "true",
+                "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
+            },
+        ),
+        ("energy_model_main.py", {}),
+    ]

@@ -204,6 +204,22 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
     )
 
 
+def _run_db_pipeline_slot(
+    slot: str,
+    *,
+    include_csv: bool = True,
+    include_settings: bool = True,
+) -> None:
+    _run(
+        [sys.executable, "db_pipeline_main.py"],
+        {
+            "CLOUD_JOB_SLOT": slot,
+            "DATA_PIPELINE_INCLUDE_CSV": "true" if include_csv else "false",
+            "DATA_PIPELINE_INCLUDE_SETTINGS": "true" if include_settings else "false",
+        },
+    )
+
+
 def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
@@ -331,13 +347,16 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
 def _run_night_23() -> None:
     # 23:00 実行:
-    # 1) CSV取得 2) 夜間計画計算 3) 強制充電設定登録
+    # 1) CSV取得 2) 実績だけ先行反映 3) 夜間計画計算 4) 強制充電設定登録
     _run(
         [sys.executable, "kpnet_main.py"],
         {
             "KP_WORKFLOW_MODE": "csv",
         },
     )
+    # Forecast providers can fail transiently. Keep dashboard actuals moving even
+    # when the later planning phase cannot complete.
+    _run_db_pipeline_slot("23", include_csv=True, include_settings=False)
     _run([sys.executable, "energy_model_main.py"])
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
     profile = "forced"
@@ -368,12 +387,7 @@ def _run_night_23() -> None:
         print(f"[cloud_job_runner] 23-night plan missing: {plan_path}", flush=True)
 
     _run_settings_profile(profile=profile, dynamic_forced_profile=dynamic_forced_profile)
-    _run(
-        [sys.executable, "db_pipeline_main.py"],
-        {
-            "CLOUD_JOB_SLOT": "23",
-        },
-    )
+    _run_db_pipeline_slot("23", include_csv=False, include_settings=True)
     _run_optional(
         [sys.executable, "sheets_export_main.py"],
         {
