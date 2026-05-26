@@ -9,6 +9,7 @@ from app.pv_array_forecast import (
     build_pv_array_forecast,
     calibrate_performance_ratio,
     forecast_pv_arrays,
+    forecast_pv_arrays_forecast_solar,
 )
 
 
@@ -64,6 +65,50 @@ def test_forecast_pv_arrays_sums_three_orientations() -> None:
     assert forecast["totals"]["evening_kwh"] == pytest.approx(1.0)
 
 
+def test_forecast_pv_arrays_forecast_solar_sums_three_orientations() -> None:
+    arrays = [
+        PVArrayConfig("east", -90, 20, 1.0, performance_ratio=1.0),
+        PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0),
+        PVArrayConfig("west", 90, 20, 1.0, performance_ratio=1.0),
+    ]
+
+    def fake_get(url, *, timeout):
+        if "/-90.000/" in url:
+            values = {
+                "2026-05-18 07:00:00": 1000.0,
+                "2026-05-18 12:00:00": 0.0,
+                "2026-05-18 17:00:00": 0.0,
+            }
+        elif "/0.000/" in url:
+            values = {
+                "2026-05-18 07:00:00": 0.0,
+                "2026-05-18 12:00:00": 2000.0,
+                "2026-05-18 17:00:00": 0.0,
+            }
+        else:
+            values = {
+                "2026-05-18 07:00:00": 0.0,
+                "2026-05-18 12:00:00": 0.0,
+                "2026-05-18 17:00:00": 3000.0,
+            }
+        return _FakeResponse({"result": {"watt_hours_period": values}})
+
+    forecast = forecast_pv_arrays_forecast_solar(
+        arrays=arrays,
+        target_date="2026-05-18",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        http_get=fake_get,
+    )
+
+    assert forecast["source"] == "forecast-solar-estimate"
+    assert forecast["totals"]["total_kwh"] == pytest.approx(6.0)
+    assert forecast["totals"]["morning_kwh"] == pytest.approx(1.0)
+    assert forecast["totals"]["midday_kwh"] == pytest.approx(2.0)
+    assert forecast["totals"]["evening_kwh"] == pytest.approx(3.0)
+
+
 def test_calibration_uses_actual_generation_history() -> None:
     arrays = [PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0)]
     rows = [
@@ -115,6 +160,7 @@ def test_build_pv_array_forecast_applies_weather_multiplier(
     monkeypatch.setenv("PV_ARRAY_WEATHER_ADJUSTMENT_MIN_RATIO", "0.5")
     monkeypatch.setenv("PV_ARRAY_WEATHER_ADJUSTMENT_MAX_RATIO", "1.5")
     monkeypatch.setenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_PROVIDER", "open_meteo")
 
     def fake_get(url, *, params, timeout):
         if "archive-api.open-meteo.com" in url:
@@ -178,6 +224,7 @@ def test_build_pv_array_forecast_prefers_regression_blend_for_cloudy_or_rain(
     monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS", "1")
     monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "1.0")
     monkeypatch.setenv("PV_ARRAY_WEATHER_REGRESSION_RIDGE", "0.01")
+    monkeypatch.setenv("PV_ARRAY_PROVIDER", "open_meteo")
 
     def fake_get(url, *, params, timeout):
         if "archive-api.open-meteo.com" in url:
@@ -227,3 +274,56 @@ def test_build_pv_array_forecast_prefers_regression_blend_for_cloudy_or_rain(
     assert forecast["totals"]["total_kwh"] > 2.0
     calibration = forecast["calibration"]
     assert calibration["adjustment_strategy"] == "regression_blend"
+
+
+def test_build_pv_array_forecast_falls_back_to_open_meteo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = [PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0)]
+    rows = [{"dt": datetime(2026, 5, 17, 12), "pv": 1.0}]
+
+    monkeypatch.setenv("PV_ARRAY_PROVIDER", "forecast_solar,open_meteo")
+    monkeypatch.setenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "1")
+    monkeypatch.setenv("PV_ARRAY_WEATHER_CALIBRATION_ENABLED", "false")
+
+    def fake_get(url, *, params=None, timeout):
+        if "forecast.solar" in url:
+            raise RuntimeError("forecast solar unavailable")
+        if "archive-api.open-meteo.com" in url:
+            return _FakeResponse(
+                {
+                    "hourly": {
+                        "time": ["2026-05-17T12:00"],
+                        "global_tilted_irradiance": [1000.0],
+                        "temperature_2m": [25.0],
+                    }
+                }
+            )
+        return _FakeResponse(
+            {
+                "hourly": {
+                    "time": ["2026-05-18T12:00"],
+                    "global_tilted_irradiance": [1000.0],
+                    "temperature_2m": [25.0],
+                }
+            }
+        )
+
+    forecast = build_pv_array_forecast(
+        arrays=arrays,
+        rows=rows,
+        target_date="2026-05-18",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        target_weather_class="clear",
+        http_get=fake_get,
+    )
+
+    assert forecast is not None
+    assert forecast["provider"] == "open_meteo"
+    assert forecast["totals"]["total_kwh"] == pytest.approx(1.0)
+    assert forecast["provider_attempts"][0]["provider"] == "forecast_solar"
+    assert forecast["provider_attempts"][0]["ok"] is False
+    assert forecast["provider_attempts"][1]["provider"] == "open_meteo"
+    assert forecast["provider_attempts"][1]["ok"] is True

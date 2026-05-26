@@ -142,7 +142,7 @@ def test_fit_coefficients_from_csv(tmp_path: Path) -> None:
     assert coeff.battery_usable_capacity_kwh > 0
 
 
-def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_sunset() -> None:
+def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_peak_soc() -> None:
     result = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=10.0,
         soc_now_percent=0.0,
@@ -157,9 +157,10 @@ def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_sunset() -> None
     assert result.predicted_daytime_buy_kwh == pytest.approx(0.0)
     assert result.predicted_daytime_sell_kwh == pytest.approx(0.0)
     assert result.target_soc_7_percent == pytest.approx(60.0)
+    assert result.predicted_daytime_max_soc_percent == pytest.approx(100.0)
 
 
-def test_optimize_target_soc_for_daytime_prefers_lower_soc_when_sunset_tied() -> None:
+def test_optimize_target_soc_for_daytime_prefers_peak_target_over_sunset_tie() -> None:
     result = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=10.0,
         soc_now_percent=0.0,
@@ -172,5 +173,7 @@ def test_optimize_target_soc_for_daytime_prefers_lower_soc_when_sunset_tied() ->
     )
     assert result is not None
     assert result.predicted_daytime_buy_kwh == pytest.approx(0.0)
-    # sunset SOC=100% を達成できる最小開始SOCを選択
-    assert result.target_soc_7_percent == pytest.approx(50.0)
+    assert result.predicted_daytime_sell_kwh == pytest.approx(0.0)
+    # 夕方100%固定ではなく、日中ピークが99%付近になる開始SOCを選択
+    assert result.target_soc_7_percent == pytest.approx(49.0)
+    assert result.predicted_daytime_max_soc_percent == pytest.approx(99.0)

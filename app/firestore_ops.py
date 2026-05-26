@@ -116,6 +116,11 @@ def ingest_sunshine_from_night_plan(
     pv_forecast = data.get("pv_array_forecast", {})
     pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
     pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
+    forecast_source = str(
+        (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)
+        or forecast.get("source")
+        or "forecast"
+    )
     lat = float(_env("FORECAST_LATITUDE", "35.67452"))
     lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
 
@@ -134,9 +139,14 @@ def ingest_sunshine_from_night_plan(
                 "forecast_pv_midday_kwh": _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
                 "forecast_pv_evening_kwh": _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
                 "forecast_pv_calibration_factor": _to_float_any(
-                    pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None
+                    (
+                        pv_calibration.get("effective_factor")
+                        if isinstance(pv_calibration, dict)
+                        else None
+                    )
+                    or (pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None)
                 ),
-                "source": "open-meteo-forecast",
+                "source": forecast_source,
                 "updated_at": ingested_at,
             },
             merge=True,

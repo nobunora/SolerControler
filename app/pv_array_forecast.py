@@ -76,6 +76,21 @@ def _parse_time(raw: Any) -> datetime | None:
         return None
 
 
+def _parse_forecast_solar_time(raw: Any) -> datetime | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    text = text.replace(" ", "T", 1)
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def _round(value: float | None, digits: int = 4) -> float | None:
     if value is None or not math.isfinite(value):
         return None
@@ -585,6 +600,7 @@ def forecast_pv_arrays(
     return {
         "enabled": True,
         "source": "open-meteo-global_tilted_irradiance",
+        "provider": "open_meteo",
         "target_date": target_date,
         "timezone": timezone,
         "calibration_factor": _round(calibration_factor),
@@ -592,6 +608,176 @@ def forecast_pv_arrays(
         "arrays": array_summaries,
         "hourly": hourly,
     }
+
+
+def _forecast_solar_url(
+    *,
+    lat: float,
+    lon: float,
+    array: PVArrayConfig,
+) -> str:
+    base = os.getenv("FORECAST_SOLAR_BASE_URL", "https://api.forecast.solar").rstrip("/")
+    return (
+        f"{base}/estimate/"
+        f"{lat:.6f}/{lon:.6f}/{array.tilt_deg:.3f}/{array.azimuth_deg:.3f}/{array.capacity_kw:.3f}"
+    )
+
+
+def _forecast_solar_series_to_rows(
+    payload: dict[str, Any],
+    *,
+    array: PVArrayConfig,
+    target_date: str,
+    calibration_factor: float,
+) -> list[dict[str, Any]]:
+    result = payload.get("result", {})
+    if not isinstance(result, dict):
+        raise RuntimeError("Forecast.Solar response does not contain result")
+
+    series = result.get("watt_hours_period")
+    mode = "watt_hours_period"
+    if not isinstance(series, dict) or not series:
+        series = result.get("watts")
+        mode = "watts"
+    if not isinstance(series, dict) or not series:
+        cumulative = result.get("watt_hours")
+        if isinstance(cumulative, dict) and cumulative:
+            mode = "watt_hours"
+            sorted_items = [
+                (dt, value)
+                for dt, value in (
+                    (_parse_forecast_solar_time(raw_time), _to_optional_float(value))
+                    for raw_time, value in cumulative.items()
+                )
+                if dt is not None and value is not None
+            ]
+            sorted_items.sort(key=lambda item: item[0])
+            series = {}
+            prev_value: float | None = None
+            for dt, value in sorted_items:
+                period_wh = value if prev_value is None else max(0.0, value - prev_value)
+                series[dt.isoformat()] = period_wh
+                prev_value = value
+        else:
+            raise RuntimeError("Forecast.Solar response does not contain hourly energy")
+
+    rows: list[dict[str, Any]] = []
+    effective_factor = array.performance_ratio * array.shading_factor * calibration_factor
+    for raw_time, value in series.items():
+        dt = _parse_forecast_solar_time(raw_time)
+        wh = _to_optional_float(value)
+        if dt is None or wh is None:
+            continue
+        if dt.date().isoformat() != target_date:
+            continue
+        if mode == "watts":
+            kwh = wh / 1000.0
+        else:
+            kwh = wh / 1000.0
+        rows.append(
+            {
+                "time": dt,
+                "kwh": max(0.0, kwh * effective_factor),
+                "forecast_solar_raw_wh": wh,
+                "forecast_solar_series": mode,
+            }
+        )
+    if not rows:
+        raise RuntimeError(f"Forecast.Solar returned no rows for {target_date}")
+    return rows
+
+
+def forecast_pv_arrays_forecast_solar(
+    *,
+    arrays: list[PVArrayConfig],
+    target_date: str,
+    lat: float,
+    lon: float,
+    timezone: str,
+    calibration_factor: float = 1.0,
+    http_get: HttpGet = requests.get,
+) -> dict[str, Any]:
+    hourly_by_time: dict[datetime, dict[str, Any]] = {}
+    array_summaries: list[dict[str, Any]] = []
+    timeout_sec = int(os.getenv("FORECAST_SOLAR_TIMEOUT_SEC", "30").strip() or "30")
+
+    for array in arrays:
+        url = _forecast_solar_url(lat=lat, lon=lon, array=array)
+        resp = http_get(url, timeout=timeout_sec)
+        resp.raise_for_status()
+        payload = resp.json()
+        hourly_rows = _forecast_solar_series_to_rows(
+            payload,
+            array=array,
+            target_date=target_date,
+            calibration_factor=calibration_factor,
+        )
+        totals = _aggregate(hourly_rows)
+        array_summaries.append(
+            {
+                **asdict(array),
+                "effective_performance_ratio": _round(array.performance_ratio * calibration_factor),
+                "effective_factor": _round(array.performance_ratio * array.shading_factor * calibration_factor),
+                **{k: _round(v) for k, v in totals.items()},
+            }
+        )
+        for row in hourly_rows:
+            dt = row.get("time")
+            if not isinstance(dt, datetime):
+                continue
+            item = hourly_by_time.setdefault(dt, {"time": dt, "total_kwh": 0.0})
+            kwh = _to_float(row.get("kwh"), 0.0)
+            item["total_kwh"] += kwh
+            item[f"{array.name}_kwh"] = kwh
+            item[f"{array.name}_forecast_solar_raw_wh"] = _to_float(row.get("forecast_solar_raw_wh"), 0.0)
+
+    hourly = []
+    for dt, row in sorted(hourly_by_time.items()):
+        rounded = {
+            key: (_round(value) if isinstance(value, (int, float)) else value)
+            for key, value in row.items()
+        }
+        rounded["time"] = dt.isoformat(timespec="minutes")
+        rounded["total_kw"] = rounded.get("total_kwh")
+        hourly.append(rounded)
+
+    totals = _aggregate(
+        [
+            {"time": dt, "kwh": _to_float(row.get("total_kwh"), 0.0)}
+            for dt, row in sorted(hourly_by_time.items())
+        ]
+    )
+    return {
+        "enabled": True,
+        "source": "forecast-solar-estimate",
+        "provider": "forecast_solar",
+        "target_date": target_date,
+        "timezone": timezone,
+        "calibration_factor": _round(calibration_factor),
+        "totals": {k: _round(v) for k, v in totals.items()},
+        "arrays": array_summaries,
+        "hourly": hourly,
+    }
+
+
+def _provider_order_from_env() -> list[str]:
+    raw = os.getenv("PV_ARRAY_PROVIDER", "forecast_solar,open_meteo").strip()
+    if not raw:
+        raw = "forecast_solar,open_meteo"
+    aliases = {
+        "forecast.solar": "forecast_solar",
+        "forecast-solar": "forecast_solar",
+        "forecast_solar": "forecast_solar",
+        "open-meteo": "open_meteo",
+        "open_meteo": "open_meteo",
+        "openmeteo": "open_meteo",
+    }
+    providers: list[str] = []
+    for part in raw.split(","):
+        key = aliases.get(part.strip().lower())
+        if key and key not in providers:
+            providers.append(key)
+    return providers or ["forecast_solar", "open_meteo"]
 
 
 def build_pv_array_forecast(
@@ -659,15 +845,41 @@ def build_pv_array_forecast(
             weather_multiplier = (effective_factor / base_factor) if base_factor > 0 else 1.0
             adjustment_strategy = "regression_blend"
 
-    forecast = forecast_pv_arrays(
-        arrays=arrays,
-        target_date=target_date,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
-        calibration_factor=effective_factor,
-        http_get=http_get,
-    )
+    provider_attempts: list[dict[str, Any]] = []
+    forecast: dict[str, Any] | None = None
+    for provider in _provider_order_from_env():
+        try:
+            if provider == "forecast_solar":
+                forecast = forecast_pv_arrays_forecast_solar(
+                    arrays=arrays,
+                    target_date=target_date,
+                    lat=lat,
+                    lon=lon,
+                    timezone=timezone,
+                    calibration_factor=effective_factor,
+                    http_get=http_get,
+                )
+            elif provider == "open_meteo":
+                forecast = forecast_pv_arrays(
+                    arrays=arrays,
+                    target_date=target_date,
+                    lat=lat,
+                    lon=lon,
+                    timezone=timezone,
+                    calibration_factor=effective_factor,
+                    http_get=http_get,
+                )
+            else:
+                continue
+            provider_attempts.append({"provider": provider, "ok": True})
+            break
+        except Exception as exc:
+            provider_attempts.append({"provider": provider, "ok": False, "error": str(exc)})
+            forecast = None
+
+    if forecast is None:
+        raise RuntimeError(f"PV array forecast failed for providers: {provider_attempts}")
+
     calibration["target_weather_class"] = weather_class
     calibration["target_sun_hours"] = _round(target_sun_hours)
     calibration["target_precipitation_sum_mm"] = _round(target_precipitation_sum_mm)
@@ -676,4 +888,5 @@ def build_pv_array_forecast(
     calibration["effective_factor"] = _round(effective_factor)
     forecast["calibration_factor"] = _round(effective_factor)
     forecast["calibration"] = calibration
+    forecast["provider_attempts"] = provider_attempts
     return forecast

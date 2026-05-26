@@ -4,9 +4,10 @@ import csv
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -273,8 +274,36 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
             "shortwave_radiation_sum_mj_m2": _to_optional_float(
                 os.getenv("FORECAST_SHORTWAVE_RADIATION_SUM_MJ_M2_OVERRIDE", "").strip() or None
             ),
+            "source": "env-override",
         }
-    return _forecast_for_date(lat=lat, lon=lon, timezone=timezone, target_date=date_override or None)
+    try:
+        forecast = _forecast_for_date(lat=lat, lon=lon, timezone=timezone, target_date=date_override or None)
+        forecast["source"] = "open-meteo-forecast"
+        return forecast
+    except Exception as exc:
+        if date_override:
+            fallback_date = date_override
+        else:
+            try:
+                fallback_date = (datetime.now(ZoneInfo(timezone)).date() + timedelta(days=1)).isoformat()
+            except Exception:
+                fallback_date = (datetime.now().date() + timedelta(days=1)).isoformat()
+        print(
+            f"[energy_model] daily forecast API failed; continue with date-only fallback for PV providers: {exc}",
+            flush=True,
+        )
+        return {
+            "date": fallback_date,
+            "sun_hours": 0.0,
+            "temp_c": 20.0,
+            "weather_code": None,
+            "weather_class": "unknown",
+            "precipitation_sum_mm": None,
+            "precipitation_probability_mean": None,
+            "shortwave_radiation_sum_mj_m2": None,
+            "source": "date-only-fallback",
+            "daily_forecast_error": str(exc),
+        }
 
 
 def _archive_weather_rows(
@@ -535,8 +564,6 @@ def _estimate_midday_surplus_from_pv_forecast(
     midday_pv = _to_optional_float(totals.get("midday_kwh"))
     if midday_pv is None:
         return None
-    total_pv = _to_optional_float(totals.get("total_kwh")) or 0.0
-
     non_morning_load = max(
         0.0,
         consumption_forecast.daytime_load_kwh - consumption_forecast.morning_load_kwh,
@@ -549,14 +576,7 @@ def _estimate_midday_surplus_from_pv_forecast(
     midday_load_fraction = max(0.0, min(1.0, midday_load_fraction))
     estimated_midday_load = non_morning_load * midday_load_fraction
     net_surplus = max(0.0, midday_pv - estimated_midday_load)
-
-    # Even when daily load is high, cloudy days can still create short PV bursts that
-    # need battery headroom. Keep a conservative floor so the forecast does not
-    # collapse to 0% headroom on days with meaningful PV.
-    floor_ratio = max(0.0, float(os.getenv("PV_CHARGE_OPPORTUNITY_FLOOR_RATIO", "0.30").strip() or "0.30"))
-    floor_threshold = max(0.0, float(os.getenv("PV_CHARGE_OPPORTUNITY_FLOOR_MIN_PV_KWH", "3.0").strip() or "3.0"))
-    floor_kwh = total_pv * floor_ratio if total_pv >= floor_threshold else 0.0
-    return max(net_surplus, floor_kwh)
+    return net_surplus
 
 
 def main() -> int:
@@ -610,11 +630,8 @@ def main() -> int:
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
         pv_array_forecast["surplus_estimate"] = {
             "midday_surplus_kwh": predicted_midday_surplus_override,
-            "method": "max(net_midday_surplus, pv_charge_opportunity_floor)",
+            "method": "net_midday_surplus_without_safety_floor",
             "midday_load_fraction": _to_optional_float(os.getenv("PV_MIDDAY_LOAD_FRACTION", "").strip()) or (6.0 / 13.0),
-            "charge_opportunity_floor_ratio": _to_optional_float(
-                os.getenv("PV_CHARGE_OPPORTUNITY_FLOOR_RATIO", "").strip()
-            ) or 0.30,
         }
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
@@ -657,34 +674,14 @@ def main() -> int:
         hourly_pv_kwh=hourly_pv_forecast,
         sunset_hour=sunset_hour,
         soc_step_percent=float(os.getenv("DAYTIME_SOC_OPT_STEP_PERCENT", "1.0").strip() or "1.0"),
+        target_peak_soc_percent=float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
+        buy_tolerance_kwh=float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
+        sell_tolerance_kwh=float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
     )
     optimization_payload: dict[str, object] | None = None
     if daytime_optimization is not None:
         optimized_target_soc = daytime_optimization.target_soc_7_percent
         optimized_required_kwh = daytime_optimization.required_night_charge_kwh
-        headroom_cap_payload: dict[str, object] | None = None
-        headroom_kwh = max(0.0, predicted_midday_surplus_override or 0.0)
-        headroom_cap_enabled = _env_bool("DAYTIME_PV_HEADROOM_CAP_ENABLED", True)
-        min_headroom_kwh = max(0.0, float(os.getenv("DAYTIME_PV_HEADROOM_CAP_MIN_KWH", "0.5").strip() or "0.5"))
-        if headroom_cap_enabled and headroom_kwh >= min_headroom_kwh and result.effective_capacity_kwh > 0:
-            cap_target_soc = max(
-                inp.reserve_soc_percent,
-                100.0 - (headroom_kwh / result.effective_capacity_kwh * 100.0),
-            )
-            if cap_target_soc < optimized_target_soc:
-                optimized_target_soc = max(0.0, min(100.0, cap_target_soc))
-                target_energy = result.effective_capacity_kwh * optimized_target_soc / 100.0
-                current_energy = result.effective_capacity_kwh * latest_soc / 100.0
-                optimized_required_kwh = max(
-                    0.0,
-                    (target_energy - current_energy) / max(0.7, coeff.battery_round_trip_efficiency),
-                )
-                headroom_cap_payload = {
-                    "applied": True,
-                    "headroom_kwh": headroom_kwh,
-                    "cap_target_soc_percent": optimized_target_soc,
-                    "original_target_soc_percent": daytime_optimization.target_soc_7_percent,
-                }
 
         result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
         result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
@@ -692,9 +689,13 @@ def main() -> int:
         result_payload["required_night_charge_kwh"] = optimized_required_kwh
         optimization_payload = {
             **to_dict(daytime_optimization),
-            "target_soc_7_percent_after_headroom_cap": optimized_target_soc,
-            "required_night_charge_kwh_after_headroom_cap": optimized_required_kwh,
-            "pv_headroom_cap": headroom_cap_payload or {"applied": False},
+            "objective": "avoid_daytime_buy_and_sell_then_peak_soc_near_target",
+            "target_peak_soc_percent": float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
+            "buy_tolerance_kwh": float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
+            "sell_tolerance_kwh": float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
+            "target_soc_7_percent_after_peak_objective": optimized_target_soc,
+            "required_night_charge_kwh_after_peak_objective": optimized_required_kwh,
+            "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
             "sunset_hour": sunset_hour,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
