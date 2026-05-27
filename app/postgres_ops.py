@@ -116,6 +116,8 @@ def ensure_schema(conn) -> None:
             setting_soc_target_percent DOUBLE PRECISION,
             night_charge_kwh DOUBLE PRECISION,
             pv_max_charge_kwh DOUBLE PRECISION,
+            pv_charge_end_soc_percent DOUBLE PRECISION,
+            pv_charge_end_at TEXT,
             end_of_day_soc_percent DOUBLE PRECISION,
             updated_at TEXT NOT NULL
         )
@@ -162,6 +164,8 @@ def ensure_schema(conn) -> None:
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_midday_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_evening_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_calibration_factor DOUBLE PRECISION",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_soc_percent DOUBLE PRECISION",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_at TEXT",
         ]:
             cur.execute(column_sql)
     conn.commit()
@@ -594,33 +598,37 @@ def upsert_battery_daily_metrics(
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
-    end_of_day_soc = metrics["end_of_day_soc"]
+    pv_charge_end_soc = metrics["pv_charge_end_soc"]
+    pv_charge_end_at = metrics["pv_charge_end_at"]
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO battery_daily_metrics (
-                date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s)
+                date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
+                pv_charge_end_soc_percent, pv_charge_end_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(date) DO UPDATE SET
                 setting_soc_target_percent=excluded.setting_soc_target_percent,
                 night_charge_kwh=excluded.night_charge_kwh,
                 pv_max_charge_kwh=excluded.pv_max_charge_kwh,
-                end_of_day_soc_percent=excluded.end_of_day_soc_percent,
+                pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
+                pv_charge_end_at=excluded.pv_charge_end_at,
                 updated_at=excluded.updated_at
             """,
-            (date, target_soc, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc, updated_at),
+            (date, target_soc, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc, pv_charge_end_at, updated_at),
         )
     conn.commit()
 
 
-def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
+def recalc_battery_pv_charge_end_soc(conn, *, updated_at: str) -> int:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT day, soc_percent
+            SELECT day, ts, soc_percent
             FROM (
                 SELECT
                     substring(ts, 1, 10) AS day,
+                    ts,
                     soc_percent,
                     ROW_NUMBER() OVER (
                         PARTITION BY substring(ts, 1, 10)
@@ -628,6 +636,8 @@ def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
                     ) AS rn
                 FROM monitoring_samples
                 WHERE soc_percent IS NOT NULL
+                  AND COALESCE(pv_kwh, 0) > 0
+                  AND COALESCE(charge_kwh, 0) > 0
             ) ranked
             WHERE rn = 1
             """
@@ -640,6 +650,7 @@ def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
     with conn.cursor() as cur:
         for row in rows:
             day = str(row["day"])
+            ts = str(row["ts"])
             soc_raw = row.get("soc_percent")
             if soc_raw is None:
                 continue
@@ -647,14 +658,19 @@ def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
             cur.execute(
                 """
                 UPDATE battery_daily_metrics
-                SET end_of_day_soc_percent = %s, updated_at = %s
+                SET pv_charge_end_soc_percent = %s, pv_charge_end_at = %s, updated_at = %s
                 WHERE date = %s
                 """,
-                (soc, updated_at, day),
+                (soc, ts, updated_at, day),
             )
             updated += int(cur.rowcount or 0)
     conn.commit()
     return updated
+
+
+def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
+    # Backward-compatible wrapper. The metric is now PV-charge-end SOC.
+    return recalc_battery_pv_charge_end_soc(conn, updated_at=updated_at)
 
 
 def upsert_model_parameters_from_plan(conn, *, night_plan_path: Path, updated_at: str) -> None:

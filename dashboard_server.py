@@ -1071,7 +1071,7 @@ def _html(payload: dict, script_nonce: str) -> str:
           { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, pointHoverRadius: 4, borderWidth: 2.5 },
           { label: "夜間充電計画(kWh/日)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
           { label: "太陽光蓄電余力予測(kWh/日)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
-          { label: "日終SOC実績(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
+          { label: "太陽光充電終了時SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
         ]},
         options: {
           ...commonOptions(),
@@ -1294,28 +1294,28 @@ def _html(payload: dict, script_nonce: str) -> str:
       const batteryTarget = buckets.map((bucket) => averageBucket(bucket, store.battery, "setting_soc_target_percent"));
       const batteryNight = buckets.map((bucket) => sumBucket(bucket, store.battery, "night_charge_kwh"));
       const batteryPvMax = buckets.map((bucket) => sumBucket(bucket, store.battery, "pv_max_charge_kwh"));
-      const batteryEndSoc = buckets.map((bucket) => averageBucket(bucket, store.battery, "end_of_day_soc_percent"));
+      const batteryPvChargeEndSoc = buckets.map((bucket) => averageBucket(bucket, store.battery, "pv_charge_end_soc_percent"));
 
       const batteryTitle = document.getElementById("batteryTitle");
       const batteryDesc = document.getElementById("batteryDesc");
       if (batteryTitle) batteryTitle.textContent = `5. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
       if (batteryDesc) {
-        batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。夜間充電・PV蓄電余力は「${bucketLabel}の計画/予測値」で、瞬時充電電力(kW)ではありません。`;
+        batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。太陽光充電終了時SOCは、その日にPV発電中の充電が最後に発生した時点のSOCです。`;
       }
 
       charts.battery.data.labels = labels;
       charts.battery.data.datasets[0].label = isWeekly ? "平均設定SOC(%)" : "設定SOC(%)";
       charts.battery.data.datasets[1].label = `夜間充電計画(kWh/${perUnit})`;
       charts.battery.data.datasets[2].label = `太陽光蓄電余力予測(kWh/${perUnit})`;
-      charts.battery.data.datasets[3].label = isWeekly ? "平均日終SOC実績(%)" : "日終SOC実績(%)";
+      charts.battery.data.datasets[3].label = isWeekly ? "平均太陽光充電終了時SOC(%)" : "太陽光充電終了時SOC(%)";
       charts.battery.data.datasets[0].data = batteryTarget;
       charts.battery.data.datasets[1].data = batteryNight;
       charts.battery.data.datasets[2].data = batteryPvMax;
-      charts.battery.data.datasets[3].data = batteryEndSoc;
-      charts.battery.data.datasets[3].hidden = !batteryEndSoc.some((v) => v != null);
+      charts.battery.data.datasets[3].data = batteryPvChargeEndSoc;
+      charts.battery.data.datasets[3].hidden = !batteryPvChargeEndSoc.some((v) => v != null);
       const batterySoc = [
         ...batteryTarget.filter((v) => v != null),
-        ...batteryEndSoc.filter((v) => v != null),
+        ...batteryPvChargeEndSoc.filter((v) => v != null),
       ];
       const batteryKwh = [
         ...batteryNight.filter((v) => v != null),

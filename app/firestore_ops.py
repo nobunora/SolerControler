@@ -474,26 +474,35 @@ def upsert_battery_daily_metrics(
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
-    end_of_day_soc = metrics["end_of_day_soc"]
+    pv_charge_end_soc = metrics["pv_charge_end_soc"]
+    pv_charge_end_at = metrics["pv_charge_end_at"]
     client.collection("battery_daily_metrics").document(date).set(
         {
             "date": date,
             "setting_soc_target_percent": target_soc,
             "night_charge_kwh": night_charge_kwh,
             "pv_max_charge_kwh": pv_max_charge_kwh,
-            "end_of_day_soc_percent": end_of_day_soc,
+            "pv_charge_end_soc_percent": pv_charge_end_soc,
+            "pv_charge_end_at": pv_charge_end_at,
             "updated_at": updated_at,
         },
         merge=True,
     )
 
 
-def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
+def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
     latest_by_day: dict[str, tuple[str, float]] = {}
     for doc in client.collection("monitoring_samples").stream():
         row = doc.to_dict() or {}
         ts = str(row.get("ts", doc.id)).strip()
         if len(ts) < 10:
+            continue
+        try:
+            pv_kwh = float(row.get("pv_kwh") or 0.0)
+            charge_kwh = float(row.get("charge_kwh") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if pv_kwh <= 0.0 or charge_kwh <= 0.0:
             continue
         soc_raw = row.get("soc_percent")
         if soc_raw is None:
@@ -513,7 +522,7 @@ def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
     batch = client.batch()
     count = 0
     updated = 0
-    for day, (_ts, soc) in latest_by_day.items():
+    for day, (ts, soc) in latest_by_day.items():
         ref = client.collection("battery_daily_metrics").document(day)
         snap = ref.get()
         if not snap.exists:
@@ -521,7 +530,8 @@ def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
         batch.set(
             ref,
             {
-                "end_of_day_soc_percent": soc,
+                "pv_charge_end_soc_percent": soc,
+                "pv_charge_end_at": ts,
                 "updated_at": updated_at,
             },
             merge=True,
@@ -535,6 +545,12 @@ def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
     if count > 0:
         batch.commit()
     return updated
+
+
+def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
+    # Backward-compatible entry point. The dashboard now tracks the SOC at the
+    # last PV charging sample, not the final sample of the day.
+    return recalc_battery_pv_charge_end_soc(client, updated_at=updated_at)
 
 
 def upsert_model_parameters_from_plan(client, *, night_plan_path: Path, updated_at: str) -> None:

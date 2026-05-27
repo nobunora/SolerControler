@@ -77,7 +77,7 @@ def main() -> int:
         b_target = [r["setting_soc_target_percent"] for r in battery]
         b_night = [r["night_charge_kwh"] for r in battery]
         b_pv_max = [r["pv_max_charge_kwh"] for r in battery]
-        b_end = [r["end_of_day_soc_percent"] for r in battery]
+        b_end = [r.get("pv_charge_end_soc_percent") for r in battery]
     else:
         b_days = days
         b_target = [35 + (i % 3) * 5 for i in range(len(days))]
@@ -156,7 +156,7 @@ def main() -> int:
     ax5.plot(b_days, b_pv_max, label="太陽光蓄電余力予測(kWh/日)", color="#14b86f")
     ax5b = ax5.twinx()
     ax5b.plot(b_days, b_target, label="設定SOC(%)", color="#147efb")
-    ax5b.plot(b_days, b_end, label="日終SOC(%)", color="#e6504f")
+    ax5b.plot(b_days, b_end, label="太陽光充電終了時SOC(%)", color="#e6504f")
     ax5.set_title("5) 蓄電池計画値と実績（日次）")
     ax5.set_ylabel("kWh")
     ax5b.set_ylabel("%")

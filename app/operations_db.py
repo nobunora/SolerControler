@@ -322,6 +322,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             setting_soc_target_percent REAL,
             night_charge_kwh REAL,
             pv_max_charge_kwh REAL,
+            pv_charge_end_soc_percent REAL,
+            pv_charge_end_at TEXT,
             end_of_day_soc_percent REAL,
             updated_at TEXT NOT NULL
         );
@@ -372,6 +374,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "forecast_pv_midday_kwh": "REAL",
             "forecast_pv_evening_kwh": "REAL",
             "forecast_pv_calibration_factor": "REAL",
+        },
+    )
+    _ensure_sqlite_columns(
+        conn,
+        "battery_daily_metrics",
+        {
+            "pv_charge_end_soc_percent": "REAL",
+            "pv_charge_end_at": "TEXT",
         },
     )
     conn.commit()
@@ -451,8 +461,9 @@ def _extract_battery_daily_from_summary(
         "target_soc": target_soc,
         "night_charge_kwh": night_charge_kwh,
         "pv_max_charge_kwh": pv_max_charge_kwh,
-        # Actual end-of-day SOC must come from monitoring CSV samples.
-        "end_of_day_soc": None,
+        # Actual PV-charge-end SOC must come from monitoring CSV samples.
+        "pv_charge_end_soc": None,
+        "pv_charge_end_at": None,
     }
 
 
@@ -961,31 +972,35 @@ def upsert_battery_daily_metrics(
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
-    end_of_day_soc = metrics["end_of_day_soc"]
+    pv_charge_end_soc = metrics["pv_charge_end_soc"]
+    pv_charge_end_at = metrics["pv_charge_end_at"]
     conn.execute(
         """
         INSERT INTO battery_daily_metrics (
-            date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
+            pv_charge_end_soc_percent, pv_charge_end_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date) DO UPDATE SET
             setting_soc_target_percent=excluded.setting_soc_target_percent,
             night_charge_kwh=excluded.night_charge_kwh,
             pv_max_charge_kwh=excluded.pv_max_charge_kwh,
-            end_of_day_soc_percent=excluded.end_of_day_soc_percent,
+            pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
+            pv_charge_end_at=excluded.pv_charge_end_at,
             updated_at=excluded.updated_at
         """,
-        (date, target_soc, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc, updated_at),
+        (date, target_soc, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc, pv_charge_end_at, updated_at),
     )
     conn.commit()
 
 
-def recalc_battery_end_of_day_soc(conn: sqlite3.Connection, *, updated_at: str) -> int:
+def recalc_battery_pv_charge_end_soc(conn: sqlite3.Connection, *, updated_at: str) -> int:
     rows = conn.execute(
         """
-        SELECT day, soc_percent
+        SELECT day, ts, soc_percent
         FROM (
             SELECT
                 substr(ts, 1, 10) AS day,
+                ts,
                 soc_percent,
                 ROW_NUMBER() OVER (
                     PARTITION BY substr(ts, 1, 10)
@@ -993,6 +1008,8 @@ def recalc_battery_end_of_day_soc(conn: sqlite3.Connection, *, updated_at: str) 
                 ) AS rn
             FROM monitoring_samples
             WHERE soc_percent IS NOT NULL
+              AND COALESCE(pv_kwh, 0) > 0
+              AND COALESCE(charge_kwh, 0) > 0
         ) ranked
         WHERE rn = 1
         """
@@ -1003,20 +1020,26 @@ def recalc_battery_end_of_day_soc(conn: sqlite3.Connection, *, updated_at: str) 
     updated = 0
     for row in rows:
         day = str(row["day"])
+        ts = str(row["ts"])
         soc = _to_float_any(row["soc_percent"])
         if soc is None:
             continue
         cur = conn.execute(
             """
             UPDATE battery_daily_metrics
-            SET end_of_day_soc_percent = ?, updated_at = ?
+            SET pv_charge_end_soc_percent = ?, pv_charge_end_at = ?, updated_at = ?
             WHERE date = ?
             """,
-            (soc, updated_at, day),
+            (soc, ts, updated_at, day),
         )
         updated += int(cur.rowcount or 0)
     conn.commit()
     return updated
+
+
+def recalc_battery_end_of_day_soc(conn: sqlite3.Connection, *, updated_at: str) -> int:
+    # Backward-compatible wrapper. The metric is now PV-charge-end SOC.
+    return recalc_battery_pv_charge_end_soc(conn, updated_at=updated_at)
 
 
 def upsert_model_parameters_from_plan(conn: sqlite3.Connection, *, night_plan_path: Path, updated_at: str) -> None:

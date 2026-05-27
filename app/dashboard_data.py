@@ -416,13 +416,25 @@ def _build_latest_schedule_from_events(
 def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
     candidates: list[str | None] = []
     for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics", "forecast_hourly"):
+        if not _sqlite_table_exists(conn, table):
+            continue
         row = conn.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}").fetchone()
         candidates.extend([row["min_date"], row["max_date"]])
+    if not _sqlite_table_exists(conn, "monitoring_samples"):
+        return _pick_min_max_dates(candidates)
     row = conn.execute(
         "SELECT MIN(substr(ts,1,10)) AS min_date, MAX(substr(ts,1,10)) AS max_date FROM monitoring_samples"
     ).fetchone()
     candidates.extend([row["min_date"], row["max_date"]])
     return _pick_min_max_dates(candidates)
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
 
 
 def _get_global_bounds_postgres(cur) -> tuple[str | None, str | None]:
@@ -524,74 +536,86 @@ def _load_sqlite_slice(
         start_date = start_obj.isoformat()
         end_date_iso = end_obj.isoformat()
 
-        sunshine = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT *
-                FROM sunshine_daily
-                WHERE date >= ? AND date <= ?
-                ORDER BY date
-                """,
-                (start_date, end_date_iso),
-            ).fetchall()
-        )
-        cost_daily = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen
-                FROM cost_daily
-                WHERE date >= ? AND date <= ?
-                ORDER BY date
-                """,
-                (start_date, end_date_iso),
-            ).fetchall()
-        )
-        battery_daily = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent
-                FROM battery_daily_metrics
-                WHERE date >= ? AND date <= ?
-                ORDER BY date
-                """,
-                (start_date, end_date_iso),
-            ).fetchall()
-        )
-        forecast_hourly = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
-                FROM forecast_hourly
-                WHERE date >= ? AND date <= ?
-                ORDER BY date, hour
-                """,
-                (start_date, end_date_iso),
-            ).fetchall()
-        )
+        sunshine = []
+        if _sqlite_table_exists(conn, "sunshine_daily"):
+            sunshine = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM sunshine_daily
+                    WHERE date >= ? AND date <= ?
+                    ORDER BY date
+                    """,
+                    (start_date, end_date_iso),
+                ).fetchall()
+            )
+        cost_daily = []
+        if _sqlite_table_exists(conn, "cost_daily"):
+            cost_daily = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen
+                    FROM cost_daily
+                    WHERE date >= ? AND date <= ?
+                    ORDER BY date
+                    """,
+                    (start_date, end_date_iso),
+                ).fetchall()
+            )
+        battery_daily = []
+        if _sqlite_table_exists(conn, "battery_daily_metrics"):
+            battery_daily = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM battery_daily_metrics
+                    WHERE date >= ? AND date <= ?
+                    ORDER BY date
+                    """,
+                    (start_date, end_date_iso),
+                ).fetchall()
+            )
+        forecast_hourly = []
+        if _sqlite_table_exists(conn, "forecast_hourly"):
+            forecast_hourly = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                    FROM forecast_hourly
+                    WHERE date >= ? AND date <= ?
+                    ORDER BY date, hour
+                    """,
+                    (start_date, end_date_iso),
+                ).fetchall()
+            )
         history_start = (start_obj - timedelta(days=14)).isoformat()
-        monitoring_daily = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT substr(ts,1,10) AS date,
-                       COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
-                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
-                FROM monitoring_samples
-                WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-                GROUP BY substr(ts,1,10)
-                ORDER BY date
-                """,
-                (history_start, end_date_iso),
-            ).fetchall()
-        )
-        params_for_energy = _rows_to_dicts(
-            conn.execute(
-                """
-                SELECT name, mean_value
-                FROM model_parameters
-                ORDER BY name
-                """
-            ).fetchall()
-        )
+        monitoring_daily = []
+        if _sqlite_table_exists(conn, "monitoring_samples"):
+            monitoring_daily = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT substr(ts,1,10) AS date,
+                           COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
+                           COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
+                    FROM monitoring_samples
+                    WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+                    GROUP BY substr(ts,1,10)
+                    ORDER BY date
+                    """,
+                    (history_start, end_date_iso),
+                ).fetchall()
+            )
+        params_for_energy = []
+        if _sqlite_table_exists(conn, "model_parameters"):
+            params_for_energy = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT name, mean_value
+                    FROM model_parameters
+                    ORDER BY name
+                    """
+                ).fetchall()
+            )
         energy_daily = _build_energy_daily(
             start_date=start_date,
             end_date_iso=end_date_iso,
@@ -604,43 +628,51 @@ def _load_sqlite_slice(
         params: list[dict[str, Any]] = []
         latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
         if include_static:
-            all_cost_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT date, self_consumption_kwh, savings_yen
-                    FROM cost_daily
-                    ORDER BY date
-                    """
-                ).fetchall()
-            )
+            all_cost_daily = []
+            if _sqlite_table_exists(conn, "cost_daily"):
+                all_cost_daily = _rows_to_dicts(
+                    conn.execute(
+                        """
+                        SELECT date, self_consumption_kwh, savings_yen
+                        FROM cost_daily
+                        ORDER BY date
+                        """
+                    ).fetchall()
+                )
             cost_monthly = _build_cost_monthly(all_cost_daily)
-            params = _rows_to_dicts(
-                conn.execute(
+            params = []
+            if _sqlite_table_exists(conn, "model_parameters"):
+                params = _rows_to_dicts(
+                    conn.execute(
+                        """
+                        SELECT name, mean_value, variance, sample_count, hit_rate
+                        FROM model_parameters
+                        ORDER BY name
+                        """
+                    ).fetchall()
+                )
+            latest_events = []
+            if _sqlite_table_exists(conn, "settings_events"):
+                latest_events = _rows_to_dicts(
+                    conn.execute(
+                        """
+                        SELECT slot, profile, status, detail_json, recorded_at
+                        FROM settings_events
+                        ORDER BY recorded_at DESC, event_id DESC
+                        LIMIT 40
+                        """
+                    ).fetchall()
+                )
+            latest_battery = None
+            if _sqlite_table_exists(conn, "battery_daily_metrics"):
+                latest_battery = conn.execute(
                     """
-                    SELECT name, mean_value, variance, sample_count, hit_rate
-                    FROM model_parameters
-                    ORDER BY name
+                    SELECT date, setting_soc_target_percent, night_charge_kwh
+                    FROM battery_daily_metrics
+                    ORDER BY date DESC
+                    LIMIT 1
                     """
-                ).fetchall()
-            )
-            latest_events = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT slot, profile, status, detail_json, recorded_at
-                    FROM settings_events
-                    ORDER BY recorded_at DESC, event_id DESC
-                    LIMIT 40
-                    """
-                ).fetchall()
-            )
-            latest_battery = conn.execute(
-                """
-                SELECT date, setting_soc_target_percent, night_charge_kwh
-                FROM battery_daily_metrics
-                ORDER BY date DESC
-                LIMIT 1
-                """
-            ).fetchone()
+                ).fetchone()
             latest_schedule = _build_latest_schedule_from_events(
                 event_rows=latest_events,
                 battery_row=dict(latest_battery) if latest_battery is not None else None,
@@ -771,7 +803,7 @@ def _load_postgres_slice(
 
             cur.execute(
                 """
-                SELECT date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, end_of_day_soc_percent
+                SELECT *
                 FROM battery_daily_metrics
                 WHERE date >= %s AND date <= %s
                 ORDER BY date
@@ -1038,7 +1070,7 @@ def _load_firestore_slice(
         collection_name="battery_daily_metrics",
         start_date=start_date,
         end_date_iso=end_date_iso,
-        fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "end_of_day_soc_percent"],
+        fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "pv_charge_end_soc_percent", "pv_charge_end_at"],
     )
     forecast_hourly = _firestore_rows_between(
         client,
