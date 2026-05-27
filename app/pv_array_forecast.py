@@ -304,6 +304,39 @@ def _weather_class_from_code(weather_code: int | None) -> str:
     return "other"
 
 
+def _ratio_distribution(values: list[float], *, source: str) -> dict[str, Any]:
+    """Summarize forecast residual multipliers without hiding the sample count."""
+
+    clean = [float(v) for v in values if math.isfinite(float(v)) and float(v) >= 0.0]
+    if not clean:
+        return {
+            "source": source,
+            "sample_count": 0,
+            "mean_multiplier": 1.0,
+            "std_multiplier": 0.30,
+            "variance_multiplier": 0.09,
+            "status": "fallback_no_samples",
+        }
+    arr = np.asarray(clean, dtype=float)
+    mean = float(np.mean(arr))
+    variance = float(np.var(arr, ddof=1)) if len(clean) >= 2 else 0.09
+    std = float(math.sqrt(max(0.0, variance)))
+    return {
+        "source": source,
+        "sample_count": len(clean),
+        "mean_multiplier": _round(mean),
+        "std_multiplier": _round(std),
+        "variance_multiplier": _round(variance),
+        "min_multiplier": _round(float(np.min(arr))),
+        "p25_multiplier": _round(float(np.percentile(arr, 25))),
+        "p50_multiplier": _round(float(np.percentile(arr, 50))),
+        "p75_multiplier": _round(float(np.percentile(arr, 75))),
+        "p90_multiplier": _round(float(np.percentile(arr, 90))),
+        "max_multiplier": _round(float(np.max(arr))),
+        "status": "ok",
+    }
+
+
 def _fetch_archive_weather_daily_by_day(
     *,
     lat: float,
@@ -417,6 +450,14 @@ def calibrate_performance_ratio(
 
     raw_factor = actual_total / modeled_total
     factor = max(min_factor, min(max_factor, raw_factor))
+    residual_multipliers = [
+        actual_by_day[d] / max(1e-6, modeled_by_day[d] * factor)
+        for d in common_days
+    ]
+    forecast_error_distribution = _ratio_distribution(
+        residual_multipliers,
+        source="actual_pv_vs_calibrated_open_meteo_gti",
+    )
 
     weather_adjustments: dict[str, dict[str, float | int | None]] = {}
     weather_regression: dict[str, Any] = {}
@@ -531,6 +572,7 @@ def calibrate_performance_ratio(
         "actual_kwh": _round(actual_total),
         "modeled_kwh": _round(modeled_total),
         "source": "actual_pv_vs_open_meteo_gti",
+        "forecast_error_distribution": forecast_error_distribution,
         "weather_adjustments": weather_adjustments,
         "weather_regression": weather_regression,
     }

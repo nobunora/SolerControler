@@ -172,16 +172,49 @@ ROOT: fixed condition adjustments
    └─ start == end なら RuntimeError
 ```
 
-## 6. `target_soc_7_percent` の算出側（`energy_model_main.py`）
+## 6. `target_soc_7_percent` の算出側
 
-夜間SOC目標の計算入力として、予備SOCを使います。
+SOC目標は `energy_model_main.py` で組み立て、読みやすさのために最終判断は
+`app/soc_cost_optimizer.py` に分離しています。
+
+考え方は次の3つです。
 
 ```text
-reserve_soc_percent = NIGHT_RESERVE_SOC_PERCENT (現在のデフォルト 0)
+1. PV予測は単一点ではなく、平均誤差 + 分散から複数シナリオへ展開する
+2. SOC候補ごとに 07:00-23:00 をリプレイする
+3. 夜間充電原価 + 昼間買電期待額 + 売電機会損失 が最小のSOCを選ぶ
 ```
 
+コスト式は次の通りです。
+
+```text
+night_charge_cost
+  = max(0, target_energy - current_energy) / charge_efficiency
+    * SOC_COST_NIGHT_RATE_YEN_PER_KWH
+
+expected_day_buy_cost
+  = Σ(probability * daytime_buy_kWh)
+    * SOC_COST_DAY_BUY_RATE_YEN_PER_KWH
+    * SOC_COST_DAY_BUY_PENALTY_FACTOR
+
+expected_sell_opportunity_loss
+  = Σ(probability * export_kWh)
+    * (night_effective_rate * (1 - SOC_COST_SELL_VALUE_RATIO))
+
+total_expected_cost
+  = night_charge_cost
+    + expected_day_buy_cost
+    + expected_sell_opportunity_loss
+```
+
+PV分散は、PV array calibration の
+`forecast_error_distribution` から取得します。履歴が足りない場合は
+`PV_FORECAST_ERROR_RATIO_MEAN` と `PV_FORECAST_ERROR_RATIO_STD` を使います。
+
 この値は `night_charge_plan.json -> result.target_soc_7_percent` に反映され、
-最終的に夜間プロファイルの `soc_charge_mode` 選択に使われます。
+最終的に夜間プロファイルの `soc_charge_mode` 選択に使われます。旧ピークSOC最適化は
+`night_charge_plan.json -> daytime_soc_optimization.legacy_peak_objective` に残し、
+比較とフォールバックに使えるようにしています。
 
 ## 7. 参照する可変ルールID（現行）
 

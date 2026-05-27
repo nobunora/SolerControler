@@ -26,6 +26,12 @@ from app.occupancy_schedule import (
     load_occupancy_events_from_env,
 )
 from app.pv_array_forecast import build_pv_array_forecast, load_pv_array_configs
+from app.soc_cost_optimizer import (
+    PvForecastUncertainty,
+    SocCostModel,
+    optimize_soc_by_expected_cost,
+    to_plain_dict,
+)
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -165,6 +171,89 @@ def _env_bool(name: str, default: bool) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_float_clamped(name: str, default: float, *, min_value: float, max_value: float) -> float:
+    value = _env_float(name, default)
+    return max(min_value, min(max_value, value))
+
+
+def _pv_uncertainty_from_forecast(pv_forecast: dict[str, object] | None) -> PvForecastUncertainty:
+    """Return the PV error distribution used by the SOC cost optimizer."""
+
+    default_mean = _env_float("PV_FORECAST_ERROR_RATIO_MEAN", 1.0)
+    default_std = max(0.0, _env_float("PV_FORECAST_ERROR_RATIO_STD", 0.30))
+    default = PvForecastUncertainty(
+        mean_multiplier=max(0.0, default_mean),
+        std_multiplier=default_std,
+        variance_multiplier=default_std * default_std,
+        sample_count=0,
+        source="env_default",
+    )
+    if not isinstance(pv_forecast, dict):
+        return default
+    calibration = pv_forecast.get("calibration")
+    if not isinstance(calibration, dict):
+        return default
+    distribution = calibration.get("forecast_error_distribution")
+    if not isinstance(distribution, dict):
+        return default
+
+    min_samples = int(_env_float("PV_FORECAST_ERROR_MIN_SAMPLE_DAYS", 5.0))
+    sample_count = int(_to_optional_float(distribution.get("sample_count")) or 0)
+    if sample_count < min_samples:
+        return PvForecastUncertainty(
+            mean_multiplier=default.mean_multiplier,
+            std_multiplier=default.std_multiplier,
+            variance_multiplier=default.variance_multiplier,
+            sample_count=sample_count,
+            source=f"{distribution.get('source') or 'calibration'}:insufficient_samples",
+        )
+
+    mean = _to_optional_float(distribution.get("mean_multiplier"))
+    std = _to_optional_float(distribution.get("std_multiplier"))
+    variance = _to_optional_float(distribution.get("variance_multiplier"))
+    if mean is None or std is None:
+        return default
+    std = max(0.0, std)
+    if variance is None:
+        variance = std * std
+    return PvForecastUncertainty(
+        mean_multiplier=max(0.0, mean),
+        std_multiplier=std,
+        variance_multiplier=max(0.0, variance),
+        sample_count=sample_count,
+        source=str(distribution.get("source") or "calibration"),
+    )
+
+
+def _soc_cost_model_from_env(*, battery_round_trip_efficiency: float) -> SocCostModel:
+    """Prices intentionally live in one place so the objective is easy to audit."""
+
+    day_rate = _env_float(
+        "SOC_COST_DAY_BUY_RATE_YEN_PER_KWH",
+        _env_float("NIGHT8_DAY_RATE_TIER2_YEN", _env_float("DAY_RATE_YEN_PER_KWH", 39.10)),
+    )
+    night_rate = _env_float("SOC_COST_NIGHT_RATE_YEN_PER_KWH", _env_float("NIGHT8_NIGHT_RATE_YEN", 28.85))
+    sell_value_ratio = _env_float_clamped("SOC_COST_SELL_VALUE_RATIO", 0.75, min_value=0.0, max_value=1.0)
+    day_buy_penalty = max(0.0, _env_float("SOC_COST_DAY_BUY_PENALTY_FACTOR", 1.0))
+    return SocCostModel(
+        day_buy_rate_yen_per_kwh=max(0.0, day_rate),
+        night_buy_rate_yen_per_kwh=max(0.0, night_rate),
+        charge_efficiency=max(0.01, battery_round_trip_efficiency),
+        sell_value_ratio=sell_value_ratio,
+        day_buy_penalty_factor=day_buy_penalty,
+    )
 
 
 def _list_value(values, index: int):
@@ -729,28 +818,76 @@ def main() -> int:
         max_target_soc_percent=_to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0,
     )
     optimization_payload: dict[str, object] | None = None
+    legacy_optimization_payload: dict[str, object] | None = None
     if daytime_optimization is not None:
-        optimized_target_soc = daytime_optimization.target_soc_7_percent
-        optimized_required_kwh = daytime_optimization.required_night_charge_kwh
-
-        result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
-        result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
-        result_payload["target_soc_7_percent"] = optimized_target_soc
-        result_payload["required_night_charge_kwh"] = optimized_required_kwh
-        optimization_payload = {
+        legacy_optimization_payload = {
             **to_dict(daytime_optimization),
             "objective": "avoid_daytime_buy_and_sell_then_peak_soc_near_target",
             "target_peak_soc_percent": float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
             "buy_tolerance_kwh": float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
             "sell_tolerance_kwh": float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
-            "target_soc_7_percent_after_peak_objective": optimized_target_soc,
-            "required_night_charge_kwh_after_peak_objective": optimized_required_kwh,
+            "target_soc_7_percent_after_peak_objective": daytime_optimization.target_soc_7_percent,
+            "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
             "morning_pv_headroom_guard": morning_headroom_guard,
             "sunset_hour": sunset_hour,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
         }
+
+    cost_optimization_payload: dict[str, object] | None = None
+    cost_optimization_enabled = _env_bool("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", True)
+    if cost_optimization_enabled:
+        pv_uncertainty = _pv_uncertainty_from_forecast(pv_array_forecast if isinstance(pv_array_forecast, dict) else None)
+        cost_model = _soc_cost_model_from_env(
+            battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
+        )
+        respect_guard = _env_bool("SOC_COST_RESPECT_MORNING_HEADROOM_CAP", False)
+        cost_max_soc = 100.0
+        if respect_guard:
+            cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+        cost_optimization = optimize_soc_by_expected_cost(
+            capacity_kwh=result.effective_capacity_kwh,
+            soc_now_percent=latest_soc,
+            reserve_soc_percent=inp.reserve_soc_percent,
+            hourly_load_kwh=hourly_load_forecast,
+            hourly_pv_kwh=hourly_pv_forecast,
+            uncertainty=pv_uncertainty,
+            cost_model=cost_model,
+            soc_step_percent=_env_float("SOC_COST_OPT_STEP_PERCENT", _env_float("DAYTIME_SOC_OPT_STEP_PERCENT", 1.0)),
+            max_target_soc_percent=cost_max_soc,
+            min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
+            max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
+        )
+        if cost_optimization is not None:
+            cost_optimization_payload = {
+                **to_plain_dict(cost_optimization),
+                "objective": (
+                    "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
+                ),
+                "morning_pv_headroom_guard": morning_headroom_guard,
+                "respect_morning_headroom_guard": respect_guard,
+                "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
+                "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
+                "legacy_peak_objective": legacy_optimization_payload,
+            }
+            result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
+            result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
+            result_payload["target_soc_7_percent"] = cost_optimization.target_soc_7_percent
+            result_payload["required_night_charge_kwh"] = cost_optimization.required_night_charge_kwh
+            result_payload["target_soc_7_percent_cost_optimized"] = cost_optimization.target_soc_7_percent
+            result_payload["required_night_charge_kwh_cost_optimized"] = cost_optimization.required_night_charge_kwh
+            result_payload["soc_expected_total_cost_yen"] = cost_optimization.total_expected_cost_yen
+            result_payload["soc_expected_day_buy_kwh"] = cost_optimization.expected_day_buy_kwh
+            result_payload["soc_expected_sell_kwh"] = cost_optimization.expected_sell_kwh
+            optimization_payload = cost_optimization_payload
+
+    if optimization_payload is None and legacy_optimization_payload is not None:
+        result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
+        result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
+        result_payload["target_soc_7_percent"] = daytime_optimization.target_soc_7_percent
+        result_payload["required_night_charge_kwh"] = daytime_optimization.required_night_charge_kwh
+        optimization_payload = legacy_optimization_payload
 
     coefficients = to_dict(coeff)
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
@@ -765,6 +902,13 @@ def main() -> int:
         if isinstance(arrays, list):
             total_capacity = sum(_to_optional_float(a.get("capacity_kw")) or 0.0 for a in arrays if isinstance(a, dict))
             coefficients["pv_array_total_capacity_kw"] = total_capacity
+    pv_uncertainty_for_payload = _pv_uncertainty_from_forecast(
+        pv_array_forecast if isinstance(pv_array_forecast, dict) else None
+    )
+    coefficients["pv_forecast_error_ratio_mean"] = pv_uncertainty_for_payload.mean_multiplier
+    coefficients["pv_forecast_error_ratio_std"] = pv_uncertainty_for_payload.std_multiplier
+    coefficients["pv_forecast_error_ratio_variance"] = pv_uncertainty_for_payload.variance_multiplier
+    coefficients["pv_forecast_error_ratio_sample_count"] = float(pv_uncertainty_for_payload.sample_count)
 
     payload = {
         "csv_paths": [str(p) for p in csv_paths],

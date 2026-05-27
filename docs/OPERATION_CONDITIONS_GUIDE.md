@@ -232,7 +232,31 @@
 - 現在のデプロイ値は `KP_GREEN_MODE_MAX_CHARGE_PERCENT=50` です。
 - このしきい値は `operation_conditions.json` では変更しません。
 
-## 6. 日中グリーンプロファイルの現在ルール
+## 6. SOC目標の経済最適化
+
+7時SOC目標は `operation_conditions.json` では直接決めません。`energy_model_main.py` が
+PV予測・消費予測・蓄電池容量を集め、`app/soc_cost_optimizer.py` がSOC候補を比較します。
+
+比較するコストは次の3つです。
+
+- 夜間充電原価: 夜間単価を充放電効率で割り戻した、実際に使える電力の原価
+- 昼間買電期待額: PV下振れ時に昼間買電する期待kWhに昼間単価を掛けた値
+- 売電機会損失: PV上振れ時に蓄電できず売電したkWhの機会損失
+
+PV予測は1本に決め打ちせず、履歴の `forecast_error_distribution` から平均・分散を取り、
+sigma bucket に分けて期待値計算します。履歴が不足する場合は
+`PV_FORECAST_ERROR_RATIO_MEAN` と `PV_FORECAST_ERROR_RATIO_STD` を使います。
+
+主な調整値:
+
+- `SOC_COST_DAY_BUY_RATE_YEN_PER_KWH`
+- `SOC_COST_NIGHT_RATE_YEN_PER_KWH`
+- `SOC_COST_SELL_VALUE_RATIO`
+- `SOC_COST_DAY_BUY_PENALTY_FACTOR`
+- `PV_FORECAST_ERROR_RATIO_MEAN`
+- `PV_FORECAST_ERROR_RATIO_STD`
+
+## 7. 日中グリーンプロファイルの現在ルール
 
 日中グリーンプロファイルは `_build_dynamic_green_profile()` で作ります。
 
@@ -247,7 +271,7 @@
 
 現在のデプロイ値では `KP_DAY_DISCHARGE_WINDOW_END=23:00` です。
 
-## 7. 23時・03系・07時ジョブとの関係
+## 8. 23時・03系・07時ジョブとの関係
 
 `operation_conditions.json` は設定プロファイルの時刻ルールですが、実際の適用タイミングは `cloud_job_runner.py` が制御します。
 
@@ -279,7 +303,7 @@
 - `KP_FORCE_SETTINGS_PROFILE=green`
 - `KP_DYNAMIC_FORCED_PROFILE=false`
 
-## 8. 編集時の注意
+## 9. 編集時の注意
 
 - 時刻は `HH:MM` 形式で書いてください。
 - JSONのコメントは使えません。
@@ -288,7 +312,7 @@
 - `priority` は整数として扱われ、大きいほど先に評価されます。
 - 現行コードが参照しないIDを追加しても動作は変わりません。
 
-## 9. 反映と確認
+## 10. 反映と確認
 
 1. `config/operation_conditions.json` を編集
 2. ローカルで対象シナリオを実行

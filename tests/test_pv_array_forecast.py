@@ -145,6 +145,9 @@ def test_calibration_uses_actual_generation_history() -> None:
 
     assert calibration["factor"] == pytest.approx(2.0)
     assert calibration["sample_days"] == 3
+    assert calibration["forecast_error_distribution"]["sample_count"] == 3
+    assert calibration["forecast_error_distribution"]["mean_multiplier"] == pytest.approx(1.0)
+    assert calibration["forecast_error_distribution"]["variance_multiplier"] == pytest.approx(0.0)
 
 
 def test_build_pv_array_forecast_applies_weather_multiplier(
