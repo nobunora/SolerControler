@@ -780,6 +780,107 @@ def _provider_order_from_env() -> list[str]:
     return providers or ["forecast_solar", "open_meteo"]
 
 
+def _forecast_hourly_map(forecast: dict[str, Any]) -> dict[datetime, float]:
+    out: dict[datetime, float] = {}
+    hourly = forecast.get("hourly", [])
+    if not isinstance(hourly, list):
+        return out
+    for row in hourly:
+        if not isinstance(row, dict):
+            continue
+        dt = _parse_time(row.get("time")) or _parse_forecast_solar_time(row.get("time"))
+        if dt is None:
+            continue
+        out[dt] = max(0.0, _to_float(row.get("total_kwh"), 0.0))
+    return out
+
+
+def _env_float_clamped(name: str, default: float, *, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    value = _to_float(os.getenv(name), default)
+    return max(min_value, min(max_value, value))
+
+
+def _ensemble_hourly_value(*, hour: int, forecast_solar_kwh: float, open_meteo_kwh: float) -> tuple[float, str]:
+    if 7 <= hour < 10:
+        return max(forecast_solar_kwh, open_meteo_kwh), "morning_max"
+    if 10 <= hour < 16:
+        weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35)
+        return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "midday_blend"
+    if 16 <= hour < 23:
+        weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25)
+        return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "evening_blend"
+    weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50)
+    return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "other_blend"
+
+
+def _ensemble_pv_forecasts(
+    *,
+    forecasts: list[dict[str, Any]],
+    target_date: str,
+    timezone: str,
+    calibration_factor: float,
+) -> dict[str, Any]:
+    by_provider = {str(f.get("provider") or ""): f for f in forecasts if isinstance(f, dict)}
+    forecast_solar = by_provider.get("forecast_solar")
+    open_meteo = by_provider.get("open_meteo")
+    if forecast_solar is None or open_meteo is None:
+        raise RuntimeError("PV ensemble requires forecast_solar and open_meteo forecasts")
+
+    fs_hourly = _forecast_hourly_map(forecast_solar)
+    om_hourly = _forecast_hourly_map(open_meteo)
+    hourly = []
+    rows_for_totals: list[dict[str, Any]] = []
+    for dt in sorted(set(fs_hourly) | set(om_hourly)):
+        fs_kwh = fs_hourly.get(dt)
+        om_kwh = om_hourly.get(dt)
+        if fs_kwh is None:
+            total_kwh = max(0.0, om_kwh or 0.0)
+            method = "open_meteo_only"
+        elif om_kwh is None:
+            total_kwh = max(0.0, fs_kwh)
+            method = "forecast_solar_only"
+        else:
+            total_kwh, method = _ensemble_hourly_value(
+                hour=dt.hour,
+                forecast_solar_kwh=max(0.0, fs_kwh),
+                open_meteo_kwh=max(0.0, om_kwh),
+            )
+        item = {
+            "time": dt.isoformat(timespec="minutes"),
+            "total_kwh": _round(total_kwh),
+            "total_kw": _round(total_kwh),
+            "forecast_solar_kwh": _round(fs_kwh) if fs_kwh is not None else None,
+            "open_meteo_kwh": _round(om_kwh) if om_kwh is not None else None,
+            "ensemble_method": method,
+        }
+        hourly.append(item)
+        rows_for_totals.append({"time": dt, "kwh": total_kwh})
+
+    totals = _aggregate(rows_for_totals)
+    return {
+        "enabled": True,
+        "source": "ensemble-forecast-solar-open-meteo",
+        "provider": "ensemble",
+        "target_date": target_date,
+        "timezone": timezone,
+        "calibration_factor": _round(calibration_factor),
+        "totals": {k: _round(v) for k, v in totals.items()},
+        "arrays": forecast_solar.get("arrays") or open_meteo.get("arrays") or [],
+        "hourly": hourly,
+        "provider_forecasts": {
+            "forecast_solar": forecast_solar,
+            "open_meteo": open_meteo,
+        },
+        "ensemble": {
+            "method": "morning_max_midday_weighted_blend",
+            "morning_hours": [7, 8, 9],
+            "open_meteo_weight_midday": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35),
+            "open_meteo_weight_evening": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25),
+            "open_meteo_weight_other": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50),
+        },
+    }
+
+
 def build_pv_array_forecast(
     *,
     arrays: list[PVArrayConfig],
@@ -846,11 +947,12 @@ def build_pv_array_forecast(
             adjustment_strategy = "regression_blend"
 
     provider_attempts: list[dict[str, Any]] = []
-    forecast: dict[str, Any] | None = None
+    successful_forecasts: list[dict[str, Any]] = []
+    provider_mode = os.getenv("PV_ARRAY_PROVIDER_MODE", "ensemble").strip().lower() or "ensemble"
     for provider in _provider_order_from_env():
         try:
             if provider == "forecast_solar":
-                forecast = forecast_pv_arrays_forecast_solar(
+                current_forecast = forecast_pv_arrays_forecast_solar(
                     arrays=arrays,
                     target_date=target_date,
                     lat=lat,
@@ -860,7 +962,7 @@ def build_pv_array_forecast(
                     http_get=http_get,
                 )
             elif provider == "open_meteo":
-                forecast = forecast_pv_arrays(
+                current_forecast = forecast_pv_arrays(
                     arrays=arrays,
                     target_date=target_date,
                     lat=lat,
@@ -872,13 +974,29 @@ def build_pv_array_forecast(
             else:
                 continue
             provider_attempts.append({"provider": provider, "ok": True})
-            break
+            successful_forecasts.append(current_forecast)
+            if provider_mode in {"first", "first_success", "fallback"}:
+                break
         except Exception as exc:
             provider_attempts.append({"provider": provider, "ok": False, "error": str(exc)})
-            forecast = None
 
-    if forecast is None:
+    if not successful_forecasts:
         raise RuntimeError(f"PV array forecast failed for providers: {provider_attempts}")
+
+    if provider_mode == "ensemble" and len(successful_forecasts) >= 2:
+        forecast_solar_ok = any(f.get("provider") == "forecast_solar" for f in successful_forecasts)
+        open_meteo_ok = any(f.get("provider") == "open_meteo" for f in successful_forecasts)
+        if forecast_solar_ok and open_meteo_ok:
+            forecast = _ensemble_pv_forecasts(
+                forecasts=successful_forecasts,
+                target_date=target_date,
+                timezone=timezone,
+                calibration_factor=effective_factor,
+            )
+        else:
+            forecast = successful_forecasts[0]
+    else:
+        forecast = successful_forecasts[0]
 
     calibration["target_weather_class"] = weather_class
     calibration["target_sun_hours"] = _round(target_sun_hours)

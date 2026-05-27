@@ -177,3 +177,20 @@ def test_optimize_target_soc_for_daytime_prefers_peak_target_over_sunset_tie() -
     # 夕方100%固定ではなく、日中ピークが99%付近になる開始SOCを選択
     assert result.target_soc_7_percent == pytest.approx(49.0)
     assert result.predicted_daytime_max_soc_percent == pytest.approx(99.0)
+
+
+def test_optimize_target_soc_for_daytime_respects_max_target_cap() -> None:
+    result = optimize_target_soc_for_daytime(
+        effective_capacity_kwh_value=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        battery_round_trip_efficiency=1.0,
+        hourly_load_kwh={7: 1.0, 8: 1.0, 12: 1.0},
+        hourly_pv_kwh={8: 3.0, 12: 5.0},
+        sunset_hour=12,
+        soc_step_percent=1.0,
+        max_target_soc_percent=80.0,
+    )
+
+    assert result is not None
+    assert result.target_soc_7_percent <= 80.0

@@ -555,6 +555,49 @@ def _estimate_sunset_hour(hourly_pv_kwh: dict[int, float]) -> int:
     return max(active_hours)
 
 
+def _morning_pv_headroom_guard(
+    *,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    effective_capacity_kwh_value: float,
+    reserve_soc_percent: float,
+) -> dict[str, object]:
+    enabled = _env_bool("MORNING_PV_HEADROOM_GUARD_ENABLED", True)
+    hours = [7, 8, 9]
+    morning_pv = sum(max(0.0, hourly_pv_kwh.get(hour, 0.0)) for hour in hours)
+    morning_load = sum(max(0.0, hourly_load_kwh.get(hour, 0.0)) for hour in hours)
+    morning_deficit = max(0.0, morning_load - morning_pv)
+    capacity = max(0.0, effective_capacity_kwh_value)
+    guard_ratio = max(
+        0.0,
+        min(1.0, float(os.getenv("MORNING_PV_HEADROOM_GUARD_RATIO", "0.50").strip() or "0.50")),
+    )
+    min_guard_kwh = max(
+        0.0,
+        float(os.getenv("MORNING_PV_HEADROOM_GUARD_MIN_KWH", "0.20").strip() or "0.20"),
+    )
+    guard_headroom = max(0.0, morning_pv * guard_ratio - morning_deficit)
+    applied = enabled and capacity > 0 and guard_headroom >= min_guard_kwh
+    cap_target_soc = 100.0
+    if applied:
+        cap_target_soc = max(
+            reserve_soc_percent,
+            100.0 - (guard_headroom / capacity * 100.0),
+        )
+    return {
+        "enabled": enabled,
+        "applied": applied,
+        "hours": hours,
+        "guard_ratio": guard_ratio,
+        "min_guard_kwh": min_guard_kwh,
+        "morning_pv_kwh": morning_pv,
+        "morning_load_kwh": morning_load,
+        "morning_deficit_kwh": morning_deficit,
+        "guard_headroom_kwh": guard_headroom,
+        "cap_target_soc_percent": max(0.0, min(100.0, cap_target_soc)),
+    }
+
+
 def _estimate_midday_surplus_from_pv_forecast(
     *,
     pv_forecast: dict[str, object] | None,
@@ -665,6 +708,12 @@ def main() -> int:
         fallback_total_kwh=result.predicted_pv_kwh,
     )
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
+    morning_headroom_guard = _morning_pv_headroom_guard(
+        hourly_load_kwh=hourly_load_forecast,
+        hourly_pv_kwh=hourly_pv_forecast,
+        effective_capacity_kwh_value=result.effective_capacity_kwh,
+        reserve_soc_percent=inp.reserve_soc_percent,
+    )
     daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         soc_now_percent=latest_soc,
@@ -677,6 +726,7 @@ def main() -> int:
         target_peak_soc_percent=float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
         buy_tolerance_kwh=float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
         sell_tolerance_kwh=float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
+        max_target_soc_percent=_to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0,
     )
     optimization_payload: dict[str, object] | None = None
     if daytime_optimization is not None:
@@ -696,6 +746,7 @@ def main() -> int:
             "target_soc_7_percent_after_peak_objective": optimized_target_soc,
             "required_night_charge_kwh_after_peak_objective": optimized_required_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
+            "morning_pv_headroom_guard": morning_headroom_guard,
             "sunset_hour": sunset_hour,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},

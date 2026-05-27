@@ -276,6 +276,63 @@ def test_build_pv_array_forecast_prefers_regression_blend_for_cloudy_or_rain(
     assert calibration["adjustment_strategy"] == "regression_blend"
 
 
+def test_build_pv_array_forecast_ensembles_forecast_solar_and_open_meteo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = [PVArrayConfig("south", 0, 20, 1.0, performance_ratio=1.0)]
+    monkeypatch.setenv("PV_ARRAY_PROVIDER", "forecast_solar,open_meteo")
+    monkeypatch.setenv("PV_ARRAY_PROVIDER_MODE", "ensemble")
+    monkeypatch.setenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "99")
+
+    def fake_get(url, *, params=None, timeout):
+        if "forecast.solar" in url:
+            return _FakeResponse(
+                {
+                    "result": {
+                        "watt_hours_period": {
+                            "2026-05-18 07:00:00": 1000.0,
+                            "2026-05-18 08:00:00": 1000.0,
+                            "2026-05-18 10:00:00": 1000.0,
+                        }
+                    }
+                }
+            )
+        return _FakeResponse(
+            {
+                "hourly": {
+                    "time": ["2026-05-18T07:00", "2026-05-18T08:00", "2026-05-18T10:00"],
+                    "global_tilted_irradiance": [2000.0, 3000.0, 5000.0],
+                    "temperature_2m": [25.0, 25.0, 25.0],
+                }
+            }
+        )
+
+    forecast = build_pv_array_forecast(
+        arrays=arrays,
+        rows=[],
+        target_date="2026-05-18",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        target_weather_class="clear",
+        http_get=fake_get,
+    )
+
+    assert forecast is not None
+    assert forecast["provider"] == "ensemble"
+    assert forecast["source"] == "ensemble-forecast-solar-open-meteo"
+    hourly = {row["time"][11:16]: row for row in forecast["hourly"]}
+    assert hourly["07:00"]["total_kwh"] == pytest.approx(2.0)
+    assert hourly["08:00"]["total_kwh"] == pytest.approx(3.0)
+    assert hourly["10:00"]["total_kwh"] == pytest.approx(2.4)
+    assert forecast["totals"]["morning_kwh"] == pytest.approx(5.0)
+    assert forecast["totals"]["midday_kwh"] == pytest.approx(2.4)
+    assert forecast["provider_attempts"] == [
+        {"provider": "forecast_solar", "ok": True},
+        {"provider": "open_meteo", "ok": True},
+    ]
+
+
 def test_build_pv_array_forecast_falls_back_to_open_meteo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

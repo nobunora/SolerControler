@@ -239,6 +239,7 @@ def optimize_target_soc_for_daytime(
     target_peak_soc_percent: float = 99.0,
     buy_tolerance_kwh: float = 0.05,
     sell_tolerance_kwh: float = 0.10,
+    max_target_soc_percent: float = 100.0,
 ) -> DaytimeSocOptimizationResult | None:
     cap = max(0.0, effective_capacity_kwh_value)
     if cap <= 0:
@@ -248,6 +249,7 @@ def optimize_target_soc_for_daytime(
         return None
 
     reserve_soc = max(0.0, min(100.0, reserve_soc_percent))
+    max_target_soc = max(reserve_soc, min(100.0, max_target_soc_percent))
     soc_now = max(0.0, min(100.0, soc_now_percent))
     step = min(10.0, max(0.5, soc_step_percent))
     eta_ch = max(0.7, battery_round_trip_efficiency)
@@ -265,8 +267,8 @@ def optimize_target_soc_for_daytime(
     best_key: tuple[float, ...] | None = None
 
     cursor = reserve_soc
-    while cursor <= 100.0 + 1e-9:
-        target_soc = min(100.0, cursor)
+    while cursor <= max_target_soc + 1e-9:
+        target_soc = min(max_target_soc, cursor)
         start_energy = cap * target_soc / 100.0
         buy_kwh, sell_kwh, sunset_energy, max_energy, max_hour = _simulate_daytime(
             start_energy_kwh=start_energy,
