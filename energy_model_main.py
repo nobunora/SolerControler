@@ -27,8 +27,10 @@ from app.occupancy_schedule import (
 )
 from app.pv_array_forecast import build_pv_array_forecast, load_pv_array_configs
 from app.soc_cost_optimizer import (
+    DEFAULT_SIGMA_BUCKETS,
     PvForecastUncertainty,
     SocCostModel,
+    SigmaBucket,
     optimize_soc_by_expected_cost,
     to_plain_dict,
 )
@@ -687,6 +689,190 @@ def _morning_pv_headroom_guard(
     }
 
 
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    p = max(0.0, min(100.0, percentile)) / 100.0
+    pos = (len(ordered) - 1) * p
+    lo = int(pos)
+    hi = min(len(ordered) - 1, lo + 1)
+    frac = pos - lo
+    return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
+
+
+def _historical_daytime_soc_gain_guard(
+    rows: list[dict[str, float | datetime]],
+    *,
+    reserve_soc_percent: float,
+    target_date: str,
+) -> dict[str, object]:
+    """Cap morning SOC using observed PV-driven SOC gain.
+
+    This is a guardrail, not the main optimizer. It prevents low PV forecasts
+    from selecting a near-full morning SOC while the historical record still
+    says some daytime charging headroom should be preserved.
+    """
+
+    enabled = _env_bool("HISTORICAL_DAYTIME_SOC_GAIN_GUARD_ENABLED", True)
+    percentile = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_PERCENTILE", 25.0, min_value=0.0, max_value=100.0)
+    floor_percent = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_FLOOR_PERCENT", 15.0, min_value=0.0, max_value=100.0)
+    min_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_DAYS", 5.0)))
+    long_term_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_LONG_TERM_DAYS", 180.0)))
+    recent_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_RECENT_DAYS", 30.0)))
+    max_morning_soc = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_MAX_MORNING_SOC", 70.0, min_value=0.0, max_value=100.0)
+    full_soc_threshold = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_FULL_SOC_THRESHOLD", 98.0, min_value=0.0, max_value=100.0)
+    min_pv_kwh = max(0.0, _env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_PV_KWH", 0.1))
+    min_samples = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_SAMPLES", 30.0)))
+
+    by_day: dict[str, list[dict[str, float | datetime]]] = {}
+    for row in rows:
+        dt = row.get("dt")
+        if not isinstance(dt, datetime):
+            continue
+        by_day.setdefault(dt.date().isoformat(), []).append(row)
+
+    candidates: list[dict[str, object]] = []
+    excluded = {
+        "incomplete": 0,
+        "low_pv": 0,
+        "missing_morning_soc": 0,
+        "full_soc_clipped": 0,
+        "high_morning_soc": 0,
+        "future_or_target_day": 0,
+    }
+
+    for day, day_rows in sorted(by_day.items()):
+        if day >= target_date:
+            excluded["future_or_target_day"] += 1
+            continue
+        day_rows = sorted(day_rows, key=lambda x: x["dt"])  # type: ignore[index]
+        if len(day_rows) < min_samples:
+            excluded["incomplete"] += 1
+            continue
+        last_dt = day_rows[-1]["dt"]
+        if not isinstance(last_dt, datetime) or last_dt.hour < 18:
+            excluded["incomplete"] += 1
+            continue
+
+        total_pv = sum(float(r.get("pv", 0.0) or 0.0) for r in day_rows)
+        if total_pv < min_pv_kwh:
+            excluded["low_pv"] += 1
+            continue
+
+        morning_rows = [
+            r for r in day_rows
+            if isinstance(r.get("dt"), datetime) and 6 <= r["dt"].hour <= 8  # type: ignore[index]
+        ]
+        if not morning_rows:
+            excluded["missing_morning_soc"] += 1
+            continue
+        morning = min(
+            morning_rows,
+            key=lambda r: abs((r["dt"].hour * 60 + r["dt"].minute) - 420),  # type: ignore[index]
+        )
+        morning_soc = _to_optional_float(morning.get("soc"))
+        if morning_soc is None or morning_soc != morning_soc:
+            excluded["missing_morning_soc"] += 1
+            continue
+
+        day_soc_values = [
+            _to_optional_float(r.get("soc"))
+            for r in day_rows
+            if isinstance(r.get("dt"), datetime) and 5 <= r["dt"].hour <= 18  # type: ignore[index]
+        ]
+        day_soc_values = [v for v in day_soc_values if v is not None and v == v]
+        if not day_soc_values:
+            excluded["incomplete"] += 1
+            continue
+        max_soc = max(day_soc_values)
+        if max_soc >= full_soc_threshold:
+            excluded["full_soc_clipped"] += 1
+            continue
+        if morning_soc > max_morning_soc:
+            excluded["high_morning_soc"] += 1
+            continue
+
+        gain = max(0.0, max_soc - morning_soc)
+        candidates.append(
+            {
+                "date": day,
+                "morning_soc_percent": round(morning_soc, 3),
+                "max_daytime_soc_percent": round(max_soc, 3),
+                "daytime_soc_gain_percent": round(gain, 3),
+                "pv_kwh": round(total_pv, 4),
+            }
+        )
+
+    if len(candidates) >= long_term_days:
+        selected = candidates[-recent_days:]
+        source_window = f"recent_{recent_days}_days"
+    else:
+        selected = candidates
+        source_window = "all_available_until_180_days"
+
+    gains = [float(x["daytime_soc_gain_percent"]) for x in selected]
+    percentile_gain = _percentile(gains, percentile)
+    applied = bool(enabled and percentile_gain is not None and len(gains) >= min_days)
+    guard_gain = max(floor_percent, percentile_gain or 0.0) if applied else 0.0
+    cap_target_soc = 100.0
+    if applied:
+        cap_target_soc = max(0.0, min(100.0, 100.0 - guard_gain))
+        cap_target_soc = max(reserve_soc_percent, cap_target_soc)
+
+    return {
+        "enabled": enabled,
+        "applied": applied,
+        "reason": "ok" if applied else ("disabled" if not enabled else "insufficient_history"),
+        "target_date": target_date,
+        "source_window": source_window,
+        "sample_count": len(gains),
+        "total_candidate_days": len(candidates),
+        "percentile": percentile,
+        "percentile_gain_percent": round(percentile_gain, 3) if percentile_gain is not None else None,
+        "floor_percent": floor_percent,
+        "guard_gain_percent": round(guard_gain, 3),
+        "cap_target_soc_percent": round(cap_target_soc, 3),
+        "reserve_soc_percent": reserve_soc_percent,
+        "selection_rules": {
+            "max_morning_soc_percent": max_morning_soc,
+            "full_soc_threshold_percent": full_soc_threshold,
+            "min_pv_kwh": min_pv_kwh,
+            "min_samples_per_day": min_samples,
+        },
+        "excluded_counts": excluded,
+        "lowest_days": sorted(selected, key=lambda x: float(x["daytime_soc_gain_percent"]))[:8],
+    }
+
+
+def _apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUncertainty:
+    floor = max(0.0, _env_float("SOC_COST_PV_UNCERTAINTY_STD_FLOOR", 0.30))
+    std = max(uncertainty.std_multiplier, floor)
+    return PvForecastUncertainty(
+        mean_multiplier=uncertainty.mean_multiplier,
+        std_multiplier=std,
+        variance_multiplier=std * std,
+        sample_count=uncertainty.sample_count,
+        source=uncertainty.source if std == uncertainty.std_multiplier else f"{uncertainty.source}+std_floor",
+    )
+
+
+def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
+    if not _env_bool("SOC_COST_UPSIDE_SCENARIO_ENABLED", True):
+        return DEFAULT_SIGMA_BUCKETS
+    upside_probability = _env_float_clamped("SOC_COST_UPSIDE_SCENARIO_PROBABILITY", 0.08, min_value=0.0, max_value=0.5)
+    upside_z = _env_float("SOC_COST_UPSIDE_SCENARIO_Z", 3.0)
+    if upside_probability <= 0:
+        return DEFAULT_SIGMA_BUCKETS
+    base_sum = sum(max(0.0, b.probability) for b in DEFAULT_SIGMA_BUCKETS) or 1.0
+    remaining = max(0.0, 1.0 - upside_probability)
+    base = tuple(
+        SigmaBucket(b.label, max(0.0, b.probability) / base_sum * remaining, b.z_value)
+        for b in DEFAULT_SIGMA_BUCKETS
+    )
+    return base + (SigmaBucket("pv_upside_guard", upside_probability, upside_z),)
+
+
 def _estimate_midday_surplus_from_pv_forecast(
     *,
     pv_forecast: dict[str, object] | None,
@@ -803,6 +989,17 @@ def main() -> int:
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         reserve_soc_percent=inp.reserve_soc_percent,
     )
+    historical_soc_gain_guard = _historical_daytime_soc_gain_guard(
+        rows,
+        reserve_soc_percent=inp.reserve_soc_percent,
+        target_date=tomorrow_date,
+    )
+    legacy_max_target_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+    if historical_soc_gain_guard.get("applied"):
+        legacy_max_target_soc = min(
+            legacy_max_target_soc,
+            _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
+        )
     daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         soc_now_percent=latest_soc,
@@ -815,7 +1012,7 @@ def main() -> int:
         target_peak_soc_percent=float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
         buy_tolerance_kwh=float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
         sell_tolerance_kwh=float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
-        max_target_soc_percent=_to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0,
+        max_target_soc_percent=legacy_max_target_soc,
     )
     optimization_payload: dict[str, object] | None = None
     legacy_optimization_payload: dict[str, object] | None = None
@@ -830,6 +1027,7 @@ def main() -> int:
             "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
             "morning_pv_headroom_guard": morning_headroom_guard,
+            "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
             "sunset_hour": sunset_hour,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
@@ -838,7 +1036,9 @@ def main() -> int:
     cost_optimization_payload: dict[str, object] | None = None
     cost_optimization_enabled = _env_bool("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", True)
     if cost_optimization_enabled:
-        pv_uncertainty = _pv_uncertainty_from_forecast(pv_array_forecast if isinstance(pv_array_forecast, dict) else None)
+        pv_uncertainty = _apply_uncertainty_floor(
+            _pv_uncertainty_from_forecast(pv_array_forecast if isinstance(pv_array_forecast, dict) else None)
+        )
         cost_model = _soc_cost_model_from_env(
             battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
         )
@@ -846,6 +1046,12 @@ def main() -> int:
         cost_max_soc = 100.0
         if respect_guard:
             cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+        if historical_soc_gain_guard.get("applied"):
+            cost_max_soc = min(
+                cost_max_soc,
+                _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
+            )
+        sigma_buckets = _sigma_buckets_for_cost_optimizer()
         cost_optimization = optimize_soc_by_expected_cost(
             capacity_kwh=result.effective_capacity_kwh,
             soc_now_percent=latest_soc,
@@ -856,6 +1062,7 @@ def main() -> int:
             cost_model=cost_model,
             soc_step_percent=_env_float("SOC_COST_OPT_STEP_PERCENT", _env_float("DAYTIME_SOC_OPT_STEP_PERCENT", 1.0)),
             max_target_soc_percent=cost_max_soc,
+            sigma_buckets=sigma_buckets,
             min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
             max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
         )
@@ -866,7 +1073,9 @@ def main() -> int:
                     "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
                 ),
                 "morning_pv_headroom_guard": morning_headroom_guard,
+                "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
                 "respect_morning_headroom_guard": respect_guard,
+                "max_target_soc_percent_after_guards": cost_max_soc,
                 "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
                 "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
                 "legacy_peak_objective": legacy_optimization_payload,
@@ -922,6 +1131,17 @@ def main() -> int:
         "inputs": to_dict(inp),
         "result": result_payload,
         "daytime_soc_optimization": optimization_payload,
+        "decision_rationale": {
+            "objective": (
+                "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
+                if cost_optimization_payload is not None else "legacy_peak_soc_objective"
+            ),
+            "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
+            "morning_pv_headroom_guard": morning_headroom_guard,
+            "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
+            "final_target_soc_7_percent": result_payload.get("target_soc_7_percent"),
+            "final_required_night_charge_kwh": result_payload.get("required_night_charge_kwh"),
+        },
     }
     out = artifacts_dir / "night_charge_plan.json"
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

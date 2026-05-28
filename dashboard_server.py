@@ -212,6 +212,19 @@ def _html(payload: dict, script_nonce: str) -> str:
     .bar-fixed-free { background: #dff3e8; color: #1f6b45; }
     .gantt-notes { margin-top: 8px; color: #5a6f85; font-size: 12px; line-height: 1.5; }
     .gantt-notes code { background: #eef4fb; padding: 1px 5px; border-radius: 5px; }
+    .gantt-status-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      margin-right: 6px;
+      border: 1px solid transparent;
+    }
+    .gantt-status-icon.ok { background: #e6f6ec; color: #17613a; border-color: #bce4cb; }
+    .gantt-status-icon.warn { background: #fff4df; color: #825100; border-color: #f2d297; }
     .period-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .period-button {
       appearance: none;
@@ -750,7 +763,14 @@ def _html(payload: dict, script_nonce: str) -> str:
         .map((x) => `<code>${x.id || ""}</code> ${x.description || ""}`)
         .join(" / ");
       const noteSoc = `SOC(安心)=${sch.soc_safety_mode ?? "-"} / SOC(経済・グリーン)=${sch.soc_economy_mode ?? "-"} / 充電時間帯SOC上限=${sch.soc_charge_mode ?? "-"}`;
-      const noteMeta = `更新: ${sch.recorded_at || "-"} / スロット: ${sch.slot || "-"} / プロファイル: ${sch.profile || sch.mode || "-"}`;
+      const completedStatus = String(sch.settings_completed_status || sch.status || "");
+      const settingsOk = sch.settings_completed === true || completedStatus === "applied" || completedStatus === "skipped-no-change";
+      const statusIcon = settingsOk
+        ? `<span class="gantt-status-icon ok">✓ 設定正常完了</span>`
+        : `<span class="gantt-status-icon warn">! 設定未確認</span>`;
+      const completedAt = sch.settings_completed_at || sch.recorded_at || "-";
+      const completedProfile = sch.settings_completed_profile || sch.profile || sch.mode || "-";
+      const noteMeta = `${statusIcon}更新: ${sch.recorded_at || "-"} / 完了確認: ${completedAt} / スロット: ${sch.slot || "-"} / プロファイル: ${completedProfile}`;
       const notePlan = chargeStart == null
         ? "夜間充電の開始時刻は未記録のため、最新の夜間充電量からの推定または未表示になる場合があります。"
         : "";

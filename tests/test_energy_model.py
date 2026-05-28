@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from app.energy_model import (
     forecast_pv_energy_kwh,
     optimize_target_soc_for_daytime,
 )
+from energy_model_main import _historical_daytime_soc_gain_guard
 
 
 def _coeff() -> EnergyModelCoefficients:
@@ -194,3 +196,27 @@ def test_optimize_target_soc_for_daytime_respects_max_target_cap() -> None:
 
     assert result is not None
     assert result.target_soc_7_percent <= 80.0
+
+
+def test_historical_daytime_soc_gain_guard_uses_lower_quartile(monkeypatch) -> None:
+    monkeypatch.setenv("HISTORICAL_DAYTIME_SOC_GAIN_MIN_DAYS", "4")
+    monkeypatch.setenv("HISTORICAL_DAYTIME_SOC_GAIN_MIN_SAMPLES", "3")
+    monkeypatch.setenv("HISTORICAL_DAYTIME_SOC_GAIN_FLOOR_PERCENT", "15")
+    rows = []
+    gains = [20.0, 10.0, 40.0, 30.0]
+    for index, gain in enumerate(gains, start=1):
+        day = f"2026-05-{index:02d}"
+        rows.extend(
+            [
+                {"dt": datetime.fromisoformat(f"{day}T07:00:00"), "pv": 0.2, "soc": 20.0},
+                {"dt": datetime.fromisoformat(f"{day}T12:00:00"), "pv": 0.4, "soc": 20.0 + gain},
+                {"dt": datetime.fromisoformat(f"{day}T18:30:00"), "pv": 0.1, "soc": 20.0 + gain - 1.0},
+            ]
+        )
+
+    guard = _historical_daytime_soc_gain_guard(rows, reserve_soc_percent=0.0, target_date="2026-05-05")
+
+    assert guard["applied"] is True
+    assert guard["sample_count"] == 4
+    assert guard["percentile_gain_percent"] == pytest.approx(17.5)
+    assert guard["cap_target_soc_percent"] == pytest.approx(82.5)

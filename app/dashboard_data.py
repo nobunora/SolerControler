@@ -345,6 +345,10 @@ def _default_latest_schedule(plan_date: str | None = None) -> dict[str, Any]:
         "estimated_charge_power_kw": float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8") or "1.8"),
         "status": "fallback-default",
         "recorded_at": None,
+        "settings_completed": False,
+        "settings_completed_status": None,
+        "settings_completed_at": None,
+        "settings_completed_profile": None,
         "constraints": conditions,
     }
 
@@ -357,7 +361,11 @@ def _build_latest_schedule_from_events(
 ) -> dict[str, Any]:
     schedule = _default_latest_schedule(plan_date=plan_date)
     chosen_row: dict[str, Any] | None = None
+    completed_row: dict[str, Any] | None = None
     for row in event_rows:
+        status = str(row.get("status", "") or "")
+        if completed_row is None and status in {"applied", "skipped-no-change"}:
+            completed_row = row
         detail = _json_object_or_empty(row.get("detail_json"))
         if not detail:
             continue
@@ -390,6 +398,12 @@ def _build_latest_schedule_from_events(
         schedule["recorded_at"] = str(chosen_row.get("recorded_at", ""))
         schedule["slot"] = str(chosen_row.get("slot", ""))
         schedule["profile"] = str(chosen_row.get("profile", ""))
+
+    if completed_row is not None:
+        schedule["settings_completed"] = True
+        schedule["settings_completed_status"] = str(completed_row.get("status", ""))
+        schedule["settings_completed_at"] = str(completed_row.get("recorded_at", ""))
+        schedule["settings_completed_profile"] = str(completed_row.get("profile", ""))
 
     if battery_row:
         target_soc = _to_float_or_none(battery_row.get("setting_soc_target_percent"))

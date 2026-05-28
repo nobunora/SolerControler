@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cloud_job_runner import (
+    _adjust03_target_date,
     _compute_force_activation_delay_seconds,
     _estimate_required_charge_kwh,
     _forecast_changed,
@@ -11,6 +13,7 @@ from cloud_job_runner import (
     _monitor_partial_forced_and_stop,
     _night23_target_date,
     _required_charge_percent_from_plan,
+    _run_adjust_03,
     _run_night_23,
     _should_stage_partial_forced,
 )
@@ -150,6 +153,13 @@ def test_night23_target_date_respects_explicit_override(monkeypatch) -> None:
     assert _night23_target_date(now=now) == "2026-06-01"
 
 
+def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
+    monkeypatch.delenv("FORECAST_DATE_OVERRIDE", raising=False)
+    monkeypatch.setenv("TIMEZONE", "Asia/Tokyo")
+    now = datetime(2026, 5, 27, 3, 10, tzinfo=ZoneInfo("Asia/Tokyo"))
+    assert _adjust03_target_date(now=now) == "2026-05-27"
+
+
 def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
     monkeypatch,
     tmp_path,
@@ -253,3 +263,36 @@ def test_run_night_23_ingests_csv_before_forecast(monkeypatch, tmp_path) -> None
         ),
         ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}),
     ]
+
+
+def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    calls: list[tuple[str, dict[str, str]]] = []
+    persisted: list[str] = []
+    monitored: list[Path] = []
+
+    def fake_run(command, env_updates=None):
+        script = list(command)[-1]
+        calls.append((script, dict(env_updates or {})))
+        if script == "energy_model_main.py":
+            plan_path.write_text(
+                '{"forecast":{"date":"2026-05-27"},"result":{"target_soc_7_percent":80}}',
+                encoding="utf-8",
+            )
+
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("cloud_job_runner._run", fake_run)
+    monkeypatch.setattr("cloud_job_runner._adjust03_target_date", lambda: "2026-05-27")
+    monkeypatch.setattr("cloud_job_runner._restore_night_plan_from_firestore", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_night_plan_to_firestore",
+        lambda _path, *, source: persisted.append(source) or True,
+    )
+    monkeypatch.setattr("cloud_job_runner._monitor_partial_forced_and_stop", lambda path: monitored.append(path))
+
+    _run_adjust_03()
+
+    assert ("kpnet_main.py", {"KP_WORKFLOW_MODE": "csv"}) in calls
+    assert ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}) in calls
+    assert persisted == ["adjust03-regenerated"]
+    assert monitored == [plan_path]

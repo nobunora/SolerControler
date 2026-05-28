@@ -72,6 +72,102 @@ def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
     }
 
 
+def _read_plan_json(plan_path: Path) -> dict:
+    return json.loads(plan_path.read_text(encoding="utf-8"))
+
+
+def _plan_date_from_json(plan: dict) -> str:
+    forecast = plan.get("forecast", {}) if isinstance(plan.get("forecast"), dict) else {}
+    return str(forecast.get("date", "")).strip()
+
+
+def _open_firestore_for_plan():
+    backend = os.getenv("DATA_BACKEND", "").strip().lower()
+    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip()
+    if backend != "firestore" and not project_id:
+        return None
+    try:
+        from google.cloud import firestore
+    except Exception as exc:
+        print(f"[cloud_job_runner] Firestore unavailable for plan persistence: {exc}", flush=True)
+        return None
+    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
+    if project_id:
+        return firestore.Client(project=project_id, database=database_id)
+    return firestore.Client(database=database_id)
+
+
+def _persist_night_plan_to_firestore(plan_path: Path, *, source: str) -> bool:
+    if not plan_path.exists():
+        print(f"[cloud_job_runner] plan persistence skipped; missing: {plan_path}", flush=True)
+        return False
+    client = _open_firestore_for_plan()
+    if client is None:
+        return False
+    try:
+        plan = _read_plan_json(plan_path)
+        plan_date = _plan_date_from_json(plan)
+        if not plan_date:
+            print("[cloud_job_runner] plan persistence skipped; forecast.date missing", flush=True)
+            return False
+        payload_text = json.dumps(plan, ensure_ascii=False, separators=(",", ":"))
+        now = datetime.now(ZoneInfo("UTC")).isoformat()
+        doc = {
+            "date": plan_date,
+            "updated_at": now,
+            "source": source,
+            "plan_json": payload_text,
+            "forecast": plan.get("forecast", {}),
+            "result": plan.get("result", {}),
+            "decision_rationale": plan.get("decision_rationale", {}),
+            "daytime_soc_optimization": plan.get("daytime_soc_optimization", {}),
+            "pv_array_forecast_summary": {
+                "source": (plan.get("pv_array_forecast") or {}).get("source")
+                if isinstance(plan.get("pv_array_forecast"), dict) else None,
+                "provider": (plan.get("pv_array_forecast") or {}).get("provider")
+                if isinstance(plan.get("pv_array_forecast"), dict) else None,
+                "totals": (plan.get("pv_array_forecast") or {}).get("totals")
+                if isinstance(plan.get("pv_array_forecast"), dict) else None,
+            },
+        }
+        coll = client.collection("night_charge_plans")
+        coll.document(plan_date).set(doc, merge=True)
+        coll.document("latest").set(doc, merge=True)
+        print(f"[cloud_job_runner] persisted night plan to Firestore date={plan_date}", flush=True)
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] plan persistence failed: {exc}", flush=True)
+        return False
+
+
+def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> bool:
+    client = _open_firestore_for_plan()
+    if client is None:
+        return False
+    try:
+        candidates = [target_date] if target_date else []
+        candidates.append("latest")
+        for doc_id in candidates:
+            snap = client.collection("night_charge_plans").document(doc_id).get()
+            if not snap.exists:
+                continue
+            data = snap.to_dict() or {}
+            plan_text = str(data.get("plan_json", "")).strip()
+            if not plan_text:
+                continue
+            plan = json.loads(plan_text)
+            plan_date = _plan_date_from_json(plan)
+            if target_date and plan_date and plan_date != target_date:
+                continue
+            plan_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"[cloud_job_runner] restored night plan from Firestore date={plan_date}", flush=True)
+            return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] plan restore failed: {exc}", flush=True)
+    return False
+
+
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     soc_now_raw = plan_meta.get("soc_now_percent", None)
@@ -204,6 +300,99 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
     )
 
 
+def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
+    try:
+        value = int(os.getenv(name, str(default)).strip() or str(default))
+    except ValueError:
+        value = default
+    return max(min_value, value)
+
+
+def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
+    try:
+        value = float(os.getenv(name, str(default)).strip() or str(default))
+    except ValueError:
+        value = default
+    return max(min_value, value)
+
+
+def _run_operation_with_retry(
+    operation,
+    *,
+    label: str,
+    attempts_env: str = "KP_COMMAND_RETRY_ATTEMPTS",
+    delay_env: str = "KP_COMMAND_RETRY_DELAY_SECONDS",
+    default_attempts: int = 3,
+    default_delay_seconds: float = 20.0,
+):
+    attempts = _env_int(attempts_env, default_attempts, min_value=1)
+    delay_seconds = _env_float(delay_env, default_delay_seconds, min_value=0.0)
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            print(
+                f"[cloud_job_runner] retry {label} attempt={attempt}/{attempts} failed: {exc}; "
+                f"sleep={delay_seconds}s",
+                flush=True,
+            )
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+    raise RuntimeError(f"{label} failed after {attempts} attempts: {last_exc}") from last_exc
+
+
+def _run_with_retry(
+    command: Iterable[str],
+    env_updates: dict[str, str] | None = None,
+    *,
+    label: str,
+    attempts_env: str = "KP_COMMAND_RETRY_ATTEMPTS",
+    delay_env: str = "KP_COMMAND_RETRY_DELAY_SECONDS",
+    default_attempts: int = 3,
+    default_delay_seconds: float = 20.0,
+) -> None:
+    _run_operation_with_retry(
+        lambda: _run(command, env_updates),
+        label=label,
+        attempts_env=attempts_env,
+        delay_env=delay_env,
+        default_attempts=default_attempts,
+        default_delay_seconds=default_delay_seconds,
+    )
+
+
+def _run_settings_profile_with_retry(
+    *,
+    profile: str,
+    dynamic_forced_profile: bool,
+    label: str | None = None,
+) -> None:
+    _run_operation_with_retry(
+        lambda: _run_settings_profile(profile=profile, dynamic_forced_profile=dynamic_forced_profile),
+        label=label or f"settings-profile-{profile}",
+        attempts_env="KP_SETTINGS_RETRY_ATTEMPTS",
+        delay_env="KP_SETTINGS_RETRY_DELAY_SECONDS",
+        default_attempts=3,
+        default_delay_seconds=30.0,
+    )
+
+
+def _run_csv_with_retry(*, label: str = "kpnet-csv") -> None:
+    _run_with_retry(
+        [sys.executable, "kpnet_main.py"],
+        {"KP_WORKFLOW_MODE": "csv"},
+        label=label,
+        attempts_env="KP_CSV_RETRY_ATTEMPTS",
+        delay_env="KP_CSV_RETRY_DELAY_SECONDS",
+        default_attempts=3,
+        default_delay_seconds=20.0,
+    )
+
+
 def _parse_hhmm_minutes(value: str, *, default: str) -> int:
     text = value.strip() or default
     if ":" not in text:
@@ -238,6 +427,44 @@ def _night23_target_date(*, now: datetime | None = None) -> str:
     if current_minutes < recovery_cutoff:
         return current.date().isoformat()
     return (current.date() + timedelta(days=1)).isoformat()
+
+
+def _adjust03_target_date(*, now: datetime | None = None) -> str:
+    explicit = os.getenv("FORECAST_DATE_OVERRIDE", "").strip()
+    if explicit:
+        return explicit
+    timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
+    current = now or datetime.now(ZoneInfo(timezone_name))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=ZoneInfo(timezone_name))
+    else:
+        current = current.astimezone(ZoneInfo(timezone_name))
+    return current.date().isoformat()
+
+
+def _ensure_night_plan_available(plan_path: Path) -> bool:
+    if plan_path.exists():
+        return True
+
+    target_date = _adjust03_target_date()
+    if _restore_night_plan_from_firestore(plan_path, target_date=target_date):
+        return True
+
+    print(
+        f"[cloud_job_runner] 03-plan missing; regenerating target_date={target_date} path={plan_path}",
+        flush=True,
+    )
+    _run_with_retry(
+        [sys.executable, "energy_model_main.py"],
+        {"FORECAST_DATE_OVERRIDE": target_date},
+        label="03-regenerate-night-plan",
+        attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
+        delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
+        default_attempts=2,
+        default_delay_seconds=30.0,
+    )
+    _persist_night_plan_to_firestore(plan_path, source="adjust03-regenerated")
+    return plan_path.exists()
 
 
 def _run_db_pipeline_slot(
@@ -298,7 +525,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     if cutoff_seconds <= 0:
         print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
-        _run_settings_profile(profile="green", dynamic_forced_profile=False)
+        _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-cutoff-green")
         return
 
     print(
@@ -339,12 +566,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
     # 強制充電モードは時間設定を無視して即時充電を開始するため、
     # 7時逆算時刻でのみ強制モードへ切り替える。
-    _run_settings_profile(profile="forced", dynamic_forced_profile=True)
+    _run_settings_profile_with_retry(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
         print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
-        _run_settings_profile(profile="green", dynamic_forced_profile=False)
+        _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-no-window-green")
         return
 
     print(
@@ -352,8 +579,21 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         flush=True,
     )
     started_at = time.time()
+    previous_soc = latest_soc
+    stagnant_polls = 0
+    reapply_enabled = os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    reapply_after_polls = _env_int("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", 2, min_value=1)
+    reapply_min_delta = _env_float("ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", 0.1, min_value=0.0)
     while time.time() - started_at < monitor_seconds:
-        _run([sys.executable, "kpnet_main.py"], {"KP_WORKFLOW_MODE": "csv"})
+        try:
+            _run_csv_with_retry(label="03-monitor-csv")
+        except Exception as exc:
+            print(f"[cloud_job_runner] 03-monitor csv retry exhausted; continue monitoring: {exc}", flush=True)
         csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
         latest_soc = _latest_soc_percent(csv_paths)
         if latest_soc is not None:
@@ -367,8 +607,34 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                     print("[cloud_job_runner] 03-monitor target reached at 100%. keep forced until cutoff.", flush=True)
                 else:
                     print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
-                    _run_settings_profile(profile="green", dynamic_forced_profile=False)
+                    _run_settings_profile_with_retry(
+                        profile="green",
+                        dynamic_forced_profile=False,
+                        label="03-target-green",
+                    )
                     return
+            if (
+                reapply_enabled
+                and previous_soc is not None
+                and latest_soc < (target_soc - soc_margin)
+            ):
+                if latest_soc <= previous_soc + reapply_min_delta:
+                    stagnant_polls += 1
+                else:
+                    stagnant_polls = 0
+                if stagnant_polls >= reapply_after_polls:
+                    print(
+                        "[cloud_job_runner] 03-monitor SOC not increasing; reapply forced profile "
+                        f"latest={latest_soc:.2f}% previous={previous_soc:.2f}%",
+                        flush=True,
+                    )
+                    _run_settings_profile_with_retry(
+                        profile="forced",
+                        dynamic_forced_profile=True,
+                        label="03-forced-reapply",
+                    )
+                    stagnant_polls = 0
+            previous_soc = latest_soc
         else:
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
 
@@ -378,25 +644,29 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         time.sleep(poll_seconds)
 
     print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
-    _run_settings_profile(profile="green", dynamic_forced_profile=False)
+    _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-timer-green")
 
 
 def _run_night_23() -> None:
     # 23:00 実行:
     # 1) CSV取得 2) 実績だけ先行反映 3) 夜間計画計算 4) 強制充電設定登録
-    _run(
-        [sys.executable, "kpnet_main.py"],
-        {
-            "KP_WORKFLOW_MODE": "csv",
-        },
-    )
+    _run_csv_with_retry(label="23-csv")
     # Forecast providers can fail transiently. Keep dashboard actuals moving even
     # when the later planning phase cannot complete.
     _run_db_pipeline_slot("23", include_csv=True, include_settings=False)
     target_date = _night23_target_date()
     print(f"[cloud_job_runner] 23-night target_date={target_date}", flush=True)
-    _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": target_date})
+    _run_with_retry(
+        [sys.executable, "energy_model_main.py"],
+        {"FORECAST_DATE_OVERRIDE": target_date},
+        label="23-night-plan",
+        attempts_env="NIGHT23_PLAN_RETRY_ATTEMPTS",
+        delay_env="NIGHT23_PLAN_RETRY_DELAY_SECONDS",
+        default_attempts=2,
+        default_delay_seconds=30.0,
+    )
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
+    _persist_night_plan_to_firestore(plan_path, source="night23")
     profile = "forced"
     dynamic_forced_profile = True
     if plan_path.exists():
@@ -424,7 +694,11 @@ def _run_night_23() -> None:
     else:
         print(f"[cloud_job_runner] 23-night plan missing: {plan_path}", flush=True)
 
-    _run_settings_profile(profile=profile, dynamic_forced_profile=dynamic_forced_profile)
+    _run_settings_profile_with_retry(
+        profile=profile,
+        dynamic_forced_profile=dynamic_forced_profile,
+        label=f"23-settings-{profile}",
+    )
     _run_db_pipeline_slot("23", include_csv=False, include_settings=True)
     _run_optional(
         [sys.executable, "sheets_export_main.py"],
@@ -508,8 +782,17 @@ def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
     if not target_date:
         return False
 
-    _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": target_date})
+    _run_with_retry(
+        [sys.executable, "energy_model_main.py"],
+        {"FORECAST_DATE_OVERRIDE": target_date},
+        label="03-refresh-night-plan",
+        attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
+        delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
+        default_attempts=2,
+        default_delay_seconds=30.0,
+    )
     current = _read_plan_signature(plan_path)
+    _persist_night_plan_to_firestore(plan_path, source="adjust03-refresh")
     changed = _plan_signature_changed(
         base,
         current,
@@ -536,14 +819,9 @@ def _run_adjust_03() -> None:
     # 1) 00時台にCSVを取得して現在SOCを把握
     # 2) 必要なら3時台に23時計画と同じ対象日の予報だけ再確認
     # 3) 7時から逆算した時刻に強制充電を開始し、目標/7時まで監視
-    _run(
-        [sys.executable, "kpnet_main.py"],
-        {
-            "KP_WORKFLOW_MODE": "csv",
-        },
-    )
+    _run_csv_with_retry(label="03-initial-csv")
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    if not plan_path.exists():
+    if not _ensure_night_plan_available(plan_path):
         raise RuntimeError(f"night charge plan not found: {plan_path}")
     _monitor_partial_forced_and_stop(plan_path)
 
@@ -551,7 +829,7 @@ def _run_adjust_03() -> None:
 def _run_day_07() -> None:
     # 07:00 実行:
     # 日中運用向けにグリーンモード設定のみ登録
-    _run_settings_profile(profile="green", dynamic_forced_profile=False)
+    _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="07-green")
 
 
 def main() -> int:
