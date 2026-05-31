@@ -34,6 +34,7 @@ from app.soc_cost_optimizer import (
     optimize_soc_by_expected_cost,
     to_plain_dict,
 )
+from app.forecast_correction import _build_forecast_correction, _risk_adjusted_peak_penalty
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -971,17 +972,29 @@ def main() -> int:
     result = compute_night_charge_target(coeff, inp)
     result_payload = to_dict(result)
 
-    hourly_load_forecast = _build_hourly_load_forecast(
+    raw_hourly_load_forecast = _build_hourly_load_forecast(
         rows,
         daytime_load_kwh=consumption_forecast.daytime_load_kwh,
         morning_load_kwh=consumption_forecast.morning_load_kwh,
     )
-    hourly_pv_forecast = _build_hourly_pv_forecast(
+    raw_hourly_pv_forecast = _build_hourly_pv_forecast(
         rows,
         pv_forecast=pv_array_forecast if isinstance(pv_array_forecast, dict) else None,
         target_date=tomorrow_date,
         fallback_total_kwh=result.predicted_pv_kwh,
     )
+    forecast_correction = _build_forecast_correction(
+        rows=rows,
+        hourly_load_forecast=raw_hourly_load_forecast,
+        hourly_pv_forecast=raw_hourly_pv_forecast,
+        target_date=tomorrow_date,
+        lat=lat,
+        lon=lon,
+        timezone=timezone,
+        forecast=forecast,
+    )
+    hourly_load_forecast = forecast_correction["hourly_load_kwh"]  # type: ignore[assignment]
+    hourly_pv_forecast = forecast_correction["hourly_pv_kwh"]  # type: ignore[assignment]
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
     morning_headroom_guard = _morning_pv_headroom_guard(
         hourly_load_kwh=hourly_load_forecast,
@@ -1052,6 +1065,10 @@ def main() -> int:
                 _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
             )
         sigma_buckets = _sigma_buckets_for_cost_optimizer()
+        peak_penalty = forecast_correction.get("peak_penalty", {})
+        peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
+        peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
+        peak_penalty_rate = cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
         cost_optimization = optimize_soc_by_expected_cost(
             capacity_kwh=result.effective_capacity_kwh,
             soc_now_percent=latest_soc,
@@ -1065,6 +1082,8 @@ def main() -> int:
             sigma_buckets=sigma_buckets,
             min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
             max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
+            peak_soc_target_percent=peak_target_soc,
+            peak_soc_unmet_penalty_yen_per_kwh=peak_penalty_rate,
         )
         if cost_optimization is not None:
             cost_optimization_payload = {
@@ -1076,6 +1095,7 @@ def main() -> int:
                 "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
                 "respect_morning_headroom_guard": respect_guard,
                 "max_target_soc_percent_after_guards": cost_max_soc,
+                "forecast_correction": forecast_correction.get("rationale", {}),
                 "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
                 "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
                 "legacy_peak_objective": legacy_optimization_payload,
@@ -1089,6 +1109,8 @@ def main() -> int:
             result_payload["soc_expected_total_cost_yen"] = cost_optimization.total_expected_cost_yen
             result_payload["soc_expected_day_buy_kwh"] = cost_optimization.expected_day_buy_kwh
             result_payload["soc_expected_sell_kwh"] = cost_optimization.expected_sell_kwh
+            result_payload["soc_expected_peak_unmet_kwh"] = cost_optimization.expected_peak_unmet_kwh
+            result_payload["soc_expected_peak_unmet_cost_yen"] = cost_optimization.expected_peak_unmet_cost_yen
             optimization_payload = cost_optimization_payload
 
     if optimization_payload is None and legacy_optimization_payload is not None:
@@ -1138,6 +1160,7 @@ def main() -> int:
             ),
             "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
             "morning_pv_headroom_guard": morning_headroom_guard,
+            "forecast_correction": forecast_correction.get("rationale", {}),
             "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
             "final_target_soc_7_percent": result_payload.get("target_soc_7_percent"),
             "final_required_night_charge_kwh": result_payload.get("required_night_charge_kwh"),

@@ -122,3 +122,49 @@ def test_cost_optimizer_charges_more_when_daytime_power_is_expensive() -> None:
     assert cheap_day is not None
     assert expensive_day is not None
     assert expensive_day.target_soc_7_percent > cheap_day.target_soc_7_percent
+
+
+def test_cost_optimizer_peak_unmet_penalty_raises_soc_target() -> None:
+    hourly_pv = {12: 3.0}
+    hourly_load = {18: 1.0, 19: 1.0}
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+    cost_model = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.75,
+    )
+
+    without_penalty = optimize_soc_by_expected_cost(
+        capacity_kwh=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=cost_model,
+        soc_step_percent=1.0,
+    )
+    with_penalty = optimize_soc_by_expected_cost(
+        capacity_kwh=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=cost_model,
+        soc_step_percent=1.0,
+        peak_soc_target_percent=95.0,
+        peak_soc_unmet_penalty_yen_per_kwh=39.10 * 2.0,
+    )
+
+    assert without_penalty is not None
+    assert with_penalty is not None
+    assert with_penalty.target_soc_7_percent > without_penalty.target_soc_7_percent
+    assert with_penalty.expected_peak_unmet_kwh <= without_penalty.selected_candidate.target_energy_kwh

@@ -56,6 +56,8 @@ class ScenarioReplay:
     end_soc_percent: float
     day_buy_cost_yen: float
     sell_opportunity_cost_yen: float
+    peak_unmet_kwh: float = 0.0
+    peak_unmet_cost_yen: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,8 @@ class SocCandidate:
     expected_sell_kwh: float
     expected_day_buy_cost_yen: float
     expected_sell_opportunity_cost_yen: float
+    expected_peak_unmet_kwh: float
+    expected_peak_unmet_cost_yen: float
     total_expected_cost_yen: float
     scenario_replays: tuple[ScenarioReplay, ...]
 
@@ -82,6 +86,8 @@ class SocCostOptimizationResult:
     expected_sell_kwh: float
     expected_day_buy_cost_yen: float
     expected_sell_opportunity_cost_yen: float
+    expected_peak_unmet_kwh: float
+    expected_peak_unmet_cost_yen: float
     total_expected_cost_yen: float
     selected_candidate: SocCandidate
     evaluated_candidate_count: int
@@ -172,6 +178,8 @@ def evaluate_soc_candidate(
     sigma_buckets: tuple[SigmaBucket, ...] = DEFAULT_SIGMA_BUCKETS,
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
+    peak_soc_target_percent: float | None = None,
+    peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
@@ -186,7 +194,11 @@ def evaluate_soc_candidate(
     expected_sell = 0.0
     expected_buy_cost = 0.0
     expected_sell_cost = 0.0
+    expected_peak_unmet = 0.0
+    expected_peak_unmet_cost = 0.0
     replays: list[ScenarioReplay] = []
+    peak_target = _bounded_soc(peak_soc_target_percent) if peak_soc_target_percent is not None else None
+    peak_penalty = max(0.0, peak_soc_unmet_penalty_yen_per_kwh)
 
     for bucket in sigma_buckets:
         probability = max(0.0, bucket.probability)
@@ -205,10 +217,19 @@ def evaluate_soc_candidate(
         )
         day_buy_cost = buy_kwh * cost_model.day_buy_rate_yen_per_kwh * cost_model.day_buy_penalty_factor
         sell_cost = sell_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
+        peak_unmet_kwh = 0.0
+        peak_unmet_cost = 0.0
+        if peak_target is not None and peak_penalty > 0.0:
+            # The system objective is not only cheapest energy: on selected risk days
+            # a plan that never gets close to full during PV hours is operationally bad.
+            peak_unmet_kwh = max(0.0, peak_target - max_soc) * capacity_kwh / 100.0
+            peak_unmet_cost = peak_unmet_kwh * peak_penalty
         expected_buy += probability * buy_kwh
         expected_sell += probability * sell_kwh
         expected_buy_cost += probability * day_buy_cost
         expected_sell_cost += probability * sell_cost
+        expected_peak_unmet += probability * peak_unmet_kwh
+        expected_peak_unmet_cost += probability * peak_unmet_cost
         replays.append(
             ScenarioReplay(
                 label=bucket.label,
@@ -221,10 +242,12 @@ def evaluate_soc_candidate(
                 end_soc_percent=end_soc,
                 day_buy_cost_yen=day_buy_cost,
                 sell_opportunity_cost_yen=sell_cost,
+                peak_unmet_kwh=peak_unmet_kwh,
+                peak_unmet_cost_yen=peak_unmet_cost,
             )
         )
 
-    total = night_cost + expected_buy_cost + expected_sell_cost
+    total = night_cost + expected_buy_cost + expected_sell_cost + expected_peak_unmet_cost
     return SocCandidate(
         target_soc_percent=target_soc,
         target_energy_kwh=target_energy,
@@ -234,6 +257,8 @@ def evaluate_soc_candidate(
         expected_sell_kwh=expected_sell,
         expected_day_buy_cost_yen=expected_buy_cost,
         expected_sell_opportunity_cost_yen=expected_sell_cost,
+        expected_peak_unmet_kwh=expected_peak_unmet,
+        expected_peak_unmet_cost_yen=expected_peak_unmet_cost,
         total_expected_cost_yen=total,
         scenario_replays=tuple(replays),
     )
@@ -253,6 +278,8 @@ def optimize_soc_by_expected_cost(
     sigma_buckets: tuple[SigmaBucket, ...] = DEFAULT_SIGMA_BUCKETS,
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
+    peak_soc_target_percent: float | None = None,
+    peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -280,6 +307,8 @@ def optimize_soc_by_expected_cost(
             sigma_buckets=sigma_buckets,
             min_pv_multiplier=min_pv_multiplier,
             max_pv_multiplier=max_pv_multiplier,
+            peak_soc_target_percent=peak_soc_target_percent,
+            peak_soc_unmet_penalty_yen_per_kwh=peak_soc_unmet_penalty_yen_per_kwh,
         )
         count += 1
         if best is None or (
@@ -307,6 +336,8 @@ def optimize_soc_by_expected_cost(
         expected_sell_kwh=best.expected_sell_kwh,
         expected_day_buy_cost_yen=best.expected_day_buy_cost_yen,
         expected_sell_opportunity_cost_yen=best.expected_sell_opportunity_cost_yen,
+        expected_peak_unmet_kwh=best.expected_peak_unmet_kwh,
+        expected_peak_unmet_cost_yen=best.expected_peak_unmet_cost_yen,
         total_expected_cost_yen=best.total_expected_cost_yen,
         selected_candidate=best,
         evaluated_candidate_count=count,
