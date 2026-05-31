@@ -97,6 +97,7 @@ def ensure_schema(conn) -> None:
             status TEXT NOT NULL,
             changed_fields_json JSONB,
             detail_json JSONB,
+            source_doc_id TEXT,
             recorded_at TEXT NOT NULL
         )
         """,
@@ -166,6 +167,7 @@ def ensure_schema(conn) -> None:
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_calibration_factor DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_soc_percent DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_at TEXT",
+            "ALTER TABLE settings_events ADD COLUMN IF NOT EXISTS source_doc_id TEXT",
         ]:
             cur.execute(column_sql)
     conn.commit()
@@ -360,15 +362,15 @@ def ingest_settings_summary(
     run_id = str(summary.get("run_id", settings_summary_path.parent.name))
     settings_results = summary.get("setting_results", [])
     with conn.cursor() as cur:
-        for item in settings_results:
+        for idx, item in enumerate(settings_results):
             profile = str(item.get("profile", "unknown"))
             status = str(item.get("status", "unknown"))
             changed_fields = item.get("changed_fields", [])
             cur.execute(
                 """
                 INSERT INTO settings_events (
-                    run_id, slot, profile, status, changed_fields_json, detail_json, recorded_at
-                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+                    run_id, slot, profile, status, changed_fields_json, detail_json, source_doc_id, recorded_at
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
                 """,
                 (
                     run_id,
@@ -377,6 +379,7 @@ def ingest_settings_summary(
                     status,
                     _safe_json(changed_fields),
                     _safe_json(item),
+                    f"{run_id}-{slot}-{idx:02d}-{profile}",
                     ingested_at,
                 ),
             )
@@ -392,8 +395,8 @@ def record_planned_day_mode(conn, *, settings_summary_path: Path, recorded_at: s
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO settings_events (run_id, slot, profile, status, changed_fields_json, detail_json, recorded_at)
-            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+            INSERT INTO settings_events (run_id, slot, profile, status, changed_fields_json, detail_json, source_doc_id, recorded_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s)
             """,
             (
                 run_id,
@@ -402,6 +405,7 @@ def record_planned_day_mode(conn, *, settings_summary_path: Path, recorded_at: s
                 "planned-from-23",
                 "[]",
                 json.dumps(day_plan, ensure_ascii=False, separators=(",", ":")),
+                f"{run_id}-07-planned-green",
                 recorded_at,
             ),
         )

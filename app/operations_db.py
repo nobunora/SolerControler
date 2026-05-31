@@ -305,6 +305,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL,
             changed_fields_json TEXT,
             detail_json TEXT,
+            source_doc_id TEXT,
             recorded_at TEXT NOT NULL
         );
 
@@ -382,6 +383,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         {
             "pv_charge_end_soc_percent": "REAL",
             "pv_charge_end_at": "TEXT",
+        },
+    )
+    _ensure_sqlite_columns(
+        conn,
+        "settings_events",
+        {
+            "source_doc_id": "TEXT",
         },
     )
     conn.commit()
@@ -760,15 +768,15 @@ def ingest_settings_summary(
     summary = _read_summary(settings_summary_path)
     run_id = str(summary.get("run_id", settings_summary_path.parent.name))
     settings_results = summary.get("setting_results", [])
-    for item in settings_results:
+    for idx, item in enumerate(settings_results):
         profile = str(item.get("profile", "unknown"))
         status = str(item.get("status", "unknown"))
         changed_fields = item.get("changed_fields", [])
         conn.execute(
             """
             INSERT INTO settings_events (
-                run_id, slot, profile, status, changed_fields_json, detail_json, recorded_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                run_id, slot, profile, status, changed_fields_json, detail_json, source_doc_id, recorded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -777,6 +785,7 @@ def ingest_settings_summary(
                 status,
                 _safe_json(changed_fields),
                 _safe_json(item),
+                f"{run_id}-{slot}-{idx:02d}-{profile}",
                 ingested_at,
             ),
         )

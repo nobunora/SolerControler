@@ -35,8 +35,8 @@ def _record_planned_day_mode_sqlite(conn, *, settings_summary_path: Path, record
         return
     conn.execute(
         """
-        INSERT INTO settings_events (run_id, slot, profile, status, changed_fields_json, detail_json, recorded_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO settings_events (run_id, slot, profile, status, changed_fields_json, detail_json, source_doc_id, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -45,6 +45,7 @@ def _record_planned_day_mode_sqlite(conn, *, settings_summary_path: Path, record
             "planned-from-23",
             "[]",
             json.dumps(day_plan, ensure_ascii=False, separators=(",", ":")),
+            f"{run_id}-07-planned-green",
             recorded_at,
         ),
     )
