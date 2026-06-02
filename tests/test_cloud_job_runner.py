@@ -76,6 +76,24 @@ def test_stage_partial_forced_enabled_for_51_to_99(monkeypatch) -> None:
     assert target_soc == 80.0
 
 
+def test_stage_partial_forced_uses_target_soc_above_green_ceiling(monkeypatch) -> None:
+    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
+    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "99")
+    staged, required_pct, target_soc = _should_stage_partial_forced(
+        plan_meta={
+            "target_soc_7_percent": 80.0,
+            "soc_now_percent": 39.0,
+            "effective_capacity_kwh": 9.0,
+            "required_night_charge_kwh": 3.7,
+        },
+        green_mode_max_charge_percent=50.0,
+    )
+
+    assert staged is True
+    assert required_pct == 41.0
+    assert target_soc == 80.0
+
+
 def test_stage_partial_forced_includes_100_percent(monkeypatch) -> None:
     monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
     monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "100")

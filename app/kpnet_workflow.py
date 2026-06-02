@@ -581,7 +581,13 @@ def _pick_night_mode_preference(
     green_mode_max_charge_percent: float,
 ) -> tuple[str, float, bool]:
     required_charge_percent = _required_charge_percent(plan)
-    force_charge = required_charge_percent >= green_mode_max_charge_percent
+    # KP green mode has behaved as an absolute SOC ceiling, not just a
+    # remaining-charge allowance. If the target SOC itself is above the green
+    # ceiling, use forced mode and let the 03 job time/monitor the stop.
+    force_charge = (
+        plan.target_soc_7_percent > green_mode_max_charge_percent
+        or required_charge_percent >= green_mode_max_charge_percent
+    )
     return ("forced" if force_charge else "green"), required_charge_percent, force_charge
 
 

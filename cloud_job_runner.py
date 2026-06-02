@@ -196,7 +196,13 @@ def _should_stage_partial_forced(
     required_charge_percent = _required_charge_percent_from_plan(plan_meta)
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     partial_min, partial_max = _force_partial_soc_window()
-    force_charge = required_charge_percent >= green_mode_max_charge_percent
+    # KP green-mode charge limit acts as an absolute SOC ceiling in practice.
+    # A target above that ceiling needs forced mode even when the remaining
+    # charge delta is smaller than the green-mode limit.
+    force_charge = (
+        target_soc > green_mode_max_charge_percent
+        or required_charge_percent >= green_mode_max_charge_percent
+    )
     stage_partial_forced = force_charge and partial_min <= target_soc <= partial_max
     return stage_partial_forced, required_charge_percent, target_soc
 

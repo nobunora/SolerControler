@@ -7,9 +7,11 @@ import pytest
 
 from app.kpnet_workflow import (
     KpNetConfig,
+    NightChargePlan,
     _build_dynamic_forced_profile,
     _in_time_window,
     _parse_hhmm,
+    _pick_night_mode_preference,
     _validate_base_url,
 )
 
@@ -123,6 +125,28 @@ def test_validate_base_url_enforces_https_and_host() -> None:
             enforce_https=True,
             allowed_hosts=["ctrl.kp-net.com"],
         )
+
+
+def test_night_mode_preference_uses_target_soc_above_green_ceiling(tmp_path: Path) -> None:
+    plan = NightChargePlan(
+        plan_path=tmp_path / "night_charge_plan.json",
+        forecast_date="2026-06-02",
+        forecast_sun_hours=0.7,
+        required_night_charge_kwh=3.7,
+        target_soc_7_percent=80.0,
+        soc_now_percent=39.0,
+        effective_capacity_kwh=9.0,
+        csv_paths=[],
+    )
+
+    preference, required_pct, force_charge = _pick_night_mode_preference(
+        plan=plan,
+        green_mode_max_charge_percent=50.0,
+    )
+
+    assert preference == "forced"
+    assert required_pct == 41.0
+    assert force_charge is True
 
 
 def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
