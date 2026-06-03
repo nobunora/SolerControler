@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from cloud_job_runner import (
     _adjust03_target_date,
     _compute_force_activation_delay_seconds,
+    _estimate_forced_charge_minutes,
     _estimate_required_charge_kwh,
     _forecast_changed,
     _mask_env_updates,
@@ -124,6 +125,35 @@ def test_estimate_required_charge_kwh_uses_latest_soc(monkeypatch) -> None:
         latest_soc_percent=60.0,
     )
     assert required == 4.0
+
+
+def test_estimate_forced_charge_minutes_uses_empirical_soc_rate(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2")
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25")
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50")
+    csv_path = tmp_path / "kp.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,蓄電残量(SOC)[%],充電電力量[kWh]",
+                "2026/06/03,02:30,0,0",
+                "2026/06/03,03:00,21,2.01",
+                "2026/06/03,03:30,42,2.00",
+            ]
+        ),
+        encoding="utf-8-sig",
+    )
+
+    minutes, info = _estimate_forced_charge_minutes(
+        plan_meta={"target_soc_7_percent": 80.0, "soc_now_percent": 0.0},
+        latest_soc_percent=0.0,
+        csv_paths=[csv_path],
+    )
+
+    assert minutes == 115
+    assert info["source"] == "csv-forced-charge-soc-rate"
+    assert info["sample_count"] == 2
+    assert info["percent_per_hour"] == 42.0
 
 
 def test_compute_force_activation_delay_seconds() -> None:

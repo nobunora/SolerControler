@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -185,6 +187,7 @@ def _persist_03_monitor_schedule_to_firestore(
     estimated_charge_minutes: int,
     default_power_kw: float,
     delay_seconds: int,
+    charge_rate_info: dict[str, float | int | str | None] | None = None,
 ) -> bool:
     """Store the 03 controller decision so the dashboard never guesses it."""
     client = _open_firestore_for_plan()
@@ -217,6 +220,15 @@ def _persist_03_monitor_schedule_to_firestore(
         "delay_before_force_seconds": delay_seconds,
         "schedule_source": "03-monitor",
     }
+    if charge_rate_info:
+        detail.update(
+            {
+                "estimated_charge_rate_percent_per_hour": charge_rate_info.get("percent_per_hour"),
+                "charge_rate_source": charge_rate_info.get("source"),
+                "charge_rate_sample_count": charge_rate_info.get("sample_count"),
+                "required_charge_percent_at_schedule": charge_rate_info.get("required_charge_percent"),
+            }
+        )
     try:
         client.collection("settings_events").document(event_id).set(
             {
@@ -337,6 +349,104 @@ def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
                     latest_dt = dt
                     latest_soc = soc
     return latest_soc
+
+
+def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
+    points: list[tuple[datetime, float, float]] = []
+    for csv_path in csv_paths:
+        if not csv_path.exists():
+            continue
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                date_text = (row.get("年月日") or "").strip()
+                time_text = (row.get("時刻") or "").strip()
+                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
+                charge_text = (row.get("充電電力量[kWh]") or "").strip()
+                if not date_text or not time_text or not soc_text:
+                    continue
+                try:
+                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
+                    soc = float(soc_text)
+                    charge_kwh = float(charge_text) if charge_text else 0.0
+                except (TypeError, ValueError):
+                    continue
+                points.append((dt, soc, charge_kwh))
+    points.sort(key=lambda x: x[0])
+    return points
+
+
+def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
+    """Estimate forced charging by observed SOC gain, not nominal kW.
+
+    Forced mode starts charging immediately, so a slow estimate over-waits and
+    misses the 07:00 target. We only use high charge-energy intervals to avoid
+    mixing in green-mode/PV trickle charging.
+    """
+    fallback = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "35").strip() or "35")
+    min_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25").strip() or "25")
+    max_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50").strip() or "50")
+    min_charge_kwh = float(os.getenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2").strip() or "1.2")
+    if max_rate < min_rate:
+        max_rate = min_rate
+
+    samples: list[float] = []
+    previous: tuple[datetime, float, float] | None = None
+    for point in _iter_charge_soc_points(csv_paths):
+        if previous is None:
+            previous = point
+            continue
+        prev_dt, prev_soc, _prev_charge = previous
+        dt, soc, charge_kwh = point
+        hours = (dt - prev_dt).total_seconds() / 3600.0
+        delta_soc = soc - prev_soc
+        if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
+            samples.append(delta_soc / hours)
+        previous = point
+
+    if samples:
+        raw_rate = statistics.median(samples)
+        source = "csv-forced-charge-soc-rate"
+    else:
+        raw_rate = fallback
+        source = "fallback-forced-charge-soc-rate"
+    rate = max(min_rate, min(max_rate, raw_rate))
+    return {
+        "percent_per_hour": rate,
+        "raw_percent_per_hour": raw_rate,
+        "sample_count": len(samples),
+        "sample_min_charge_kwh": min_charge_kwh,
+        "source": source,
+    }
+
+
+def _estimate_required_charge_percent_for_schedule(
+    *,
+    plan_meta: dict[str, float | str | None],
+    latest_soc_percent: float | None,
+) -> float:
+    target_soc = max(0.0, min(100.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0)))
+    if latest_soc_percent is not None:
+        soc_now = max(0.0, min(100.0, latest_soc_percent))
+        return max(0.0, target_soc - soc_now)
+    return _required_charge_percent_from_plan(plan_meta)
+
+
+def _estimate_forced_charge_minutes(
+    *,
+    plan_meta: dict[str, float | str | None],
+    latest_soc_percent: float | None,
+    csv_paths: list[Path],
+) -> tuple[int, dict[str, float | int | str]]:
+    charge_rate_info = _estimate_forced_charge_rate_percent_per_hour(csv_paths)
+    required_percent = _estimate_required_charge_percent_for_schedule(
+        plan_meta=plan_meta,
+        latest_soc_percent=latest_soc_percent,
+    )
+    rate = max(1.0, float(charge_rate_info["percent_per_hour"]))
+    minutes = int(math.ceil((required_percent / rate) * 60.0)) if required_percent > 0 else 0
+    charge_rate_info["required_charge_percent"] = required_percent
+    return minutes, charge_rate_info
 
 
 def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
@@ -597,9 +707,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
     latest_soc = _latest_soc_percent(csv_paths)
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
-    estimated_charge_minutes = 0
-    if required_kwh > 0:
-        estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999)
+    estimated_charge_minutes, charge_rate_info = _estimate_forced_charge_minutes(
+        plan_meta=plan_meta,
+        latest_soc_percent=latest_soc,
+        csv_paths=csv_paths,
+    )
     start_advance_minutes = max(0, int(os.getenv("ADJUST03_FORCE_START_ADVANCE_MINUTES", "0").strip() or "0"))
     poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
     soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
@@ -620,7 +732,9 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         "[cloud_job_runner] 03-monitor schedule "
         f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
         f"required={required_kwh:.3f}kWh "
-        f"estimated={estimated_charge_minutes}min advance={start_advance_minutes}min "
+        f"estimated={estimated_charge_minutes}min "
+        f"rate={charge_rate_info.get('percent_per_hour')}%/h "
+        f"samples={charge_rate_info.get('sample_count')} advance={start_advance_minutes}min "
         f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
@@ -635,6 +749,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         estimated_charge_minutes=estimated_charge_minutes,
         default_power_kw=default_power_kw,
         delay_seconds=delay_seconds,
+        charge_rate_info=charge_rate_info,
     )
     refresh_hhmm = os.getenv("ADJUST03_REFRESH_HHMM", "03:10").strip() or "03:10"
     refresh_enabled = os.getenv("ADJUST03_REFRESH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -647,7 +762,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
             latest_soc = _latest_soc_percent(csv_paths)
             required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
-            estimated_charge_minutes = int((required_kwh / default_power_kw) * 60.0 + 0.9999) if required_kwh > 0 else 0
+            estimated_charge_minutes, charge_rate_info = _estimate_forced_charge_minutes(
+                plan_meta=plan_meta,
+                latest_soc_percent=latest_soc,
+                csv_paths=csv_paths,
+            )
             cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
             delay_seconds = _compute_force_activation_delay_seconds(
                 cutoff_seconds=cutoff_seconds,
@@ -658,7 +777,9 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             print(
                 "[cloud_job_runner] 03-monitor refreshed schedule "
                 f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
-                f"required={required_kwh:.3f}kWh delay_before_force={delay_seconds}s",
+                f"required={required_kwh:.3f}kWh "
+                f"rate={charge_rate_info.get('percent_per_hour')}%/h "
+                f"delay_before_force={delay_seconds}s",
                 flush=True,
             )
             charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
@@ -672,6 +793,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 estimated_charge_minutes=estimated_charge_minutes,
                 default_power_kw=default_power_kw,
                 delay_seconds=delay_seconds,
+                charge_rate_info=charge_rate_info,
             )
     if delay_seconds > 0:
         _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")

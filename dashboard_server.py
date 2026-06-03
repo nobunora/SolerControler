@@ -75,6 +75,7 @@ def _empty_dashboard_payload() -> dict:
         "battery_daily": [],
         "model_parameters": [],
         "latest_schedule": {},
+        "dashboard_warnings": [],
         "meta": {
             "window_days": 31,
             "oldest_loaded_date": None,
@@ -225,6 +226,27 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
     .gantt-status-icon.ok { background: #e6f6ec; color: #17613a; border-color: #bce4cb; }
     .gantt-status-icon.warn { background: #fff4df; color: #825100; border-color: #f2d297; }
+    .warning-panel {
+      display: none;
+      border: 1px solid #f0d6a8;
+      border-radius: 14px;
+      background: #fff9ec;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      box-sizing: border-box;
+    }
+    .warning-panel.active { display: block; }
+    .warning-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .warning-item {
+      border-left: 5px solid #ef8e1d;
+      background: rgba(255,255,255,0.72);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .warning-item.danger { border-left-color: var(--red); }
+    .warning-item.info { border-left-color: var(--blue); }
+    .warning-title { font-weight: 800; margin-right: 8px; }
+    .warning-message { color: var(--sub); font-size: 12px; line-height: 1.5; }
     .period-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .period-button {
       appearance: none;
@@ -270,6 +292,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       <p>期間ボタンで、日次・月次・蓄電池グラフの表示範囲をまとめて切り替えます。</p>
       <p id="statusMsg" class="desc"></p>
     </section>
+
+    <section id="dashboardWarnings" class="warning-panel" aria-live="polite"></section>
 
     <section class="grid">
       <article class="card full">
@@ -574,6 +598,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       monthly: [],
       params: [],
       latestSchedule: null,
+      dashboardWarnings: [],
       dates: [],
       loadingOlder: false,
     };
@@ -671,6 +696,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         store.monthly = payload.cost_monthly || [];
         store.params = payload.model_parameters || [];
         store.latestSchedule = payload.latest_schedule || store.latestSchedule;
+        store.dashboardWarnings = payload.dashboard_warnings || [];
       }
       store.meta = payload.meta || store.meta;
       rebuildDateIndex();
@@ -781,6 +807,38 @@ def _html(payload: dict, script_nonce: str) -> str:
         ${renderRow("制約レイヤー", fixedSegments)}
         <div class="gantt-notes">${noteSoc}<br>${noteMeta}${fixedNotes ? `<br>${fixedNotes}` : ""}${notePlan ? `<br>${notePlan}` : ""}</div>
       `;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      }[ch]));
+    }
+
+    function renderDashboardWarnings() {
+      const root = document.getElementById("dashboardWarnings");
+      if (!root) return;
+      const warnings = store.dashboardWarnings || [];
+      if (!warnings.length) {
+        root.classList.remove("active");
+        root.innerHTML = "";
+        return;
+      }
+      const items = warnings.slice(0, 6).map((w) => {
+        const severity = String(w.severity || "warning");
+        return `
+          <li class="warning-item ${escapeHtml(severity)}">
+            <span class="warning-title">${escapeHtml(w.title || w.code || "警告")}</span>
+            <span class="warning-message">${escapeHtml(w.message || "")}</span>
+          </li>
+        `;
+      }).join("");
+      root.classList.add("active");
+      root.innerHTML = `<ul class="warning-list">${items}</ul>`;
     }
 
     function latestAvailableDate() {
@@ -1399,6 +1457,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         await ensureDataForRange(range.start);
       }
       updatePeriodControls();
+      renderDashboardWarnings();
       renderConstraintGantt();
       renderHourlyForecast();
       renderWindow();
@@ -1478,6 +1537,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       const resizeAll = () => {
         renderConstraintGantt();
+        renderDashboardWarnings();
         for (const c of Object.values(charts)) c.resize();
         renderHourlyForecast();
         renderWindow();

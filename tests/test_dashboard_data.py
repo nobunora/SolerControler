@@ -192,3 +192,33 @@ def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Pa
     assert schedule["charge_end_time"] == "07:00"
     assert schedule["status"] == "planned-force-start"
     assert schedule["schedule_source"] == "03-monitor"
+
+
+def test_dashboard_warns_when_soc_target_is_unreached(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO battery_daily_metrics(
+                date, setting_soc_target_percent, night_charge_kwh, pv_charge_end_soc_percent, pv_charge_end_at, updated_at
+            )
+            VALUES ('2026-06-03', 80, 4.2, 49, '2026-06-03T15:30:00', '2026-06-03T23:10:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO monitoring_samples(ts, pv_kwh, load_kwh, ingested_at)
+            VALUES ('2026-06-03T07:00:00', 1.0, 0.8, '2026-06-03T23:10:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-06-03", window_days=1, include_static=True)
+    codes = {row["code"] for row in sliced.data.dashboard_warnings}
+
+    assert "soc_target_unreached" in codes
+    assert "monitor_schedule_missing" in codes

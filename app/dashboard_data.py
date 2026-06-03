@@ -21,6 +21,7 @@ class DashboardData:
     energy_daily: list[dict[str, Any]] = field(default_factory=list)
     forecast_hourly: list[dict[str, Any]] = field(default_factory=list)
     latest_schedule: dict[str, Any] = field(default_factory=dict)
+    dashboard_warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -398,6 +399,10 @@ def _build_latest_schedule_from_events(
             "schedule_source",
             "estimated_charge_minutes",
             "delay_before_force_seconds",
+            "estimated_charge_rate_percent_per_hour",
+            "charge_rate_source",
+            "charge_rate_sample_count",
+            "required_charge_percent_at_schedule",
         ):
             value = detail.get(key)
             if value is None or value == "":
@@ -440,6 +445,101 @@ def _build_latest_schedule_from_events(
         schedule["status"] = "estimated-from-night-kwh"
 
     return schedule
+
+
+def _latest_row_by_date(rows: list[dict[str, Any]], *, date_key: str = "date") -> dict[str, Any] | None:
+    dated = [row for row in rows if row.get(date_key)]
+    if not dated:
+        return None
+    return max(dated, key=lambda row: str(row.get(date_key)))
+
+
+def _build_dashboard_warnings(
+    *,
+    latest_schedule: dict[str, Any],
+    battery_daily: list[dict[str, Any]],
+    energy_daily: list[dict[str, Any]],
+    end_date_iso: str,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+
+    def add(code: str, severity: str, title: str, message: str, detail: dict[str, Any] | None = None) -> None:
+        warnings.append(
+            {
+                "code": code,
+                "severity": severity,
+                "title": title,
+                "message": message,
+                "detail": detail or {},
+            }
+        )
+
+    latest_battery = _latest_row_by_date(battery_daily)
+    if latest_battery:
+        target_soc = _to_float_or_none(latest_battery.get("setting_soc_target_percent"))
+        pv_end_soc = _to_float_or_none(latest_battery.get("pv_charge_end_soc_percent"))
+        if target_soc is not None and pv_end_soc is not None and pv_end_soc + 5.0 < target_soc:
+            add(
+                "soc_target_unreached",
+                "warning",
+                "目標SOC未達",
+                f"{latest_battery.get('date')} の太陽光充電終了時SOCが目標より低いです。",
+                {
+                    "date": latest_battery.get("date"),
+                    "target_soc_percent": target_soc,
+                    "pv_charge_end_soc_percent": pv_end_soc,
+                },
+            )
+
+        night_charge = _to_float_or_none(latest_battery.get("night_charge_kwh")) or 0.0
+        source = str(latest_schedule.get("schedule_source") or "")
+        if night_charge > 0.1 and source != "03-monitor":
+            add(
+                "monitor_schedule_missing",
+                "warning",
+                "03実行計画が未記録",
+                "夜間充電が必要な日に、03ジョブが決めた実開始時刻を確認できません。",
+                {
+                    "date": latest_battery.get("date"),
+                    "night_charge_kwh": night_charge,
+                    "schedule_source": source or None,
+                },
+            )
+
+    actual_dates = [
+        str(row.get("date"))
+        for row in energy_daily
+        if row.get("date") and (
+            _to_float_or_none(row.get("actual_pv_kwh")) is not None
+            or _to_float_or_none(row.get("actual_load_kwh")) is not None
+        )
+    ]
+    latest_actual = max(actual_dates) if actual_dates else None
+    if latest_actual is None or latest_actual < end_date_iso:
+        add(
+            "csv_actual_stale",
+            "info",
+            "CSV実績未更新",
+            "表示終了日の実績CSVがまだ反映されていない可能性があります。",
+            {"latest_actual_date": latest_actual, "display_end_date": end_date_iso},
+        )
+
+    completed = bool(latest_schedule.get("settings_completed"))
+    status = str(latest_schedule.get("settings_completed_status") or latest_schedule.get("status") or "")
+    if not completed and status not in {"applied", "skipped-no-change"}:
+        add(
+            "settings_completion_unconfirmed",
+            "warning",
+            "設定完了未確認",
+            "最新設定の正常完了イベントを確認できません。",
+            {
+                "plan_date": latest_schedule.get("plan_date"),
+                "status": status or None,
+                "schedule_source": latest_schedule.get("schedule_source"),
+            },
+        )
+
+    return warnings
 
 
 def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
@@ -728,6 +828,12 @@ def _load_sqlite_slice(
                 energy_daily=energy_daily,
                 forecast_hourly=forecast_hourly,
                 latest_schedule=latest_schedule,
+                dashboard_warnings=_build_dashboard_warnings(
+                    latest_schedule=latest_schedule,
+                    battery_daily=battery_daily,
+                    energy_daily=energy_daily,
+                    end_date_iso=end_date_iso,
+                ),
             ),
             meta=meta,
         )
@@ -950,6 +1056,12 @@ def _load_postgres_slice(
                     energy_daily=energy_daily,
                     forecast_hourly=forecast_hourly,
                     latest_schedule=latest_schedule,
+                    dashboard_warnings=_build_dashboard_warnings(
+                        latest_schedule=latest_schedule,
+                        battery_daily=battery_daily,
+                        energy_daily=energy_daily,
+                        end_date_iso=end_date_iso,
+                    ),
                 ),
                 meta=meta,
             )
@@ -1203,6 +1315,12 @@ def _load_firestore_slice(
             energy_daily=energy_daily,
             forecast_hourly=forecast_hourly,
             latest_schedule=latest_schedule,
+            dashboard_warnings=_build_dashboard_warnings(
+                latest_schedule=latest_schedule,
+                battery_daily=battery_daily,
+                energy_daily=energy_daily,
+                end_date_iso=end_date_iso,
+            ),
         ),
         meta=meta,
     )
