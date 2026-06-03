@@ -12,6 +12,7 @@ from cloud_job_runner import (
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _night23_target_date,
+    _persist_03_monitor_schedule_to_firestore,
     _required_charge_percent_from_plan,
     _run_adjust_03,
     _run_night_23,
@@ -314,3 +315,48 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
     assert ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}) in calls
     assert persisted == ["adjust03-regenerated"]
     assert monitored == [plan_path]
+
+
+def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> None:
+    writes: dict[tuple[str, str], dict] = {}
+
+    class FakeDocument:
+        def __init__(self, collection_name: str, document_id: str) -> None:
+            self.collection_name = collection_name
+            self.document_id = document_id
+
+        def set(self, payload: dict, merge: bool = False) -> None:
+            writes[(self.collection_name, self.document_id)] = payload
+
+    class FakeCollection:
+        def __init__(self, collection_name: str) -> None:
+            self.collection_name = collection_name
+
+        def document(self, document_id: str) -> FakeDocument:
+            return FakeDocument(self.collection_name, document_id)
+
+    class FakeClient:
+        def collection(self, collection_name: str) -> FakeCollection:
+            return FakeCollection(collection_name)
+
+    monkeypatch.setattr("cloud_job_runner._open_firestore_for_plan", lambda: FakeClient())
+
+    persisted = _persist_03_monitor_schedule_to_firestore(
+        plan_meta={"date": "2026-06-03"},
+        charge_start_time="02:43",
+        charge_end_time="07:00",
+        target_soc=79.0,
+        latest_soc=0.0,
+        required_kwh=7.68,
+        estimated_charge_minutes=257,
+        default_power_kw=1.8,
+        delay_seconds=9382,
+    )
+
+    assert persisted is True
+    event = writes[("settings_events", "2026-06-03-03-monitor-schedule")]
+    assert event["slot"] == "03"
+    assert event["status"] == "planned-force-start"
+    assert event["detail_json"]["charge_start_time"] == "02:43"
+    assert event["detail_json"]["charge_end_time"] == "07:00"
+    assert writes[("night_charge_plans", "2026-06-03")]["monitor_schedule"]["schedule_source"] == "03-monitor"

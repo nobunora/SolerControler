@@ -128,7 +128,7 @@
   "id": "night_charge_end_time",
   "enabled": true,
   "priority": 500,
-  "value": "06:30"
+  "value": "07:00"
 }
 ```
 
@@ -174,7 +174,7 @@
   "enabled": true,
   "priority": 400,
   "start": "00:00",
-  "end": "06:30"
+  "end": "07:00"
 }
 ```
 

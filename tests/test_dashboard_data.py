@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -138,3 +139,56 @@ def test_dashboard_monthly_cost_uses_configurable_close_day(tmp_path: Path, monk
     assert by_month["2026-05"]["self_consumption_kwh"] == pytest.approx(5.0)
     assert by_month["2026-06"]["self_consumption_kwh"] == pytest.approx(4.0)
     assert sliced.meta["aggregation_close_day"] == 14
+
+
+def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO battery_daily_metrics(date, setting_soc_target_percent, night_charge_kwh, updated_at)
+            VALUES ('2026-06-03', 79, 7.68, '2026-06-02T14:03:00Z')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO settings_events(
+                run_id, slot, profile, status, changed_fields_json, detail_json, source_doc_id, recorded_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-06-03-03-monitor-schedule",
+                "03",
+                "forced-monitor",
+                "planned-force-start",
+                "[]",
+                json.dumps(
+                    {
+                        "plan_date": "2026-06-03",
+                        "charge_start_time": "02:43",
+                        "charge_end_time": "07:00",
+                        "soc_charge_mode": "79",
+                        "battery_operating_mode": "forced",
+                        "estimated_charge_power_kw": 1.8,
+                        "schedule_source": "03-monitor",
+                    },
+                    separators=(",", ":"),
+                ),
+                "2026-06-03-03-monitor-schedule",
+                "2026-06-03T00:06:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-06-03", window_days=1, include_static=True)
+    schedule = sliced.data.latest_schedule
+
+    assert schedule["charge_start_time"] == "02:43"
+    assert schedule["charge_end_time"] == "07:00"
+    assert schedule["status"] == "planned-force-start"
+    assert schedule["schedule_source"] == "03-monitor"

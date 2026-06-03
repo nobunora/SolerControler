@@ -168,6 +168,88 @@ def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> 
     return False
 
 
+def _hhmm_after_delay(*, timezone_name: str, delay_seconds: int) -> str:
+    now = datetime.now(ZoneInfo(timezone_name))
+    scheduled = now + timedelta(seconds=max(0, delay_seconds))
+    return scheduled.strftime("%H:%M")
+
+
+def _persist_03_monitor_schedule_to_firestore(
+    *,
+    plan_meta: dict[str, float | str | None],
+    charge_start_time: str,
+    charge_end_time: str,
+    target_soc: float,
+    latest_soc: float | None,
+    required_kwh: float,
+    estimated_charge_minutes: int,
+    default_power_kw: float,
+    delay_seconds: int,
+) -> bool:
+    """Store the 03 controller decision so the dashboard never guesses it."""
+    client = _open_firestore_for_plan()
+    if client is None:
+        return False
+    plan_date = str(plan_meta.get("date") or "").strip()
+    if not plan_date:
+        return False
+
+    now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
+    event_id = f"{plan_date}-03-monitor-schedule"
+    day_start = os.getenv("KP_DAY_DISCHARGE_WINDOW_START", "07:00").strip() or "07:00"
+    day_end = os.getenv("KP_DAY_DISCHARGE_WINDOW_END", "23:00").strip() or "23:00"
+    detail = {
+        "plan_date": plan_date,
+        "charge_start_time": charge_start_time,
+        "charge_end_time": charge_end_time,
+        "night_window_start": os.getenv("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip() or "23:00",
+        "night_window_end": os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00",
+        "day_discharge_window_start": day_start,
+        "day_discharge_window_end": day_end,
+        "discharge_fixed_window": f"{day_start}-{day_end}",
+        "soc_charge_mode": str(int(round(target_soc))),
+        "mode": "forced",
+        "battery_operating_mode": "forced",
+        "estimated_charge_power_kw": default_power_kw,
+        "latest_soc_percent_at_schedule": latest_soc,
+        "required_night_charge_kwh_at_schedule": required_kwh,
+        "estimated_charge_minutes": estimated_charge_minutes,
+        "delay_before_force_seconds": delay_seconds,
+        "schedule_source": "03-monitor",
+    }
+    try:
+        client.collection("settings_events").document(event_id).set(
+            {
+                "event_id": event_id,
+                "run_id": event_id,
+                "slot": "03",
+                "profile": "forced-monitor",
+                "status": "planned-force-start",
+                "changed_fields_json": [],
+                "detail_json": detail,
+                "recorded_at": now_utc,
+            },
+            merge=True,
+        )
+        client.collection("night_charge_plans").document(plan_date).set(
+            {"monitor_schedule": detail, "monitor_schedule_updated_at": now_utc},
+            merge=True,
+        )
+        client.collection("night_charge_plans").document("latest").set(
+            {"monitor_schedule": detail, "monitor_schedule_updated_at": now_utc},
+            merge=True,
+        )
+        print(
+            "[cloud_job_runner] persisted 03-monitor schedule "
+            f"date={plan_date} start={charge_start_time} end={charge_end_time}",
+            flush=True,
+        )
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] 03-monitor schedule persistence failed: {exc}", flush=True)
+        return False
+
+
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     soc_now_raw = plan_meta.get("soc_now_percent", None)
@@ -542,6 +624,18 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
+    charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
+    _persist_03_monitor_schedule_to_firestore(
+        plan_meta=plan_meta,
+        charge_start_time=charge_start_hhmm,
+        charge_end_time=cutoff_hhmm,
+        target_soc=target_soc,
+        latest_soc=latest_soc,
+        required_kwh=required_kwh,
+        estimated_charge_minutes=estimated_charge_minutes,
+        default_power_kw=default_power_kw,
+        delay_seconds=delay_seconds,
+    )
     refresh_hhmm = os.getenv("ADJUST03_REFRESH_HHMM", "03:10").strip() or "03:10"
     refresh_enabled = os.getenv("ADJUST03_REFRESH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
     if refresh_enabled and delay_seconds > 0:
@@ -566,6 +660,18 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
                 f"required={required_kwh:.3f}kWh delay_before_force={delay_seconds}s",
                 flush=True,
+            )
+            charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
+            _persist_03_monitor_schedule_to_firestore(
+                plan_meta=plan_meta,
+                charge_start_time=charge_start_hhmm,
+                charge_end_time=cutoff_hhmm,
+                target_soc=target_soc,
+                latest_soc=latest_soc,
+                required_kwh=required_kwh,
+                estimated_charge_minutes=estimated_charge_minutes,
+                default_power_kw=default_power_kw,
+                delay_seconds=delay_seconds,
             )
     if delay_seconds > 0:
         _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")

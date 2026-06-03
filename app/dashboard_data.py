@@ -327,7 +327,11 @@ def _default_latest_schedule(plan_date: str | None = None) -> dict[str, Any]:
     day_discharge_end = os.getenv("KP_DAY_DISCHARGE_WINDOW_END", "23:00").strip() or "23:00"
     night_window_start = os.getenv("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip() or "23:00"
     night_window_end = os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00"
-    charge_end_time = _find_variable_condition_value(conditions, target_id="night_charge_end_time", default="06:00")
+    charge_end_time = (
+        os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "").strip()
+        or os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "").strip()
+        or _find_variable_condition_value(conditions, target_id="night_charge_end_time", default="07:00")
+    )
     return {
         "plan_date": plan_date,
         "charge_start_time": None,
@@ -369,6 +373,9 @@ def _build_latest_schedule_from_events(
         detail = _json_object_or_empty(row.get("detail_json"))
         if not detail:
             continue
+        detail_plan_date = str(detail.get("plan_date") or "").strip()
+        if plan_date and detail_plan_date and detail_plan_date != plan_date:
+            continue
         changed = False
         for key in (
             "charge_start_time",
@@ -384,6 +391,9 @@ def _build_latest_schedule_from_events(
             "mode",
             "battery_operating_mode",
             "estimated_charge_power_kw",
+            "schedule_source",
+            "estimated_charge_minutes",
+            "delay_before_force_seconds",
         ):
             value = detail.get(key)
             if value is None or value == "":

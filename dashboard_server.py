@@ -348,7 +348,7 @@ def _html(payload: dict, script_nonce: str) -> str:
           (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
           (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
           (5) 夜間充電量: <b>NC = max(0, ((RC - RS)/100 × Cp) / Ef)</b><br>
-          条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 23時設定は06:00終了固定で逆算。 条件C: 充電開始は00:00未満にしない。<br>
+          条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 03ジョブが07:00カットオフで強制充電開始を逆算。 条件C: 充電開始は00:00未満にしない。<br>
           条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
           最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
           的中率: <b>HT = max(0, 1 - sMAPE(SH実績, SH予測) / 2) × 100</b>
@@ -701,7 +701,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       if (!root) return;
       const sch = store.latestSchedule || {};
       const chargeStart = minuteOf(sch.charge_start_time, null);
-      const chargeEnd = minuteOf(sch.charge_end_time, minuteOf("06:00", 360));
+      const chargeEnd = minuteOf(sch.charge_end_time, minuteOf("07:00", 420));
       const dayStart = minuteOf(sch.day_discharge_window_start, minuteOf("07:00", 420));
       const dayEnd = minuteOf(sch.day_discharge_window_end, minuteOf("23:00", 1380));
       const nightStart = minuteOf(sch.night_window_start, minuteOf("23:00", 1380));
