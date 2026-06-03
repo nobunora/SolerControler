@@ -1,6 +1,6 @@
 # Solar Controller Automation (Cloud Run Jobs)
 
-23:00 / 03:10 / 07:00（JST）に以下を自動実行する Python 実装です。
+23:00 / 04:30 / 07:00（JST）に以下を自動実行する Python 実装です。
 
 1. ブラウザで 12 時間先の太陽日射時間を取得  
 2. モニタリングサービスにログインして CSV を取得  
@@ -93,7 +93,7 @@ python kpnet_main.py
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
   - 日中(放電開始は予報連動): 晴れ予報=06:00開始 / 曇り予報=07:00開始（終了は23:00）
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
-- 00:05夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
+- 04:30夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
   - 23時計画と同じ対象日のまま、必要時だけ3時台に予報を再確認
   - 7時から逆算した時刻に強制充電を開始
@@ -190,7 +190,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 
 ## 4. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 00:05夜間コントローラ / 07:00 ジョブと Scheduler を一括登録
+推奨: 自動化スクリプトで 23:00 / 04:30夜間コントローラ / 07:00 ジョブと Scheduler を一括登録
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -207,8 +207,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Docker build/push（Cloud Run Jobs runner は `requirements-runner.txt` を使い、未使用のPlaywright/Chromiumは含めない）
 - Secret Manager に監視ログイン情報登録
 - 実行用 / Scheduler用の専用サービスアカウント作成
-- Cloud Run Job 3本（23時用 / 00:05夜間コントローラ用 / 7時用）デプロイ
-- Cloud Scheduler 3本（`0 23 * * *`, `5 0 * * *`, `0 7 * * *` JST）作成/更新
+- Cloud Run Job 3本（23時用 / 04:30夜間コントローラ用 / 7時用）デプロイ
+- Cloud Scheduler 3本（`0 23 * * *`, `30 4 * * *`, `0 7 * * *` JST）作成/更新
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell
@@ -237,7 +237,7 @@ gcloud run jobs create $JOB_NAME `
   --env-vars-file=.env.prod
 ```
 
-## 5. 07:00/03:10/23:00 実行の Scheduler 設定例
+## 5. 07:00/04:30/23:00 実行の Scheduler 設定例
 
 ```powershell
 $SCHEDULER_REGION="asia-northeast1"
@@ -253,7 +253,7 @@ gcloud scheduler jobs create http "solar-battery-run-23" `
 
 gcloud scheduler jobs create http "solar-battery-run-03" `
   --location=$SCHEDULER_REGION `
-  --schedule="10 3 * * *" `
+  --schedule="30 4 * * *" `
   --time-zone="Asia/Tokyo" `
   --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/solar-battery-03:run" `
   --http-method=POST `

@@ -509,7 +509,7 @@ function Upsert-SchedulerRunJob {
 
 Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "5 0 * * *" -TargetJobName $Job03Name
+Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "30 4 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
 if ($deploySheetsJob) {
     Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
@@ -530,7 +530,7 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00), $Job03Name (00:05 night controller), $Job07Name (07:00)"
+Write-Host "Jobs: $Job23Name (23:00), $Job03Name (04:30 night controller), $Job07Name (07:00)"
 if ($deploySheetsJob) {
     Write-Host "Sheets backup job: $SheetsJobName (00:20)"
     Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"

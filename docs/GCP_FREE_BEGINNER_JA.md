@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps
 これで以下の3つのCloud Schedulerジョブが作成されます。
 
 - `solar-battery-run-23`（23:00 JST）
-- `solar-battery-run-03`（03:10 JST）
+- `solar-battery-run-03`（04:30 JST）
 - `solar-battery-run-07`（07:00 JST）
 
 ## 4. ダッシュボード（任意）
