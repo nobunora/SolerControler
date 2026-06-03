@@ -366,6 +366,7 @@ def _build_latest_schedule_from_events(
     schedule = _default_latest_schedule(plan_date=plan_date)
     chosen_row: dict[str, Any] | None = None
     completed_row: dict[str, Any] | None = None
+    schedule_source_locked = False
     for row in event_rows:
         status = str(row.get("status", "") or "")
         if completed_row is None and status in {"applied", "skipped-no-change"}:
@@ -375,6 +376,9 @@ def _build_latest_schedule_from_events(
             continue
         detail_plan_date = str(detail.get("plan_date") or "").strip()
         if plan_date and detail_plan_date and detail_plan_date != plan_date:
+            continue
+        is_monitor_schedule = str(detail.get("schedule_source") or "") == "03-monitor"
+        if schedule_source_locked and not is_monitor_schedule:
             continue
         changed = False
         for key in (
@@ -400,8 +404,9 @@ def _build_latest_schedule_from_events(
                 continue
             schedule[key] = value
             changed = True
-        if changed and chosen_row is None:
+        if changed and (chosen_row is None or is_monitor_schedule):
             chosen_row = row
+            schedule_source_locked = is_monitor_schedule
 
     if chosen_row is not None:
         schedule["status"] = str(chosen_row.get("status", "from-settings-events"))
