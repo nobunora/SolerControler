@@ -73,6 +73,7 @@ def _empty_dashboard_payload() -> dict:
         "cost_daily": [],
         "cost_monthly": [],
         "battery_daily": [],
+        "battery_flow_daily": [],
         "model_parameters": [],
         "latest_schedule": {},
         "dashboard_warnings": [],
@@ -144,6 +145,47 @@ def _html(payload: dict, script_nonce: str) -> str:
     .card h2 { margin: 0 0 6px; font-size: 16px; }
     .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; }
     .chart-box { position: relative; width: 100%; min-width: 0; height: 300px; }
+    .battery-life-card { display: grid; gap: 10px; }
+    .battery-life-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .battery-life-kpi {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 34px;
+      padding: 8px 10px;
+      border: 1px solid #e3edf6;
+      border-radius: 11px;
+      background: linear-gradient(180deg, #f8fbff, #ffffff);
+      box-sizing: border-box;
+    }
+    .battery-life-label {
+      color: #7a8da1;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .battery-life-value {
+      color: #16314f;
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .battery-life-value small {
+      color: #5a6f85;
+      font-size: 11px;
+      font-weight: 800;
+      margin-left: 3px;
+    }
+    .battery-life-chart { height: 230px; }
     .gantt-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #f8fbff; }
     .gantt-board { min-width: 980px; padding: 10px; }
     .gantt-axis {
@@ -281,6 +323,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       .grid { grid-template-columns: 1fr; }
       .full { grid-column: auto; }
       .chart-box { height: 240px; }
+      .battery-life-kpis { grid-template-columns: 1fr; }
+      .battery-life-chart { height: 220px; }
       .hero h1 { font-size: 19px; }
     }
   </style>
@@ -364,7 +408,23 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card full">
-        <h2>6. 蓄電池方程式とパラメータ</h2>
+        <h2>6. 蓄電池容量予測（推定）</h2>
+        <p class="desc">表示期間の充放電実績とモデルパラメータから、等価サイクル・推定容量・12ヶ月先の容量推移を見ます。制御には使わない可視化用の推定です。</p>
+        <div class="battery-life-card">
+          <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
+            <div class="battery-life-kpi"><span class="battery-life-label">累計充電</span><span id="lifeTotalCharge" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">累計放電</span><span id="lifeTotalDischarge" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">等価サイクル</span><span id="lifeEquivalentCycles" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">推定容量</span><span id="lifeEstimatedCapacity" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">80%到達予測</span><span id="lifeEightyPercentYear" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">月平均等価サイクル</span><span id="lifeMonthlyCycles" class="battery-life-value">-</span></div>
+          </div>
+          <div class="chart-box battery-life-chart"><canvas id="batteryLifeChart"></canvas></div>
+        </div>
+      </article>
+
+      <article class="card full">
+        <h2>7. 蓄電池方程式とパラメータ</h2>
         <div class="equation">
           変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh], <b>HT</b>=的中率[%]<br>
           (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
@@ -595,6 +655,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       energy: new Map(),
       cost: new Map(),
       battery: new Map(),
+      batteryFlow: new Map(),
       monthly: [],
       params: [],
       latestSchedule: null,
@@ -669,6 +730,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       for (const k of store.energy.keys()) all.add(k);
       for (const k of store.cost.keys()) all.add(k);
       for (const k of store.battery.keys()) all.add(k);
+      for (const k of store.batteryFlow.keys()) all.add(k);
       const cutoff = displayCutoffDate();
       store.dates = Array.from(all).filter((d) => d <= cutoff).sort();
     }
@@ -692,6 +754,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       mergeRows(store.energy, payload.energy_daily || []);
       mergeRows(store.cost, payload.cost_daily || []);
       mergeRows(store.battery, payload.battery_daily || []);
+      mergeRows(store.batteryFlow, payload.battery_flow_daily || []);
       if (includeStatic) {
         store.monthly = payload.cost_monthly || [];
         store.params = payload.model_parameters || [];
@@ -1159,6 +1222,27 @@ def _html(payload: dict, script_nonce: str) -> str:
           },
         },
       });
+
+      charts.batteryLife = new Chart(document.getElementById("batteryLifeChart"), {
+        data: { labels: [], datasets: [
+          { type: "line", label: "推定容量(kWh)", data: [], yAxisID: "y", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, borderWidth: 2.4 },
+          { type: "bar", label: "サイクル劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#9ed8f466", borderColor: "#55acd8", borderWidth: 1, stack: "loss" },
+          { type: "bar", label: "温度補正(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#ffe08a99", borderColor: "#ef8e1d", borderWidth: 1, stack: "loss" },
+          { type: "bar", label: "カレンダー劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#d8e6f299", borderColor: "#9dafbf", borderWidth: 1, stack: "loss" },
+        ]},
+        options: {
+          ...commonOptions(),
+          plugins: {
+            ...commonOptions().plugins,
+            legend: { labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } },
+          },
+          scales: {
+            y: { min: 0, max: 1, title: { display: true, text: "容量(kWh)", color: "#147efb" }, ticks: { color: "#147efb" }, border: { color: "#147efb" }, grid: { color: "#d8e6f2" } },
+            y2: { min: 0, max: 1, position: "right", title: { display: true, text: "月間劣化(kWh)", color: "#ef8e1d" }, ticks: { color: "#ef8e1d" }, border: { color: "#ef8e1d" }, grid: { drawOnChartArea: false }, stacked: true },
+            x: { stacked: true },
+          },
+        },
+      });
     }
 
     function rowByDate(map, day) {
@@ -1281,6 +1365,114 @@ def _html(payload: dict, script_nonce: str) -> str:
         const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
         note.textContent = `${date} の1時間予測。発電 ${totalPv.toFixed(2)}kWh / 充電 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh`;
       }
+      chart.update("none");
+    }
+
+    function modelParam(name, fallback) {
+      for (const row of store.params || []) {
+        if (String(row.name || "") !== name) continue;
+        const value = Number(row.mean_value);
+        if (Number.isFinite(value)) return value;
+      }
+      return fallback;
+    }
+
+    function setLifeText(id, text, unit = "") {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = unit ? `${escapeHtml(text)}<small>${escapeHtml(unit)}</small>` : escapeHtml(text);
+    }
+
+    function monthLabelFromDate(dateObj) {
+      return `${String(dateObj.getUTCMonth() + 1).padStart(2, "0")}月`;
+    }
+
+    function seasonalAverageTempC(monthIndex1) {
+      const normals = [5, 6, 10, 15, 20, 23, 27, 29, 25, 19, 13, 8];
+      return normals[Math.max(0, Math.min(11, monthIndex1 - 1))];
+    }
+
+    function monthSpan(startIso, endIso) {
+      const start = isoParts(startIso);
+      const end = isoParts(endIso);
+      if (!start || !end) return 1;
+      const months = (end.year - start.year) * 12 + (end.month - start.month) + (end.day >= start.day ? 1 : 0.5);
+      return Math.max(1, months);
+    }
+
+    function renderBatteryLifeProjection(buckets) {
+      const chart = charts.batteryLife;
+      if (!chart || !buckets.length) return;
+      const range = currentPeriodRange();
+      const dates = selectedWindowDates();
+      let totalCharge = 0;
+      let totalDischarge = 0;
+      for (const day of dates) {
+        const row = store.batteryFlow.get(day);
+        totalCharge += n(row && row.charge_kwh);
+        totalDischarge += n(row && row.discharge_kwh);
+      }
+
+      const baseCapacity = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
+      const cycleFadePerCycle = Math.max(0.00001, modelParam("battery_cycle_capacity_fade_per_cycle", 0.0003));
+      const equivalentCycles = totalDischarge / baseCapacity;
+      const currentCapacity = Math.max(baseCapacity * 0.5, baseCapacity * (1 - cycleFadePerCycle * equivalentCycles));
+      const currentSoh = currentCapacity / baseCapacity * 100;
+      const months = range ? monthSpan(range.start, range.end) : 1;
+      const monthlyEqCycles = equivalentCycles / months;
+      const monthlyCycleLoss = baseCapacity * cycleFadePerCycle * monthlyEqCycles;
+      const calendarLoss = baseCapacity * 0.00025;
+
+      let projectedCapacity = currentCapacity;
+      const labels = [];
+      const capacities = [];
+      const cycleLosses = [];
+      const tempLosses = [];
+      const calendarLosses = [];
+      const latest = latestAvailableDate();
+      const latestParts = isoParts(latest || todayIsoJst());
+      const baseDate = latestParts
+        ? new Date(Date.UTC(latestParts.year, latestParts.month - 1, 1))
+        : new Date();
+      for (let i = 0; i < 12; i += 1) {
+        const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i + 1, 1));
+        const avgTemp = seasonalAverageTempC(d.getUTCMonth() + 1);
+        const tempLoss = baseCapacity * Math.max(0, avgTemp - 25) * 0.00008;
+        projectedCapacity = Math.max(baseCapacity * 0.2, projectedCapacity - monthlyCycleLoss - calendarLoss - tempLoss);
+        labels.push(monthLabelFromDate(d));
+        capacities.push(Number(projectedCapacity.toFixed(3)));
+        cycleLosses.push(Number(monthlyCycleLoss.toFixed(4)));
+        tempLosses.push(Number(tempLoss.toFixed(4)));
+        calendarLosses.push(Number(calendarLoss.toFixed(4)));
+      }
+
+      const lossPerMonth = monthlyCycleLoss + calendarLoss + (tempLosses.reduce((a, b) => a + b, 0) / Math.max(1, tempLosses.length));
+      const monthsTo80 = lossPerMonth > 0 ? Math.max(0, (currentCapacity - baseCapacity * 0.8) / lossPerMonth) : null;
+      const year80 = monthsTo80 == null
+        ? "-"
+        : String(new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + Math.ceil(monthsTo80), 1)).getUTCFullYear());
+
+      setLifeText("lifeTotalCharge", totalCharge.toFixed(1), "kWh");
+      setLifeText("lifeTotalDischarge", totalDischarge.toFixed(1), "kWh");
+      setLifeText("lifeEquivalentCycles", equivalentCycles.toFixed(1), "回");
+      setLifeText("lifeEstimatedCapacity", `${currentCapacity.toFixed(2)} kWh / ${currentSoh.toFixed(1)}`, "%");
+      setLifeText("lifeEightyPercentYear", year80 === "-" ? "-" : `${year80}年`, "ごろ");
+      setLifeText("lifeMonthlyCycles", monthlyEqCycles.toFixed(1), "回/月");
+
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = capacities;
+      chart.data.datasets[1].data = cycleLosses;
+      chart.data.datasets[2].data = tempLosses;
+      chart.data.datasets[3].data = calendarLosses;
+      const capMin = Math.min(...capacities, currentCapacity);
+      const capMax = Math.max(...capacities, currentCapacity);
+      const capPad = Math.max(0.05, (capMax - capMin) * 0.35);
+      chart.options.scales.y.min = Math.max(0, Math.floor((capMin - capPad) * 20) / 20);
+      chart.options.scales.y.max = Math.ceil((capMax + capPad) * 20) / 20;
+      chart.options.scales.y.ticks = { color: "#147efb", callback: (v) => `${Number(v).toFixed(2)}` };
+      const maxMonthlyLoss = Math.max(0.01, ...cycleLosses.map((v, i) => v + tempLosses[i] + calendarLosses[i]));
+      chart.options.scales.y2.max = Math.ceil(maxMonthlyLoss * 1000) / 1000;
+      chart.options.scales.y2.ticks = { color: "#ef8e1d", callback: (v) => Number(v).toFixed(3) };
       chart.update("none");
     }
 
@@ -1415,6 +1607,8 @@ def _html(payload: dict, script_nonce: str) -> str:
         title: { display: true, text: "SOC(%)", color: "#147efb" },
       };
       charts.battery.update("none");
+
+      renderBatteryLifeProjection(buckets);
 
       setStatus(`表示期間: ${buckets[0].start} 〜 ${buckets[buckets.length - 1].end}${isWeekly ? "（週単位）" : ""}`);
     }

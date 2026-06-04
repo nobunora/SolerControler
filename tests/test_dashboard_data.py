@@ -108,6 +108,33 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
     assert sliced.data.forecast_hourly[0]["forecast_charge_kwh"] == pytest.approx(0.4)
 
 
+def test_dashboard_slice_includes_battery_flow_daily(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.executemany(
+            """
+            INSERT INTO monitoring_samples(ts, charge_kwh, discharge_kwh, ingested_at)
+            VALUES (?, ?, ?, '2026-05-02T00:00:00')
+            """,
+            [
+                ("2026-05-02T01:00:00", 1.2, 0.0),
+                ("2026-05-02T07:00:00", 0.4, 0.7),
+                ("2026-05-02T18:00:00", 0.0, 1.1),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-05-02", window_days=1, include_static=True)
+
+    assert sliced.data.battery_flow_daily == [
+        {"date": "2026-05-02", "charge_kwh": pytest.approx(1.6), "discharge_kwh": pytest.approx(1.8)}
+    ]
+
+
 def test_dashboard_monthly_cost_uses_configurable_close_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14")
     db_path = tmp_path / "solar.db"

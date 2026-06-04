@@ -18,6 +18,7 @@ class DashboardData:
     cost_monthly: list[dict[str, Any]]
     battery_daily: list[dict[str, Any]]
     model_parameters: list[dict[str, Any]]
+    battery_flow_daily: list[dict[str, Any]] = field(default_factory=list)
     energy_daily: list[dict[str, Any]] = field(default_factory=list)
     forecast_hourly: list[dict[str, Any]] = field(default_factory=list)
     latest_schedule: dict[str, Any] = field(default_factory=dict)
@@ -588,6 +589,7 @@ def _meta_from_data(
     battery_daily: list[dict[str, Any]],
     energy_daily: list[dict[str, Any]] | None = None,
     forecast_hourly: list[dict[str, Any]] | None = None,
+    battery_flow_daily: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     all_dates: list[str] = []
     all_dates.extend([str(x.get("date", "")) for x in sunshine_daily if x.get("date")])
@@ -595,6 +597,7 @@ def _meta_from_data(
     all_dates.extend([str(x.get("date", "")) for x in battery_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in energy_daily or [] if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in forecast_hourly or [] if x.get("date")])
+    all_dates.extend([str(x.get("date", "")) for x in battery_flow_daily or [] if x.get("date")])
     oldest_loaded = min(all_dates) if all_dates else None
     newest_loaded = max(all_dates) if all_dates else None
     has_more_before = False
@@ -719,6 +722,7 @@ def _load_sqlite_slice(
             )
         history_start = (start_obj - timedelta(days=14)).isoformat()
         monitoring_daily = []
+        battery_flow_daily = []
         if _sqlite_table_exists(conn, "monitoring_samples"):
             monitoring_daily = _rows_to_dicts(
                 conn.execute(
@@ -732,6 +736,20 @@ def _load_sqlite_slice(
                     ORDER BY date
                     """,
                     (history_start, end_date_iso),
+                ).fetchall()
+            )
+            battery_flow_daily = _rows_to_dicts(
+                conn.execute(
+                    """
+                    SELECT substr(ts,1,10) AS date,
+                           COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
+                           COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
+                    FROM monitoring_samples
+                    WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+                    GROUP BY substr(ts,1,10)
+                    ORDER BY date
+                    """,
+                    (start_date, end_date_iso),
                 ).fetchall()
             )
         params_for_energy = []
@@ -817,6 +835,7 @@ def _load_sqlite_slice(
             battery_daily=battery_daily,
             energy_daily=energy_daily,
             forecast_hourly=forecast_hourly,
+            battery_flow_daily=battery_flow_daily,
         )
         return DashboardSlice(
             data=DashboardData(
@@ -825,6 +844,7 @@ def _load_sqlite_slice(
                 cost_monthly=cost_monthly,
                 battery_daily=battery_daily,
                 model_parameters=params,
+                battery_flow_daily=battery_flow_daily,
                 energy_daily=energy_daily,
                 forecast_hourly=forecast_hourly,
                 latest_schedule=latest_schedule,
@@ -975,6 +995,20 @@ def _load_postgres_slice(
 
             cur.execute(
                 """
+                SELECT substring(ts,1,10) AS date,
+                       COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
+                       COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
+                FROM monitoring_samples
+                WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
+                GROUP BY substring(ts,1,10)
+                ORDER BY date
+                """,
+                (start_date, end_date_iso),
+            )
+            battery_flow_daily = _rows_to_dicts(cur.fetchall())
+
+            cur.execute(
+                """
                 SELECT name, mean_value
                 FROM model_parameters
                 ORDER BY name
@@ -1045,6 +1079,7 @@ def _load_postgres_slice(
                 battery_daily=battery_daily,
                 energy_daily=energy_daily,
                 forecast_hourly=forecast_hourly,
+                battery_flow_daily=battery_flow_daily,
             )
             return DashboardSlice(
                 data=DashboardData(
@@ -1053,6 +1088,7 @@ def _load_postgres_slice(
                     cost_monthly=cost_monthly,
                     battery_daily=battery_daily,
                     model_parameters=params,
+                    battery_flow_daily=battery_flow_daily,
                     energy_daily=energy_daily,
                     forecast_hourly=forecast_hourly,
                     latest_schedule=latest_schedule,
@@ -1128,9 +1164,14 @@ def _firestore_monitoring_daily(
         day = ts[:10]
         if not day:
             continue
-        acc = by_day.setdefault(day, {"actual_pv_kwh": 0.0, "actual_load_kwh": 0.0})
+        acc = by_day.setdefault(
+            day,
+            {"actual_pv_kwh": 0.0, "actual_load_kwh": 0.0, "charge_kwh": 0.0, "discharge_kwh": 0.0},
+        )
         acc["actual_pv_kwh"] += float(row.get("pv_kwh") or 0.0)
         acc["actual_load_kwh"] += float(row.get("load_kwh") or 0.0)
+        acc["charge_kwh"] += float(row.get("charge_kwh") or 0.0)
+        acc["discharge_kwh"] += float(row.get("discharge_kwh") or 0.0)
     return [{"date": day, **values} for day, values in sorted(by_day.items())]
 
 
@@ -1227,6 +1268,15 @@ def _load_firestore_slice(
         start_date=history_start,
         end_date_iso=end_date_iso,
     )
+    battery_flow_daily = [
+        {
+            "date": row.get("date"),
+            "charge_kwh": row.get("charge_kwh"),
+            "discharge_kwh": row.get("discharge_kwh"),
+        }
+        for row in monitoring_daily
+        if start_date <= str(row.get("date", "")) <= end_date_iso
+    ]
     params_for_energy: list[dict[str, Any]] = []
     for doc in client.collection("model_parameters").order_by("name").stream():
         row = doc.to_dict() or {}
@@ -1304,6 +1354,7 @@ def _load_firestore_slice(
         battery_daily=battery_daily,
         energy_daily=energy_daily,
         forecast_hourly=forecast_hourly,
+        battery_flow_daily=battery_flow_daily,
     )
     return DashboardSlice(
         data=DashboardData(
@@ -1312,6 +1363,7 @@ def _load_firestore_slice(
             cost_monthly=cost_monthly,
             battery_daily=battery_daily,
             model_parameters=params,
+            battery_flow_daily=battery_flow_daily,
             energy_daily=energy_daily,
             forecast_hourly=forecast_hourly,
             latest_schedule=latest_schedule,
