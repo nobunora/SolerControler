@@ -145,19 +145,19 @@ def _html(payload: dict, script_nonce: str) -> str:
     .card h2 { margin: 0 0 6px; font-size: 16px; }
     .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; }
     .chart-box { position: relative; width: 100%; min-width: 0; height: 300px; }
-    .battery-life-card { display: grid; gap: 10px; }
+    .battery-life-card { display: grid; gap: 8px; }
     .battery-life-kpis {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
+      gap: 6px;
     }
     .battery-life-kpi {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      gap: 8px;
-      min-height: 34px;
-      padding: 8px 10px;
+      gap: 5px;
+      min-height: 32px;
+      padding: 7px 8px;
       border: 1px solid #e3edf6;
       border-radius: 11px;
       background: linear-gradient(180deg, #f8fbff, #ffffff);
@@ -165,14 +165,14 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
     .battery-life-label {
       color: #7a8da1;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 700;
       line-height: 1;
       white-space: nowrap;
     }
     .battery-life-value {
       color: #16314f;
-      font-size: 17px;
+      font-size: 14px;
       font-weight: 900;
       line-height: 1;
       letter-spacing: -0.02em;
@@ -181,11 +181,11 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
     .battery-life-value small {
       color: #5a6f85;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 800;
       margin-left: 3px;
     }
-    .battery-life-chart { height: 230px; }
+    .battery-life-chart { height: 210px; }
     .gantt-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #f8fbff; }
     .gantt-board { min-width: 980px; padding: 10px; }
     .gantt-axis {
@@ -323,7 +323,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       .grid { grid-template-columns: 1fr; }
       .full { grid-column: auto; }
       .chart-box { height: 240px; }
-      .battery-life-kpis { grid-template-columns: 1fr; }
+      .battery-life-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .battery-life-chart { height: 220px; }
       .hero h1 { font-size: 19px; }
     }
@@ -407,9 +407,9 @@ def _html(payload: dict, script_nonce: str) -> str:
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
-      <article class="card full">
+      <article class="card">
         <h2>6. 蓄電池容量予測（推定）</h2>
-        <p class="desc">表示期間の充放電実績とモデルパラメータから、等価サイクル・推定容量・12ヶ月先の容量推移を見ます。制御には使わない可視化用の推定です。</p>
+        <p class="desc">表示期間の実測充放電量とモデルパラメータから、等価サイクル・推定容量・12ヶ月先の容量推移を見ます。実容量を直接測った診断値ではなく、制御には使わない可視化用の推定です。</p>
         <div class="battery-life-card">
           <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
             <div class="battery-life-kpi"><span class="battery-life-label">累計充電</span><span id="lifeTotalCharge" class="battery-life-value">-</span></div>
@@ -417,7 +417,7 @@ def _html(payload: dict, script_nonce: str) -> str:
             <div class="battery-life-kpi"><span class="battery-life-label">等価サイクル</span><span id="lifeEquivalentCycles" class="battery-life-value">-</span></div>
             <div class="battery-life-kpi"><span class="battery-life-label">推定容量</span><span id="lifeEstimatedCapacity" class="battery-life-value">-</span></div>
             <div class="battery-life-kpi"><span class="battery-life-label">80%到達予測</span><span id="lifeEightyPercentYear" class="battery-life-value">-</span></div>
-            <div class="battery-life-kpi"><span class="battery-life-label">月平均等価サイクル</span><span id="lifeMonthlyCycles" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">月平均Eqサイクル</span><span id="lifeMonthlyCycles" class="battery-life-value">-</span></div>
           </div>
           <div class="chart-box battery-life-chart"><canvas id="batteryLifeChart"></canvas></div>
         </div>
@@ -1227,7 +1227,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         data: { labels: [], datasets: [
           { type: "line", label: "推定容量(kWh)", data: [], yAxisID: "y", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, borderWidth: 2.4 },
           { type: "bar", label: "サイクル劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#9ed8f466", borderColor: "#55acd8", borderWidth: 1, stack: "loss" },
-          { type: "bar", label: "温度補正(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#ffe08a99", borderColor: "#ef8e1d", borderWidth: 1, stack: "loss" },
+          { type: "bar", label: "温度容量補正(kWh)", data: [], yAxisID: "y2", backgroundColor: "#ffe08a99", borderColor: "#ef8e1d", borderWidth: 1, stack: "loss" },
           { type: "bar", label: "カレンダー劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#d8e6f299", borderColor: "#9dafbf", borderWidth: 1, stack: "loss" },
         ]},
         options: {
@@ -1238,7 +1238,7 @@ def _html(payload: dict, script_nonce: str) -> str:
           },
           scales: {
             y: { min: 0, max: 1, title: { display: true, text: "容量(kWh)", color: "#147efb" }, ticks: { color: "#147efb" }, border: { color: "#147efb" }, grid: { color: "#d8e6f2" } },
-            y2: { min: 0, max: 1, position: "right", title: { display: true, text: "月間劣化(kWh)", color: "#ef8e1d" }, ticks: { color: "#ef8e1d" }, border: { color: "#ef8e1d" }, grid: { drawOnChartArea: false }, stacked: true },
+            y2: { min: 0, max: 1, position: "right", title: { display: true, text: "容量低下(kWh)", color: "#ef8e1d" }, ticks: { color: "#ef8e1d" }, border: { color: "#ef8e1d" }, grid: { drawOnChartArea: false }, stacked: true },
             x: { stacked: true },
           },
         },
@@ -1415,6 +1415,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       const baseCapacity = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
       const cycleFadePerCycle = Math.max(0.00001, modelParam("battery_cycle_capacity_fade_per_cycle", 0.0003));
+      const tempCoeffPerDeg = modelParam("battery_temp_coeff_per_deg", -0.005);
       const equivalentCycles = totalDischarge / baseCapacity;
       const currentCapacity = Math.max(baseCapacity * 0.5, baseCapacity * (1 - cycleFadePerCycle * equivalentCycles));
       const currentSoh = currentCapacity / baseCapacity * 100;
@@ -1423,7 +1424,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const monthlyCycleLoss = baseCapacity * cycleFadePerCycle * monthlyEqCycles;
       const calendarLoss = baseCapacity * 0.00025;
 
-      let projectedCapacity = currentCapacity;
+      let projectedAgedCapacity = currentCapacity;
       const labels = [];
       const capacities = [];
       const cycleLosses = [];
@@ -1437,8 +1438,10 @@ def _html(payload: dict, script_nonce: str) -> str:
       for (let i = 0; i < 12; i += 1) {
         const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i + 1, 1));
         const avgTemp = seasonalAverageTempC(d.getUTCMonth() + 1);
-        const tempLoss = baseCapacity * Math.max(0, avgTemp - 25) * 0.00008;
-        projectedCapacity = Math.max(baseCapacity * 0.2, projectedCapacity - monthlyCycleLoss - calendarLoss - tempLoss);
+        projectedAgedCapacity = Math.max(baseCapacity * 0.2, projectedAgedCapacity - monthlyCycleLoss - calendarLoss);
+        const tempFactor = Math.max(0.7, 1 + tempCoeffPerDeg * (avgTemp - 25));
+        const tempLoss = Math.max(0, projectedAgedCapacity * (1 - tempFactor));
+        const projectedCapacity = Math.max(baseCapacity * 0.2, projectedAgedCapacity - tempLoss);
         labels.push(monthLabelFromDate(d));
         capacities.push(Number(projectedCapacity.toFixed(3)));
         cycleLosses.push(Number(monthlyCycleLoss.toFixed(4)));
@@ -1446,7 +1449,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         calendarLosses.push(Number(calendarLoss.toFixed(4)));
       }
 
-      const lossPerMonth = monthlyCycleLoss + calendarLoss + (tempLosses.reduce((a, b) => a + b, 0) / Math.max(1, tempLosses.length));
+      const lossPerMonth = monthlyCycleLoss + calendarLoss;
       const monthsTo80 = lossPerMonth > 0 ? Math.max(0, (currentCapacity - baseCapacity * 0.8) / lossPerMonth) : null;
       const year80 = monthsTo80 == null
         ? "-"
@@ -1470,8 +1473,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       chart.options.scales.y.min = Math.max(0, Math.floor((capMin - capPad) * 20) / 20);
       chart.options.scales.y.max = Math.ceil((capMax + capPad) * 20) / 20;
       chart.options.scales.y.ticks = { color: "#147efb", callback: (v) => `${Number(v).toFixed(2)}` };
-      const maxMonthlyLoss = Math.max(0.01, ...cycleLosses.map((v, i) => v + tempLosses[i] + calendarLosses[i]));
-      chart.options.scales.y2.max = Math.ceil(maxMonthlyLoss * 1000) / 1000;
+      const monthlyLossTotals = cycleLosses.map((v, i) => v + tempLosses[i] + calendarLosses[i]);
+      const minMonthlyLoss = Math.min(...monthlyLossTotals);
+      const maxMonthlyLoss = Math.max(...monthlyLossTotals);
+      const lossPad = Math.max(0.001, (maxMonthlyLoss - minMonthlyLoss) * 0.35);
+      chart.options.scales.y2.min = Math.max(0, Math.floor((minMonthlyLoss - lossPad) * 1000) / 1000);
+      chart.options.scales.y2.max = Math.ceil((maxMonthlyLoss + lossPad) * 1000) / 1000;
       chart.options.scales.y2.ticks = { color: "#ef8e1d", callback: (v) => Number(v).toFixed(3) };
       chart.update("none");
     }
