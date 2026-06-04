@@ -28,6 +28,7 @@ from app.occupancy_schedule import (
 from app.pv_array_forecast import build_pv_array_forecast, load_pv_array_configs
 from app.soc_cost_optimizer import (
     DEFAULT_SIGMA_BUCKETS,
+    ForecastScenario,
     PvForecastUncertainty,
     SocCostModel,
     SigmaBucket,
@@ -247,15 +248,21 @@ def _soc_cost_model_from_env(*, battery_round_trip_efficiency: float) -> SocCost
         "SOC_COST_DAY_BUY_RATE_YEN_PER_KWH",
         _env_float("NIGHT8_DAY_RATE_TIER2_YEN", _env_float("DAY_RATE_YEN_PER_KWH", 39.10)),
     )
-    night_rate = _env_float("SOC_COST_NIGHT_RATE_YEN_PER_KWH", _env_float("NIGHT8_NIGHT_RATE_YEN", 28.85))
-    sell_value_ratio = _env_float_clamped("SOC_COST_SELL_VALUE_RATIO", 0.75, min_value=0.0, max_value=1.0)
+    night_rate = _env_float("SOC_COST_NIGHT_RATE_YEN_PER_KWH", _env_float("NIGHT8_NIGHT_RATE_YEN", 31.0))
+    sell_value_ratio = _env_float_clamped("SOC_COST_SELL_VALUE_RATIO", 0.0, min_value=0.0, max_value=1.0)
     day_buy_penalty = max(0.0, _env_float("SOC_COST_DAY_BUY_PENALTY_FACTOR", 1.0))
+    charge_efficiency = _env_float(
+        "SOC_COST_USABLE_CHARGE_EFFICIENCY",
+        _env_float("SOC_COST_CHARGE_EFFICIENCY", battery_round_trip_efficiency),
+    )
+    sell_loss_override = _env_float("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", 38.75)
     return SocCostModel(
         day_buy_rate_yen_per_kwh=max(0.0, day_rate),
         night_buy_rate_yen_per_kwh=max(0.0, night_rate),
-        charge_efficiency=max(0.01, battery_round_trip_efficiency),
+        charge_efficiency=max(0.01, charge_efficiency),
         sell_value_ratio=sell_value_ratio,
         day_buy_penalty_factor=day_buy_penalty,
+        sell_opportunity_loss_yen_per_kwh_override=max(0.0, sell_loss_override),
     )
 
 
@@ -859,7 +866,7 @@ def _apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUn
 
 
 def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
-    if not _env_bool("SOC_COST_UPSIDE_SCENARIO_ENABLED", True):
+    if not _env_bool("SOC_COST_UPSIDE_SCENARIO_ENABLED", False):
         return DEFAULT_SIGMA_BUCKETS
     upside_probability = _env_float_clamped("SOC_COST_UPSIDE_SCENARIO_PROBABILITY", 0.08, min_value=0.0, max_value=0.5)
     upside_z = _env_float("SOC_COST_UPSIDE_SCENARIO_Z", 3.0)
@@ -872,6 +879,28 @@ def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
         for b in DEFAULT_SIGMA_BUCKETS
     )
     return base + (SigmaBucket("pv_upside_guard", upside_probability, upside_z),)
+
+
+def _load_scenarios_for_cost_optimizer() -> tuple[ForecastScenario, ...] | None:
+    if not _env_bool("SOC_COST_LOAD_SCENARIOS_ENABLED", True):
+        return None
+    low_probability = _env_float_clamped("SOC_COST_LOAD_LOW_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
+    high_probability = _env_float_clamped("SOC_COST_LOAD_HIGH_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
+    mid_probability = max(0.0, 1.0 - low_probability - high_probability)
+    return (
+        ForecastScenario("load_low", low_probability, 1.0, _env_float("SOC_COST_LOAD_LOW_MULTIPLIER", 0.82)),
+        ForecastScenario("load_mid", mid_probability, 1.0, _env_float("SOC_COST_LOAD_MID_MULTIPLIER", 1.00)),
+        ForecastScenario("load_high", high_probability, 1.0, _env_float("SOC_COST_LOAD_HIGH_MULTIPLIER", 1.18)),
+    )
+
+
+def _weather_upside_probability_for_cost_optimizer(forecast: dict[str, object]) -> float:
+    if not _env_bool("SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED", True):
+        return 0.0
+    weather_class = str(forecast.get("weather_class") or "").strip().lower()
+    if weather_class not in {"cloudy", "rain", "rainy"}:
+        return 0.0
+    return _env_float_clamped("SOC_COST_WEATHER_UPSIDE_SCENARIO_PROBABILITY", 0.12, min_value=0.0, max_value=0.5)
 
 
 def _estimate_midday_surplus_from_pv_forecast(
@@ -1065,6 +1094,9 @@ def main() -> int:
                 _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
             )
         sigma_buckets = _sigma_buckets_for_cost_optimizer()
+        load_scenarios = _load_scenarios_for_cost_optimizer()
+        weather_upside_probability = _weather_upside_probability_for_cost_optimizer(forecast)
+        weather_upside_z = _env_float("SOC_COST_WEATHER_UPSIDE_SCENARIO_Z", 3.5)
         peak_penalty = forecast_correction.get("peak_penalty", {})
         peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
         peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
@@ -1082,6 +1114,9 @@ def main() -> int:
             sigma_buckets=sigma_buckets,
             min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
             max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
+            load_scenarios=load_scenarios,
+            weather_upside_probability=weather_upside_probability,
+            weather_upside_z=weather_upside_z,
             peak_soc_target_percent=peak_target_soc,
             peak_soc_unmet_penalty_yen_per_kwh=peak_penalty_rate,
         )
@@ -1096,6 +1131,20 @@ def main() -> int:
                 "respect_morning_headroom_guard": respect_guard,
                 "max_target_soc_percent_after_guards": cost_max_soc,
                 "forecast_correction": forecast_correction.get("rationale", {}),
+                "soc_cost_risk": {
+                    "expected_day_buy_kwh": cost_optimization.expected_day_buy_kwh_risk,
+                    "expected_sell_kwh": cost_optimization.expected_sell_kwh_risk,
+                    "worst_case_day_buy_kwh": cost_optimization.worst_case_day_buy_kwh,
+                    "worst_case_sell_kwh": cost_optimization.worst_case_sell_kwh,
+                    "buy_risk": cost_optimization.buy_risk,
+                    "sell_risk": cost_optimization.sell_risk,
+                    "peak_unmet_penalty_factor": peak_penalty_factor,
+                    "sell_opportunity_loss_yen_per_kwh": cost_model.sell_opportunity_loss_yen_per_kwh,
+                    "scenario_count": len(cost_optimization.forecast_scenarios),
+                    "scenario_method": "pv_sigma_x_load_scenarios_with_weather_upside",
+                    "weather_upside_probability": weather_upside_probability,
+                    "weather_upside_z": weather_upside_z,
+                },
                 "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
                 "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
                 "legacy_peak_objective": legacy_optimization_payload,

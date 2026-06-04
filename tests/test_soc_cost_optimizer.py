@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 
 from app.soc_cost_optimizer import (
+    ForecastScenario,
     PvForecastUncertainty,
     SocCostModel,
+    evaluate_soc_candidate,
     optimize_soc_by_expected_cost,
 )
 
@@ -168,3 +170,135 @@ def test_cost_optimizer_peak_unmet_penalty_raises_soc_target() -> None:
     assert with_penalty is not None
     assert with_penalty.target_soc_7_percent > without_penalty.target_soc_7_percent
     assert with_penalty.expected_peak_unmet_kwh <= without_penalty.selected_candidate.target_energy_kwh
+
+
+def test_cost_optimizer_expands_load_scenarios_and_normalizes_probability() -> None:
+    hourly_pv = {10: 2.0, 11: 2.0}
+    hourly_load = {18: 1.0, 19: 1.0}
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=39.10,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.75,
+        ),
+        soc_step_percent=10.0,
+        load_scenarios=(
+            ForecastScenario("load_low", 0.2, 1.0, 0.82),
+            ForecastScenario("load_mid", 0.6, 1.0, 1.0),
+            ForecastScenario("load_high", 0.2, 1.0, 1.18),
+        ),
+    )
+
+    assert result is not None
+    assert len(result.forecast_scenarios) == 18
+    assert sum(s.probability for s in result.forecast_scenarios) == pytest.approx(1.0)
+    assert any("load_low" in s.label for s in result.forecast_scenarios)
+    assert any("load_high" in s.label for s in result.forecast_scenarios)
+
+
+def test_cost_optimizer_sell_loss_override_changes_cost() -> None:
+    hourly_pv = {12: 5.0}
+    hourly_load = {}
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+
+    base = evaluate_soc_candidate(
+        target_soc_percent=100.0,
+        soc_now_percent=0.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=39.10,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.0,
+        ),
+        weather_upside_probability=0.0,
+    )
+    overridden = evaluate_soc_candidate(
+        target_soc_percent=100.0,
+        soc_now_percent=0.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=39.10,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.0,
+            sell_opportunity_loss_yen_per_kwh_override=38.75,
+        ),
+        weather_upside_probability=0.0,
+    )
+
+    assert overridden.expected_sell_opportunity_cost_yen > base.expected_sell_opportunity_cost_yen
+    assert overridden.total_expected_cost_yen > base.total_expected_cost_yen
+
+
+def test_cost_optimizer_peak_penalty_factor_scales_cost() -> None:
+    hourly_pv = {12: 3.0}
+    hourly_load = {18: 1.0, 19: 1.0}
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+    cost_model = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.75,
+    )
+
+    factor_100 = evaluate_soc_candidate(
+        target_soc_percent=0.0,
+        soc_now_percent=0.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=cost_model,
+        peak_soc_target_percent=95.0,
+        peak_soc_unmet_penalty_yen_per_kwh=10.0,
+        peak_soc_unmet_penalty_factor=1.0,
+    )
+    factor_045 = evaluate_soc_candidate(
+        target_soc_percent=0.0,
+        soc_now_percent=0.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=cost_model,
+        peak_soc_target_percent=95.0,
+        peak_soc_unmet_penalty_yen_per_kwh=10.0,
+        peak_soc_unmet_penalty_factor=0.45,
+    )
+
+    assert factor_100.expected_peak_unmet_cost_yen > 0.0
+    assert factor_045.expected_peak_unmet_cost_yen == pytest.approx(factor_100.expected_peak_unmet_cost_yen * 0.45)

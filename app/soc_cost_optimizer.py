@@ -24,6 +24,16 @@ class SigmaBucket:
 
 
 @dataclass(frozen=True)
+class ForecastScenario:
+    """Readable forecast scenario for joint PV/load evaluation."""
+
+    label: str
+    probability: float
+    pv_multiplier: float
+    load_multiplier: float
+
+
+@dataclass(frozen=True)
 class SocCostModel:
     """Prices used to compare grid charging, daytime grid import, and wasted PV headroom."""
 
@@ -32,6 +42,7 @@ class SocCostModel:
     charge_efficiency: float
     sell_value_ratio: float
     day_buy_penalty_factor: float = 1.0
+    sell_opportunity_loss_yen_per_kwh_override: float | None = None
 
     @property
     def night_effective_rate_yen_per_kwh(self) -> float:
@@ -40,6 +51,8 @@ class SocCostModel:
     @property
     def sell_opportunity_loss_yen_per_kwh(self) -> float:
         # Exported PV is not worthless, but it is less valuable than PV stored for later use.
+        if self.sell_opportunity_loss_yen_per_kwh_override is not None:
+            return max(0.0, self.sell_opportunity_loss_yen_per_kwh_override)
         sell_credit = self.night_effective_rate_yen_per_kwh * max(0.0, min(1.0, self.sell_value_ratio))
         return max(0.0, self.night_effective_rate_yen_per_kwh - sell_credit)
 
@@ -49,6 +62,7 @@ class ScenarioReplay:
     label: str
     probability: float
     pv_multiplier: float
+    load_multiplier: float
     buy_kwh: float
     sell_kwh: float
     max_soc_percent: float
@@ -88,12 +102,19 @@ class SocCostOptimizationResult:
     expected_sell_opportunity_cost_yen: float
     expected_peak_unmet_kwh: float
     expected_peak_unmet_cost_yen: float
+    expected_day_buy_kwh_risk: float
+    expected_sell_kwh_risk: float
+    worst_case_day_buy_kwh: float
+    worst_case_sell_kwh: float
+    buy_risk: bool
+    sell_risk: bool
     total_expected_cost_yen: float
     selected_candidate: SocCandidate
     evaluated_candidate_count: int
     uncertainty: PvForecastUncertainty
     cost_model: SocCostModel
     sigma_buckets: tuple[SigmaBucket, ...]
+    forecast_scenarios: tuple[ForecastScenario, ...]
 
 
 DEFAULT_SIGMA_BUCKETS: tuple[SigmaBucket, ...] = (
@@ -127,6 +148,85 @@ def _pv_multiplier_for_bucket(
     return max(min_multiplier, min(max_multiplier, raw))
 
 
+def _build_forecast_scenarios(
+    *,
+    uncertainty: PvForecastUncertainty,
+    sigma_buckets: tuple[SigmaBucket, ...],
+    load_scenarios: tuple[ForecastScenario, ...] | None,
+    min_pv_multiplier: float,
+    max_pv_multiplier: float,
+    weather_upside_probability: float,
+    weather_upside_z: float,
+) -> tuple[ForecastScenario, ...]:
+    pv_scenarios: list[ForecastScenario] = []
+    upside_probability = max(0.0, min(1.0, weather_upside_probability))
+    if sigma_buckets:
+        for bucket in sigma_buckets:
+            base_probability = max(0.0, bucket.probability) * (1.0 - upside_probability)
+            pv_scenarios.append(
+                ForecastScenario(
+                    label=bucket.label,
+                    probability=base_probability,
+                    pv_multiplier=_pv_multiplier_for_bucket(
+                        uncertainty=uncertainty,
+                        bucket=bucket,
+                        min_multiplier=min_pv_multiplier,
+                        max_multiplier=max_pv_multiplier,
+                    ),
+                    load_multiplier=1.0,
+                )
+            )
+            if upside_probability > 0.0:
+                upside_multiplier = max(
+                    min_pv_multiplier,
+                    min(max_pv_multiplier, uncertainty.mean_multiplier + weather_upside_z * uncertainty.std_multiplier),
+                )
+                pv_scenarios.append(
+                    ForecastScenario(
+                        label=f"{bucket.label}+upside",
+                        probability=max(0.0, bucket.probability) * upside_probability,
+                        pv_multiplier=upside_multiplier,
+                        load_multiplier=1.0,
+                    )
+                )
+    else:
+        pv_scenarios.append(
+            ForecastScenario(
+                label="pv_base",
+                probability=1.0,
+                pv_multiplier=max(min_pv_multiplier, min(max_pv_multiplier, uncertainty.mean_multiplier)),
+                load_multiplier=1.0,
+            )
+        )
+
+    load_scenarios = load_scenarios or (
+        ForecastScenario("load_mid", 1.0, 1.0, 1.0),
+    )
+    joint: list[ForecastScenario] = []
+    for pv_scenario in pv_scenarios:
+        for load_scenario in load_scenarios:
+            joint.append(
+                ForecastScenario(
+                    label=f"{pv_scenario.label} x {load_scenario.label}",
+                    probability=max(0.0, pv_scenario.probability) * max(0.0, load_scenario.probability),
+                    pv_multiplier=pv_scenario.pv_multiplier,
+                    load_multiplier=load_scenario.load_multiplier,
+                )
+            )
+    total_probability = sum(s.probability for s in joint)
+    if total_probability <= 0.0:
+        return (ForecastScenario("fallback", 1.0, 1.0, 1.0),)
+    return tuple(
+        ForecastScenario(
+            label=scenario.label,
+            probability=scenario.probability / total_probability,
+            pv_multiplier=scenario.pv_multiplier,
+            load_multiplier=scenario.load_multiplier,
+        )
+        for scenario in joint
+    )
+
+
 def _simulate_day(
     *,
     start_energy_kwh: float,
@@ -134,6 +234,7 @@ def _simulate_day(
     hourly_load_kwh: dict[int, float],
     hourly_pv_kwh: dict[int, float],
     pv_multiplier: float,
+    load_multiplier: float,
 ) -> tuple[float, float, float, int | None, float]:
     """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
 
@@ -144,7 +245,7 @@ def _simulate_day(
     first_full_hour: int | None = None
 
     for hour in range(7, 23):
-        load = max(0.0, hourly_load_kwh.get(hour, 0.0))
+        load = max(0.0, hourly_load_kwh.get(hour, 0.0)) * max(0.0, load_multiplier)
         pv = max(0.0, hourly_pv_kwh.get(hour, 0.0)) * max(0.0, pv_multiplier)
         net = pv - load
         if net >= 0:
@@ -178,8 +279,12 @@ def evaluate_soc_candidate(
     sigma_buckets: tuple[SigmaBucket, ...] = DEFAULT_SIGMA_BUCKETS,
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
+    load_scenarios: tuple[ForecastScenario, ...] | None = None,
+    weather_upside_probability: float = 0.0,
+    weather_upside_z: float = 3.5,
     peak_soc_target_percent: float | None = None,
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
+    peak_soc_unmet_penalty_factor: float = 1.0,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
@@ -200,30 +305,33 @@ def evaluate_soc_candidate(
     peak_target = _bounded_soc(peak_soc_target_percent) if peak_soc_target_percent is not None else None
     peak_penalty = max(0.0, peak_soc_unmet_penalty_yen_per_kwh)
 
-    for bucket in sigma_buckets:
-        probability = max(0.0, bucket.probability)
-        multiplier = _pv_multiplier_for_bucket(
-            uncertainty=uncertainty,
-            bucket=bucket,
-            min_multiplier=min_pv_multiplier,
-            max_multiplier=max_pv_multiplier,
-        )
+    scenarios = _build_forecast_scenarios(
+        uncertainty=uncertainty,
+        sigma_buckets=sigma_buckets,
+        load_scenarios=load_scenarios,
+        min_pv_multiplier=min_pv_multiplier,
+        max_pv_multiplier=max_pv_multiplier,
+        weather_upside_probability=weather_upside_probability,
+        weather_upside_z=weather_upside_z,
+    )
+
+    for scenario in scenarios:
+        probability = max(0.0, scenario.probability)
         buy_kwh, sell_kwh, max_soc, first_full, end_soc = _simulate_day(
             start_energy_kwh=target_energy,
             capacity_kwh=capacity_kwh,
             hourly_load_kwh=hourly_load_kwh,
             hourly_pv_kwh=hourly_pv_kwh,
-            pv_multiplier=multiplier,
+            pv_multiplier=scenario.pv_multiplier,
+            load_multiplier=scenario.load_multiplier,
         )
         day_buy_cost = buy_kwh * cost_model.day_buy_rate_yen_per_kwh * cost_model.day_buy_penalty_factor
         sell_cost = sell_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
         peak_unmet_kwh = 0.0
         peak_unmet_cost = 0.0
         if peak_target is not None and peak_penalty > 0.0:
-            # The system objective is not only cheapest energy: on selected risk days
-            # a plan that never gets close to full during PV hours is operationally bad.
             peak_unmet_kwh = max(0.0, peak_target - max_soc) * capacity_kwh / 100.0
-            peak_unmet_cost = peak_unmet_kwh * peak_penalty
+            peak_unmet_cost = peak_unmet_kwh * peak_penalty * max(0.0, peak_soc_unmet_penalty_factor)
         expected_buy += probability * buy_kwh
         expected_sell += probability * sell_kwh
         expected_buy_cost += probability * day_buy_cost
@@ -232,9 +340,10 @@ def evaluate_soc_candidate(
         expected_peak_unmet_cost += probability * peak_unmet_cost
         replays.append(
             ScenarioReplay(
-                label=bucket.label,
+                label=scenario.label,
                 probability=probability,
-                pv_multiplier=multiplier,
+                pv_multiplier=scenario.pv_multiplier,
+                load_multiplier=scenario.load_multiplier,
                 buy_kwh=buy_kwh,
                 sell_kwh=sell_kwh,
                 max_soc_percent=max_soc,
@@ -278,8 +387,12 @@ def optimize_soc_by_expected_cost(
     sigma_buckets: tuple[SigmaBucket, ...] = DEFAULT_SIGMA_BUCKETS,
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
+    load_scenarios: tuple[ForecastScenario, ...] | None = None,
+    weather_upside_probability: float = 0.0,
+    weather_upside_z: float = 3.5,
     peak_soc_target_percent: float | None = None,
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
+    peak_soc_unmet_penalty_factor: float = 1.0,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -291,6 +404,15 @@ def optimize_soc_by_expected_cost(
     start_soc = _bounded_soc(reserve_soc_percent)
     stop_soc = max(start_soc, _bounded_soc(max_target_soc_percent))
     step = max(0.1, min(10.0, soc_step_percent))
+    scenarios = _build_forecast_scenarios(
+        uncertainty=uncertainty,
+        sigma_buckets=sigma_buckets,
+        load_scenarios=load_scenarios,
+        min_pv_multiplier=min_pv_multiplier,
+        max_pv_multiplier=max_pv_multiplier,
+        weather_upside_probability=weather_upside_probability,
+        weather_upside_z=weather_upside_z,
+    )
 
     best: SocCandidate | None = None
     count = 0
@@ -307,8 +429,12 @@ def optimize_soc_by_expected_cost(
             sigma_buckets=sigma_buckets,
             min_pv_multiplier=min_pv_multiplier,
             max_pv_multiplier=max_pv_multiplier,
+            load_scenarios=load_scenarios,
+            weather_upside_probability=weather_upside_probability,
+            weather_upside_z=weather_upside_z,
             peak_soc_target_percent=peak_soc_target_percent,
             peak_soc_unmet_penalty_yen_per_kwh=peak_soc_unmet_penalty_yen_per_kwh,
+            peak_soc_unmet_penalty_factor=peak_soc_unmet_penalty_factor,
         )
         count += 1
         if best is None or (
@@ -327,6 +453,10 @@ def optimize_soc_by_expected_cost(
 
     if best is None:
         return None
+    worst_case_day_buy = max((r.buy_kwh for r in best.scenario_replays), default=0.0)
+    worst_case_sell = max((r.sell_kwh for r in best.scenario_replays), default=0.0)
+    buy_risk = best.expected_day_buy_kwh > 0.3 or worst_case_day_buy > 1.0
+    sell_risk = best.expected_sell_kwh > 0.3 or worst_case_sell > 2.0
     return SocCostOptimizationResult(
         target_soc_7_percent=best.target_soc_percent,
         target_energy_kwh=best.target_energy_kwh,
@@ -338,10 +468,17 @@ def optimize_soc_by_expected_cost(
         expected_sell_opportunity_cost_yen=best.expected_sell_opportunity_cost_yen,
         expected_peak_unmet_kwh=best.expected_peak_unmet_kwh,
         expected_peak_unmet_cost_yen=best.expected_peak_unmet_cost_yen,
+        expected_day_buy_kwh_risk=best.expected_day_buy_kwh,
+        expected_sell_kwh_risk=best.expected_sell_kwh,
+        worst_case_day_buy_kwh=worst_case_day_buy,
+        worst_case_sell_kwh=worst_case_sell,
+        buy_risk=buy_risk,
+        sell_risk=sell_risk,
         total_expected_cost_yen=best.total_expected_cost_yen,
         selected_candidate=best,
         evaluated_candidate_count=count,
         uncertainty=uncertainty,
         cost_model=cost_model,
         sigma_buckets=sigma_buckets,
+        forecast_scenarios=scenarios,
     )
