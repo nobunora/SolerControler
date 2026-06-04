@@ -13,6 +13,7 @@
 
 - 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
 - Codexトークン節約運用ルール: [docs/codex_token_usage_rules.md](docs/codex_token_usage_rules.md)
+- リモートCodex安全運用セットアップ: [docs/REMOTE_CODEX_SETUP_JA.md](docs/REMOTE_CODEX_SETUP_JA.md)
 - Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
 - Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
 - 運用条件ファイルガイド: [docs/OPERATION_CONDITIONS_GUIDE.md](docs/OPERATION_CONDITIONS_GUIDE.md)
