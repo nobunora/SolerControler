@@ -6,7 +6,7 @@ import math
 import sqlite3
 from calendar import monthrange
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +111,10 @@ def _date_add_iso(date_text: str, delta_days: int) -> str | None:
     if d is None:
         return None
     return (d + timedelta(days=delta_days)).isoformat()
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
 
 
 def _aggregation_close_day() -> int:
@@ -494,7 +498,8 @@ def _build_dashboard_warnings(
 
         night_charge = _to_float_or_none(latest_battery.get("night_charge_kwh")) or 0.0
         source = str(latest_schedule.get("schedule_source") or "")
-        if night_charge > 0.1 and source != "03-monitor":
+        charge_start_time = str(latest_schedule.get("charge_start_time") or "").strip()
+        if night_charge > 0.1 and source != "03-monitor" and not charge_start_time:
             add(
                 "monitor_schedule_missing",
                 "warning",
@@ -516,7 +521,8 @@ def _build_dashboard_warnings(
         )
     ]
     latest_actual = max(actual_dates) if actual_dates else None
-    if latest_actual is None or latest_actual < end_date_iso:
+    today_jst = _today_jst_iso()
+    if end_date_iso < today_jst and (latest_actual is None or latest_actual < end_date_iso):
         add(
             "csv_actual_stale",
             "info",

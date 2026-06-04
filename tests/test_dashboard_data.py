@@ -221,7 +221,7 @@ def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Pa
     assert schedule["schedule_source"] == "03-monitor"
 
 
-def test_dashboard_warns_when_soc_target_is_unreached(tmp_path: Path) -> None:
+def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_warning(tmp_path: Path) -> None:
     db_path = tmp_path / "solar.db"
     conn = open_db(db_path)
     try:
@@ -248,4 +248,32 @@ def test_dashboard_warns_when_soc_target_is_unreached(tmp_path: Path) -> None:
     codes = {row["code"] for row in sliced.data.dashboard_warnings}
 
     assert "soc_target_unreached" in codes
-    assert "monitor_schedule_missing" in codes
+    assert "monitor_schedule_missing" not in codes
+
+
+def test_dashboard_does_not_warn_stale_csv_for_today_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.dashboard_data._today_jst_iso", lambda: "2026-06-05")
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO sunshine_daily(date, forecast_hours, source, updated_at)
+            VALUES ('2026-06-05', 3.0, 'test', '2026-06-04T23:00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO monitoring_samples(ts, pv_kwh, load_kwh, ingested_at)
+            VALUES ('2026-06-04T07:00:00', 1.0, 0.8, '2026-06-04T23:10:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-06-05", window_days=2, include_static=True)
+    codes = {row["code"] for row in sliced.data.dashboard_warnings}
+
+    assert "csv_actual_stale" not in codes
