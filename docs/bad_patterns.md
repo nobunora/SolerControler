@@ -1,74 +1,74 @@
 # bad_patterns.md
 
-## このファイルの目的
+## Purpose of This File
 
-このファイルは、AI生成コードで起きやすい悪いパターンと、それぞれの禁止・改善ルールを細かく定義する。
+This file defines the bad patterns that are common in AI-generated code, along with the detailed rules for what is prohibited and how to improve them.
 
-「まとめて良い感じに直す」ではなく、個々の悪いパターンを愚直に潰すためのルールである。
+It is a rule set for eliminating each bad pattern directly, not for vaguely "cleaning things up all at once."
 
-## 動くが意図がないコードの禁止
+## Prohibition on Code That Works But Has No Intent
 
-Codexは、以下のようなコードを書いてはならない。
+Codex must not write code like the following:
 
-- とりあえず動くコード
-- テストだけ通すコード
-- 仕様の一部だけ満たすコード
-- なぜそうしたか説明できないコード
-- 既存設計に接続されていないコード
-- 人間が読んだときに判断理由がわからないコード
-- 後で直す前提の仮コード
-- デバッグ用コードが残ったコード
-- 不要な分岐が残ったコード
-- 未使用の変数・関数・型が残ったコード
-- 似た処理を別の場所にコピーしたコード
-- ハードコードで一時的に回避したコード
+- Code that only works for now
+- Code that only passes the tests
+- Code that satisfies only part of the specification
+- Code whose reasoning cannot be explained
+- Code that is not connected to the existing design
+- Code whose judgment rationale is unclear to a human reader
+- Temporary code that is meant to be fixed later
+- Code that still contains debug remnants
+- Code with unnecessary branches left behind
+- Code with unused variables, functions, or types left behind
+- Code that copies similar logic and makes minor changes
+- Code that works around issues with hard-coded temporary values
 
-動くことは最低条件であり、十分条件ではない。
+Working is the minimum requirement, not a sufficient condition.
 
-## 重複コード禁止
+## No Duplicate Code
 
-Codexは、安易に既存コードをコピーして少し変えた実装を作ってはならない。
+Codex must not casually copy existing code and make small changes to it.
 
-重複が必要に見える場合は、次を確認する。
+If duplication seems necessary, check the following:
 
-- 本当に同じ責務か
-- 仕様上の差分は何か
-- 共通化すると逆に読みにくくならないか
-- 既存コードの変更リスクはどれくらいか
-- 将来同時に修正される可能性が高いか
-- 片方だけ変わる可能性が高いか
+- Is it really the same responsibility?
+- What is the specification-level difference?
+- Would commonization make it harder to read?
+- How large is the risk of changing the existing code?
+- Is it likely to need to be changed together in the future?
+- Is it likely that only one side will change?
 
-重複を残す場合は、なぜ共通化しないのかを説明する。
+If duplication is kept, explain why it is not being unified.
 
-共通化する場合は、なぜ今共通化するのかを説明する。
+If it is unified, explain why it is being unified now.
 
-## ハードコード禁止
+## No Hard-Coding
 
-Codexは、根拠のないハードコードをしてはならない。
+Codex must not hard-code values without a basis.
 
-特に禁止するもの。
+Items especially prohibited:
 
-- 固定のユーザーID
-- 固定の環境名
-- 固定のURL
-- 固定の認証情報
-- 固定のタイムアウト値
-- 固定のリトライ回数
-- 固定の金額
-- 固定の日付
-- 固定の権限名
-- 固定のファイルパス
-- 固定の表示文言
-- 固定のマジックナンバー
+- Fixed user IDs
+- Fixed environment names
+- Fixed URLs
+- Fixed credentials
+- Fixed timeout values
+- Fixed retry counts
+- Fixed amounts of money
+- Fixed dates
+- Fixed permission names
+- Fixed file paths
+- Fixed display text
+- Fixed magic numbers
 
-ハードコードが必要な場合は、次を満たす。
+If hard-coding is necessary, it must satisfy the following:
 
-- 定数名が意味を表している。
-- なぜその値なのかコメントまたはドキュメントで説明されている。
-- 変更される可能性がある値は設定ファイル・環境変数・DBなどに分離されている。
-- テストで値の意味が確認できる。
+- The constant name expresses the meaning.
+- Why the value is what it is must be explained in a comment or document.
+- Values that may change should be separated into config files, environment variables, DB values, or similar.
+- The meaning of the value must be verifiable in tests.
 
-悪い例。
+Bad example:
 
 ```ts
 if (retryCount > 3) {
@@ -76,57 +76,57 @@ if (retryCount > 3) {
 }
 ```
 
-よい例。
+Good example:
 
 ```ts
 const MAX_PAYMENT_RETRY_COUNT = 3;
 
-// 決済代行APIの一時失敗は通常2回以内に回復する。
-// 3回を超える場合は永続的失敗として扱い、二重決済を避ける。
+// Temporary failures from the payment gateway usually recover within two retries.
+// If the failure continues past three attempts, treat it as permanent and avoid double charging.
 if (retryCount > MAX_PAYMENT_RETRY_COUNT) {
   throw error;
 }
 ```
 
-## デバッグコード残存禁止
+## No Debug Code Left Behind
 
-Codexは、デバッグ用のコードを残してはならない。
+Codex must not leave debug code behind.
 
-禁止例。
+Examples of prohibited code:
 
-- console.logを残す。
-- printを残す。
-- 一時的なalertを残す。
-- debuggerを残す。
-- 仮のreturnを残す。
-- テスト用IDを残す。
-- TODOだけ書いて未完成のままにする。
-- コメントアウトされた古い実装を残す。
-- 一時的にエラーを握りつぶす。
-- 一時的に認証をスキップする。
-- 一時的にバリデーションを緩める。
+- Leaving `console.log`
+- Leaving `print`
+- Leaving temporary `alert`
+- Leaving `debugger`
+- Leaving placeholder `return`
+- Leaving test IDs
+- Writing only `TODO` and leaving it unfinished
+- Leaving old implementations commented out
+- Temporarily swallowing errors
+- Temporarily skipping authentication
+- Temporarily relaxing validation
 
-必要なログは、既存のログ方針に従って正式なログとして追加する。
+Any required logging must be added as formal logging according to the existing logging policy.
 
-## コメントアウトされたコード禁止
+## No Commented-Out Code
 
-Codexは、古い実装をコメントアウトして残してはならない。
+Codex must not leave old implementations commented out.
 
-理由。
+Reasons:
 
-- それが必要なのか不要なのか人間が判断できなくなる。
-- 将来の読者が仕様の候補と誤解する。
-- AI生成の残骸に見える。
-- レビュー負荷が増える。
-- 本当に必要ならGit履歴で追える。
+- Human readers cannot tell whether it is needed or not
+- Future readers may mistake it for a candidate implementation
+- It looks like AI-generated debris
+- It increases review burden
+- If it is really needed, Git history can be used to find it
 
-例外的に残す場合は、明確な理由・期限・削除条件を書く。
+If it must remain exceptionally, write a clear reason, deadline, and removal condition.
 
-## 例外処理ルール
+## Exception-Handling Rules
 
-Codexは、例外を安易に握りつぶしてはならない。
+Codex must not casually swallow exceptions.
 
-禁止例。
+Bad example:
 
 ```ts
 try {
@@ -136,25 +136,25 @@ try {
 }
 ```
 
-例外を握りつぶす場合は、次を明記する。
+If exceptions are swallowed, explicitly state the following:
 
-- なぜ無視してよいのか
-- どの例外だけを無視するのか
-- それ以外の例外はどう扱うのか
-- ログは必要か
-- ユーザーに通知する必要はあるか
-- リトライすべきか
-- 上位層に投げるべきか
+- Why it is okay to ignore it
+- Which exceptions are ignored
+- How other exceptions are handled
+- Whether logging is needed
+- Whether the user needs to be notified
+- Whether it should be retried
+- Whether it should be rethrown to the upper layer
 
-よい例。
+Good example:
 
 ```ts
 try {
   await markNotificationAsRead(notificationId);
 } catch (error) {
   if (isAlreadyArchivedNotificationError(error)) {
-    // 通知が既にアーカイブ済みの場合、既読化は不要。
-    // ユーザー操作としては成功扱いにする。
+    // If the notification is already archived, marking it as read is unnecessary.
+    // Treat this as a successful user action.
     return;
   }
 
@@ -162,334 +162,99 @@ try {
 }
 ```
 
-## セキュリティルール
+## Security Rules
 
-Codexは、セキュリティに関わる処理を推測で実装してはならない。
+Codex must not guess when implementing security-sensitive processing.
 
-以下に関わる場合は、人間に確認する。
+If the work involves any of the following, ask a human:
 
-- 認証
-- 認可
-- セッション
-- Cookie
+- Authentication
+- Authorization
+- Session
+- Cookies
 - CSRF
 - XSS
 - SQL Injection
 - SSRF
 - CORS
-- 暗号化
-- トークン
-- APIキー
-- 個人情報
-- 権限昇格
-- ファイルアップロード
-- 外部URLアクセス
-- Webhook
-- 管理者機能
-- 課金
-- 支払い
-- ログに出してよい情報
+- Encryption
+- Tokens
+- API keys
+- Personal information
+- Privilege escalation
+- File uploads
+- External URL access
+- Webhooks
+- Admin features
+- Billing
+- Payments
+- Information that may be logged
 
-セキュリティ処理では、便利さより安全性を優先する。
-
-## 依存関係追加ルール
-
-Codexは、新しいライブラリを安易に追加してはならない。
-
-追加前に確認する。
-
-- 既存依存で実現できないか
-- 標準ライブラリで実現できないか
-- 追加する理由は明確か
-- メンテナンス状況は問題ないか
-- ライセンスは問題ないか
-- バンドルサイズへの影響はあるか
-- セキュリティリスクはあるか
-- 既存設計と相性がよいか
-- テストが書けるか
+For security-related processing, prioritize safety over convenience.
 
-新規依存を追加する場合は、最終報告に理由を書く。
+## Dependency-Addition Rules
 
-## AIらしい過剰実装の禁止
+Codex must not casually add new libraries.
 
-Codexは、要求されていない大きな設計変更をしてはならない。
+Before adding one, check the following:
 
-禁止例。
-
-- 小さな修正なのに大規模な抽象化を追加する。
-- 既存の単純な関数を複雑なクラス構造に変える。
-- 使われていない拡張ポイントを作る。
-- 将来使うかもしれない汎用化をする。
-- 1箇所でしか使わない処理を過剰に共通化する。
-- 仕様にないオプションを追加する。
-- 仕様にない設定項目を追加する。
-- 仕様にないエラー分類を追加する。
-- 仕様にない状態管理を追加する。
-- 仕様にないキャッシュを追加する。
+- Can the existing dependencies handle it?
+- Can the standard library handle it?
+- Is the reason for adding it clear?
+- Is the maintenance status acceptable?
+- Is the license acceptable?
+- Is there an impact on bundle size?
+- Is there a security risk?
+- Does it fit the existing design?
+- Can tests be written?
 
-必要最小限の変更にする。
+If a new dependency is added, explain the reason in the final report.
 
-ただし、既存設計上どうしても必要な場合は、理由を説明してから行う。
+## No AI-Style Overengineering
 
-## AIらしい過少実装の禁止
+Codex must not make large design changes that were not requested.
 
-Codexは、要求の表面だけを満たす小手先の修正をしてはならない。
-
-禁止例。
-
-- テストの期待値だけを書き換えて通す。
-- エラーを無視して通す。
-- 型エラーをanyで消す。
-- nullチェックだけ追加して根本原因を放置する。
-- 既存バグの原因を確認せず、症状だけ隠す。
-- 仕様の一部ケースだけ通す。
-- 境界条件を確認しない。
-- 非同期処理の競合を確認しない。
-- 既存の呼び出し元を確認しない。
-- 既存のテスト失敗理由を読まない。
-
-修正は、原因に対して行う。
-
-## 型に関するルール
-
-Codexは、型を使って意図を表現する。
-
-禁止例。
-
-- 不必要なany
-- 不必要なunknownの放置
-- 型アサーションで無理やり通す
-- asを多用する
-- null/undefinedを曖昧に扱う
-- ドメイン上異なる値を同じstringで扱う
-- 戻り値の意味が型から読めない
-
-型で表すべきもの。
-
-- IDの種類
-- 状態
-- 権限
-- エラー種別
-- APIレスポンス
-- 永続化前後の違い
-- 検証済みデータと未検証データの違い
-- ユーザー入力と内部データの違い
-
-型で表せない意図は、命名またはコメントで補う。
-
-## テストルール
-
-Codexは、実装変更に対して必要なテストを確認する。
-
-確認するテスト。
-
-- 正常系
-- 異常系
-- 境界値
-- null/undefined
-- 空配列
-- 権限不足
-- 外部API失敗
-- タイムアウト
-- リトライ
-- 既存データとの互換性
-- 既存バグの再発防止
-- 過去に壊れた可能性のあるケース
-- ユーザーが明示した重要ケース
-
-テストを追加しない場合は、なぜ不要かを説明する。
-
-テストを実行できない場合は、実行できない理由と、人間が実行すべきコマンドを示す。
-
-## レビュー負荷削減ルール
-
-Codexは、人間のレビュー負荷を増やさないようにする。
-
-そのために次を守る。
-
-- 変更範囲を小さくする。
-- 無関係な整形をしない。
-- 無関係なリファクタリングを混ぜない。
-- 目的の異なる変更を同じ差分に混ぜない。
-- ファイル全体の並べ替えをしない。
-- 自動整形だけの変更を本質的変更と混ぜない。
-- 生成コードを大量に追加しない。
-- レビュー観点を最終報告に書く。
-- 危険な変更箇所を明示する。
-- 人間が重点的に見るべき箇所を示す。
-
-大きな変更が必要な場合は、段階分けを提案する。
-
-## 可読性改善リファクタリングのルール
-
-Codexは、「読みやすくする」という名目で複雑性を増やしてはならない。
-
-リファクタリング前に確認する。
-
-- 何が読みにくいのか
-- 読みにくさの原因は命名か
-- 読みにくさの原因は責務混在か
-- 読みにくさの原因はネストか
-- 読みにくさの原因は副作用か
-- 読みにくさの原因は過剰抽象化か
-- 読みにくさの原因は仕様コメント不足か
-- 変更後に分岐数が増えないか
-- 変更後にファイル数が増えすぎないか
-- 変更後に追跡すべき関数呼び出しが増えすぎないか
-- 変更後にテストが弱くならないか
+Bad examples:
 
-可読性改善では、次を優先する。
-
-- より具体的な命名
-- 不要なネストの削減
-- 早期return
-- 重複した条件式の整理
-- ドメイン上の意味を持つ関数への抽出
-- 仕様理由のコメント追加
-- テスト名の改善
-- 既存設計に沿った責務分割
+- Adding a large abstraction for a small fix
+- Converting a simple existing function into a complex class structure
+- Creating extension points that are not used
+- Generalizing something just because it might be useful later
+- Over-commonizing processing that is only used in one place
+- Adding options that are not in the specification
+- Adding configuration items that are not in the specification
+- Adding error categories that are not in the specification
+- Adding state management that is not in the specification
+- Adding caching that is not in the specification
 
-次は避ける。
+Keep the change as small as possible.
 
-- 不必要なクラス化
-- 不必要なデザインパターン導入
-- 不必要なジェネリクス
-- 不必要な設定化
-- 不必要な抽象インターフェース
-- 1回しか使わないhelperの乱立
-- 追いづらいコールチェーン
-- 意味の薄いラッパー関数
+However, if it is truly necessary under the existing design, do it only after explaining why.
 
-## 「何をしているか」コメント禁止
+## No AI-Style Underimplementation
 
-Codexは、コードを読めばわかるコメントを増やしてはならない。
+Codex must not make superficial fixes that only satisfy the surface of the request.
 
-悪い例。
+Bad examples:
 
-```ts
-// 配列をループする
-for (const item of items) {
-  // itemを処理する
-  processItem(item);
-}
-```
+- Changing only the expected values in tests to make them pass
+- Ignoring errors to make them pass
+- Silencing type errors with `any`
+- Adding only a null check and leaving the root cause untouched
+- Hiding symptoms without checking the root cause of an existing bug
+- Passing only some of the specification cases
+- Not checking boundary conditions
+- Not checking asynchronous race conditions
+- Not checking existing callers
+- Not reading the reason for existing test failures
 
-コメントを書くべきなのは、次の場合である。
+Fix the cause, not the symptom.
 
-- なぜその条件が必要なのか
-- なぜその順序で処理するのか
-- なぜキャッシュしないのか
-- なぜリトライするのか
-- なぜリトライしないのか
-- なぜ例外を握りつぶすのか
-- なぜこの値を上限にするのか
-- なぜ既存設計と違う書き方をしているのか
-- なぜ一見不要に見える処理が必要なのか
-- なぜこの処理がセキュリティ上必要なのか
+## Type-Related Rules
 
-## 一貫した誤りへの警戒
+Codex should use types to express intent.
 
-Codexは、自分が生成した実装が一貫して間違っている可能性を常に疑う。
+Bad examples:
 
-特に次を確認する。
-
-- 同じ誤った前提を複数ファイルに展開していないか
-- 同じ誤った型解釈を複数箇所で使っていないか
-- 同じ誤った権限判定を複数箇所にコピーしていないか
-- 同じ誤った日付処理を複数箇所に展開していないか
-- 同じ誤ったnull処理を複数箇所に展開していないか
-- 同じ誤ったAPI仕様理解を複数箇所に展開していないか
-
-大きな変更では、最初の前提が間違っていないかを途中で再確認する。
-
-## 未使用コード禁止
-
-Codexは、未使用のコードを残してはならない。
-
-禁止対象。
-
-- 未使用変数
-- 未使用関数
-- 未使用型
-- 未使用import
-- 未使用定数
-- 未使用ファイル
-- 未使用CSS
-- 未使用設定
-- 未使用テストヘルパー
-- 未使用mock
-- 使われていない分岐
-- 到達不能コード
-
-未使用に見えるが必要な場合は、理由をコメントまたは最終報告で説明する。
-
-## 短期的に書き換えられるコードの禁止
-
-Codexは、すぐに書き換える前提の雑なコードを入れてはならない。
-
-禁止例。
-
-- 「後で直す」として仮実装する。
-- 仕様が曖昧なまま仮で決める。
-- 将来の本実装を想定せずに一時対応する。
-- 一時対応なのに期限・削除条件を書かない。
-- 一時対応を恒久コードのように混ぜる。
-
-一時対応が必要な場合は、次を明記する。
-
-- なぜ一時対応が必要か
-- いつまで有効か
-- 何が起きたら削除するか
-- 恒久対応は何か
-- チケットやissueがあるか
-
-## 仕様と実装の対応付け
-
-Codexは、実装がどの仕様に対応しているかを説明できなければならない。
-
-最終報告では、可能な限り次の形式で書く。
-
-- 仕様A → ファイルXの関数Yで対応
-- 仕様B → ファイルZの条件分岐で対応
-- 異常系C → テストDで確認
-- 境界条件E → テストFで確認
-
-仕様と対応しないコードを追加してはならない。
-
-## 変更範囲の制御
-
-Codexは、依頼された変更以外を勝手に行ってはならない。
-
-禁止例。
-
-- ついでに別のバグを直す。
-- ついでに整形する。
-- ついでに依存関係を更新する。
-- ついでに古いコードを消す。
-- ついでに命名を変える。
-- ついでにディレクトリ構成を変える。
-- ついでにテストフレームワークを変える。
-- ついでに設定ファイルを整理する。
-
-必要な場合は、別変更として提案する。
-
-特に、公開API名、DBテーブル名、DBカラム名、設定キー、環境変数名、外部連携フィールド名は、一般的な名前に見えても外部契約または永続化形式である可能性がある。命名改善だけを理由に変更してはならない。
-
-既存コード内で広く使われている名前も、対象変更と直接関係しない限り、ついでにリネームしない。
-
-## 既存挙動を変える場合のルール
-
-Codexは、既存挙動を変える場合、必ず明示する。
-
-明示する内容。
-
-- 何が変わるか
-- 誰に影響するか
-- どの入力で結果が変わるか
-- 既存データに影響するか
-- 既存APIに影響するか
-- 既存テストに影響するか
-- ロールバックできるか
-- 人間の確認が必要か
-
-既存挙動の変更を「リファクタリング」と呼んではならない。
+- Unnecessary `any`
+- Leaving unnecessary `unknown` in place

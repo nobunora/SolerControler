@@ -1,177 +1,177 @@
 # report_template.md
 
-## 作業前メモ
+## Pre-Work Notes
 
 ```md
-## 作業前確認
+## Pre-Work Check
 
-### 変更目的
-
-- 
-
-### 変更対象
+### Change Purpose
 
 - 
 
-### 変更しない範囲
+### Change Target
 
 - 
 
-### 参照した既存コード・資料
+### Scope Not To Change
 
 - 
 
-### 既存設計との関係
+### Existing Code or References Reviewed
 
 - 
 
-### 不明点
+### Relationship to Existing Design
 
 - 
 
-### 人間への確認が必要な点
+### Unknowns
+
+- 
+
+### Points Requiring Human Confirmation
 
 - 
 ```
 
-## 最終報告テンプレート
+## Final Report Template
 
 ```md
-## 変更概要
+## Change Summary
 
 - 
 
-## 設計意図
+## Design Intent
 
 - 
 
-## 既存設計との整合性
+## Alignment With Existing Design
 
 - 
 
-## 代替案と不採用理由
+## Alternatives and Why They Were Not Chosen
 
 - 
 
-## 変更したファイル
+## Files Changed
 
 - 
 
-## 変更しなかった範囲
+## Scope Not Changed
 
 - 
 
-## テスト
+## Tests
 
-- 実行したコマンド:
-- 結果:
-- 実行できなかった場合の理由:
+- Commands run:
+- Results:
+- Reason they could not be run, if applicable:
 
-## 人間に確認してほしい点
+## Points a Human Should Confirm
 
 - 
 
-## 残っているリスク
+## Remaining Risks
 
 - 
 ```
 
-## 不明点がある場合の質問テンプレート
+## Question Template for Unknowns
 
 ```md
-実装前に確認したい点があります。
+I would like to confirm one point before implementation.
 
-## 不明点
-
-- 
-
-## なぜ確認が必要か
+## Unknowns
 
 - 
 
-## こちらで確認済みの情報
+## Why Confirmation Is Needed
 
 - 
 
-## 想定される選択肢
+## Information Already Confirmed
+
+- 
+
+## Possible Options
 
 1. 
 2. 
 3. 
 
-## 推奨案
+## Recommended Option
 
 - 
 
-## 人間に決めてほしいこと
-
-- 
-```
-
-## 既存挙動を変える場合の報告テンプレート
-
-```md
-## 既存挙動の変更があります
-
-### 変わる内容
-
-- 
-
-### 影響するユーザー・機能
-
-- 
-
-### 影響する入力・条件
-
-- 
-
-### 既存データへの影響
-
-- 
-
-### 既存APIへの影響
-
-- 
-
-### テストへの影響
-
-- 
-
-### ロールバック可否
-
-- 
-
-### 人間に確認してほしい点
+## What I Need a Human To Decide
 
 - 
 ```
 
-## 一時対応を入れる場合の報告テンプレート
+## Report Template When Existing Behavior Changes
 
 ```md
-## 一時対応を含みます
+## Existing Behavior Is Changing
 
-### 一時対応の内容
-
-- 
-
-### なぜ一時対応が必要か
+### What Will Change
 
 - 
 
-### 有効期限または削除条件
+### Affected Users or Features
 
 - 
 
-### 恒久対応案
+### Affected Inputs or Conditions
 
 - 
 
-### 関連issue・チケット
+### Impact on Existing Data
 
 - 
 
-### 人間に確認してほしい点
+### Impact on Existing APIs
+
+- 
+
+### Impact on Tests
+
+- 
+
+### Rollback Feasibility
+
+- 
+
+### Points a Human Should Confirm
+
+- 
+```
+
+## Report Template for Temporary Workarounds
+
+```md
+## Includes a Temporary Workaround
+
+### Temporary Workaround Details
+
+- 
+
+### Why the Temporary Workaround Is Needed
+
+- 
+
+### Expiration Date or Removal Condition
+
+- 
+
+### Permanent Fix Plan
+
+- 
+
+### Related Issue or Ticket
+
+- 
+
+### Points a Human Should Confirm
 
 - 
 ```

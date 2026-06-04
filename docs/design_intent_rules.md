@@ -1,153 +1,154 @@
 # design_intent_rules.md
 
-## このファイルの目的
+## Purpose of This File
 
-このファイルは、Codexがコードを書く前に確認すべき「意図」と「設計思想」の扱いを定義する。
+This file defines how Codex should handle "intent" and "design intent" before writing code.
 
-AI生成コードが読みにくくなる最大の原因は、構文の汚さではなく、なぜその設計にしたのかが見えないことである。
+The biggest cause of unreadable AI-generated code is not bad syntax, but the fact that the reason for the design is not visible.
 
-Codexは、コードを書く前に必ず意図を確認し、必要に応じて人間に質問する。
+Codex must confirm the intent before writing code and ask a human when necessary.
 
-## 設計意図を確認する理由
+## Why Design Intent Must Be Checked
 
-コードは、単に命令の集合ではない。
+Code is not just a set of instructions.
 
-コードには以下の情報が含まれていなければならない。
+Code must contain the following information:
 
-- 何を実現するための処理か
-- なぜこの責務分割なのか
-- なぜこのデータ構造なのか
-- なぜこの例外処理なのか
-- なぜこの順序で処理するのか
-- なぜこの境界条件を扱うのか
-- なぜこの抽象化を追加するのか
-- なぜ既存コードと異なる書き方をするのか
-- なぜ既存コードと同じ書き方をするのか
-- 将来の保守者が何を理解すべきか
+- What the processing is meant to achieve
+- Why the responsibility is split this way
+- Why this data structure is used
+- Why this exception handling is used
+- Why the processing happens in this order
+- Why this boundary condition is handled
+- Why this abstraction was added
+- Why the code is written differently from the existing code
+- Why the code is written the same way as the existing code
+- What future maintainers need to understand
 
-これらを説明できない場合、そのコードは長期保守に耐えない。
+If these cannot be explained, the code will not be sustainable in the long term.
 
-## 実装前に確認する設計項目
+## Design Items to Confirm Before Implementation
 
-Codexは、実装前に以下を確認する。
+Codex must confirm the following before implementing:
 
-- この変更はバグ修正か、新機能か、リファクタリングか。
-- この変更は既存挙動を変えるか。
-- どのユーザー操作またはユースケースに対応するか。
-- どの仕様・issue・会話・要望に対応するか。
-- 既存のどのモジュールに属するか。
-- 既存の責務分割と矛盾しないか。
-- 既存のデータフローと矛盾しないか。
-- 既存の型設計と矛盾しないか。
-- 既存のエラー処理方針と矛盾しないか。
-- 既存のログ方針と矛盾しないか。
-- 既存のテスト方針と矛盾しないか。
-- 既存のセキュリティ方針と矛盾しないか。
-- 既存のユーザー体験と矛盾しないか。
-- 将来の拡張を妨げないか。
-- 不要な抽象化を増やしていないか。
-- 不要な重複を増やしていないか。
+- Whether this change is a bug fix, a new feature, or a refactor
+- Whether this change alters existing behavior
+- Which user action or use case it addresses
+- Which specification, issue, conversation, or request it corresponds to
+- Which existing module it belongs to
+- Whether it conflicts with the existing responsibility boundaries
+- Whether it conflicts with the existing data flow
+- Whether it conflicts with the existing type design
+- Whether it conflicts with the existing error-handling policy
+- Whether it conflicts with the existing logging policy
+- Whether it conflicts with the existing test policy
+- Whether it conflicts with the existing security policy
+- Whether it conflicts with the existing user experience
+- Whether it blocks future extension
+- Whether it adds unnecessary abstraction
+- Whether it adds unnecessary duplication
 
-## 過去チャット履歴・メモリ参照ルール
+## Rules for Referencing Past Chat History and Memory
 
-Codexが過去チャット履歴やメモリを参照できる場合、以下を確認する。
+If Codex can access past chat history or memory, it must confirm the following:
 
-- ユーザーが過去に決めた仕様
-- ユーザーが過去に避けたいと言った実装
-- ユーザーが過去に採用した設計方針
-- ユーザーが過去に否定した設計方針
-- ユーザーが過去に明示した運用制約
-- ユーザーが過去に指定した命名規則
-- ユーザーが過去に指定したファイル構成
-- ユーザーが過去に指定したテスト方針
-- ユーザーが過去に指定したログ方針
-- ユーザーが過去に指定した出力形式
+- Specifications the user decided earlier
+- Implementations the user previously wanted to avoid
+- Design policies the user previously adopted
+- Design policies the user previously rejected
+- Operational constraints the user previously stated
+- Naming conventions the user previously specified
+- File structure the user previously specified
+- Test policies the user previously specified
+- Logging policies the user previously specified
+- Output formats the user previously specified
 
-ただし、過去チャット履歴やメモリを参照できる範囲は実行環境によって異なる。Codexは利用可能な範囲で確認し、参照できない情報が設計判断に必要な場合に限り、人間へ追加情報を求める。
+However, the range of past chat history or memory that can be referenced depends on the execution environment. Codex should confirm what is available and, only when missing information is required for design judgment, ask a human for additional details.
 
-過去チャット履歴を参照できない場合は、次のように報告する。
+If past chat history cannot be referenced, report it like this:
 
-「過去チャット履歴をこの環境から直接確認できません。この変更が過去の設計方針に依存する場合は、関連する仕様・会話ログ・メモを貼ってください。」
+"I cannot directly check past chat history from this environment. If this change depends on a prior design policy, please paste the relevant specification, conversation log, or notes."
 
-ただし、明らかに既存コードだけで判断できる変更では、作業を止めずに進めてよい。
+However, if the change can clearly be judged from the existing code alone, it may proceed without stopping.
 
-## 設計意図が不明なときの質問例
+## Example Questions When Design Intent Is Unclear
 
-Codexは、次のような質問を人間に行う。
+Codex should ask questions like the following:
 
-- この処理は既存挙動を維持する前提ですか、それとも挙動変更してよいですか。
-- この責務は既存のモジュールに追加すべきですか、それとも新しいモジュールとして分けるべきですか。
-- この例外はユーザーに見せるべきですか、それとも内部ログのみにすべきですか。
-- この値は設定化すべきですか、それとも仕様上の固定値ですか。
-- このデータ構造は将来拡張される前提ですか。
-- この処理は同期的に完了する必要がありますか、それとも非同期でよいですか。
-- このケースは仕様上起こり得ない前提ですか、それとも防御的に扱うべきですか。
-- 既存実装AとBで方針が違いますが、どちらに合わせるべきですか。
-- 過去のチャットでこの方針を決めた可能性があります。参照すべき会話ログはありますか。
-- この変更で優先するのは互換性ですか、簡潔さですか、将来拡張性ですか。
+- Is this processing intended to preserve existing behavior, or may the behavior change?
+- Should this responsibility be added to an existing module, or split into a new module?
+- Should this exception be shown to the user, or only logged internally?
+- Should this value be configurable, or is it a fixed value by specification?
+- Is this data structure expected to be extended in the future?
+- Does this processing need to complete synchronously, or is asynchronous processing acceptable?
+- Is this case assumed to be impossible by specification, or should it be handled defensively?
+- Existing implementations A and B use different approaches; which should we follow?
+- This approach may have been decided in a past chat. Is there a conversation log we should consult?
+- For this change, which should take priority: compatibility, simplicity, or future extensibility?
 
-## 設計意図をコードに残すルール
+## Rules for Leaving Design Intent in the Code
 
-Codexは、コードを変更した場合、必要に応じて「なぜ」を残す。
+When Codex changes code, it should leave the reason when needed.
 
-コメントは、コードを読めばわかることではなく、コードを読んでもわからない判断理由を書く。
+Comments should not explain what is already obvious from the code. They should explain the judgment that cannot be inferred from the code alone.
 
-悪いコメント例。
+Bad comment example:
 
 ```ts
-// ユーザーを取得する
+// Get the user
 const user = await getUser(id);
 ```
 
-よいコメント例。
+Good comment example:
 
 ```ts
-// ここではキャッシュを使わない。
-// 権限変更直後のユーザー状態を反映する必要があり、古い権限で処理すると認可漏れになるため。
+// Do not use the cache here.
+// We need to reflect the user's state immediately after a permission change,
+// and processing with stale permissions could cause an authorization leak.
 const user = await getUserFresh(id);
 ```
 
-## 設計意図を最終報告に残すルール
+## Rules for Leaving Design Intent in the Final Report
 
-Codexは、作業後に必ず次を説明する。
+After work is complete, Codex must explain the following:
 
-- 何を変更したか
-- なぜ変更したか
-- なぜその設計を選んだか
-- 代替案として何を考えたか
-- 代替案を採用しなかった理由
-- 既存設計のどこに合わせたか
-- 既存挙動への影響
-- 互換性への影響
-- テスト内容
-- 人間に確認してほしい点
-- 残っているリスク
+- What changed
+- Why it changed
+- Why that design was chosen
+- What alternatives were considered
+- Why the alternatives were not chosen
+- What part of the existing design it matched
+- Impact on existing behavior
+- Impact on compatibility
+- Test coverage
+- Points a human should confirm
+- Remaining risks
 
-説明できない変更を入れてはならない。
+Do not introduce changes that cannot be explained.
 
-## 可読性の定義
+## Definition of Readability
 
-このプロジェクトでの「読みやすいコード」とは、次を満たすコードである。
+In this project, "readable code" is code that satisfies the following:
 
-- 処理の目的が名前からわかる。
-- 業務上・仕様上の意味が名前からわかる。
-- 責務が過剰に混ざっていない。
-- 関数の入力と出力が明確である。
-- 副作用が明確である。
-- 例外がどこで起き、どこで処理されるかが明確である。
-- 既存設計と同じ考え方で書かれている。
-- なぜその分岐があるのか説明できる。
-- なぜそのデータ構造を使うのか説明できる。
-- なぜその抽象化を追加したのか説明できる。
-- 半年後の人間が読んでも、意図を追える。
-- AI生成っぽい一般名詞だけで構成されていない。
-- 動くが理由がわからないコードになっていない。
+- The purpose of the processing is clear from the name.
+- The business or specification meaning is clear from the name.
+- Responsibilities are not mixed excessively.
+- The inputs and outputs of functions are clear.
+- Side effects are clear.
+- It is clear where exceptions occur and where they are handled.
+- It is written using the same design thinking as the existing code.
+- The reason for each branch can be explained.
+- The reason for the data structure can be explained.
+- The reason for the abstraction can be explained.
+- A human can still follow the intent six months later.
+- It is not made up only of generic nouns that feel AI-generated.
+- It is not code that works but has no discernible reason.
 
-## 命名ルール
+## Naming Rules
 
-Codexは、一般的すぎる名前を避ける。
+Codex should avoid overly generic names.
 
-避けるべき名前の例。
+Examples of names to avoid:
 
 - data
 - result
@@ -174,109 +175,67 @@ Codexは、一般的すぎる名前を避ける。
 - check
 - validate
 
-これらを完全禁止するわけではないが、仕様上の意味が薄い場合は使わない。
+This does not mean these names are completely forbidden, but they should not be used when they do not carry meaningful specification-level semantics.
 
-一方で、既存の公開API名、DBテーブル名、DBカラム名、設定キー、環境変数名、ファイル名、外部サービス連携で使われるフィールド名は、一般的な名前に見えても勝手に変更してはならない。これらは外部契約または永続化形式として意味を持つ可能性があるため、変更する場合は互換性と移行手順を確認し、人間に確認する。
+On the other hand, existing public API names, DB table names, DB column names, configuration keys, environment variable names, file names, and fields used in external service integrations must not be changed arbitrarily, even if they appear generic. These may have meaning as an external contract or persistence format, so if a change is needed, confirm compatibility and migration steps with a human.
 
-既存コード内で広く使われている名前も、単独では理想的でなくても、無関係なリファクタリングとして変更しない。命名改善は、対象変更の目的に必要な範囲に限定する。
+Names that are already widely used in the existing code should not be changed as an unrelated refactor, even if they are not ideal on their own. Naming improvements should be limited to the scope required by the target change.
 
-悪い例。
+Bad example:
 
 ```ts
 const data = await fetchData();
 const result = process(data);
 ```
 
-よい例。
+Good example:
 
 ```ts
 const unpaidInvoices = await fetchUnpaidInvoices(customerId);
 const paymentRetryPlan = buildPaymentRetryPlan(unpaidInvoices);
 ```
 
-命名では、次を優先する。
+In naming, prioritize the following:
 
-- 何のデータか
-- どの仕様に対応するものか
-- どの状態を表すものか
-- 何のための処理か
-- どの境界条件に対応するものか
-- ドメイン上の意味は何か
+- What data it is
+- Which specification it corresponds to
+- Which state it represents
+- What the processing is for
+- Which boundary condition it addresses
+- What the domain meaning is
 
-関数名は、内部処理ではなく目的を表す。
+Function names should express the purpose, not the internal implementation.
 
-悪い例。
+Bad example:
 
 ```ts
 function processUser(user) {}
 ```
 
-よい例。
+Good example:
 
 ```ts
 function deactivateExpiredTrialUser(user) {}
 ```
 
-## 責務分割ルール
+## Responsibility-Splitting Rules
 
-Codexは、1つの関数に複数の責務を混ぜてはならない。
+Codex must not mix multiple responsibilities into a single function.
 
-次の責務は、原則として分離する。
+The following responsibilities should, in principle, be separated:
 
-- 入力検証
-- データ取得
-- 権限確認
-- 状態判定
-- 変換
-- 永続化
-- 外部API呼び出し
-- ログ出力
-- エラー変換
-- 表示用整形
-- 通知
-- リトライ
-- キャッシュ制御
+- Input validation
+- Data retrieval
+- Permission checks
+- State determination
+- Transformation
+- Persistence
+- External API calls
+- Logging
+- Error conversion
+- Presentation formatting
+- Notifications
+- Retry handling
+- Cache control
 
-ただし、分離しすぎて処理の流れが追えなくなる場合は、既存コードの粒度に合わせる。
-
-新しい抽象化を追加する場合は、なぜ必要かを説明する。
-
-抽象化の理由が「なんとなく綺麗だから」だけの場合、抽象化してはならない。
-
-## 既存設計への準拠
-
-Codexは、新しい実装を追加する前に、必ず既存の類似実装を探す。
-
-探す対象は以下である。
-
-- 同じ機能領域
-- 同じデータ構造を扱う箇所
-- 同じAPIを呼んでいる箇所
-- 同じエラー処理をしている箇所
-- 同じ画面・同じユースケース
-- 同じテストパターン
-- 同じ命名規則
-- 同じログ形式
-
-既存パターンがある場合、それに従う。
-
-既存パターンから外れる場合は、必ず理由を説明する。
-
-理由なく「AIが考えたより一般的な設計」に置き換えてはならない。
-
-## 局所最適禁止
-
-Codexは、今見えている1ファイルだけで最適化してはならない。
-
-次を確認する。
-
-- 他のファイルで同じ責務がどう実装されているか
-- 型定義と整合しているか
-- 既存のテストが何を仕様として固定しているか
-- 呼び出し元が何を期待しているか
-- 呼び出し先が何を保証しているか
-- エラー時の挙動が全体設計と一致しているか
-- ログ・監視・メトリクスと整合しているか
-- 将来の変更がどこに波及するか
-
-1ファイルだけ見て「このほうが綺麗」と判断してはならない。
+However, if separating them too much makes the flow harder to follow, match the granularity of the existing code.

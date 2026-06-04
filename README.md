@@ -12,10 +12,16 @@
 ## 公開向け説明文と画面イメージ
 
 - 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
+- Codexトークン節約運用ルール: [docs/codex_token_usage_rules.md](docs/codex_token_usage_rules.md)
 - Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
 - Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
 - 運用条件ファイルガイド: [docs/OPERATION_CONDITIONS_GUIDE.md](docs/OPERATION_CONDITIONS_GUIDE.md)
+- 現在の判定ルール（条件木）: [docs/CURRENT_DECISION_TREE_JA.md](docs/CURRENT_DECISION_TREE_JA.md)
 - 東・南・西アレイ発電予測: [docs/PV_ARRAY_FORECAST_JA.md](docs/PV_ARRAY_FORECAST_JA.md)
+- 消費電力量予測モデル仕様: [docs/CONSUMPTION_FORECAST_MODEL_JA.md](docs/CONSUMPTION_FORECAST_MODEL_JA.md)
+- 不在予定入力シート仕様: [docs/OCCUPANCY_SCHEDULE_JA.md](docs/OCCUPANCY_SCHEDULE_JA.md)
+- Google Cloud料金情報CLI: [docs/GCP_PRICING_CLI_JA.md](docs/GCP_PRICING_CLI_JA.md)
+- Google Cloud実費確認CLI: [docs/GCP_ACTUAL_COST_CLI_JA.md](docs/GCP_ACTUAL_COST_CLI_JA.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）

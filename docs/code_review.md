@@ -1,205 +1,205 @@
 # code_review.md
 
-## このファイルの目的
+## Purpose of This File
 
-このファイルは、Codexが実装後に必ず行う自己レビューと、人間がレビューするときに見るべき観点を定義する。
+This file defines the self-review that Codex must always perform after implementation, and the review points that humans should use when reviewing.
 
-レビューでは「動くか」だけではなく、「なぜそうしたかが追えるか」を確認する。
+The review should check not only whether it works, but also whether the reasoning can be followed.
 
-## 実装後の自己レビュー
+## Post-Implementation Self-Review
 
-Codexは、実装後に必ず次を確認する。
+After implementation, Codex must check the following:
 
-- 仕様を満たしているか。
-- 仕様外の変更をしていないか。
-- 既存設計に合っているか。
-- 命名は具体的か。
-- 一般語だけの命名になっていないか。
-- 責務が混ざっていないか。
-- 不必要な抽象化がないか。
-- 不必要な重複がないか。
-- 例外処理は妥当か。
-- セキュリティ上危険な変更がないか。
-- デバッグコードが残っていないか。
-- 未使用コードが残っていないか。
-- コメントは「なぜ」を説明しているか。
-- テストは必要十分か。
-- 人間がレビューしやすい差分か。
-- 変更理由を説明できるか。
-- 半年後に読めるか。
+- Whether the specification is satisfied
+- Whether any out-of-spec changes were made
+- Whether the code matches the existing design
+- Whether the names are specific
+- Whether the naming relies only on generic words
+- Whether responsibilities are mixed
+- Whether there is unnecessary abstraction
+- Whether there is unnecessary duplication
+- Whether exception handling is appropriate
+- Whether there are any security-risky changes
+- Whether any debug code remains
+- Whether any unused code remains
+- Whether comments explain the reason
+- Whether the tests are sufficient
+- Whether the diff is easy for a human to review
+- Whether the change reason can be explained
+- Whether it will still be readable in six months
 
-## 実装前提レビュー
+## Pre-Implementation Review
 
-以下を確認する。
+Check the following:
 
-- 変更目的は明確か。
-- 変更対象は明確か。
-- 変更しない範囲は明確か。
-- 既存設計のどこに合わせたか説明できるか。
-- 過去チャット履歴・メモリ・仕様書・README・issueを、利用可能な範囲で必要に応じて確認したか。
-- 過去文脈を確認できない場合、その事実を人間に伝えたか。
-- 不明点を推測で埋めていないか。
-- 人間に確認すべき不明点を放置していないか。
+- Whether the change purpose is clear
+- Whether the change target is clear
+- Whether the scope that will not be changed is clear
+- Whether you can explain which part of the existing design it matches
+- Whether you checked past chat history, memory, specifications, README, and issues as far as available and necessary
+- Whether you told a human if past context could not be checked
+- Whether you filled in unknowns by guessing
+- Whether you left any unknowns that should be confirmed by a human unresolved
 
-## 設計レビュー
+## Design Review
 
-以下を確認する。
+Check the following:
 
-- この変更は既存の責務分割と一致しているか。
-- 新しい責務を既存の不適切な場所に押し込んでいないか。
-- 新しい抽象化は本当に必要か。
-- 抽象化の理由を説明できるか。
-- 既存の類似実装を確認したか。
-- 既存実装と違う書き方をしている場合、その理由を説明できるか。
-- 1ファイルだけを見た局所最適になっていないか。
-- 将来の保守者が設計意図を追えるか。
+- Whether this change matches the existing responsibility boundaries
+- Whether a new responsibility was forced into an unsuitable existing place
+- Whether a new abstraction is truly necessary
+- Whether the reason for the abstraction can be explained
+- Whether you checked similar existing implementations
+- Whether you can explain why the code differs from the existing implementation if it does
+- Whether the work has become a local optimization based on only one file
+- Whether future maintainers can follow the design intent
 
-## 命名レビュー
+## Naming Review
 
-以下を確認する。
+Check the following:
 
-- data、result、item、value、temp、objなどの一般名詞を安易に使っていないか。
-- handler、manager、processor、service、helper、utilなどの意味が薄い名前を乱用していないか。
-- process、execute、handle、run、update、fix、check、validateなどの汎用動詞だけで関数名を作っていないか。
-- 名前からドメイン上の意味がわかるか。
-- 名前から状態がわかるか。
-- 名前から処理対象がわかるか。
-- 名前から処理目的がわかるか。
-- 型名・関数名・変数名が既存の命名規則と一致しているか。
-- 公開API名、DBテーブル名、DBカラム名、設定キー、環境変数名、外部連携フィールド名を、命名改善だけを理由に変更していないか。
-- 既存コード内で広く使われている名前を、対象変更と無関係にリネームしていないか。
+- Whether you avoided using generic nouns such as data, result, item, value, temp, and obj too casually
+- Whether you avoided overusing low-meaning names such as handler, manager, processor, service, helper, and util
+- Whether you avoided naming functions only with generic verbs such as process, execute, handle, run, update, fix, check, and validate
+- Whether the name reveals the domain meaning
+- Whether the name reveals the state
+- Whether the name reveals the processing target
+- Whether the name reveals the processing purpose
+- Whether the type, function, and variable names match the existing naming rules
+- Whether public API names, DB table names, DB column names, configuration keys, environment variable names, and external integration field names were not changed only for naming improvement
+- Whether widely used names in the existing code were not renamed for reasons unrelated to the target change
 
-## 責務レビュー
+## Responsibility Review
 
-以下を確認する。
+Check the following:
 
-- 入力検証とデータ取得が混ざりすぎていないか。
-- 権限確認と状態更新が混ざりすぎていないか。
-- 表示用整形と永続化処理が混ざっていないか。
-- 外部API呼び出しとドメイン判定が混ざりすぎていないか。
-- ログ出力が処理本体を読みにくくしていないか。
-- リトライ処理が本質的な処理と混ざりすぎていないか。
-- 関数の入力と出力が明確か。
-- 副作用が明確か。
+- Whether input validation and data retrieval are too mixed
+- Whether permission checks and state updates are too mixed
+- Whether presentation formatting and persistence are mixed
+- Whether external API calls and domain decisions are too mixed
+- Whether logging makes the main logic hard to read
+- Whether retry logic is too mixed with the essential processing
+- Whether the inputs and outputs of functions are clear
+- Whether side effects are clear
 
-## 例外処理レビュー
+## Exception Handling Review
 
-以下を確認する。
+Check the following:
 
-- 例外を握りつぶしていないか。
-- 例外を握りつぶす場合、理由が明確か。
-- どの例外だけを処理するのか明確か。
-- 予期しない例外を上位へ投げているか。
-- ログが必要な箇所でログを出しているか。
-- ログに出してはいけない情報を出していないか。
-- ユーザーに見せるべきエラーと内部エラーを分けているか。
-- リトライすべき失敗とリトライしてはいけない失敗を分けているか。
+- Whether exceptions are being swallowed
+- If exceptions are swallowed, whether the reason is clear
+- Which exceptions are handled, and which are not
+- Whether unexpected exceptions are propagated upward
+- Whether logs are written where they are needed
+- Whether sensitive information is kept out of logs
+- Whether user-facing errors and internal errors are separated
+- Whether retriable failures and non-retriable failures are separated
 
-## テストレビュー
+## Test Review
 
-以下を確認する。
+Check the following:
 
-- 正常系を確認したか。
-- 異常系を確認したか。
-- 境界値を確認したか。
-- null/undefinedを確認したか。
-- 空配列・空文字・0などを確認したか。
-- 権限不足を確認したか。
-- 外部API失敗を確認したか。
-- タイムアウトを確認したか。
-- リトライを確認したか。
-- 既存データとの互換性を確認したか。
-- 過去のバグの再発防止テストがあるか。
-- ユーザーが明示した重要ケースを確認したか。
-- テストを追加しない場合、理由を説明できるか。
-- テストを実行できない場合、理由と人間が実行すべきコマンドを示したか。
+- Whether normal cases were checked
+- Whether error cases were checked
+- Whether boundary values were checked
+- Whether null/undefined was checked
+- Whether empty arrays, empty strings, and zero were checked
+- Whether insufficient permissions were checked
+- Whether external API failures were checked
+- Whether timeouts were checked
+- Whether retries were checked
+- Whether compatibility with existing data was checked
+- Whether there is a regression test for a past bug
+- Whether important cases explicitly requested by the user were checked
+- Whether you can explain why tests were not added if none were added
+- Whether you provided the reason and the command the human should run if tests could not be executed
 
-## セキュリティレビュー
+## Security Review
 
-以下を確認する。
+Check the following:
 
-- 認証をバイパスしていないか。
-- 認可を弱めていないか。
-- 権限チェックの位置は適切か。
-- 個人情報をログに出していないか。
-- APIキーやトークンをコードに埋め込んでいないか。
-- 外部URLアクセスの検証は適切か。
-- ファイルアップロードの検証は適切か。
-- SQL Injectionの可能性はないか。
-- XSSの可能性はないか。
-- CSRFの可能性はないか。
-- CORS設定を広げすぎていないか。
-- Webhookの検証を弱めていないか。
-- 課金・支払い・金銭に関わる変更を推測で行っていないか。
+- Whether authentication was bypassed
+- Whether authorization was weakened
+- Whether the placement of permission checks is appropriate
+- Whether personal information is written to logs
+- Whether API keys or tokens are embedded in code
+- Whether external URL access is validated properly
+- Whether file upload validation is appropriate
+- Whether SQL injection is possible
+- Whether XSS is possible
+- Whether CSRF is possible
+- Whether CORS is too open
+- Whether webhook validation is weakened
+- Whether changes related to billing, payments, or money were made by guessing
 
-## 差分レビュー
+## Diff Review
 
-以下を確認する。
+Check the following:
 
-- 変更範囲は必要最小限か。
-- 無関係な整形が混ざっていないか。
-- 無関係なリファクタリングが混ざっていないか。
-- 目的の異なる変更を同じ差分に混ぜていないか。
-- ファイル全体の並べ替えをしていないか。
-- 自動整形だけの変更と本質的変更を混ぜていないか。
-- レビューが困難なほど大量の生成コードを追加していないか。
-- 人間が重点的に見るべき箇所を最終報告に書いたか。
+- Whether the scope of the change is minimal
+- Whether unrelated formatting was mixed in
+- Whether unrelated refactoring was mixed in
+- Whether changes with different purposes were mixed into the same diff
+- Whether the entire file was reordered
+- Whether formatting-only changes were mixed with substantive changes
+- Whether so much generated code was added that review is difficult
+- Whether the final report identifies the parts a human should focus on
 
-## 既存挙動レビュー
+## Existing Behavior Review
 
-以下を確認する。
+Check the following:
 
-- 既存挙動を変えていないか。
-- 既存挙動を変える場合、その事実を明示したか。
-- どの入力で結果が変わるか説明したか。
-- 誰に影響するか説明したか。
-- 既存データに影響するか説明したか。
-- 既存APIに影響するか説明したか。
-- 既存テストに影響するか説明したか。
-- ロールバック可能か説明したか。
-- 人間の確認が必要か説明したか。
+- Whether existing behavior was changed
+- If existing behavior changed, whether that fact was made explicit
+- Which inputs cause different results
+- Who is affected
+- Whether existing data is affected
+- Whether existing APIs are affected
+- Whether existing tests are affected
+- Whether rollback is possible
+- Whether human confirmation is needed
 
-## 最終報告レビュー
+## Final Report Review
 
-Codexは、最終報告に以下を含める。
+Codex must include the following in the final report:
 
-- 変更概要
-- 設計意図
-- 既存設計との整合性
-- 代替案と不採用理由
-- 変更したファイル
-- 変更しなかった範囲
-- テスト
-- 人間に確認してほしい点
-- 残っているリスク
+- Change summary
+- Design intent
+- Alignment with the existing design
+- Alternatives and why they were not chosen
+- Files changed
+- Scope that was not changed
+- Tests
+- Points a human should confirm
+- Remaining risks
 
-## 禁止する最終報告
+## Prohibited Final Reports
 
-Codexは、次のような報告をしてはならない。
+Codex must not give reports like the following:
 
-- 「修正しました」だけ。
-- 「テストしました」だけ。
-- 「問題ありません」だけ。
-- 「可読性を改善しました」だけ。
-- 「既存コードに合わせました」だけ。
-- 「軽微な変更です」だけ。
-- 実行していないテストを実行したように書く。
-- 確認していない仕様を確認したように書く。
-- 不明点を隠す。
-- リスクを隠す。
-- 推測を事実のように書く。
+- "Fixed it" only
+- "Tested it" only
+- "There is no problem" only
+- "Improved readability" only
+- "Matched the existing code" only
+- "It was a minor change" only
+- Reporting tests as executed when they were not
+- Reporting specifications as confirmed when they were not
+- Hiding unknowns
+- Hiding risks
+- Writing guesses as facts
 
-## コミットメッセージレビュー
+## Commit Message Review
 
-コミットメッセージには、何をしたかだけでなく、なぜしたかを含める。
+Commit messages should include not only what was done, but why it was done.
 
-悪い例。
+Bad example:
 
 ```txt
 fix user error
 ```
 
-よい例。
+Good example:
 
 ```txt
 Fix expired trial user deactivation guard
