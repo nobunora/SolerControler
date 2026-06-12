@@ -17,6 +17,7 @@ from app.energy_model import (
 from energy_model_main import (
     _build_forecast_correction,
     _historical_daytime_soc_gain_guard,
+    _estimate_remaining_overnight_discharge_kwh,
     _risk_adjusted_peak_penalty,
 )
 
@@ -125,6 +126,28 @@ def test_compute_night_charge_target_uses_daytime_deficit_for_low_pv_days() -> N
     assert result.required_night_charge_kwh == pytest.approx(10.0)
 
 
+def test_compute_night_charge_target_includes_remaining_overnight_discharge() -> None:
+    coeff = _coeff()
+    inp = NightChargeInputs(
+        soc_now_percent=30.0,
+        sun_hours_forecast=5.0,
+        temp_forecast_c=25.0,
+        daytime_load_forecast_kwh=3.0,
+        morning_load_forecast_kwh=1.0,
+        morning_pv_ratio=0.2,
+        midday_surplus_ratio=0.3,
+        reserve_soc_percent=30.0,
+        cycle_count=0.0,
+        battery_temp_c=25.0,
+        expected_overnight_discharge_kwh=1.8,
+    )
+
+    result = compute_night_charge_target(coeff, inp)
+
+    assert result.target_soc_7_percent == pytest.approx(30.0)
+    assert result.required_night_charge_kwh == pytest.approx(2.0)
+
+
 def test_fit_coefficients_from_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "fit.csv"
     csv_path.write_text(
@@ -224,6 +247,24 @@ def test_historical_daytime_soc_gain_guard_uses_lower_quartile(monkeypatch) -> N
     assert guard["sample_count"] == 4
     assert guard["percentile_gain_percent"] == pytest.approx(17.5)
     assert guard["cap_target_soc_percent"] == pytest.approx(82.5)
+
+
+def test_estimate_remaining_overnight_discharge_uses_recent_matching_slots(monkeypatch) -> None:
+    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "2")
+    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_PERCENTILE", "50")
+    rows = [
+        {"dt": datetime.fromisoformat("2026-06-09T22:30:00"), "discharge": 0.5, "charge": 0.0, "soc": 40.0},
+        {"dt": datetime.fromisoformat("2026-06-10T00:30:00"), "discharge": 0.4, "charge": 0.0, "soc": 35.0},
+        {"dt": datetime.fromisoformat("2026-06-10T22:30:00"), "discharge": 0.7, "charge": 0.0, "soc": 42.0},
+        {"dt": datetime.fromisoformat("2026-06-11T00:30:00"), "discharge": 0.6, "charge": 0.0, "soc": 36.0},
+        {"dt": datetime.fromisoformat("2026-06-11T22:00:00"), "discharge": 0.0, "charge": 0.0, "soc": 30.0},
+    ]
+
+    guard = _estimate_remaining_overnight_discharge_kwh(rows, target_date="2026-06-12")
+
+    assert guard["reason"] == "history_percentile"
+    assert guard["sample_count"] == 2
+    assert guard["expected_kwh"] == pytest.approx(1.1)
 
 
 def test_risk_adjusted_peak_penalty_requires_high_temp_and_pv_overconfidence(monkeypatch) -> None:

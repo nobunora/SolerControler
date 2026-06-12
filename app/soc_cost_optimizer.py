@@ -285,14 +285,16 @@ def evaluate_soc_candidate(
     peak_soc_target_percent: float | None = None,
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
     peak_soc_unmet_penalty_factor: float = 1.0,
+    expected_overnight_discharge_kwh: float = 0.0,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
     target_soc = _bounded_soc(target_soc_percent)
     target_energy = capacity_kwh * target_soc / 100.0
     current_energy = capacity_kwh * _bounded_soc(soc_now_percent) / 100.0
+    projected_morning_energy = max(0.0, current_energy - max(0.0, expected_overnight_discharge_kwh))
     charge_efficiency = max(0.01, cost_model.charge_efficiency)
-    required_night_charge_kwh = max(0.0, (target_energy - current_energy) / charge_efficiency)
+    required_night_charge_kwh = max(0.0, (target_energy - projected_morning_energy) / charge_efficiency)
     night_cost = required_night_charge_kwh * cost_model.night_buy_rate_yen_per_kwh
 
     expected_buy = 0.0
@@ -393,6 +395,7 @@ def optimize_soc_by_expected_cost(
     peak_soc_target_percent: float | None = None,
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
     peak_soc_unmet_penalty_factor: float = 1.0,
+    expected_overnight_discharge_kwh: float = 0.0,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -435,6 +438,7 @@ def optimize_soc_by_expected_cost(
             peak_soc_target_percent=peak_soc_target_percent,
             peak_soc_unmet_penalty_yen_per_kwh=peak_soc_unmet_penalty_yen_per_kwh,
             peak_soc_unmet_penalty_factor=peak_soc_unmet_penalty_factor,
+            expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
         )
         count += 1
         if best is None or (

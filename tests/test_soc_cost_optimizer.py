@@ -126,6 +126,32 @@ def test_cost_optimizer_charges_more_when_daytime_power_is_expensive() -> None:
     assert expensive_day.target_soc_7_percent > cheap_day.target_soc_7_percent
 
 
+def test_cost_optimizer_required_charge_includes_expected_overnight_discharge() -> None:
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=30.0,
+        soc_now_percent=30.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh={7: 1.0},
+        hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(
+            mean_multiplier=1.0,
+            std_multiplier=0.0,
+            variance_multiplier=0.0,
+            sample_count=10,
+            source="deterministic",
+        ),
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=39.10,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.9,
+            sell_value_ratio=0.75,
+        ),
+        expected_overnight_discharge_kwh=1.8,
+    )
+
+    assert candidate.required_night_charge_kwh == pytest.approx(2.0)
+
+
 def test_cost_optimizer_peak_unmet_penalty_raises_soc_target() -> None:
     hourly_pv = {12: 3.0}
     hourly_load = {18: 1.0, 19: 1.0}

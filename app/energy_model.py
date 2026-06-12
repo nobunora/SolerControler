@@ -45,6 +45,7 @@ class NightChargeInputs:
     predicted_pv_kwh_override: float | None = None
     predicted_morning_pv_kwh_override: float | None = None
     predicted_midday_surplus_kwh_override: float | None = None
+    expected_overnight_discharge_kwh: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -336,6 +337,7 @@ def compute_night_charge_target(
         battery_temp_c=inp.battery_temp_c,
     )
     e_now = cap_eff * inp.soc_now_percent / 100.0
+    e_projected_at_7 = max(0.0, e_now - max(0.0, inp.expected_overnight_discharge_kwh))
     e_reserve = cap_eff * inp.reserve_soc_percent / 100.0
 
     if inp.predicted_pv_kwh_override is None:
@@ -372,9 +374,9 @@ def compute_night_charge_target(
     e_upper = max(e_lower, cap_eff - e_midday_surplus)
     e_target = min(e_lower, e_upper) if e_lower <= e_upper else e_lower
 
-    # 夜間に系統から充電する必要量（放電禁止前提）
+    # 夜間に系統から充電する必要量。計画時点から7時までの想定放電を差し引いて判定する。
     eta_ch = max(0.7, coeff.battery_round_trip_efficiency)
-    e_night_charge = max(0.0, (e_target - e_now) / eta_ch)
+    e_night_charge = max(0.0, (e_target - e_projected_at_7) / eta_ch)
 
     target_soc = max(0.0, min(100.0, 100.0 * e_target / cap_eff if cap_eff > 0 else 0.0))
     return NightChargeResult(
