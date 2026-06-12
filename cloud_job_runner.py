@@ -642,6 +642,28 @@ def _adjust03_target_date(*, now: datetime | None = None) -> str:
 
 def _ensure_night_plan_available(plan_path: Path) -> bool:
     target_date = _adjust03_target_date()
+    regenerate = os.getenv("ADJUST03_REGENERATE_PLAN", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if regenerate:
+        print(
+            f"[cloud_job_runner] 03-plan regenerating target_date={target_date} path={plan_path}",
+            flush=True,
+        )
+        try:
+            _run_with_retry(
+                [sys.executable, "energy_model_main.py"],
+                {"FORECAST_DATE_OVERRIDE": target_date},
+                label="03-regenerate-night-plan",
+                attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
+                delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
+                default_attempts=2,
+                default_delay_seconds=30.0,
+            )
+            _persist_night_plan_to_firestore(plan_path, source="adjust03-regenerated")
+            if plan_path.exists() and _night_plan_file_date(plan_path) == target_date:
+                return True
+        except Exception as exc:
+            print(f"[cloud_job_runner] 03-plan regeneration failed; trying fallback plan: {exc}", flush=True)
+
     if plan_path.exists() and _night_plan_file_date(plan_path) == target_date:
         return True
 
@@ -696,6 +718,28 @@ def _run_db_pipeline_slot(
     )
 
 
+def _run_03_settings_profile_with_db(
+    *,
+    profile: str,
+    dynamic_forced_profile: bool,
+    label: str,
+) -> None:
+    _run_settings_profile_with_retry(
+        profile=profile,
+        dynamic_forced_profile=dynamic_forced_profile,
+        label=label,
+    )
+    _run_db_pipeline_slot(
+        "03",
+        include_csv=False,
+        include_settings=True,
+        extra_env={
+            "DATA_DB_WRITE_ONLY_23": "false",
+            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+        },
+    )
+
+
 def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
@@ -710,8 +754,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if not stage_partial:
         print(
             "[cloud_job_runner] 03-monitor skip "
-            f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%",
+            f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%; apply dynamic night profile.",
             flush=True,
+        )
+        _run_03_settings_profile_with_db(
+            profile="forced",
+            dynamic_forced_profile=True,
+            label="03-settings-night-profile",
         )
         return
 
@@ -740,7 +789,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     if cutoff_seconds <= 0:
         print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
-        _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-cutoff-green")
+        _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-cutoff-green")
         return
 
     print(
@@ -815,12 +864,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
     # 強制充電モードは時間設定を無視して即時充電を開始するため、
     # 7時逆算時刻でのみ強制モードへ切り替える。
-    _run_settings_profile_with_retry(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
+    _run_03_settings_profile_with_db(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
         print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
-        _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-no-window-green")
+        _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-no-window-green")
         return
 
     print(
@@ -856,7 +905,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                     print("[cloud_job_runner] 03-monitor target reached at 100%. keep forced until cutoff.", flush=True)
                 else:
                     print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
-                    _run_settings_profile_with_retry(
+                    _run_03_settings_profile_with_db(
                         profile="green",
                         dynamic_forced_profile=False,
                         label="03-target-green",
@@ -877,7 +926,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                         f"latest={latest_soc:.2f}% previous={previous_soc:.2f}%",
                         flush=True,
                     )
-                    _run_settings_profile_with_retry(
+                    _run_03_settings_profile_with_db(
                         profile="forced",
                         dynamic_forced_profile=True,
                         label="03-forced-reapply",
@@ -893,7 +942,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         time.sleep(poll_seconds)
 
     print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
-    _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="03-timer-green")
+    _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-timer-green")
 
 
 def _run_night_23() -> None:

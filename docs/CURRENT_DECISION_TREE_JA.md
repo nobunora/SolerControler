@@ -22,7 +22,7 @@ ROOT: CLOUD_JOB_SLOT
 │  └─ sheets_export_main.py (optional)
 ├─ in {"3", "03", "adjust", "adjust03"}
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
-│  ├─ 当日 night_charge_plan.json を復元。なければ当日分を再生成
+│  ├─ 当日 night_charge_plan.json を毎回再生成（失敗時は当日分を復元）
 │  ├─ 04:30時点の最新SOCから必要充電kWhを再見積もり
 │  ├─ db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_DB_WRITE_ONLY_23=false, DATA_PREFER_NIGHT_PLAN_METRICS=true)
 │  ├─ 強制充電が必要(必要SOC差 >= KP_GREEN_MODE_MAX_CHARGE_PERCENT)なら:
@@ -31,7 +31,11 @@ ROOT: CLOUD_JOB_SLOT
 │  │  ├─ 待機中に ADJUST03_REFRESH_HHMM を跨ぐ場合のみ同じ対象日の予報を再取得
 │  │  ├─ 内容変化ありなら db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_PREFER_NIGHT_PLAN_METRICS=true)
 │  │  ├─ 逆算時刻で kpnet_main.py(settings, forced, dynamic=true) を実行
+│  │  ├─ settings_events を db_pipeline_main.py (CLOUD_JOB_SLOT=03) で保存
 │  │  └─ cutoff(07:00)までSOC監視
+│  ├─ 強制充電が不要なら:
+│  │  ├─ kpnet_main.py(settings, forced, dynamic=true) で夜間プロファイルを反映
+│  │  └─ settings_events を db_pipeline_main.py (CLOUD_JOB_SLOT=03) で保存
 │  └─ 100%目標:
 │     └─ 目標到達後も07:00まで強制モードを維持し、早朝放電を避ける
 └─ in {"7", "07", "day", "day07"}

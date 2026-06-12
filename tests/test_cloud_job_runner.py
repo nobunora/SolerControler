@@ -229,10 +229,28 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
         "cloud_job_runner._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
+    db_calls: list[tuple[str, bool, bool, dict[str, str] | None]] = []
+    monkeypatch.setattr(
+        "cloud_job_runner._run_db_pipeline_slot",
+        lambda slot, *, include_csv=True, include_settings=True, extra_env=None: db_calls.append(
+            (slot, include_csv, include_settings, extra_env)
+        ),
+    )
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert calls == []
+    assert calls == [("forced", True)]
+    assert db_calls == [
+        (
+            "03",
+            False,
+            True,
+            {
+                "DATA_DB_WRITE_ONLY_23": "false",
+                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+            },
+        )
+    ]
 
 
 def test_monitor_partial_forced_delays_forced_start_then_switches_green(

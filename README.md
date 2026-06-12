@@ -137,6 +137,7 @@ python kpnet_main.py
 - `PV_ARRAY_CALIBRATION_LOOKBACK_DAYS=45`（実測発電量でperformance_ratioを補正する履歴日数）
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
+- `ADJUST03_REGENERATE_PLAN=true`（23時停止運用のため、04:30で当日計画を毎回再生成）
 - `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（4:30制御でSOC実測レートが取れない場合のフォールバック）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`
 - `KP_DOWNLOAD_LATEST_MONTH=true`
