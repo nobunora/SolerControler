@@ -641,10 +641,10 @@ def _adjust03_target_date(*, now: datetime | None = None) -> str:
 
 
 def _ensure_night_plan_available(plan_path: Path) -> bool:
-    if plan_path.exists():
+    target_date = _adjust03_target_date()
+    if plan_path.exists() and _night_plan_file_date(plan_path) == target_date:
         return True
 
-    target_date = _adjust03_target_date()
     if _restore_night_plan_from_firestore(plan_path, target_date=target_date):
         return True
 
@@ -665,19 +665,34 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
     return plan_path.exists()
 
 
+def _night_plan_file_date(plan_path: Path) -> str:
+    try:
+        obj = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    forecast = obj.get("forecast", {})
+    if not isinstance(forecast, dict):
+        return ""
+    return str(forecast.get("date", "")).strip()
+
+
 def _run_db_pipeline_slot(
     slot: str,
     *,
     include_csv: bool = True,
     include_settings: bool = True,
+    extra_env: dict[str, str] | None = None,
 ) -> None:
+    env = {
+        "CLOUD_JOB_SLOT": slot,
+        "DATA_PIPELINE_INCLUDE_CSV": "true" if include_csv else "false",
+        "DATA_PIPELINE_INCLUDE_SETTINGS": "true" if include_settings else "false",
+    }
+    if extra_env:
+        env.update(extra_env)
     _run(
         [sys.executable, "db_pipeline_main.py"],
-        {
-            "CLOUD_JOB_SLOT": slot,
-            "DATA_PIPELINE_INCLUDE_CSV": "true" if include_csv else "false",
-            "DATA_PIPELINE_INCLUDE_SETTINGS": "true" if include_settings else "false",
-        },
+        env,
     )
 
 
@@ -1057,6 +1072,15 @@ def _run_adjust_03() -> None:
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
     if not _ensure_night_plan_available(plan_path):
         raise RuntimeError(f"night charge plan not found: {plan_path}")
+    _run_db_pipeline_slot(
+        "03",
+        include_csv=True,
+        include_settings=False,
+        extra_env={
+            "DATA_DB_WRITE_ONLY_23": "false",
+            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+        },
+    )
     _monitor_partial_forced_and_stop(plan_path)
 
 

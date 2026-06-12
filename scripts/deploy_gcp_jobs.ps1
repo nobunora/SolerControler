@@ -32,7 +32,8 @@
     [switch]$SkipCapacityCheck,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
-    [switch]$RunSmokeTest
+    [switch]$RunSmokeTest,
+    [switch]$Enable23Scheduler
 )
 
 $ErrorActionPreference = "Stop"
@@ -359,7 +360,7 @@ $commonEnv = @(
     "KP_DYNAMIC_MODE_SWITCH_BY_TIME=true",
     "KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json",
     "KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json",
-    "KP_DEFAULT_CHARGE_POWER_KW=1.8",
+    "KP_DEFAULT_CHARGE_POWER_KW=4.0",
     "KP_GREEN_MODE_MAX_CHARGE_PERCENT=50",
     "KP_FORCE_PARTIAL_SOC_MIN_PERCENT=51",
     "KP_FORCE_PARTIAL_SOC_MAX_PERCENT=100",
@@ -411,7 +412,7 @@ $commonEnv = @(
     "DATA_BACKEND=$DataBackend",
     "DATA_DB_PATH=artifacts/solar_monitor.db",
     "DATA_DB_SYNC_ENABLED=false",
-    "DATA_DB_WRITE_ONLY_23=true",
+    "DATA_DB_WRITE_ONLY_23=false",
     "DATA_WEEKLY_BACKUP_ENABLED=true",
     "DATA_WEEKLY_BACKUP_WEEKDAY=5",
     "DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly",
@@ -454,7 +455,7 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
 Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23" --set-secrets $secretEnvArg
-Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REFRESH_ENABLED=true,ADJUST03_REFRESH_HHMM=03:10,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
+Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REFRESH_ENABLED=true,ADJUST03_REFRESH_HHMM=03:10,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
 $deploySheetsJob = $sheetsExportEnabled -and [bool]$sheetsIdResolved
@@ -515,6 +516,11 @@ if ($deploySheetsJob) {
     Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
 }
 
+if (-not $Enable23Scheduler) {
+    Write-Host "Pause 23:00 scheduler by default (04:30 controller is primary)."
+    Pause-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
+}
+
 if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
     Write-Host "Pause legacy Tokyo schedulers (keep resources, stop execution)..."
     Pause-SchedulerIfExists -Name "solar-battery-run-23" -Location $LegacySchedulerRegionToPause
@@ -530,13 +536,13 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00), $Job03Name (04:30 night controller), $Job07Name (07:00)"
+Write-Host "Jobs: $Job23Name (23:00 manual/paused scheduler), $Job03Name (04:30 night controller), $Job07Name (07:00)"
 if ($deploySheetsJob) {
     Write-Host "Sheets backup job: $SheetsJobName (00:20)"
-    Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"
+    Write-Host "Schedulers: solar-battery-run-23 (paused unless -Enable23Scheduler), solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"
 } else {
     Write-Host "Sheets backup job: skipped (SHEETS_SPREADSHEET_ID is empty)"
-    Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
+    Write-Host "Schedulers: solar-battery-run-23 (paused unless -Enable23Scheduler), solar-battery-run-03, solar-battery-run-07"
 }
 
 if (-not $SkipArtifactPrune) {

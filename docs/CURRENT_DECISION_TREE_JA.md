@@ -1,6 +1,6 @@
 # 現在の判定ルール（条件木）
 
-最終更新: 2026-05-24 (JST)  
+最終更新: 2026-06-13 (JST)
 対象コード: `cloud_job_runner.py`, `app/kpnet_workflow.py`, `energy_model_main.py`, `config/operation_conditions.json`
 
 この文書は、現在実装されている「設定適用の判定ロジック」を条件木として整理したものです。
@@ -11,7 +11,7 @@
 
 ```text
 ROOT: CLOUD_JOB_SLOT
-├─ in {"23", "night", "night23"}
+├─ in {"23", "night", "night23"}  ※現在のScheduler既定はpause
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
 │  ├─ energy_model_main.py
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
@@ -22,8 +22,9 @@ ROOT: CLOUD_JOB_SLOT
 │  └─ sheets_export_main.py (optional)
 ├─ in {"3", "03", "adjust", "adjust03"}
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
-│  ├─ 23時に作成した night_charge_plan.json を維持
-│  ├─ 00時台の最新SOCから必要充電kWhを再見積もり
+│  ├─ 当日 night_charge_plan.json を復元。なければ当日分を再生成
+│  ├─ 04:30時点の最新SOCから必要充電kWhを再見積もり
+│  ├─ db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_DB_WRITE_ONLY_23=false, DATA_PREFER_NIGHT_PLAN_METRICS=true)
 │  ├─ 強制充電が必要(必要SOC差 >= KP_GREEN_MODE_MAX_CHARGE_PERCENT)なら:
 │  │  ├─ 07:00 逆算で「強制モード開始時刻」を算出
 │  │  ├─ 逆算時刻まで待機

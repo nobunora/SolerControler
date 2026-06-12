@@ -1,6 +1,6 @@
 # Solar Controller Automation (Cloud Run Jobs)
 
-23:00 / 04:30 / 07:00（JST）に以下を自動実行する Python 実装です。
+04:30 / 07:00（JST）を主系として自動実行する Python 実装です。23:00ジョブは残していますが、現在のデプロイ既定ではSchedulerをpauseし、必要時の手動実行/プレビュー用途に寄せています。
 
 1. ブラウザで 12 時間先の太陽日射時間を取得  
 2. モニタリングサービスにログインして CSV を取得  
@@ -136,7 +136,8 @@ python kpnet_main.py
 - `PV_ARRAY_CONFIG_PATH=config/pv_arrays.json`
 - `PV_ARRAY_CALIBRATION_LOOKBACK_DAYS=45`（実測発電量でperformance_ratioを補正する履歴日数）
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
-- `KP_DEFAULT_CHARGE_POWER_KW=1.8`（夜間実測が取れない場合のフォールバック）
+- `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
+- `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（4:30制御でSOC実測レートが取れない場合のフォールバック）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`
 - `KP_DOWNLOAD_LATEST_MONTH=true`
 - `KP_CSV_OUTPUT_FORMAT=太陽光発電＋蓄電池`
@@ -154,7 +155,7 @@ python kpnet_main.py
 - `DATA_DB_PATH=artifacts/solar_monitor.db`
 - `DATA_BACKEND=sqlite|postgres|firestore`
 - `DATA_DB_SYNC_ENABLED=false`（既定。逐次Cloud Storage同期は無効化）
-- `DATA_DB_WRITE_ONLY_23=true`（DB永続化は23時のみ）
+- `DATA_DB_WRITE_ONLY_23=false`（23時Scheduler pause運用のため、04:30/07:00側でもDB永続化を許可）
 - `DATA_WEEKLY_BACKUP_ENABLED=true`（週1回だけ差分バックアップ）
 - `DATA_WEEKLY_BACKUP_WEEKDAY=5`（土曜）
 - `DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly`
@@ -197,7 +198,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 
 ## 4. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 04:30夜間コントローラ / 07:00 ジョブと Scheduler を一括登録
+推奨: 自動化スクリプトで 23:00 / 04:30夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。既定では23:00 Schedulerを作成/更新後にpauseし、04:30夜間コントローラを主系にします。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -216,6 +217,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - 実行用 / Scheduler用の専用サービスアカウント作成
 - Cloud Run Job 3本（23時用 / 04:30夜間コントローラ用 / 7時用）デプロイ
 - Cloud Scheduler 3本（`0 23 * * *`, `30 4 * * *`, `0 7 * * *` JST）作成/更新
+- `solar-battery-run-23` は既定でpause（23:00を有効化したい場合は `-Enable23Scheduler`）
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell
