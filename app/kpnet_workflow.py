@@ -564,6 +564,69 @@ def _estimate_charge_power_kw(
     return fallback_kw
 
 
+def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
+    points: list[tuple[datetime, float, float]] = []
+    for csv_path in csv_paths:
+        if not csv_path.exists():
+            continue
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                date_text = (row.get("年月日") or "").strip()
+                time_text = (row.get("時刻") or "").strip()
+                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
+                charge_text = (row.get("充電電力量[kWh]") or "").strip()
+                if not date_text or not time_text or not soc_text:
+                    continue
+                try:
+                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
+                    soc = float(soc_text)
+                    charge_kwh = float(charge_text) if charge_text else 0.0
+                except (TypeError, ValueError):
+                    continue
+                points.append((dt, soc, charge_kwh))
+    points.sort(key=lambda x: x[0])
+    return points
+
+
+def _estimate_charge_soc_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
+    fallback = float(_env("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "40").strip() or "40")
+    min_rate = float(_env("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25").strip() or "25")
+    max_rate = float(_env("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50").strip() or "50")
+    min_charge_kwh = float(_env("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2").strip() or "1.2")
+    if max_rate < min_rate:
+        max_rate = min_rate
+
+    samples: list[float] = []
+    previous: tuple[datetime, float, float] | None = None
+    for point in _iter_charge_soc_points(csv_paths):
+        if previous is None:
+            previous = point
+            continue
+        prev_dt, prev_soc, _prev_charge = previous
+        dt, soc, charge_kwh = point
+        hours = (dt - prev_dt).total_seconds() / 3600.0
+        delta_soc = soc - prev_soc
+        if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
+            samples.append(delta_soc / hours)
+        previous = point
+
+    if samples:
+        raw_rate = statistics.median(samples)
+        source = "csv-forced-charge-soc-rate"
+    else:
+        raw_rate = fallback
+        source = "fallback-forced-charge-soc-rate"
+    rate = max(min_rate, min(max_rate, raw_rate))
+    return {
+        "percent_per_hour": rate,
+        "raw_percent_per_hour": raw_rate,
+        "sample_count": len(samples),
+        "sample_min_charge_kwh": min_charge_kwh,
+        "source": source,
+    }
+
+
 def _required_charge_percent(plan: NightChargePlan) -> float:
     target_soc = max(0.0, plan.target_soc_7_percent)
     soc_now = plan.soc_now_percent
@@ -803,9 +866,34 @@ def _build_dynamic_forced_profile(
     )
 
     required_night_charge_kwh = max(0.0, plan.required_night_charge_kwh)
-    duration_minutes = 0
+    target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
+    night_mode_preference, required_charge_percent, force_charge_mode = _pick_night_mode_preference(
+        plan=plan,
+        green_mode_max_charge_percent=cfg.green_mode_max_charge_percent,
+    )
+    soc_charge_code = _pick_ceil_code(value_maps["SocChargeMode"], target_soc_7_percent)
+
+    duration_minutes_kwh = 0
     if estimated_charge_power_kw > 0 and required_night_charge_kwh > 0:
-        duration_minutes = int(math.ceil(required_night_charge_kwh / estimated_charge_power_kw * 60.0))
+        duration_minutes_kwh = int(math.ceil(required_night_charge_kwh / estimated_charge_power_kw * 60.0))
+
+    charge_rate_info: dict[str, float | int | str] | None = None
+    duration_minutes_soc: int | None = None
+    duration_source = "kwh"
+    duration_minutes = duration_minutes_kwh
+    soc_upper_percent = _to_optional_float(soc_charge_code)
+    rounded_up_soc_target = (
+        soc_upper_percent is not None
+        and soc_upper_percent > target_soc_7_percent + 0.01
+        and plan.soc_now_percent is not None
+        and required_charge_percent > 0
+    )
+    if rounded_up_soc_target:
+        charge_rate_info = _estimate_charge_soc_rate_percent_per_hour(plan.csv_paths)
+        rate = max(1.0, float(charge_rate_info["percent_per_hour"]))
+        duration_minutes_soc = int(math.ceil(required_charge_percent / rate * 60.0))
+        duration_minutes = duration_minutes_soc
+        duration_source = "soc-rate-rounded-target"
 
     # ユーザー要件:
     # - 夜間設定の充電終了は運用条件で決定
@@ -845,11 +933,6 @@ def _build_dynamic_forced_profile(
         name="KP_DAY_DISCHARGE_WINDOW_END",
     )
 
-    target_soc_7_percent = max(0.0, plan.target_soc_7_percent)
-    night_mode_preference, required_charge_percent, force_charge_mode = _pick_night_mode_preference(
-        plan=plan,
-        green_mode_max_charge_percent=cfg.green_mode_max_charge_percent,
-    )
     night_mode_code = _pick_battery_operating_mode_code(
         value_maps["BatteryOperatingMode"],
         prefer=night_mode_preference,
@@ -857,7 +940,6 @@ def _build_dynamic_forced_profile(
     night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_max_code(value_maps["SocContactInput"])
-    soc_charge_code = _pick_ceil_code(value_maps["SocChargeMode"], target_soc_7_percent)
 
     summary["night_charge_plan"] = {
         "plan_path": str(plan.plan_path),
@@ -870,6 +952,12 @@ def _build_dynamic_forced_profile(
         "effective_capacity_kwh": plan.effective_capacity_kwh,
         "target_soc_7_percent_raw": target_soc_7_percent,
         "estimated_charge_power_kw": estimated_charge_power_kw,
+        "duration_minutes_kwh": duration_minutes_kwh,
+        "duration_minutes_soc": duration_minutes_soc,
+        "duration_source": duration_source,
+        "charge_rate_percent_per_hour": (charge_rate_info or {}).get("percent_per_hour"),
+        "charge_rate_source": (charge_rate_info or {}).get("source"),
+        "charge_rate_sample_count": (charge_rate_info or {}).get("sample_count"),
         "duration_minutes": duration_minutes,
         "duration_clipped_to_window": duration_clipped,
         "no_cross_midnight": True,
@@ -891,14 +979,18 @@ def _build_dynamic_forced_profile(
     }
 
     LOGGER.info(
-        "Night plan date=%s required=%.3fkWh power=%.3fkW start=%02d:%02d end=%02d:%02d socUpper=%s",
+        "Night plan date=%s required=%.3fkWh power=%.3fkW duration=%s/%smin source=%s start=%02d:%02d end=%02d:%02d socTarget=%.1f socUpper=%s",
         plan.forecast_date,
         required_night_charge_kwh,
         estimated_charge_power_kw,
+        duration_minutes_kwh,
+        duration_minutes,
+        duration_source,
         charge_start_h,
         charge_start_m,
         charge_end_h,
         charge_end_m,
+        target_soc_7_percent,
         soc_charge_code,
     )
 

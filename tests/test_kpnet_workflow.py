@@ -205,6 +205,68 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     assert profile.discharge_end_m == "0"
 
 
+def test_build_dynamic_forced_profile_times_rounded_soc_limit_by_raw_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "40")
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25")
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50")
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "0.8")
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,充電電力量[kWh],蓄電残量(SOC)[%]",
+                "2026/06/18,05:00,0.0,0",
+                "2026/06/18,05:30,1.0,20",
+                "2026/06/18,06:00,1.0,40",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-06-19"},
+                "inputs": {"soc_now_percent": 0.0},
+                "result": {
+                    "required_night_charge_kwh": 3.25,
+                    "effective_capacity_kwh": 8.9,
+                    "target_soc_7_percent": 34.0,
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cfg = _build_cfg(plan_path=plan_path)
+    value_maps = {
+        "BatteryOperatingMode": {"1": "グリーンモード", "2": "経済モード", "3": "強制充電モード"},
+        "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
+        "SocEconomyMode": {"0": "0%", "20": "20%"},
+        "SocContactInput": {"0": "0%", "100": "100%"},
+        "SocChargeMode": {"0": "0%", "10": "10%", "20": "20%", "30": "30%", "40": "40%"},
+    }
+    summary: dict[str, object] = {}
+
+    profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
+
+    assert profile.soc_charge_mode == "40"
+    # Raw target is 34%, but KP-NET upper code is 40%. 34% / 40%/h = 51min,
+    # so start should be 05:09 for a 06:00 end instead of the earlier kWh-based time.
+    assert profile.charge_start_h == "5"
+    assert profile.charge_start_m == "9"
+    night_plan_summary = summary.get("night_charge_plan", {})
+    assert isinstance(night_plan_summary, dict)
+    assert night_plan_summary.get("duration_source") == "soc-rate-rounded-target"
+    assert night_plan_summary.get("duration_minutes") == 51
+    assert night_plan_summary.get("duration_minutes_kwh") == 98
+    assert night_plan_summary.get("charge_rate_percent_per_hour") == pytest.approx(40.0)
+
+
 @pytest.mark.parametrize(
     ("sun_hours", "expected_discharge_start_h", "expected_charge_end_h"),
     [

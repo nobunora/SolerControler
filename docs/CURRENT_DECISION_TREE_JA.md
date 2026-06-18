@@ -109,6 +109,10 @@ ROOT: charge_start_time
 ├─ duration_minutes
 │  ├─ power>0 かつ required>0 -> ceil(required/power*60)
 │  └─ それ以外 -> 0
+├─ SocChargeMode が target_soc_7_percent より上に丸められ、現在SOCがある場合
+│  ├─ CSVのSOC増分から強制充電時のSOC上昇率(%/h)を推定
+│  ├─ データが無ければ ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR
+│  └─ duration_minutes = ceil((target_soc_7_percent - soc_now_percent) / rate * 60)
 ├─ duration_minutes > charge_end_minute の場合は clip
 └─ charge_start = max(0, charge_end - duration)
 ```
@@ -116,6 +120,11 @@ ROOT: charge_start_time
 03側の夜間コントローラでは、23時計画の `required_night_charge_kwh` をそのまま使わず、
 00時台に取り込んだ最新SOCと有効容量から必要充電kWhを再計算します。
 これにより、23時計画時点のSOC推定が古い場合でも、開始時刻を7時から再逆算します。
+
+KP-NET の `SocChargeMode` は候補値への丸めが必要なため、たとえば生目標が34%でも
+送信するSOC上限コードは40%になります。この場合でも開始時刻は40%到達ではなく、
+生目標34%到達を狙ってSOC上昇率から逆算します。これにより、1の位のSOC設定ができない
+制約を、充電開始時刻側で吸収します。
 
 ### 3-3. 放電開始時刻（日中側境界）
 

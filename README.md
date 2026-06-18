@@ -136,6 +136,7 @@ python kpnet_main.py
 - `PV_ARRAY_CONFIG_PATH=config/pv_arrays.json`
 - `PV_ARRAY_CALIBRATION_LOOKBACK_DAYS=45`（実測発電量でperformance_ratioを補正する履歴日数）
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
+- `OVERNIGHT_DISCHARGE_GUARD_CAP_KWH=2.0`（4:30以降7:00までの残り夜間放電見込みの上限）
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
 - `ADJUST03_REGENERATE_PLAN=true`（23時停止運用のため、04:30で当日計画を毎回再生成）
 - `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（4:30制御でSOC実測レートが取れない場合のフォールバック）
@@ -160,6 +161,9 @@ python kpnet_main.py
 - `DATA_WEEKLY_BACKUP_ENABLED=true`（週1回だけ差分バックアップ）
 - `DATA_WEEKLY_BACKUP_WEEKDAY=5`（土曜）
 - `DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly`
+- `DRIVE_BACKUP_FOLDER_ID`（Google Drive の共有フォルダID。完全復旧用の退避先）
+- `DRIVE_BACKUP_MODE=all|data|source`（既定は `all`。`source` は更新時のみ上書き）
+- `DRIVE_BACKUP_REPO_ROOT`（空ならリポジトリルートを自動使用）
 - `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`（`DATA_BACKEND=postgres` 時）
 - `FIRESTORE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`（`DATA_BACKEND=firestore` 時）
 - `DRY_RUN=true` の間は設定登録は行わず、確認画面到達までを検証
@@ -197,7 +201,50 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 - `confirm_night-green.html`, `confirm_green-mode.html`（`KP_SETTINGS_SEQUENCE=forced-then-green`）
 - `kpnet_summary.json`
 
-## 4. Cloud Run Jobs デプロイ例
+## 4. Google Drive バックアップ
+
+完全復旧を目指す場合は、ソースとデータを Drive に分けて退避します。
+
+- ソース: `scripts/backup_drive.py --mode source`
+  - `app/`, `scripts/`, `docs/`, 設定ファイルなどを ZIP 化
+  - 変更がないときは再保存しない
+- データ: `scripts/backup_drive.py --mode data`
+  - Firestore の全コレクションを JSON gzip で保存
+  - 1.7MB 規模なら毎日フルで十分
+- `all` モード
+  - ソースは更新時だけ上書き
+  - データは毎日上書き
+  - Cloud Scheduler では JST 01:10 の日次実行を想定
+
+Drive 側は、共有フォルダを Cloud Run の実行サービスアカウントに編集権限で共有してください。
+このフォルダには `source.zip` / `source_manifest.json` / `data_snapshot.json.gz` / `data_manifest.json` を置きます。
+
+ローカルで直接実行する場合は、Drive への書き込み権限を持つ認証が必要です。
+- サービスアカウント鍵を使うなら `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`
+- ユーザー認証を使うなら Drive スコープ付きの ADC を作る
+
+この認証がないと、`insufficient authentication scopes` で止まります。
+
+### 30分CSVの保存先
+
+- 通常の監視CSVダウンロードは各実行の `artifacts/<run_id>/` に保存されます。
+- KP-NET の 30分データは `artifacts/<run_id>/csv/` に保存されます。
+- `history.csv` は要約履歴なので、元CSVのコピーを探すときは上記の run ディレクトリを見てください。
+
+### CSVを1つにまとめる
+
+必要なときだけ手動で使う補助スクリプトです。
+
+```powershell
+python .\scripts\merge_csvs.py --input-root artifacts --include-source-file
+```
+
+- `artifacts/**/csv/*.csv` を探して 1 つの CSV にまとめます
+- 既定の出力先は `artifacts/combined_csv/merged-<timestamp>.csv` です
+- `--include-source-file` を付けると元ファイルの相対パスを `source_file` 列に残します
+- 同一行は重複除外し、先に見つかった行だけを残します
+
+## 5. Cloud Run Jobs デプロイ例
 
 推奨: 自動化スクリプトで 23:00 / 04:30夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。既定では23:00 Schedulerを作成/更新後にpauseし、04:30夜間コントローラを主系にします。
 
@@ -219,6 +266,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Cloud Run Job 3本（23時用 / 04:30夜間コントローラ用 / 7時用）デプロイ
 - Cloud Scheduler 3本（`0 23 * * *`, `30 4 * * *`, `0 7 * * *` JST）作成/更新
 - `solar-battery-run-23` は既定でpause（23:00を有効化したい場合は `-Enable23Scheduler`）
+- `DRIVE_BACKUP_FOLDER_ID` が設定されている場合は Drive バックアップ Job も作成し、日次で `scripts/backup_drive.py --mode all` を実行
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell
@@ -247,7 +295,7 @@ gcloud run jobs create $JOB_NAME `
   --env-vars-file=.env.prod
 ```
 
-## 5. 07:00/04:30/23:00 実行の Scheduler 設定例
+## 6. 07:00/04:30/23:00 実行の Scheduler 設定例
 
 ```powershell
 $SCHEDULER_REGION="asia-northeast1"
@@ -278,14 +326,14 @@ gcloud scheduler jobs create http "solar-battery-run-07" `
   --oauth-service-account-email="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 ```
 
-## 6. 安全運用の注意
+## 7. 安全運用の注意
 
 - Cloud Scheduler は at-least-once 実行です（重複実行の可能性あり）
 - この実装は「現在値と同じなら更新しない」ことで冪等性を高めています
 - 認証情報は本番では Secret Manager 連携を推奨します
 - サービス利用規約に反しない範囲で利用してください
 
-## 7. リリース前チェック
+## 8. リリース前チェック
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
@@ -296,7 +344,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
 - ユニットテスト（`pytest`）
 - セキュリティ設定チェック（`scripts/security_check.py`）
 
-## 8. DB保存方針（今回の運用）
+## 9. DB保存方針（今回の運用）
 
 - DB形式: `DATA_BACKEND=firestore`（推奨）または `sqlite` / `postgres`
 - 23時ジョブのみ `db_pipeline_main.py` を実行し、以下をDBに反映
@@ -306,7 +354,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
 - 毎回のCloud Storage追加は行わない（無効化）
 - 週1回のみ、直近7日で更新された行を差分バックアップ（JSON）として保存
 
-## 9. ダッシュボード（Web）
+## 10. ダッシュボード（Web）
 
 ローカル起動:
 

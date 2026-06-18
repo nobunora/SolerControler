@@ -219,12 +219,17 @@
 1. `night_charge_plan.json` を読む
 2. CSVから夜間充電電力を推定する
 3. `required_night_charge_kwh / estimated_charge_power_kw` から必要充電時間を計算する
-4. `night_charge_end_time` と `night_charge_end_by_forecast` で充電終了時刻を決める
-5. 終了時刻から必要充電時間を逆算して充電開始時刻を決める
-6. 必要時間が終了時刻までの同日内窓を超える場合は、開始時刻を `00:00` 側へクリップする
-7. `fixed` 条件で0時跨ぎと開始終了同一を補正する
-8. `day_discharge_start_by_forecast` で日中放電開始時刻を決める
-9. SOC目標値以上の最小 `SocChargeMode` コードを選ぶ
+4. SOC目標値以上の最小 `SocChargeMode` コードを選ぶ
+5. `SocChargeMode` が生SOC目標より上に丸められ、現在SOCがある場合は、CSVのSOC増分から推定した強制充電SOC上昇率で必要時間を再計算する
+6. `night_charge_end_time` と `night_charge_end_by_forecast` で充電終了時刻を決める
+7. 終了時刻から必要充電時間を逆算して充電開始時刻を決める
+8. 必要時間が終了時刻までの同日内窓を超える場合は、開始時刻を `00:00` 側へクリップする
+9. `fixed` 条件で0時跨ぎと開始終了同一を補正する
+10. `day_discharge_start_by_forecast` で日中放電開始時刻を決める
+
+`SocChargeMode` はKP-NET側の候補値へ丸める必要があります。生目標が34%で候補値が10%刻みなら、
+送信するSOC上限コードは40%になります。ただし充電開始時刻は40%到達ではなく34%到達を狙うため、
+現在SOCから生目標までの差分を `ADJUST03_FORCE_CHARGE_RATE_*` の実測SOC上昇率で逆算します。
 
 強制充電モードかグリーンモードかの選択:
 

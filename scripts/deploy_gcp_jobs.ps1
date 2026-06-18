@@ -25,6 +25,10 @@
     [string]$SheetsSpreadsheetId = "",
     [string]$SheetsSpreadsheetTitle = "SolarController Backup",
     [string]$SheetsShareEmail = "",
+    [string]$DriveBackupJobName = "solar-drive-backup",
+    [string]$DriveBackupSchedulerName = "solar-drive-backup-daily",
+    [string]$DriveBackupFolderId = "",
+    [string]$DriveBackupSchedule = "10 1 * * *",
     [double]$MaxArtifactRegistryMB = 500.0,
     [double]$MaxCloudBuildBucketMB = 5120.0,
     [double]$MaxAppDataBucketMB = 5120.0,
@@ -92,6 +96,12 @@ function Get-MonitorCredentials {
     }
     if ($envMap.ContainsKey("KP_MONITOR_PASSWORD")) {
         $password = [string]$envMap["KP_MONITOR_PASSWORD"]
+    }
+    if (-not $username -and $env:KP_MONITOR_USERNAME) {
+        $username = [string]$env:KP_MONITOR_USERNAME
+    }
+    if (-not $password -and $env:KP_MONITOR_PASSWORD) {
+        $password = [string]$env:KP_MONITOR_PASSWORD
     }
     if ($username -and $password) {
         return @{ username = $username; password = $password }
@@ -288,6 +298,10 @@ if (-not $sheetsShareResolved) {
         }
     }
 }
+$driveBackupFolderResolved = $DriveBackupFolderId
+if (-not $driveBackupFolderResolved -and $envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID")) {
+    $driveBackupFolderResolved = [string]$envMap["DRIVE_BACKUP_FOLDER_ID"]
+}
 $creds = Get-MonitorCredentials
 $usernameSecret = "kp-monitor-username"
 $passwordSecret = "kp-monitor-password"
@@ -401,6 +415,7 @@ $commonEnv = @(
     "DAYTIME_PV_HEADROOM_CAP_ENABLED=true",
     "DAYTIME_PV_HEADROOM_CAP_MIN_KWH=0.5",
     "NIGHT_RESERVE_SOC_PERCENT=0",
+    "OVERNIGHT_DISCHARGE_GUARD_CAP_KWH=2.0",
     "CONSUMPTION_MODEL_MIN_TRAINING_DAYS=45",
     "CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS=14",
     "OCCUPANCY_SCHEDULE_ENABLED=true",
@@ -479,12 +494,40 @@ if ($deploySheetsJob) {
     Write-Warning "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. Skipping $SheetsJobName deployment and scheduler."
 }
 
+$deployDriveBackupJob = [bool]$driveBackupFolderResolved
+if ($deployDriveBackupJob) {
+    $driveBackupMode = "all"
+    if ($DataBackend -ne "firestore") {
+        $driveBackupMode = "source"
+        Write-Warning "Drive backup data export is optimized for Firestore. Deploying source-only backup job because DATA_BACKEND=$DataBackend."
+    }
+    $driveBackupEnv = @(
+        "TIMEZONE=Asia/Tokyo",
+        "DATA_BACKEND=$DataBackend",
+        "DATA_DB_PATH=artifacts/solar_monitor.db",
+        "DRIVE_BACKUP_FOLDER_ID=$driveBackupFolderResolved",
+        "DRIVE_BACKUP_MODE=$driveBackupMode",
+        "FIRESTORE_PROJECT_ID=$ProjectId",
+        "FIRESTORE_DATABASE_ID=(default)",
+        "CLOUD_JOB_SLOT=backup"
+    )
+    $driveBackupEnv += $backendEnv
+    $driveBackupEnvArg = [string]::Join(",", $driveBackupEnv)
+    $driveBackupArgs = "scripts/backup_drive.py,--mode,$driveBackupMode"
+    Invoke-GCloud run jobs deploy $DriveBackupJobName --project $ProjectId --region $Region --image $image --service-account $runSa --command python --args $driveBackupArgs --task-timeout 1800 --max-retries 1 --set-env-vars $driveBackupEnvArg
+} elseif ($DriveBackupFolderId -or ($envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID") -and [string]$envMap["DRIVE_BACKUP_FOLDER_ID"])) {
+    Write-Warning "Drive backup folder is configured, but the value is empty after resolution. Skipping Drive backup job."
+}
+
 Write-Host "Grant run.invoker to scheduler service account..."
 Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 if ($deploySheetsJob) {
     Invoke-GCloud run jobs add-iam-policy-binding $SheetsJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+}
+if ($deployDriveBackupJob) {
+    Invoke-GCloud run jobs add-iam-policy-binding $DriveBackupJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 }
 
 function Upsert-SchedulerRunJob {
@@ -515,6 +558,9 @@ Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * 
 if ($deploySheetsJob) {
     Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
 }
+if ($deployDriveBackupJob) {
+    Upsert-SchedulerRunJob -SchedulerName $DriveBackupSchedulerName -Schedule $DriveBackupSchedule -TargetJobName $DriveBackupJobName
+}
 
 if (-not $Enable23Scheduler) {
     Write-Host "Pause 23:00 scheduler by default (04:30 controller is primary)."
@@ -543,6 +589,12 @@ if ($deploySheetsJob) {
 } else {
     Write-Host "Sheets backup job: skipped (SHEETS_SPREADSHEET_ID is empty)"
     Write-Host "Schedulers: solar-battery-run-23 (paused unless -Enable23Scheduler), solar-battery-run-03, solar-battery-run-07"
+}
+if ($deployDriveBackupJob) {
+    Write-Host "Drive backup job: $DriveBackupJobName ($DriveBackupSchedule)"
+    Write-Host "Drive backup folder: $driveBackupFolderResolved"
+} else {
+    Write-Host "Drive backup job: skipped (DRIVE_BACKUP_FOLDER_ID is empty)"
 }
 
 if (-not $SkipArtifactPrune) {
