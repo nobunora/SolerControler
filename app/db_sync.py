@@ -91,7 +91,20 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
     },
     "forecast_hourly": {
         "key_cols": ("date", "hour"),
-        "columns": ("date", "hour", "forecast_pv_kwh", "forecast_load_kwh", "forecast_charge_kwh", "source", "updated_at"),
+        "columns": (
+            "date",
+            "hour",
+            "forecast_pv_kwh",
+            "forecast_load_kwh",
+            "forecast_charge_kwh",
+            "forecast_weather_code",
+            "forecast_precipitation_mm",
+            "forecast_precipitation_probability",
+            "forecast_cloud_cover",
+            "forecast_shortwave_radiation_w_m2",
+            "source",
+            "updated_at",
+        ),
     },
 }
 
@@ -160,7 +173,17 @@ def _row_value(row: dict[str, Any], key: str) -> Any:
     value = row.get(key)
     if key in {"hour"}:
         return _as_int(value)
-    if key.endswith("_kwh") or key.endswith("_percent") or key.endswith("_yen") or key.endswith("_hours") or key.endswith("_temp_c"):
+    if (
+        key.endswith("_kwh")
+        or key.endswith("_percent")
+        or key.endswith("_yen")
+        or key.endswith("_hours")
+        or key.endswith("_temp_c")
+        or key.endswith("_mm")
+        or key.endswith("_probability")
+        or key.endswith("_cover")
+        or key.endswith("_w_m2")
+    ):
         return _as_float(value)
     if key in {"sample_count", "csv_rows_upserted", "forecast_weather_code", "actual_weather_code"}:
         return _as_int(value)
@@ -214,8 +237,11 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
         conn.execute(
             """
             INSERT INTO forecast_hourly (
-                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
+                forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.get("date"),
@@ -223,6 +249,11 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_pv_kwh")),
                 _as_float(row.get("forecast_load_kwh")),
                 _as_float(row.get("forecast_charge_kwh")),
+                _as_int(row.get("forecast_weather_code")),
+                _as_float(row.get("forecast_precipitation_mm")),
+                _as_float(row.get("forecast_precipitation_probability")),
+                _as_float(row.get("forecast_cloud_cover")),
+                _as_float(row.get("forecast_shortwave_radiation_w_m2")),
                 row.get("source"),
                 row.get("updated_at"),
             ),
@@ -268,12 +299,20 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
         conn.execute(
             """
             INSERT INTO forecast_hourly (
-                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
+                forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
                 forecast_charge_kwh=excluded.forecast_charge_kwh,
+                forecast_weather_code=excluded.forecast_weather_code,
+                forecast_precipitation_mm=excluded.forecast_precipitation_mm,
+                forecast_precipitation_probability=excluded.forecast_precipitation_probability,
+                forecast_cloud_cover=excluded.forecast_cloud_cover,
+                forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
@@ -283,6 +322,11 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_pv_kwh")),
                 _as_float(row.get("forecast_load_kwh")),
                 _as_float(row.get("forecast_charge_kwh")),
+                _as_int(row.get("forecast_weather_code")),
+                _as_float(row.get("forecast_precipitation_mm")),
+                _as_float(row.get("forecast_precipitation_probability")),
+                _as_float(row.get("forecast_cloud_cover")),
+                _as_float(row.get("forecast_shortwave_radiation_w_m2")),
                 row.get("source"),
                 row.get("updated_at"),
             ),

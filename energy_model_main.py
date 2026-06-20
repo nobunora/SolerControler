@@ -298,6 +298,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
     params = {
         "latitude": lat,
         "longitude": lon,
+        "hourly": "weather_code,precipitation,precipitation_probability,cloud_cover,shortwave_radiation",
         "daily": (
             "sunshine_duration,temperature_2m_mean,weather_code,"
             "precipitation_sum,precipitation_probability_mean,shortwave_radiation_sum"
@@ -333,6 +334,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
     if len(times) < 2:
         raise RuntimeError("翌日予報を取得できませんでした")
     daily = obj.get("daily", {})
+    hourly = obj.get("hourly", {})
     target_index = 1
     if target_date:
         try:
@@ -340,8 +342,36 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         except ValueError as exc:
             raise RuntimeError(f"指定日の予報を取得できませんでした: {target_date}") from exc
     weather_code = _to_optional_int(_list_value(daily.get("weather_code"), target_index))
+    forecast_date = str(times[target_index])
+    hourly_weather: list[dict[str, object]] = []
+    hourly_times = hourly.get("time", []) if isinstance(hourly, dict) else []
+    if isinstance(hourly_times, list):
+        for idx, raw_time in enumerate(hourly_times):
+            time_text = str(raw_time)
+            if not time_text.startswith(f"{forecast_date}T"):
+                continue
+            try:
+                hour = int(time_text.split("T", 1)[1].split(":", 1)[0])
+            except (IndexError, ValueError):
+                continue
+            hourly_weather.append(
+                {
+                    "time": time_text,
+                    "hour": hour,
+                    "weather_code": _to_optional_int(_list_value(hourly.get("weather_code"), idx)),
+                    "weather_class": _weather_class(_to_optional_int(_list_value(hourly.get("weather_code"), idx))),
+                    "precipitation_mm": _to_optional_float(_list_value(hourly.get("precipitation"), idx)),
+                    "precipitation_probability": _to_optional_float(
+                        _list_value(hourly.get("precipitation_probability"), idx)
+                    ),
+                    "cloud_cover": _to_optional_float(_list_value(hourly.get("cloud_cover"), idx)),
+                    "shortwave_radiation_w_m2": _to_optional_float(
+                        _list_value(hourly.get("shortwave_radiation"), idx)
+                    ),
+                }
+            )
     return {
-        "date": times[target_index],
+        "date": forecast_date,
         "sun_hours": (_to_optional_float(_list_value(sunshine, target_index)) or 0.0) / 3600.0,
         "temp_c": _to_optional_float(_list_value(temp, target_index)) or 0.0,
         "weather_code": weather_code,
@@ -353,6 +383,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         "shortwave_radiation_sum_mj_m2": _to_optional_float(
             _list_value(daily.get("shortwave_radiation_sum"), target_index)
         ),
+        "hourly_weather": hourly_weather,
     }
 
 
@@ -376,6 +407,7 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
             "shortwave_radiation_sum_mj_m2": _to_optional_float(
                 os.getenv("FORECAST_SHORTWAVE_RADIATION_SUM_MJ_M2_OVERRIDE", "").strip() or None
             ),
+            "hourly_weather": [],
             "source": "env-override",
         }
     try:

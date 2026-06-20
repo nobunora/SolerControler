@@ -150,6 +150,11 @@ def ensure_schema(conn) -> None:
             forecast_pv_kwh DOUBLE PRECISION,
             forecast_load_kwh DOUBLE PRECISION,
             forecast_charge_kwh DOUBLE PRECISION,
+            forecast_weather_code INTEGER,
+            forecast_precipitation_mm DOUBLE PRECISION,
+            forecast_precipitation_probability DOUBLE PRECISION,
+            forecast_cloud_cover DOUBLE PRECISION,
+            forecast_shortwave_radiation_w_m2 DOUBLE PRECISION,
             source TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(date, hour)
@@ -165,6 +170,11 @@ def ensure_schema(conn) -> None:
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_midday_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_evening_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_calibration_factor DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_weather_code INTEGER",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_precipitation_mm DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_precipitation_probability DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_cloud_cover DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_shortwave_radiation_w_m2 DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_soc_percent DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_at TEXT",
             "ALTER TABLE settings_events ADD COLUMN IF NOT EXISTS source_doc_id TEXT",
@@ -291,16 +301,28 @@ def ingest_sunshine_from_night_plan(
             cur.executemany(
                 """
                 INSERT INTO forecast_hourly (
-                    date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                    date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                    forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
+                    forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                    source, updated_at
                 )
                 VALUES (
                     %(date)s, %(hour)s, %(forecast_pv_kwh)s, %(forecast_load_kwh)s,
-                    %(forecast_charge_kwh)s, %(source)s, %(updated_at)s
+                    %(forecast_charge_kwh)s,
+                    %(forecast_weather_code)s, %(forecast_precipitation_mm)s,
+                    %(forecast_precipitation_probability)s, %(forecast_cloud_cover)s,
+                    %(forecast_shortwave_radiation_w_m2)s,
+                    %(source)s, %(updated_at)s
                 )
                 ON CONFLICT(date, hour) DO UPDATE SET
                     forecast_pv_kwh=excluded.forecast_pv_kwh,
                     forecast_load_kwh=excluded.forecast_load_kwh,
                     forecast_charge_kwh=excluded.forecast_charge_kwh,
+                    forecast_weather_code=excluded.forecast_weather_code,
+                    forecast_precipitation_mm=excluded.forecast_precipitation_mm,
+                    forecast_precipitation_probability=excluded.forecast_precipitation_probability,
+                    forecast_cloud_cover=excluded.forecast_cloud_cover,
+                    forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
                     source=excluded.source,
                     updated_at=excluded.updated_at
                 """,

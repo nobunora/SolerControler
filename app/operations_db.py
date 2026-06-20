@@ -85,6 +85,16 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
         pv_by_hour = {}
     if not isinstance(load_by_hour, dict):
         load_by_hour = {}
+    weather_by_hour: dict[int, dict[str, Any]] = {}
+    hourly_weather = forecast.get("hourly_weather", []) if isinstance(forecast, dict) else []
+    if isinstance(hourly_weather, list):
+        for item in hourly_weather:
+            if not isinstance(item, dict):
+                continue
+            hour = _to_int_any(item.get("hour"))
+            if hour is None or hour < 0 or hour > 23:
+                continue
+            weather_by_hour[hour] = item
 
     hours: set[int] = set()
     for source in (pv_by_hour, load_by_hour):
@@ -95,11 +105,13 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
                 continue
             if 0 <= hour <= 23:
                 hours.add(hour)
+    hours.update(weather_by_hour)
 
     rows: list[dict[str, Any]] = []
     for hour in sorted(hours):
         pv_kwh = _to_float_any(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
         load_kwh = _to_float_any(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
+        weather = weather_by_hour.get(hour, {})
         rows.append(
             {
                 "date": forecast_date,
@@ -107,6 +119,11 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
                 "forecast_pv_kwh": round(max(0.0, pv_kwh), 4),
                 "forecast_load_kwh": round(max(0.0, load_kwh), 4),
                 "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4),
+                "forecast_weather_code": _to_int_any(weather.get("weather_code")),
+                "forecast_precipitation_mm": _to_float_any(weather.get("precipitation_mm")),
+                "forecast_precipitation_probability": _to_float_any(weather.get("precipitation_probability")),
+                "forecast_cloud_cover": _to_float_any(weather.get("cloud_cover")),
+                "forecast_shortwave_radiation_w_m2": _to_float_any(weather.get("shortwave_radiation_w_m2")),
             }
         )
     return rows
@@ -353,6 +370,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             forecast_pv_kwh REAL,
             forecast_load_kwh REAL,
             forecast_charge_kwh REAL,
+            forecast_weather_code INTEGER,
+            forecast_precipitation_mm REAL,
+            forecast_precipitation_probability REAL,
+            forecast_cloud_cover REAL,
+            forecast_shortwave_radiation_w_m2 REAL,
             source TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(date, hour)
@@ -375,6 +397,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "forecast_pv_midday_kwh": "REAL",
             "forecast_pv_evening_kwh": "REAL",
             "forecast_pv_calibration_factor": "REAL",
+        },
+    )
+    _ensure_sqlite_columns(
+        conn,
+        "forecast_hourly",
+        {
+            "forecast_weather_code": "INTEGER",
+            "forecast_precipitation_mm": "REAL",
+            "forecast_precipitation_probability": "REAL",
+            "forecast_cloud_cover": "REAL",
+            "forecast_shortwave_radiation_w_m2": "REAL",
         },
     )
     _ensure_sqlite_columns(
@@ -690,13 +723,26 @@ def ingest_sunshine_from_night_plan(
         conn.executemany(
             """
             INSERT INTO forecast_hourly (
-                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
+                forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                source, updated_at
             )
-            VALUES (:date, :hour, :forecast_pv_kwh, :forecast_load_kwh, :forecast_charge_kwh, :source, :updated_at)
+            VALUES (
+                :date, :hour, :forecast_pv_kwh, :forecast_load_kwh, :forecast_charge_kwh,
+                :forecast_weather_code, :forecast_precipitation_mm, :forecast_precipitation_probability,
+                :forecast_cloud_cover, :forecast_shortwave_radiation_w_m2,
+                :source, :updated_at
+            )
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
                 forecast_charge_kwh=excluded.forecast_charge_kwh,
+                forecast_weather_code=excluded.forecast_weather_code,
+                forecast_precipitation_mm=excluded.forecast_precipitation_mm,
+                forecast_precipitation_probability=excluded.forecast_precipitation_probability,
+                forecast_cloud_cover=excluded.forecast_cloud_cover,
+                forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,

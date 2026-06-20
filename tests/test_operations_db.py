@@ -214,7 +214,31 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
         night_plan_path.write_text(
             """
             {
-              "forecast": {"date": "2026-05-03", "sun_hours": 3.5, "temp_c": 22.0},
+              "forecast": {
+                "date": "2026-05-03",
+                "sun_hours": 3.5,
+                "temp_c": 22.0,
+                "hourly_weather": [
+                  {
+                    "time": "2026-05-03T07:00",
+                    "hour": 7,
+                    "weather_code": 61,
+                    "precipitation_mm": 0.8,
+                    "precipitation_probability": 92,
+                    "cloud_cover": 100,
+                    "shortwave_radiation_w_m2": 88
+                  },
+                  {
+                    "time": "2026-05-03T08:00",
+                    "hour": 8,
+                    "weather_code": 3,
+                    "precipitation_mm": 0,
+                    "precipitation_probability": 30,
+                    "cloud_cover": 80,
+                    "shortwave_radiation_w_m2": 220
+                  }
+                ]
+              },
               "daytime_soc_optimization": {
                 "hourly_pv_forecast_kwh": {"7": 1.2, "8": 0.3},
                 "hourly_load_forecast_kwh": {"7": 0.8, "8": 0.9}
@@ -233,7 +257,10 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
 
         rows = conn.execute(
             """
-            SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh
+            SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                   forecast_weather_code, forecast_precipitation_mm,
+                   forecast_precipitation_probability, forecast_cloud_cover,
+                   forecast_shortwave_radiation_w_m2
             FROM forecast_hourly
             ORDER BY hour
             """
@@ -242,7 +269,13 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
         assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.2)
         assert rows[0]["forecast_load_kwh"] == pytest.approx(0.8)
         assert rows[0]["forecast_charge_kwh"] == pytest.approx(0.4)
+        assert rows[0]["forecast_weather_code"] == 61
+        assert rows[0]["forecast_precipitation_mm"] == pytest.approx(0.8)
+        assert rows[0]["forecast_precipitation_probability"] == pytest.approx(92.0)
+        assert rows[0]["forecast_cloud_cover"] == pytest.approx(100.0)
+        assert rows[0]["forecast_shortwave_radiation_w_m2"] == pytest.approx(88.0)
         assert rows[1]["forecast_charge_kwh"] == pytest.approx(0.0)
+        assert rows[1]["forecast_weather_code"] == 3
     finally:
         conn.close()
 
