@@ -12,7 +12,6 @@ from google.cloud import firestore
 from app.operations_db import (
     _extract_battery_daily_from_summary,
     _extract_hourly_forecast_from_plan,
-    _env,
     _fetch_open_meteo_daily_actual,
     _is_within_window,
     _iter_monitoring_rows,
@@ -20,9 +19,8 @@ from app.operations_db import (
     _read_json_if_exists,
     _read_summary,
     _tiered_day_increment_cost,
-    _to_float_any,
-    _to_int_any,
 )
+from app.utils import env, to_float, to_int
 
 
 def open_firestore():
@@ -121,8 +119,8 @@ def ingest_sunshine_from_night_plan(
         or forecast.get("source")
         or "forecast"
     )
-    lat = float(_env("FORECAST_LATITUDE", "35.67452"))
-    lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
+    lat = float(env("FORECAST_LATITUDE", default="35.67452"))
+    lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 
     if forecast_date:
         client.collection("sunshine_daily").document(forecast_date).set(
@@ -130,15 +128,15 @@ def ingest_sunshine_from_night_plan(
                 "date": forecast_date,
                 "forecast_hours": float(tomorrow_hours) if tomorrow_hours is not None else None,
                 "forecast_temp_c": float(tomorrow_temp) if tomorrow_temp is not None else None,
-                "forecast_weather_code": _to_int_any(tomorrow_weather_code),
-                "forecast_precipitation_sum_mm": _to_float_any(tomorrow_precip_sum),
-                "forecast_precipitation_probability_mean": _to_float_any(tomorrow_precip_probability),
-                "forecast_shortwave_radiation_sum_mj_m2": _to_float_any(tomorrow_shortwave),
-                "forecast_pv_total_kwh": _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
-                "forecast_pv_morning_kwh": _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
-                "forecast_pv_midday_kwh": _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
-                "forecast_pv_evening_kwh": _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
-                "forecast_pv_calibration_factor": _to_float_any(
+                "forecast_weather_code": to_int(tomorrow_weather_code),
+                "forecast_precipitation_sum_mm": to_float(tomorrow_precip_sum),
+                "forecast_precipitation_probability_mean": to_float(tomorrow_precip_probability),
+                "forecast_shortwave_radiation_sum_mj_m2": to_float(tomorrow_shortwave),
+                "forecast_pv_total_kwh": to_float(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_morning_kwh": to_float(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_midday_kwh": to_float(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_evening_kwh": to_float(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                "forecast_pv_calibration_factor": to_float(
                     (
                         pv_calibration.get("effective_factor")
                         if isinstance(pv_calibration, dict)

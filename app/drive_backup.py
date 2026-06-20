@@ -17,6 +17,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+from app.constants import FileConstants
 from app.db_sync import TABLE_SPECS
 from app.firestore_ops import open_firestore
 
@@ -102,7 +103,7 @@ def collect_source_files(root: Path | None = None) -> list[Path]:
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+        for chunk in iter(lambda: f.read(FileConstants.DEFAULT_CHUNK_SIZE_BYTES), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -116,7 +117,7 @@ def hash_source_tree(root: Path | None = None, files: Iterable[Path] | None = No
         digest.update(rel.encode("utf-8"))
         digest.update(b"\0")
         with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            for chunk in iter(lambda: f.read(FileConstants.DEFAULT_CHUNK_SIZE_BYTES), b""):
                 digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()

@@ -15,48 +15,11 @@ from pathlib import Path
 
 import requests
 
-
-def _to_optional_float(value) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+from app.utils import env_bool, env_float, env_float_clamped, to_float, to_int
 
 
-def _to_optional_int(value) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _env_float_clamped(name: str, default: float, *, min_value: float, max_value: float) -> float:
-    return max(min_value, min(max_value, _env_float(name, default)))
-
-
-def _clip_float(value: float, *, min_value: float, max_value: float) -> float:
-    return max(min_value, min(max_value, value))
+def _clip_float(value: float, *, min_val: float, max_val: float) -> float:
+    return max(min_val, min(max_val, value))
 
 
 def _ewma_ratio_from_daily_pairs(
@@ -67,7 +30,7 @@ def _ewma_ratio_from_daily_pairs(
 ) -> dict[str, object]:
     """Summarize forecast/actual ratios without letting target-day data leak in."""
 
-    alpha = _clip_float(alpha, min_value=0.0, max_value=1.0)
+    alpha = _clip_float(alpha, min_val=0.0, max_val=1.0)
     current = max(0.0, initial_value)
     used: list[dict[str, float | str]] = []
     for day, forecast_total, actual_total in sorted(pairs, key=lambda item: item[0]):
@@ -135,7 +98,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
 
     out: dict[str, dict[int, dict[str, float]]] = {}
     for row in rows:
-        hour = _to_optional_int(row["hour"])
+        hour = to_int(row["hour"])
         if hour is None or hour < 7 or hour >= 23:
             continue
         out.setdefault(str(row["date"]), {})[hour] = {
@@ -166,12 +129,12 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
     for doc in docs:
         row = doc.to_dict() or {}
         day = str(row.get("date", "")).strip()
-        hour = _to_optional_int(row.get("hour"))
+        hour = to_int(row.get("hour"))
         if not day or hour is None or hour < 7 or hour >= 23:
             continue
         out.setdefault(day, {})[hour] = {
-            "pv": max(0.0, _to_optional_float(row.get("forecast_pv_kwh")) or 0.0),
-            "load": max(0.0, _to_optional_float(row.get("forecast_load_kwh")) or 0.0),
+            "pv": max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0),
+            "load": max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0),
         }
     return out
 
@@ -316,11 +279,11 @@ def _evening_temperature_correction(
     target_features: dict[str, float | None],
     load_ratio: float,
 ) -> dict[str, object]:
-    enabled = _env_bool("EVENING_LOAD_TEMPERATURE_CORRECTION_ENABLED", True)
-    min_samples = max(1, int(_env_float("EVENING_LOAD_TEMPERATURE_MIN_SAMPLES", 3.0)))
-    lower = _env_float("EVENING_LOAD_TEMPERATURE_MIN_MULTIPLIER_DELTA", -0.10)
-    upper = _env_float("EVENING_LOAD_TEMPERATURE_MAX_MULTIPLIER_DELTA", 0.45)
-    regularization = max(0.0, _env_float("EVENING_LOAD_TEMPERATURE_RIDGE_LAMBDA", 1.0))
+    enabled = env_bool("EVENING_LOAD_TEMPERATURE_CORRECTION_ENABLED", default=True)
+    min_samples = max(1, int(env_float("EVENING_LOAD_TEMPERATURE_MIN_SAMPLES", default=3.0)))
+    lower = env_float("EVENING_LOAD_TEMPERATURE_MIN_MULTIPLIER_DELTA", default=-0.10)
+    upper = env_float("EVENING_LOAD_TEMPERATURE_MAX_MULTIPLIER_DELTA", default=0.45)
+    regularization = max(0.0, env_float("EVENING_LOAD_TEMPERATURE_RIDGE_LAMBDA", default=1.0))
     if not enabled:
         return {"enabled": False, "applied": False, "multiplier_delta": 0.0, "reason": "disabled"}
 
@@ -339,7 +302,7 @@ def _evening_temperature_correction(
         if forecast_evening <= 0:
             continue
         feature_rows.append(_temperature_feature_vector(historical_temperature_features[day]))
-        residuals.append(_clip_float(actual_evening / forecast_evening - 1.0, min_value=-0.50, max_value=1.0))
+        residuals.append(_clip_float(actual_evening / forecast_evening - 1.0, min_val=-0.50, max_val=1.0))
         training_days.append(day)
 
     if len(feature_rows) < min_samples:
@@ -362,7 +325,7 @@ def _evening_temperature_correction(
             "sample_count": len(feature_rows),
         }
     raw_delta = sum(value * weight for value, weight in zip(_temperature_feature_vector(target_features), coefficients))
-    delta = _clip_float(raw_delta, min_value=lower, max_value=upper)
+    delta = _clip_float(raw_delta, min_val=lower, max_val=upper)
     return {
         "enabled": True,
         "applied": True,
@@ -383,18 +346,18 @@ def _risk_adjusted_peak_penalty(
     pv_ratio_raw: float,
     pv_ratio_applied: float,
 ) -> dict[str, object]:
-    enabled = _env_bool("SOC_PEAK_UNMET_PENALTY_ENABLED", True)
-    base_factor = max(0.0, _env_float("SOC_PEAK_UNMET_BASE_FACTOR", 0.45))
-    risk_factor = max(base_factor, _env_float("SOC_PEAK_UNMET_RISK_FACTOR", 0.45))
-    max_factor = max(base_factor, _env_float("SOC_PEAK_UNMET_MAX_FACTOR", risk_factor))
-    target_peak_soc = _env_float_clamped("SOC_PEAK_UNMET_TARGET_SOC_PERCENT", 95.0, min_value=0.0, max_value=100.0)
-    cdh_threshold = _env_float("SOC_HIGH_TEMP_CDH28_THRESHOLD", 10.0)
-    ewma_threshold = _env_float("SOC_HIGH_TEMP_EWMA12_EVENING_THRESHOLD", 26.0)
-    night_min_threshold = _env_float("SOC_HIGH_TEMP_NIGHT_MIN_THRESHOLD", 20.0)
-    pv_epsilon = max(0.0, _env_float("SOC_PV_OVERRATIO_CAP_EPSILON", 1e-6))
-    cdh28 = _to_optional_float(target_features.get("cooling_degree_hours_28")) or 0.0
-    ewma_evening = _to_optional_float(target_features.get("temp_ewma_12h_evening")) or 0.0
-    night_min = _to_optional_float(target_features.get("night_min_temp_c")) or 0.0
+    enabled = env_bool("SOC_PEAK_UNMET_PENALTY_ENABLED", default=True)
+    base_factor = max(0.0, env_float("SOC_PEAK_UNMET_BASE_FACTOR", default=0.45))
+    risk_factor = max(base_factor, env_float("SOC_PEAK_UNMET_RISK_FACTOR", default=0.45))
+    max_factor = max(base_factor, env_float("SOC_PEAK_UNMET_MAX_FACTOR", default=risk_factor))
+    target_peak_soc = env_float_clamped("SOC_PEAK_UNMET_TARGET_SOC_PERCENT", 95.0, min_val=0.0, max_val=100.0)
+    cdh_threshold = env_float("SOC_HIGH_TEMP_CDH28_THRESHOLD", default=10.0)
+    ewma_threshold = env_float("SOC_HIGH_TEMP_EWMA12_EVENING_THRESHOLD", default=26.0)
+    night_min_threshold = env_float("SOC_HIGH_TEMP_NIGHT_MIN_THRESHOLD", default=20.0)
+    pv_epsilon = max(0.0, env_float("SOC_PV_OVERRATIO_CAP_EPSILON", default=1e-6))
+    cdh28 = to_float(target_features.get("cooling_degree_hours_28")) or 0.0
+    ewma_evening = to_float(target_features.get("temp_ewma_12h_evening")) or 0.0
+    night_min = to_float(target_features.get("night_min_temp_c")) or 0.0
     high_temperature = cdh28 >= cdh_threshold or ewma_evening >= ewma_threshold or night_min >= night_min_threshold
     pv_overconfidence = pv_ratio_raw > pv_ratio_applied + pv_epsilon
     risk_reasons: list[str] = []
@@ -436,7 +399,7 @@ def _build_forecast_correction(
     timezone: str,
     forecast: dict[str, object],
 ) -> dict[str, object]:
-    enabled = _env_bool("FORECAST_CORRECTION_ENABLED", True)
+    enabled = env_bool("FORECAST_CORRECTION_ENABLED", default=True)
     if not enabled:
         return {
             "enabled": False,
@@ -447,12 +410,12 @@ def _build_forecast_correction(
 
     forecast_history, history_source = _load_forecast_hourly_history(target_date=target_date)
     actual_history = _actual_hourly_totals_by_day(rows, target_date=target_date)
-    pv_alpha = _env_float_clamped("PV_RATIO_EWMA_ALPHA", 0.2, min_value=0.0, max_value=1.0)
-    pv_min = max(0.0, _env_float("PV_RATIO_EWMA_MIN", 0.9))
-    pv_max = max(pv_min, _env_float("PV_RATIO_EWMA_MAX", 1.35))
-    load_alpha = _env_float_clamped("LOAD_RATIO_EWMA_ALPHA", 0.5, min_value=0.0, max_value=1.0)
-    load_min = max(0.0, _env_float("LOAD_RATIO_EWMA_MIN", 0.7))
-    load_max = max(load_min, _env_float("LOAD_RATIO_EWMA_MAX", 1.8))
+    pv_alpha = env_float_clamped("PV_RATIO_EWMA_ALPHA", 0.2, min_val=0.0, max_val=1.0)
+    pv_min = max(0.0, env_float("PV_RATIO_EWMA_MIN", default=0.9))
+    pv_max = max(pv_min, env_float("PV_RATIO_EWMA_MAX", default=1.35))
+    load_alpha = env_float_clamped("LOAD_RATIO_EWMA_ALPHA", 0.5, min_val=0.0, max_val=1.0)
+    load_min = max(0.0, env_float("LOAD_RATIO_EWMA_MIN", default=0.7))
+    load_max = max(load_min, env_float("LOAD_RATIO_EWMA_MAX", default=1.8))
 
     pv_summary = _ewma_ratio_from_daily_pairs(
         _daily_pairs_for_ratio(forecast_history=forecast_history, actual_history=actual_history, key="pv"),
@@ -464,8 +427,8 @@ def _build_forecast_correction(
     )
     pv_ratio_raw = float(pv_summary["raw_ratio"])
     load_ratio_raw = float(load_summary["raw_ratio"])
-    pv_ratio = _clip_float(pv_ratio_raw, min_value=pv_min, max_value=pv_max)
-    load_ratio = _clip_float(load_ratio_raw, min_value=load_min, max_value=load_max)
+    pv_ratio = _clip_float(pv_ratio_raw, min_val=pv_min, max_val=pv_max)
+    load_ratio = _clip_float(load_ratio_raw, min_val=load_min, max_val=load_max)
 
     history_dates = sorted(set(forecast_history) & set(actual_history))
     historical_temperature_features: dict[str, dict[str, float | None]] = {}
@@ -492,7 +455,7 @@ def _build_forecast_correction(
         archive=False,
     ).get(target_date, {})
     if not target_temps:
-        fallback_temp = _to_optional_float(forecast.get("temp_c"))
+        fallback_temp = to_float(forecast.get("temp_c"))
         if fallback_temp is not None:
             target_temps = {hour: fallback_temp for hour in range(0, 23)}
     target_features = _temperature_features_for_day(target_date, target_temps)
@@ -551,5 +514,3 @@ def _build_forecast_correction(
             "corrected_hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(corrected_pv.items())},
         },
     }
-
-

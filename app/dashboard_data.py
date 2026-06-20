@@ -10,6 +10,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.utils import to_float
+
 
 @dataclass(frozen=True)
 class DashboardData:
@@ -90,21 +92,6 @@ def _find_variable_condition_value(conditions: dict[str, Any], *, target_id: str
             if value:
                 return value
     return default
-
-
-def _to_float_or_none(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
 
 def _date_add_iso(date_text: str, delta_days: int) -> str | None:
     d = _to_date_or_none(date_text)
@@ -195,7 +182,7 @@ def _model_param_value(params: list[dict[str, Any]], name: str, default: float) 
     for row in params:
         if str(row.get("name", "")).strip() != name:
             continue
-        value = _to_float_or_none(row.get("mean_value"))
+        value = to_float(row.get("mean_value"))
         if value is not None:
             return value
     return default
@@ -209,13 +196,13 @@ def _forecast_pv_kwh(
 ) -> float | None:
     if not sunshine_row:
         return None
-    array_forecast = _to_float_or_none(sunshine_row.get("forecast_pv_total_kwh"))
+    array_forecast = to_float(sunshine_row.get("forecast_pv_total_kwh"))
     if array_forecast is not None:
         return max(0.0, array_forecast)
-    sun_hours = _to_float_or_none(sunshine_row.get("forecast_hours"))
+    sun_hours = to_float(sunshine_row.get("forecast_hours"))
     if sun_hours is None:
         return None
-    temp_c = _to_float_or_none(sunshine_row.get("forecast_temp_c"))
+    temp_c = to_float(sunshine_row.get("forecast_temp_c"))
     if temp_c is None:
         temp_c = 25.0
     factor = max(0.0, 1.0 + pv_temp_coeff_per_deg * (temp_c - 25.0))
@@ -238,7 +225,7 @@ def _rolling_load_forecast(
             continue
         if (day_obj - prev_obj).days > lookback_days:
             continue
-        value = _to_float_or_none(actual_by_day[prev_day].get("actual_load_kwh"))
+        value = to_float(actual_by_day[prev_day].get("actual_load_kwh"))
         if value is not None:
             values.append(value)
     if not values:
@@ -431,7 +418,7 @@ def _build_latest_schedule_from_events(
         schedule["settings_completed_profile"] = str(completed_row.get("profile", ""))
 
     if battery_row:
-        target_soc = _to_float_or_none(battery_row.get("setting_soc_target_percent"))
+        target_soc = to_float(battery_row.get("setting_soc_target_percent"))
         if target_soc is not None:
             schedule["soc_charge_mode"] = str(int(round(target_soc)))
         if schedule.get("plan_date") is None and battery_row.get("date"):
@@ -439,8 +426,8 @@ def _build_latest_schedule_from_events(
 
     charge_start = _parse_hhmm_minutes(str(schedule.get("charge_start_time") or ""))
     charge_end = _parse_hhmm_minutes(str(schedule.get("charge_end_time") or ""))
-    power_kw = _to_float_or_none(schedule.get("estimated_charge_power_kw")) or 1.8
-    night_kwh = _to_float_or_none(battery_row.get("night_charge_kwh") if battery_row else None) or 0.0
+    power_kw = to_float(schedule.get("estimated_charge_power_kw")) or 1.8
+    night_kwh = to_float(battery_row.get("night_charge_kwh") if battery_row else None) or 0.0
 
     if charge_start is None and charge_end is not None and night_kwh > 0 and power_kw > 0:
         duration_minutes = int(math.ceil((night_kwh / power_kw) * 60.0))
@@ -481,8 +468,8 @@ def _build_dashboard_warnings(
 
     latest_battery = _latest_row_by_date(battery_daily)
     if latest_battery:
-        target_soc = _to_float_or_none(latest_battery.get("setting_soc_target_percent"))
-        pv_end_soc = _to_float_or_none(latest_battery.get("pv_charge_end_soc_percent"))
+        target_soc = to_float(latest_battery.get("setting_soc_target_percent"))
+        pv_end_soc = to_float(latest_battery.get("pv_charge_end_soc_percent"))
         if target_soc is not None and pv_end_soc is not None and pv_end_soc + 5.0 < target_soc:
             add(
                 "soc_target_unreached",
@@ -496,7 +483,7 @@ def _build_dashboard_warnings(
                 },
             )
 
-        night_charge = _to_float_or_none(latest_battery.get("night_charge_kwh")) or 0.0
+        night_charge = to_float(latest_battery.get("night_charge_kwh")) or 0.0
         source = str(latest_schedule.get("schedule_source") or "")
         charge_start_time = str(latest_schedule.get("charge_start_time") or "").strip()
         if night_charge > 0.1 and source != "03-monitor" and not charge_start_time:
@@ -516,8 +503,8 @@ def _build_dashboard_warnings(
         str(row.get("date"))
         for row in energy_daily
         if row.get("date") and (
-            _to_float_or_none(row.get("actual_pv_kwh")) is not None
-            or _to_float_or_none(row.get("actual_load_kwh")) is not None
+            to_float(row.get("actual_pv_kwh")) is not None
+            or to_float(row.get("actual_load_kwh")) is not None
         )
     ]
     latest_actual = max(actual_dates) if actual_dates else None

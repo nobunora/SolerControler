@@ -1,0 +1,19 @@
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "google.auth.*",
+    "google.cloud.*",
+    "googleapiclient.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "app.utils",
+    "app.constants",
+]
+strict = true

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from app.constants import SOCBounds
+
 
 @dataclass(frozen=True)
 class PvForecastUncertainty:
@@ -134,7 +136,7 @@ def to_plain_dict(obj) -> dict:
 
 
 def _bounded_soc(value: float) -> float:
-    return max(0.0, min(100.0, value))
+    return SOCBounds.clamp(value)
 
 
 def _pv_multiplier_for_bucket(

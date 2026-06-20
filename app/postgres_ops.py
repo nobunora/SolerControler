@@ -13,7 +13,6 @@ from psycopg.rows import dict_row
 from app.operations_db import (
     _extract_battery_daily_from_summary,
     _extract_hourly_forecast_from_plan,
-    _env,
     _fetch_open_meteo_today_actual,
     _is_within_window,
     _iter_monitoring_rows,
@@ -22,8 +21,8 @@ from app.operations_db import (
     _read_summary,
     _safe_json,
     _tiered_day_increment_cost,
-    _to_float_any,
 )
+from app.utils import env, to_float
 
 
 def _conninfo_from_env() -> str:
@@ -251,8 +250,8 @@ def ingest_sunshine_from_night_plan(
         or forecast.get("source")
         or "forecast"
     )
-    lat = float(_env("FORECAST_LATITUDE", "35.67452"))
-    lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
+    lat = float(env("FORECAST_LATITUDE", default="35.67452"))
+    lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 
     with conn.cursor() as cur:
         if forecast_date:
@@ -280,11 +279,11 @@ def ingest_sunshine_from_night_plan(
                     forecast_date,
                     float(tomorrow_hours) if tomorrow_hours is not None else None,
                     float(tomorrow_temp) if tomorrow_temp is not None else None,
-                    _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
-                    _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
-                    _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
-                    _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
-                    _to_float_any(
+                    to_float(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                    to_float(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                    to_float(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                    to_float(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                    to_float(
                         (
                             pv_calibration.get("effective_factor")
                             if isinstance(pv_calibration, dict)

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import csv
-import re
 from pathlib import Path
 from statistics import mean
-from typing import Iterable, Optional
+from typing import Iterable
 
 from app.config import AppConfig
 from app.models import MonitoringMetrics
-
-_NUM_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
+from app.utils import parse_csv_float
 
 
 def _read_rows(csv_path: Path) -> list[dict[str, str]]:
@@ -31,26 +29,16 @@ def _read_rows(csv_path: Path) -> list[dict[str, str]]:
     return list(reader)
 
 
-def _to_float(raw: str) -> Optional[float]:
-    if raw is None:
-        return None
-    match = _NUM_PATTERN.search(raw.replace(",", ""))
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
-
-
 def _column_values(rows: Iterable[dict[str, str]], column: str) -> list[float]:
     values: list[float] = []
     if not column:
         return values
     for row in rows:
-        v = _to_float(row.get(column, ""))
-        if v is not None:
-            values.append(v)
+        raw = row.get(column, "")
+        if raw is not None and raw.strip():
+            parsed = parse_csv_float(raw, default=None)
+            if parsed is not None:
+                values.append(parsed)
     return values
 
 

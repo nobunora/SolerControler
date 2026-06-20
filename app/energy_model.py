@@ -8,6 +8,8 @@ from typing import Iterable
 
 import numpy as np
 
+from app.constants import SOCBounds
+
 
 @dataclass(frozen=True)
 class EnergyModelCoefficients:
@@ -249,12 +251,12 @@ def optimize_target_soc_for_daytime(
     if not hours:
         return None
 
-    reserve_soc = max(0.0, min(100.0, reserve_soc_percent))
-    max_target_soc = max(reserve_soc, min(100.0, max_target_soc_percent))
-    soc_now = max(0.0, min(100.0, soc_now_percent))
+    reserve_soc = SOCBounds.clamp(reserve_soc_percent)
+    max_target_soc = max(reserve_soc, SOCBounds.clamp(max_target_soc_percent))
+    soc_now = SOCBounds.clamp(soc_now_percent)
     step = min(10.0, max(0.5, soc_step_percent))
     eta_ch = max(0.7, battery_round_trip_efficiency)
-    target_peak_soc = max(reserve_soc, min(100.0, target_peak_soc_percent))
+    target_peak_soc = max(reserve_soc, SOCBounds.clamp(target_peak_soc_percent))
     buy_tolerance = max(0.0, buy_tolerance_kwh)
     sell_tolerance = max(0.0, sell_tolerance_kwh)
 
@@ -314,15 +316,15 @@ def optimize_target_soc_for_daytime(
     sunset_soc = 100.0 * best_sunset_energy / cap if cap > 0 else 0.0
     max_soc = 100.0 * best_max_energy / cap if cap > 0 else 0.0
     return DaytimeSocOptimizationResult(
-        target_soc_7_percent=max(0.0, min(100.0, best_target_soc)),
+        target_soc_7_percent=SOCBounds.clamp(best_target_soc),
         target_energy_kwh=best_target_energy,
         required_night_charge_kwh=required_night_charge_kwh,
         predicted_daytime_buy_kwh=max(0.0, best_buy),
         predicted_daytime_sell_kwh=max(0.0, best_sell),
-        predicted_daytime_max_soc_percent=max(0.0, min(100.0, max_soc)),
+        predicted_daytime_max_soc_percent=SOCBounds.clamp(max_soc),
         predicted_daytime_max_energy_kwh=max(0.0, best_max_energy),
         predicted_daytime_max_hour=best_max_hour,
-        predicted_sunset_soc_percent=max(0.0, min(100.0, sunset_soc)),
+        predicted_sunset_soc_percent=SOCBounds.clamp(sunset_soc),
         predicted_sunset_energy_kwh=max(0.0, best_sunset_energy),
     )
 
@@ -378,7 +380,7 @@ def compute_night_charge_target(
     eta_ch = max(0.7, coeff.battery_round_trip_efficiency)
     e_night_charge = max(0.0, (e_target - e_projected_at_7) / eta_ch)
 
-    target_soc = max(0.0, min(100.0, 100.0 * e_target / cap_eff if cap_eff > 0 else 0.0))
+    target_soc = SOCBounds.clamp(100.0 * e_target / cap_eff if cap_eff > 0 else 0.0)
     return NightChargeResult(
         predicted_pv_kwh=e_pv,
         predicted_morning_pv_kwh=e_morning_pv,

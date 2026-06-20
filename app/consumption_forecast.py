@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
+from app.utils import parse_csv_float
+
 try:
     from sklearn.ensemble import HistGradientBoostingRegressor
 except Exception:  # pragma: no cover - sklearn unavailable in some environments
@@ -394,7 +396,7 @@ def _normalize_load_row(row: LoadObservation | Mapping[str, Any]) -> LoadObserva
         raise ValueError("load row requires datetime or dt")
     return LoadObservation(
         dt=_coerce_datetime(dt_value),
-        load_kwh=_to_float(row.get("load_kwh", row.get("load"))),
+        load_kwh=parse_csv_float(row.get("load_kwh", row.get("load"))),
     )
 
 
@@ -424,18 +426,18 @@ def _normalize_weather_row(row: DailyWeatherFeatures | Mapping[str, Any]) -> _No
         "extras",
     }
     extras = {
-        key: _to_float(value)
+        key: parse_csv_float(value)
         for key, value in row.items()
         if key not in reserved_keys and value is not None
     }
-    extras.update({key: _to_float(value) for key, value in dict(row.get("extras") or {}).items()})
+    extras.update({key: parse_csv_float(value) for key, value in dict(row.get("extras") or {}).items()})
 
     return _NormalizedWeather(
         date=_coerce_date(date_value),
-        temp=_to_float(row.get("temp")),
+        temp=parse_csv_float(row.get("temp")),
         weather_code=row.get("weather_code", "unknown"),
-        sunshine_hours=_to_float(row.get("sunshine_hours")),
-        precipitation=_to_float(row.get("precipitation")),
+        sunshine_hours=parse_csv_float(row.get("sunshine_hours")),
+        precipitation=parse_csv_float(row.get("precipitation")),
         extras=extras,
     )
 
@@ -460,12 +462,6 @@ def _coerce_date(value: Any) -> date:
 
 def _mean_or_default(values: list[float], default: float) -> float:
     return float(fmean(values)) if values else default
-
-
-def _to_float(value: Any) -> float:
-    if value is None:
-        return 0.0
-    return float(value)
 
 
 __all__ = [

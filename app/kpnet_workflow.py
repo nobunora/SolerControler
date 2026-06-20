@@ -4,7 +4,6 @@ import csv
 import json
 import logging
 import math
-import os
 import re
 import statistics
 import time
@@ -20,6 +19,8 @@ import matplotlib
 import requests
 from bs4 import BeautifulSoup
 
+from app.constants import SOCBounds
+from app.utils import env, env_bool, load_dotenv_if_present, to_float
 
 LOGGER = logging.getLogger(__name__)
 
@@ -27,50 +28,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if (
-            len(value) >= 2
-            and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'"))
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
-
-
 def _setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
-
-
-def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, default)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _to_optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
 
 def _clean_filename(name: str) -> str:
     return re.sub(r"[\\/:*?\"<>|]", "_", name).strip() or "download.csv"
@@ -496,8 +458,8 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
 
     required_night_charge_kwh = float(result.get("required_night_charge_kwh", 0.0))
     target_soc_7_percent = float(result.get("target_soc_7_percent", 0.0))
-    soc_now_percent = _to_optional_float(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None
-    effective_capacity_kwh = _to_optional_float(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None
+    soc_now_percent = to_float(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None
+    effective_capacity_kwh = to_float(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None
     forecast_date = str(forecast.get("date", ""))
     forecast_sun_hours: float | None = None
     forecast_sun_hours_raw = forecast.get("sun_hours", None)
@@ -590,10 +552,10 @@ def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float
 
 
 def _estimate_charge_soc_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
-    fallback = float(_env("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "40").strip() or "40")
-    min_rate = float(_env("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25").strip() or "25")
-    max_rate = float(_env("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50").strip() or "50")
-    min_charge_kwh = float(_env("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2").strip() or "1.2")
+    fallback = float(env("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", default="40").strip() or "40")
+    min_rate = float(env("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", default="25").strip() or "25")
+    max_rate = float(env("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", default="50").strip() or "50")
+    min_charge_kwh = float(env("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", default="1.2").strip() or "1.2")
     if max_rate < min_rate:
         max_rate = min_rate
 
@@ -631,7 +593,7 @@ def _required_charge_percent(plan: NightChargePlan) -> float:
     target_soc = max(0.0, plan.target_soc_7_percent)
     soc_now = plan.soc_now_percent
     if soc_now is not None:
-        return max(0.0, target_soc - max(0.0, min(100.0, soc_now)))
+        return max(0.0, target_soc - SOCBounds.clamp(soc_now))
     cap = plan.effective_capacity_kwh
     if cap is not None and cap > 0 and plan.required_night_charge_kwh > 0:
         return max(0.0, 100.0 * plan.required_night_charge_kwh / cap)
@@ -745,16 +707,11 @@ class KpNetConfig:
 
     @staticmethod
     def from_env() -> "KpNetConfig":
-        username = _env("KP_MONITOR_USERNAME", _env("MONITOR_USERNAME", ""))
-        password = _env("KP_MONITOR_PASSWORD", _env("MONITOR_PASSWORD", ""))
+        username = env("KP_MONITOR_USERNAME", default=env("MONITOR_USERNAME", default=""))
+        password = env("KP_MONITOR_PASSWORD", default=env("MONITOR_PASSWORD", default=""))
 
-        use_har_credentials = _env_bool("KP_USE_HAR_CREDENTIALS", False)
-        har_path = Path(
-            _env(
-                "KP_HAR_PATH",
-                r"",
-            )
-        )
+        use_har_credentials = env_bool("KP_USE_HAR_CREDENTIALS", default=False)
+        har_path = Path(env("KP_HAR_PATH", default=r""))
         if use_har_credentials and (not username or not password):
             username, password = _parse_har_credentials(har_path)
 
@@ -764,44 +721,44 @@ class KpNetConfig:
                 "(または HAR から取得できません)"
             )
 
-        raw_months = _env("KP_CSV_TARGET_MONTHS", "2026-04,2026-05")
+        raw_months = env("KP_CSV_TARGET_MONTHS", default="2026-04,2026-05")
         months = [m.strip() for m in raw_months.split(",") if m.strip()]
         if not months:
             months = ["2026-04", "2026-05"]
 
-        workflow_mode = _env("KP_WORKFLOW_MODE", "all").strip().lower()
+        workflow_mode = env("KP_WORKFLOW_MODE", default="all").strip().lower()
         if workflow_mode not in {"all", "csv", "settings"}:
             raise RuntimeError("KP_WORKFLOW_MODE は all / csv / settings のいずれかを指定してください")
-        settings_sequence = _env("KP_SETTINGS_SEQUENCE", "forced-only").strip().lower()
+        settings_sequence = env("KP_SETTINGS_SEQUENCE", default="forced-only").strip().lower()
         if settings_sequence not in {"forced-only", "forced-then-green"}:
             raise RuntimeError(
                 "KP_SETTINGS_SEQUENCE は forced-only / forced-then-green のいずれかを指定してください"
             )
-        force_settings_profile = _env("KP_FORCE_SETTINGS_PROFILE", "auto").strip().lower()
+        force_settings_profile = env("KP_FORCE_SETTINGS_PROFILE", default="auto").strip().lower()
         if force_settings_profile not in {"auto", "forced", "green"}:
             raise RuntimeError("KP_FORCE_SETTINGS_PROFILE は auto / forced / green のいずれかを指定してください")
-        dynamic_forced_profile = _env_bool("KP_DYNAMIC_FORCED_PROFILE", True)
-        dynamic_mode_switch_by_time = _env_bool("KP_DYNAMIC_MODE_SWITCH_BY_TIME", True)
-        night_charge_window_start = _env("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip()
-        night_charge_window_end = _env("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip()
-        day_discharge_window_start = _env("KP_DAY_DISCHARGE_WINDOW_START", "07:00").strip()
-        day_discharge_window_end = _env("KP_DAY_DISCHARGE_WINDOW_END", "23:00").strip()
+        dynamic_forced_profile = env_bool("KP_DYNAMIC_FORCED_PROFILE", default=True)
+        dynamic_mode_switch_by_time = env_bool("KP_DYNAMIC_MODE_SWITCH_BY_TIME", default=True)
+        night_charge_window_start = env("KP_NIGHT_CHARGE_WINDOW_START", default="23:00").strip()
+        night_charge_window_end = env("KP_NIGHT_CHARGE_WINDOW_END", default="07:00").strip()
+        day_discharge_window_start = env("KP_DAY_DISCHARGE_WINDOW_START", default="07:00").strip()
+        day_discharge_window_end = env("KP_DAY_DISCHARGE_WINDOW_END", default="23:00").strip()
         _parse_hhmm(night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
         _parse_hhmm(night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
         _parse_hhmm(day_discharge_window_start, name="KP_DAY_DISCHARGE_WINDOW_START")
         _parse_hhmm(day_discharge_window_end, name="KP_DAY_DISCHARGE_WINDOW_END")
-        timezone_name = _env("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
+        timezone_name = env("TIMEZONE", default="Asia/Tokyo").strip() or "Asia/Tokyo"
 
-        default_charge_power_kw = float(_env("KP_DEFAULT_CHARGE_POWER_KW", "1.8"))
+        default_charge_power_kw = float(env("KP_DEFAULT_CHARGE_POWER_KW", default="1.8"))
         if default_charge_power_kw <= 0:
             raise RuntimeError("KP_DEFAULT_CHARGE_POWER_KW は 0 より大きい値を指定してください")
-        green_mode_max_charge_percent = float(_env("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50"))
+        green_mode_max_charge_percent = float(env("KP_GREEN_MODE_MAX_CHARGE_PERCENT", default="50"))
         if green_mode_max_charge_percent < 0:
             raise RuntimeError("KP_GREEN_MODE_MAX_CHARGE_PERCENT は 0 以上を指定してください")
 
-        base_url = _env("KP_BASE_URL", "https://ctrl.kp-net.com/settingcontrol").strip()
-        enforce_https = _env_bool("KP_ENFORCE_HTTPS", True)
-        allowed_hosts_raw = _env("KP_ALLOWED_HOSTS", "ctrl.kp-net.com")
+        base_url = env("KP_BASE_URL", default="https://ctrl.kp-net.com/settingcontrol").strip()
+        enforce_https = env_bool("KP_ENFORCE_HTTPS", default=True)
+        allowed_hosts_raw = env("KP_ALLOWED_HOSTS", default="ctrl.kp-net.com")
         allowed_hosts = [host.strip() for host in allowed_hosts_raw.split(",") if host.strip()]
         _validate_base_url(
             base_url=base_url,
@@ -809,22 +766,22 @@ class KpNetConfig:
             allowed_hosts=allowed_hosts,
         )
 
-        artifacts_dir = Path(_env("ARTIFACTS_DIR", "artifacts"))
-        night_plan_path = Path(_env("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
+        artifacts_dir = Path(env("ARTIFACTS_DIR", default="artifacts"))
+        night_plan_path = Path(env("KP_NIGHT_PLAN_PATH", default=str(artifacts_dir / "night_charge_plan.json")))
         operation_conditions_path = Path(
-            _env("KP_OPERATION_CONDITIONS_PATH", "config/operation_conditions.json")
+            env("KP_OPERATION_CONDITIONS_PATH", default="config/operation_conditions.json")
         )
 
         return KpNetConfig(
             base_url=base_url,
             username=username,
             password=password,
-            dry_run=_env_bool("DRY_RUN", True),
-            timeout_sec=float(_env("KP_TIMEOUT_SEC", "60")),
-            csv_output_format=_env("KP_CSV_OUTPUT_FORMAT", "太陽光発電＋蓄電池"),
-            csv_aggr_type=_env("KP_CSV_AGGR_TYPE", "30分データ"),
+            dry_run=env_bool("DRY_RUN", default=True),
+            timeout_sec=float(env("KP_TIMEOUT_SEC", default="60")),
+            csv_output_format=env("KP_CSV_OUTPUT_FORMAT", default="太陽光発電＋蓄電池"),
+            csv_aggr_type=env("KP_CSV_AGGR_TYPE", default="30分データ"),
             csv_target_months=months,
-            download_latest_month=_env_bool("KP_DOWNLOAD_LATEST_MONTH", True),
+            download_latest_month=env_bool("KP_DOWNLOAD_LATEST_MONTH", default=True),
             workflow_mode=workflow_mode,
             settings_sequence=settings_sequence,
             force_settings_profile=force_settings_profile,
@@ -881,7 +838,7 @@ def _build_dynamic_forced_profile(
     duration_minutes_soc: int | None = None
     duration_source = "kwh"
     duration_minutes = duration_minutes_kwh
-    soc_upper_percent = _to_optional_float(soc_charge_code)
+    soc_upper_percent = to_float(soc_charge_code)
     rounded_up_soc_target = (
         soc_upper_percent is not None
         and soc_upper_percent > target_soc_7_percent + 0.01
@@ -1722,7 +1679,7 @@ def _run_settings_phase(
 
 
 def run_kpnet_workflow() -> int:
-    _load_dotenv_if_present()
+    load_dotenv_if_present()
     _setup_logging()
     cfg = KpNetConfig.from_env()
 

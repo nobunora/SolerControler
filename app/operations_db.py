@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
@@ -12,63 +11,7 @@ from typing import Any
 
 import requests
 
-
-def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if (
-            len(value) >= 2
-            and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'"))
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
-
-
-def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, default)
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return float(raw)
-
-
-def _to_float(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    value = raw.strip()
-    if not value:
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
-def _to_float_any(value: Any) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        return _to_float(value)
-    return _to_float(str(value))
-
-
-def _to_int_any(value: Any) -> int | None:
-    as_float = _to_float_any(value)
-    if as_float is None:
-        return None
-    return int(as_float)
+from app.utils import env, env_float, load_dotenv_if_present, to_float, to_int
 
 
 def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -91,7 +34,7 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
         for item in hourly_weather:
             if not isinstance(item, dict):
                 continue
-            hour = _to_int_any(item.get("hour"))
+            hour = to_int(item.get("hour"))
             if hour is None or hour < 0 or hour > 23:
                 continue
             weather_by_hour[hour] = item
@@ -109,8 +52,8 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
 
     rows: list[dict[str, Any]] = []
     for hour in sorted(hours):
-        pv_kwh = _to_float_any(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
-        load_kwh = _to_float_any(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
+        pv_kwh = to_float(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
+        load_kwh = to_float(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
         weather = weather_by_hour.get(hour, {})
         rows.append(
             {
@@ -119,11 +62,11 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
                 "forecast_pv_kwh": round(max(0.0, pv_kwh), 4),
                 "forecast_load_kwh": round(max(0.0, load_kwh), 4),
                 "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4),
-                "forecast_weather_code": _to_int_any(weather.get("weather_code")),
-                "forecast_precipitation_mm": _to_float_any(weather.get("precipitation_mm")),
-                "forecast_precipitation_probability": _to_float_any(weather.get("precipitation_probability")),
-                "forecast_cloud_cover": _to_float_any(weather.get("cloud_cover")),
-                "forecast_shortwave_radiation_w_m2": _to_float_any(weather.get("shortwave_radiation_w_m2")),
+                "forecast_weather_code": to_int(weather.get("weather_code")),
+                "forecast_precipitation_mm": to_float(weather.get("precipitation_mm")),
+                "forecast_precipitation_probability": to_float(weather.get("precipitation_probability")),
+                "forecast_cloud_cover": to_float(weather.get("cloud_cover")),
+                "forecast_shortwave_radiation_w_m2": to_float(weather.get("shortwave_radiation_w_m2")),
             }
         )
     return rows
@@ -229,8 +172,8 @@ class PipelineConfig:
 
     @staticmethod
     def from_env() -> "PipelineConfig":
-        _load_dotenv_if_present()
-        slot_raw = _env("CLOUD_JOB_SLOT", "").strip().lower()
+        load_dotenv_if_present()
+        slot_raw = env("CLOUD_JOB_SLOT", default="").strip().lower()
         if slot_raw in {"23", "night", "night23"}:
             slot = "23"
         elif slot_raw in {"7", "07", "day", "day07"}:
@@ -238,43 +181,43 @@ class PipelineConfig:
         else:
             slot = slot_raw or "unknown"
 
-        sync_enabled = _env("DATA_DB_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-        write_only_23 = _env("DATA_DB_WRITE_ONLY_23", "true").strip().lower() in {"1", "true", "yes", "on"}
-        weekly_backup_enabled = _env("DATA_WEEKLY_BACKUP_ENABLED", "true").strip().lower() in {
+        sync_enabled = env("DATA_DB_SYNC_ENABLED", default="false").strip().lower() in {"1", "true", "yes", "on"}
+        write_only_23 = env("DATA_DB_WRITE_ONLY_23", default="true").strip().lower() in {"1", "true", "yes", "on"}
+        weekly_backup_enabled = env("DATA_WEEKLY_BACKUP_ENABLED", default="true").strip().lower() in {
             "1",
             "true",
             "yes",
             "on",
         }
-        weekly_backup_weekday = int(_env("DATA_WEEKLY_BACKUP_WEEKDAY", "5"))
-        cost_tariff_mode = _env("COST_TARIFF_MODE", "night8_tiered").strip().lower() or "night8_tiered"
+        weekly_backup_weekday = int(env("DATA_WEEKLY_BACKUP_WEEKDAY", default="5"))
+        cost_tariff_mode = env("COST_TARIFF_MODE", default="night8_tiered").strip().lower() or "night8_tiered"
         if cost_tariff_mode not in {"flat", "night8_tiered"}:
             cost_tariff_mode = "night8_tiered"
-        day_rate = _env_float("DAY_RATE_YEN_PER_KWH", 31.0)
+        day_rate = env_float("DAY_RATE_YEN_PER_KWH", default=31.0)
         return PipelineConfig(
-            data_backend=_env("DATA_BACKEND", "sqlite").strip().lower(),
-            site_id=_env("SITE_ID", "fuchu-home").strip() or "fuchu-home",
-            db_path=Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db")),
-            artifacts_dir=Path(_env("ARTIFACTS_DIR", "artifacts")),
+            data_backend=env("DATA_BACKEND", default="sqlite").strip().lower(),
+            site_id=env("SITE_ID", default="fuchu-home").strip() or "fuchu-home",
+            db_path=Path(env("DATA_DB_PATH", default="artifacts/solar_monitor.db")),
+            artifacts_dir=Path(env("ARTIFACTS_DIR", default="artifacts")),
             slot=slot,
-            timezone=_env("TIMEZONE", "Asia/Tokyo"),
+            timezone=env("TIMEZONE", default="Asia/Tokyo"),
             day_rate_yen_per_kwh=day_rate,
             cost_tariff_mode=cost_tariff_mode,
-            night8_day_start_hhmm=_env("NIGHT8_DAY_START_HHMM", "07:00").strip() or "07:00",
-            night8_day_end_hhmm=_env("NIGHT8_DAY_END_HHMM", "23:00").strip() or "23:00",
-            night8_day_tier1_upper_kwh=_env_float("NIGHT8_DAY_TIER1_UPPER_KWH", 90.0),
-            night8_day_tier2_upper_kwh=_env_float("NIGHT8_DAY_TIER2_UPPER_KWH", 230.0),
-            night8_day_rate_tier1_yen=_env_float("NIGHT8_DAY_RATE_TIER1_YEN", 31.80),
-            night8_day_rate_tier2_yen=_env_float("NIGHT8_DAY_RATE_TIER2_YEN", 39.10),
-            night8_day_rate_tier3_yen=_env_float("NIGHT8_DAY_RATE_TIER3_YEN", 43.62),
-            night8_night_rate_yen=_env_float("NIGHT8_NIGHT_RATE_YEN", 28.85),
-            storage_gcs_db_uri=_env("DATA_GCS_DB_URI", ""),
-            storage_gcs_daily_prefix=_env("DATA_GCS_DAILY_PREFIX", ""),
+            night8_day_start_hhmm=env("NIGHT8_DAY_START_HHMM", default="07:00").strip() or "07:00",
+            night8_day_end_hhmm=env("NIGHT8_DAY_END_HHMM", default="23:00").strip() or "23:00",
+            night8_day_tier1_upper_kwh=env_float("NIGHT8_DAY_TIER1_UPPER_KWH", default=90.0),
+            night8_day_tier2_upper_kwh=env_float("NIGHT8_DAY_TIER2_UPPER_KWH", default=230.0),
+            night8_day_rate_tier1_yen=env_float("NIGHT8_DAY_RATE_TIER1_YEN", default=31.80),
+            night8_day_rate_tier2_yen=env_float("NIGHT8_DAY_RATE_TIER2_YEN", default=39.10),
+            night8_day_rate_tier3_yen=env_float("NIGHT8_DAY_RATE_TIER3_YEN", default=43.62),
+            night8_night_rate_yen=env_float("NIGHT8_NIGHT_RATE_YEN", default=28.85),
+            storage_gcs_db_uri=env("DATA_GCS_DB_URI", default=""),
+            storage_gcs_daily_prefix=env("DATA_GCS_DAILY_PREFIX", default=""),
             storage_sync_enabled=sync_enabled,
             write_only_slot_23=write_only_23,
             weekly_backup_enabled=weekly_backup_enabled,
             weekly_backup_weekday=weekly_backup_weekday,
-            weekly_backup_dir=Path(_env("DATA_WEEKLY_BACKUP_DIR", "artifacts/backups/weekly")),
+            weekly_backup_dir=Path(env("DATA_WEEKLY_BACKUP_DIR", default="artifacts/backups/weekly")),
         )
 
 
@@ -468,7 +411,7 @@ def _extract_battery_daily_from_summary(
     np_root = night_plan if isinstance(night_plan, dict) else {}
     np_result = np_root.get("result", {}) if isinstance(np_root.get("result", {}), dict) else {}
     np_forecast = np_root.get("forecast", {}) if isinstance(np_root.get("forecast", {}), dict) else {}
-    prefer_night_plan = _env("DATA_PREFER_NIGHT_PLAN_METRICS", "false").strip().lower() in {
+    prefer_night_plan = env("DATA_PREFER_NIGHT_PLAN_METRICS", default="false").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -479,23 +422,23 @@ def _extract_battery_daily_from_summary(
     if not date:
         return None
 
-    target_soc = _to_float_any(np_result.get("target_soc_7_percent")) if prefer_night_plan else None
+    target_soc = to_float(np_result.get("target_soc_7_percent")) if prefer_night_plan else None
     if target_soc is None:
-        target_soc = _to_float_any(np_summary.get("target_soc_7_percent_raw"))
+        target_soc = to_float(np_summary.get("target_soc_7_percent_raw"))
     if target_soc is None:
-        target_soc = _to_float_any(np_result.get("target_soc_7_percent"))
+        target_soc = to_float(np_result.get("target_soc_7_percent"))
 
-    night_charge_kwh = _to_float_any(np_result.get("required_night_charge_kwh")) if prefer_night_plan else None
+    night_charge_kwh = to_float(np_result.get("required_night_charge_kwh")) if prefer_night_plan else None
     if night_charge_kwh is None:
-        night_charge_kwh = _to_float_any(np_summary.get("required_night_charge_kwh"))
+        night_charge_kwh = to_float(np_summary.get("required_night_charge_kwh"))
     if night_charge_kwh is None:
-        night_charge_kwh = _to_float_any(np_result.get("required_night_charge_kwh"))
+        night_charge_kwh = to_float(np_result.get("required_night_charge_kwh"))
 
-    pv_max_charge_kwh = _to_float_any(np_result.get("predicted_midday_surplus_kwh")) if prefer_night_plan else None
+    pv_max_charge_kwh = to_float(np_result.get("predicted_midday_surplus_kwh")) if prefer_night_plan else None
     if pv_max_charge_kwh is None:
-        pv_max_charge_kwh = _to_float_any(np_summary.get("predicted_midday_surplus_kwh"))
+        pv_max_charge_kwh = to_float(np_summary.get("predicted_midday_surplus_kwh"))
     if pv_max_charge_kwh is None:
-        pv_max_charge_kwh = _to_float_any(np_result.get("predicted_midday_surplus_kwh"))
+        pv_max_charge_kwh = to_float(np_result.get("predicted_midday_surplus_kwh"))
 
     return {
         "date": date,
@@ -540,13 +483,13 @@ def _iter_monitoring_rows(csv_path: Path):
             ts = dt.isoformat()
             yield {
                 "ts": ts,
-                "pv_kwh": _to_float(row.get("発電電力量[kWh]")),
-                "load_kwh": _to_float(row.get("消費電力量[kWh]")),
-                "sell_kwh": _to_float(row.get("売電電力量[kWh]")),
-                "buy_kwh": _to_float(row.get("買電電力量[kWh]")),
-                "charge_kwh": _to_float(row.get("充電電力量[kWh]")),
-                "discharge_kwh": _to_float(row.get("放電電力量[kWh]")),
-                "soc_percent": _to_float(row.get("蓄電残量(SOC)[%]")),
+                "pv_kwh": to_float(row.get("発電電力量[kWh]")),
+                "load_kwh": to_float(row.get("消費電力量[kWh]")),
+                "sell_kwh": to_float(row.get("売電電力量[kWh]")),
+                "buy_kwh": to_float(row.get("買電電力量[kWh]")),
+                "charge_kwh": to_float(row.get("充電電力量[kWh]")),
+                "discharge_kwh": to_float(row.get("放電電力量[kWh]")),
+                "soc_percent": to_float(row.get("蓄電残量(SOC)[%]")),
             }
 
 
@@ -595,7 +538,7 @@ def _first_float(values: Any) -> float | None:
         value = values[0]
     except Exception:
         return None
-    return _to_float_any(value)
+    return to_float(value)
 
 
 def _first_int(values: Any) -> int | None:
@@ -632,8 +575,8 @@ def _fetch_open_meteo_daily_actual(*, lat: float, lon: float, date_ymd: str, tim
 def _fetch_open_meteo_today_actual(*, lat: float, lon: float, date_ymd: str, timezone: str) -> tuple[float | None, float | None]:
     actual = _fetch_open_meteo_daily_actual(lat=lat, lon=lon, date_ymd=date_ymd, timezone=timezone)
     return (
-        _to_float_any(actual.get("actual_hours")),
-        _to_float_any(actual.get("actual_temp_c")),
+        to_float(actual.get("actual_hours")),
+        to_float(actual.get("actual_temp_c")),
     )
 
 
@@ -663,8 +606,8 @@ def ingest_sunshine_from_night_plan(
         or forecast.get("source")
         or "forecast"
     )
-    lat = float(_env("FORECAST_LATITUDE", "35.67452"))
-    lon = float(_env("FORECAST_LONGITUDE", "139.48216"))
+    lat = float(env("FORECAST_LATITUDE", default="35.67452"))
+    lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 
     if forecast_date:
         conn.execute(
@@ -698,15 +641,15 @@ def ingest_sunshine_from_night_plan(
                 forecast_date,
                 float(tomorrow_hours) if tomorrow_hours is not None else None,
                 float(tomorrow_temp) if tomorrow_temp is not None else None,
-                _to_int_any(tomorrow_weather_code),
-                _to_float_any(tomorrow_precip_sum),
-                _to_float_any(tomorrow_precip_probability),
-                _to_float_any(tomorrow_shortwave),
-                _to_float_any(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
-                _to_float_any(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
-                _to_float_any(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
-                _to_float_any(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
-                _to_float_any(
+                to_int(tomorrow_weather_code),
+                to_float(tomorrow_precip_sum),
+                to_float(tomorrow_precip_probability),
+                to_float(tomorrow_shortwave),
+                to_float(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+                to_float(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+                to_float(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+                to_float(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+                to_float(
                     (
                         pv_calibration.get("effective_factor")
                         if isinstance(pv_calibration, dict)
@@ -790,11 +733,11 @@ def ingest_sunshine_from_night_plan(
             """,
             (
                 today_date,
-                _to_float_any(actual_weather.get("actual_hours")),
-                _to_float_any(actual_weather.get("actual_temp_c")),
-                _to_int_any(actual_weather.get("actual_weather_code")),
-                _to_float_any(actual_weather.get("actual_precipitation_sum_mm")),
-                _to_float_any(actual_weather.get("actual_shortwave_radiation_sum_mj_m2")),
+                to_float(actual_weather.get("actual_hours")),
+                to_float(actual_weather.get("actual_temp_c")),
+                to_int(actual_weather.get("actual_weather_code")),
+                to_float(actual_weather.get("actual_precipitation_sum_mm")),
+                to_float(actual_weather.get("actual_shortwave_radiation_sum_mj_m2")),
                 "open-meteo-archive",
                 ingested_at,
             ),
@@ -1076,7 +1019,7 @@ def recalc_battery_pv_charge_end_soc(conn: sqlite3.Connection, *, updated_at: st
     for row in rows:
         day = str(row["day"])
         ts = str(row["ts"])
-        soc = _to_float_any(row["soc_percent"])
+        soc = to_float(row["soc_percent"])
         if soc is None:
             continue
         cur = conn.execute(
@@ -1139,8 +1082,8 @@ def recalc_model_hit_rates(conn: sqlite3.Connection, *, updated_at: str) -> floa
 
     smape_values: list[float] = []
     for row in rows:
-        fh = _to_float_any(row["forecast_hours"])
-        ah = _to_float_any(row["actual_hours"])
+        fh = to_float(row["forecast_hours"])
+        ah = to_float(row["actual_hours"])
         if fh is None or ah is None:
             continue
         # Use sMAPE-like normalization to avoid low-actual-day over-penalty.

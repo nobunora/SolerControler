@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -22,24 +21,7 @@ from app.csv_utils import parse_monitoring_csv
 from app.decision import decide_battery_setting
 from app.history_store import persist_history
 from app.models import ApplyResult, DesiredBatterySetting, ForecastResult
-
-
-def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if (
-            len(value) >= 2
-            and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'"))
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
+from app.utils import load_dotenv_if_present
 
 
 def _setup_logging() -> None:
@@ -98,7 +80,7 @@ def _apply_local_battery_setting(
 
 
 def main() -> int:
-    _load_dotenv_if_present()
+    load_dotenv_if_present()
     _setup_logging()
     logger = logging.getLogger(__name__)
 

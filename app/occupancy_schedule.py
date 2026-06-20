@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from app.consumption_forecast import ConsumptionForecast
+from app.utils import env_bool, to_float
 
 
 OCCUPANCY_SCHEDULE_TAB = "occupancy_schedule"
@@ -61,14 +62,6 @@ class OccupancyAdjustment:
         payload["event"]["end_date"] = self.event.end_date.isoformat()
         return payload
 
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
 def _to_bool(value: Any, default: bool) -> bool:
     text = str(value or "").strip().lower()
     if not text:
@@ -78,18 +71,6 @@ def _to_bool(value: Any, default: bool) -> bool:
     if text in {"0", "false", "no", "n", "off", "無効"}:
         return False
     return default
-
-
-def _to_optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return float(text)
-    except ValueError:
-        return None
 
 
 def _to_date(value: Any) -> date | None:
@@ -130,11 +111,11 @@ def _event_from_mapping(row: Mapping[str, Any], *, row_number: int | None = None
         start_date=start,
         end_date=end,
         status=status,
-        occupancy_factor=_to_optional_float(row.get("occupancy_factor")),
-        morning_load_override_kwh=_to_optional_float(row.get("morning_load_override_kwh")),
-        daytime_load_override_kwh=_to_optional_float(row.get("daytime_load_override_kwh")),
-        standby_floor_morning_kwh=_to_optional_float(row.get("standby_floor_morning_kwh")),
-        standby_floor_daytime_kwh=_to_optional_float(row.get("standby_floor_daytime_kwh")),
+        occupancy_factor=to_float(row.get("occupancy_factor")),
+        morning_load_override_kwh=to_float(row.get("morning_load_override_kwh")),
+        daytime_load_override_kwh=to_float(row.get("daytime_load_override_kwh")),
+        standby_floor_morning_kwh=to_float(row.get("standby_floor_morning_kwh")),
+        standby_floor_daytime_kwh=to_float(row.get("standby_floor_daytime_kwh")),
         include_in_training=_to_bool(row.get("include_in_training"), False),
         reason=str(row.get("reason") or "").strip(),
         note=str(row.get("note") or "").strip(),
@@ -212,7 +193,7 @@ def load_occupancy_events_from_path(path: Path) -> list[OccupancyScheduleEvent]:
 
 
 def load_occupancy_events_from_env() -> list[OccupancyScheduleEvent]:
-    if not _env_bool("OCCUPANCY_SCHEDULE_ENABLED", True):
+    if not env_bool("OCCUPANCY_SCHEDULE_ENABLED", default=True):
         return []
     path_raw = os.getenv("OCCUPANCY_SCHEDULE_PATH", "").strip()
     if path_raw:

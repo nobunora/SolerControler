@@ -12,6 +12,8 @@ from typing import Any, Callable
 import numpy as np
 import requests
 
+from app.utils import env_bool, env_float_clamped, parse_csv_float, to_float, to_int
+
 
 HttpGet = Callable[..., Any]
 
@@ -25,43 +27,6 @@ class PVArrayConfig:
     performance_ratio: float = 0.82
     shading_factor: float = 1.0
     temp_coeff_per_deg: float = -0.0035
-
-
-def _to_float(value: Any, default: float = 0.0) -> float:
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_optional_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _to_optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    text = raw.strip().lower()
-    if not text:
-        return default
-    return text in {"1", "true", "yes", "on", "y"}
 
 
 def _parse_time(raw: Any) -> datetime | None:
@@ -112,18 +77,18 @@ def load_pv_array_configs(path: Path | None = None) -> list[PVArrayConfig]:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or f"array_{idx + 1}").strip()
-        capacity_kw = _to_float(item.get("capacity_kw"), 0.0)
+        capacity_kw = parse_csv_float(item.get("capacity_kw"), default=0.0)
         if capacity_kw <= 0:
             continue
         arrays.append(
             PVArrayConfig(
                 name=name,
-                azimuth_deg=_to_float(item.get("azimuth_deg")),
-                tilt_deg=_to_float(item.get("tilt_deg")),
+                azimuth_deg=parse_csv_float(item.get("azimuth_deg")),
+                tilt_deg=parse_csv_float(item.get("tilt_deg")),
                 capacity_kw=capacity_kw,
-                performance_ratio=_to_float(item.get("performance_ratio"), 0.82),
-                shading_factor=_to_float(item.get("shading_factor"), 1.0),
-                temp_coeff_per_deg=_to_float(item.get("temp_coeff_per_deg"), -0.0035),
+                performance_ratio=parse_csv_float(item.get("performance_ratio"), default=0.82),
+                shading_factor=parse_csv_float(item.get("shading_factor"), default=1.0),
+                temp_coeff_per_deg=parse_csv_float(item.get("temp_coeff_per_deg"), default=-0.0035),
             )
         )
     return arrays
@@ -184,8 +149,8 @@ def _fetch_hourly(
         dt = _parse_time(raw_time)
         if dt is None:
             continue
-        gti = _to_optional_float(gti_values[idx] if idx < len(gti_values) else None)
-        temp = _to_optional_float(temp_values[idx] if idx < len(temp_values) else None)
+        gti = to_float(gti_values[idx] if idx < len(gti_values) else None)
+        temp = to_float(temp_values[idx] if idx < len(temp_values) else None)
         out.append({"time": dt, "gti_w_m2": gti, "temp_c": temp})
     return out
 
@@ -202,8 +167,8 @@ def _array_hourly_kwh(
         dt = row.get("time")
         if not isinstance(dt, datetime):
             continue
-        gti = max(0.0, _to_float(row.get("gti_w_m2"), 0.0))
-        temp_c = _to_float(row.get("temp_c"), 25.0)
+        gti = max(0.0, parse_csv_float(row.get("gti_w_m2"), default=0.0))
+        temp_c = parse_csv_float(row.get("temp_c"), default=25.0)
         temp_factor = max(0.0, 1.0 + array.temp_coeff_per_deg * (temp_c - 25.0))
         # Open-Meteo hourly GTI is a preceding-hour mean W/m2 value.
         # For a one-hour interval, W/m2 / 1000 is approximately kWh/m2.
@@ -230,7 +195,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, float]:
         dt = row.get("time")
         if not isinstance(dt, datetime):
             continue
-        kwh = max(0.0, _to_float(row.get("kwh"), 0.0))
+        kwh = max(0.0, parse_csv_float(row.get("kwh"), default=0.0))
         total += kwh
         peak_kw = max(peak_kw, kwh)
         if 7 <= dt.hour < 23:
@@ -265,7 +230,7 @@ def _daily_actual_pv(rows: list[dict[str, Any]], *, target_date: str, lookback_d
         day = dt.date()
         if day >= target or day < start:
             continue
-        out[day.isoformat()] += max(0.0, _to_float(row.get("pv"), 0.0))
+        out[day.isoformat()] += max(0.0, parse_csv_float(row.get("pv"), default=0.0))
     return dict(out)
 
 
@@ -366,9 +331,9 @@ def _fetch_archive_weather_daily_by_day(
     precipitation_values = daily.get("precipitation_sum", [])
     out: dict[str, dict[str, float | str | None]] = {}
     for idx, day in enumerate(times if isinstance(times, list) else []):
-        weather_code = _to_optional_int(weather_codes[idx] if idx < len(weather_codes) else None)
-        sunshine_hours = _to_optional_float(sunshine_values[idx] if idx < len(sunshine_values) else None)
-        precipitation_sum = _to_optional_float(
+        weather_code = to_int(weather_codes[idx] if idx < len(weather_codes) else None)
+        sunshine_hours = to_float(sunshine_values[idx] if idx < len(sunshine_values) else None)
+        precipitation_sum = to_float(
             precipitation_values[idx] if idx < len(precipitation_values) else None
         )
         out[str(day)] = {
@@ -424,7 +389,7 @@ def calibrate_performance_ratio(
             for row in _array_hourly_kwh(hourly, array=array, calibration_factor=1.0):
                 dt = row.get("time")
                 if isinstance(dt, datetime):
-                    modeled_by_day[dt.date().isoformat()] += _to_float(row.get("kwh"), 0.0)
+                    modeled_by_day[dt.date().isoformat()] += parse_csv_float(row.get("kwh"), default=0.0)
     except Exception:
         return {
             "factor": 1.0,
@@ -461,7 +426,7 @@ def calibrate_performance_ratio(
 
     weather_adjustments: dict[str, dict[str, float | int | None]] = {}
     weather_regression: dict[str, Any] = {}
-    if _env_bool("PV_ARRAY_WEATHER_CALIBRATION_ENABLED", True):
+    if env_bool("PV_ARRAY_WEATHER_CALIBRATION_ENABLED", default=True):
         try:
             weather_by_day = _fetch_archive_weather_daily_by_day(
                 lat=lat,
@@ -511,7 +476,7 @@ def calibrate_performance_ratio(
                     "multiplier": _round(ratio),
                 }
 
-            if _env_bool("PV_ARRAY_WEATHER_REGRESSION_ENABLED", True):
+            if env_bool("PV_ARRAY_WEATHER_REGRESSION_ENABLED", default=True):
                 regression_rows: list[tuple[float, float, float]] = []
                 for day in common_days:
                     modeled_kwh = modeled_by_day.get(day, 0.0)
@@ -524,8 +489,8 @@ def calibrate_performance_ratio(
                     weather_class = _normalize_weather_class(weather_row.get("weather_class"))
                     if weather_class not in {"cloudy", "rain"}:
                         continue
-                    sunshine_hours = _to_optional_float(weather_row.get("sunshine_hours"))
-                    precipitation_sum_mm = _to_optional_float(weather_row.get("precipitation_sum_mm"))
+                    sunshine_hours = to_float(weather_row.get("sunshine_hours"))
+                    precipitation_sum_mm = to_float(weather_row.get("precipitation_sum_mm"))
                     if sunshine_hours is None or precipitation_sum_mm is None:
                         continue
                     y = actual_by_day.get(day, 0.0) / modeled_kwh
@@ -533,9 +498,9 @@ def calibrate_performance_ratio(
                     regression_rows.append((sunshine_hours, precipitation_sum_mm, y))
 
                 regression_min_days = max(3, int(os.getenv("PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS", "7")))
-                regression_blend = _to_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "0.1"), 0.1)
+                regression_blend = parse_csv_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "0.1"), default=0.1)
                 regression_blend = max(0.0, min(1.0, regression_blend))
-                regression_ridge = _to_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_RIDGE", "0.01"), 0.01)
+                regression_ridge = parse_csv_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_RIDGE", "0.01"), default=0.01)
                 regression_ridge = max(0.0, regression_ridge)
                 weather_regression = {
                     "enabled": True,
@@ -618,10 +583,10 @@ def forecast_pv_arrays(
             if not isinstance(dt, datetime):
                 continue
             item = hourly_by_time.setdefault(dt, {"time": dt, "total_kwh": 0.0})
-            kwh = _to_float(row.get("kwh"), 0.0)
+            kwh = parse_csv_float(row.get("kwh"), default=0.0)
             item["total_kwh"] += kwh
             item[f"{array.name}_kwh"] = kwh
-            item[f"{array.name}_gti_w_m2"] = _to_float(row.get("gti_w_m2"), 0.0)
+            item[f"{array.name}_gti_w_m2"] = parse_csv_float(row.get("gti_w_m2"), default=0.0)
 
     hourly = []
     for dt, row in sorted(hourly_by_time.items()):
@@ -635,7 +600,7 @@ def forecast_pv_arrays(
 
     totals = _aggregate(
         [
-            {"time": dt, "kwh": _to_float(row.get("total_kwh"), 0.0)}
+            {"time": dt, "kwh": parse_csv_float(row.get("total_kwh"), default=0.0)}
             for dt, row in sorted(hourly_by_time.items())
         ]
     )
@@ -688,7 +653,7 @@ def _forecast_solar_series_to_rows(
             sorted_items = [
                 (dt, value)
                 for dt, value in (
-                    (_parse_forecast_solar_time(raw_time), _to_optional_float(value))
+                    (_parse_forecast_solar_time(raw_time), to_float(value))
                     for raw_time, value in cumulative.items()
                 )
                 if dt is not None and value is not None
@@ -707,7 +672,7 @@ def _forecast_solar_series_to_rows(
     effective_factor = array.performance_ratio * array.shading_factor * calibration_factor
     for raw_time, value in series.items():
         dt = _parse_forecast_solar_time(raw_time)
-        wh = _to_optional_float(value)
+        wh = to_float(value)
         if dt is None or wh is None:
             continue
         if dt.date().isoformat() != target_date:
@@ -768,10 +733,10 @@ def forecast_pv_arrays_forecast_solar(
             if not isinstance(dt, datetime):
                 continue
             item = hourly_by_time.setdefault(dt, {"time": dt, "total_kwh": 0.0})
-            kwh = _to_float(row.get("kwh"), 0.0)
+            kwh = parse_csv_float(row.get("kwh"), default=0.0)
             item["total_kwh"] += kwh
             item[f"{array.name}_kwh"] = kwh
-            item[f"{array.name}_forecast_solar_raw_wh"] = _to_float(row.get("forecast_solar_raw_wh"), 0.0)
+            item[f"{array.name}_forecast_solar_raw_wh"] = parse_csv_float(row.get("forecast_solar_raw_wh"), default=0.0)
 
     hourly = []
     for dt, row in sorted(hourly_by_time.items()):
@@ -785,7 +750,7 @@ def forecast_pv_arrays_forecast_solar(
 
     totals = _aggregate(
         [
-            {"time": dt, "kwh": _to_float(row.get("total_kwh"), 0.0)}
+            {"time": dt, "kwh": parse_csv_float(row.get("total_kwh"), default=0.0)}
             for dt, row in sorted(hourly_by_time.items())
         ]
     )
@@ -833,25 +798,20 @@ def _forecast_hourly_map(forecast: dict[str, Any]) -> dict[datetime, float]:
         dt = _parse_time(row.get("time")) or _parse_forecast_solar_time(row.get("time"))
         if dt is None:
             continue
-        out[dt] = max(0.0, _to_float(row.get("total_kwh"), 0.0))
+        out[dt] = max(0.0, parse_csv_float(row.get("total_kwh"), default=0.0))
     return out
-
-
-def _env_float_clamped(name: str, default: float, *, min_value: float = 0.0, max_value: float = 1.0) -> float:
-    value = _to_float(os.getenv(name), default)
-    return max(min_value, min(max_value, value))
 
 
 def _ensemble_hourly_value(*, hour: int, forecast_solar_kwh: float, open_meteo_kwh: float) -> tuple[float, str]:
     if 7 <= hour < 10:
         return max(forecast_solar_kwh, open_meteo_kwh), "morning_max"
     if 10 <= hour < 16:
-        weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35)
+        weight = env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35, max_val=1.0)
         return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "midday_blend"
     if 16 <= hour < 23:
-        weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25)
+        weight = env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25, max_val=1.0)
         return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "evening_blend"
-    weight = _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50)
+    weight = env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50, max_val=1.0)
     return (forecast_solar_kwh * (1.0 - weight) + open_meteo_kwh * weight), "other_blend"
 
 
@@ -916,9 +876,9 @@ def _ensemble_pv_forecasts(
         "ensemble": {
             "method": "morning_max_midday_weighted_blend",
             "morning_hours": [7, 8, 9],
-            "open_meteo_weight_midday": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35),
-            "open_meteo_weight_evening": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25),
-            "open_meteo_weight_other": _env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50),
+            "open_meteo_weight_midday": env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_MIDDAY", 0.35, max_val=1.0),
+            "open_meteo_weight_evening": env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_EVENING", 0.25, max_val=1.0),
+            "open_meteo_weight_other": env_float_clamped("PV_ENSEMBLE_OPEN_METEO_WEIGHT_OTHER", 0.50, max_val=1.0),
         },
     }
 
@@ -951,7 +911,7 @@ def build_pv_array_forecast(
         max_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MAX_FACTOR", "5.0")),
         http_get=http_get,
     )
-    base_factor = _to_float(calibration.get("factor"), 1.0)
+    base_factor = parse_csv_float(calibration.get("factor"), default=1.0)
     weather_class = _normalize_weather_class(target_weather_class)
     weather_adjustments = calibration.get("weather_adjustments")
     weather_multiplier = 1.0
@@ -959,7 +919,7 @@ def build_pv_array_forecast(
     if isinstance(weather_adjustments, dict):
         entry = weather_adjustments.get(weather_class)
         if isinstance(entry, dict):
-            weather_multiplier = _to_float(entry.get("multiplier"), 1.0)
+            weather_multiplier = parse_csv_float(entry.get("multiplier"), default=1.0)
             adjustment_strategy = "class_multiplier"
     effective_factor = max(0.0, base_factor * weather_multiplier)
 
@@ -973,14 +933,14 @@ def build_pv_array_forecast(
     ):
         coefficients = weather_regression.get("coefficients")
         if isinstance(coefficients, dict):
-            intercept = _to_float(coefficients.get("intercept"), base_factor)
-            coef_sun = _to_float(coefficients.get("sunshine_hours"), 0.0)
-            coef_precip = _to_float(coefficients.get("precipitation_sum_mm"), 0.0)
-            blend = _to_float(weather_regression.get("blend"), 0.1)
+            intercept = parse_csv_float(coefficients.get("intercept"), default=base_factor)
+            coef_sun = parse_csv_float(coefficients.get("sunshine_hours"), default=0.0)
+            coef_precip = parse_csv_float(coefficients.get("precipitation_sum_mm"), default=0.0)
+            blend = parse_csv_float(weather_regression.get("blend"), default=0.1)
             blend = max(0.0, min(1.0, blend))
             reg_factor_raw = intercept + coef_sun * target_sun_hours + coef_precip * target_precipitation_sum_mm
-            reg_min = _to_float(weather_regression.get("min_factor"), 0.2)
-            reg_max = _to_float(weather_regression.get("max_factor"), 5.0)
+            reg_min = parse_csv_float(weather_regression.get("min_factor"), default=0.2)
+            reg_max = parse_csv_float(weather_regression.get("max_factor"), default=5.0)
             if reg_min > reg_max:
                 reg_min, reg_max = reg_max, reg_min
             reg_factor = max(reg_min, min(reg_max, reg_factor_raw))

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.occupancy_schedule import OCCUPANCY_SCHEDULE_HEADERS, OCCUPANCY_SCHEDULE_TAB
+from app.utils import env_bool
 
 
 SHEETS_SCOPE = [
@@ -29,14 +30,6 @@ def _norm(v: Any) -> str:
         return json.dumps(v, ensure_ascii=False, separators=(",", ":"))
     return str(v)
 
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
-
-
 @dataclass(frozen=True)
 class SheetsExportConfig:
     enabled: bool
@@ -51,7 +44,7 @@ class SheetsExportConfig:
     @staticmethod
     def from_env() -> "SheetsExportConfig":
         return SheetsExportConfig(
-            enabled=_env_bool("SHEETS_EXPORT_ENABLED", False),
+            enabled=env_bool("SHEETS_EXPORT_ENABLED", default=False),
             slot_only=(os.getenv("SHEETS_EXPORT_SLOT_ONLY", "23").strip() or "23"),
             timezone=(os.getenv("SHEETS_EXPORT_TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"),
             spreadsheet_id=os.getenv("SHEETS_SPREADSHEET_ID", "").strip(),
