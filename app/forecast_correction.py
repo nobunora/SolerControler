@@ -347,8 +347,8 @@ def _risk_adjusted_peak_penalty(
     pv_ratio_applied: float,
 ) -> dict[str, object]:
     enabled = env_bool("SOC_PEAK_UNMET_PENALTY_ENABLED", default=True)
-    base_factor = max(0.0, env_float("SOC_PEAK_UNMET_BASE_FACTOR", default=0.45))
-    risk_factor = max(base_factor, env_float("SOC_PEAK_UNMET_RISK_FACTOR", default=0.45))
+    base_factor = max(0.0, env_float("SOC_PEAK_UNMET_BASE_FACTOR", default=1.0))
+    risk_factor = max(base_factor, env_float("SOC_PEAK_UNMET_RISK_FACTOR", default=2.0))
     max_factor = max(base_factor, env_float("SOC_PEAK_UNMET_MAX_FACTOR", default=risk_factor))
     target_peak_soc = env_float_clamped("SOC_PEAK_UNMET_TARGET_SOC_PERCENT", 95.0, min_val=0.0, max_val=100.0)
     cdh_threshold = env_float("SOC_HIGH_TEMP_CDH28_THRESHOLD", default=10.0)

@@ -2,7 +2,9 @@ param(
     [string]$RunId = "",
     [string]$ForecastDate = "",
     [double]$ForecastSunHours = 5.0,
-    [double]$ForecastTempC = 20.0
+    [double]$ForecastTempC = 20.0,
+    [switch]$DisablePreviousDay1Forecast,
+    [switch]$SkipDbPipeline
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,7 +49,8 @@ if ($RunId) {
 
 $replayRoot = Join-Path $artifacts "replay"
 New-Item -ItemType Directory -Force -Path $replayRoot | Out-Null
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$sourceLabel = $sourceRunDir.Name
+$stamp = "$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$sourceLabel"
 $dstRoot = Join-Path $replayRoot $stamp
 New-Item -ItemType Directory -Force -Path $dstRoot | Out-Null
 
@@ -63,16 +66,24 @@ $python = Resolve-Python
 Write-Host "[replay] source run: $($sourceRunDir.FullName)"
 Write-Host "[replay] replay root: $dstRoot"
 Write-Host "[replay] forecast: date=$ForecastDate sun_h=$ForecastSunHours temp_c=$ForecastTempC"
+Write-Host "[replay] previous day1 hourly forecast: $(-not $DisablePreviousDay1Forecast)"
 
 $env:ARTIFACTS_DIR = $dstRoot
 $env:ENERGY_MODEL_CSV_DIR = (Join-Path $dstRunDir "csv")
 $env:FORECAST_DATE_OVERRIDE = $ForecastDate
 $env:FORECAST_SUN_HOURS_OVERRIDE = [string]$ForecastSunHours
 $env:FORECAST_TEMP_C_OVERRIDE = [string]$ForecastTempC
+$env:OPEN_METEO_PREVIOUS_DAY1_FORECAST_ENABLED = if ($DisablePreviousDay1Forecast) { "false" } else { "true" }
 
 if ($python -like "* -3") {
     & py -3 energy_model_main.py
     if ($LASTEXITCODE -ne 0) { throw "energy_model_main.py failed" }
+    if ($SkipDbPipeline) {
+        Write-Host "[replay] db pipeline: skipped"
+        Write-Host "[replay] done"
+        Write-Host "[replay] plan: $(Join-Path $dstRoot 'night_charge_plan.json')"
+        exit 0
+    }
     $env:CLOUD_JOB_SLOT = "23"
     $env:DATA_BACKEND = "sqlite"
     $env:DATA_DB_PATH = (Join-Path $dstRoot "replay.db")
@@ -83,6 +94,12 @@ if ($python -like "* -3") {
 } else {
     & python energy_model_main.py
     if ($LASTEXITCODE -ne 0) { throw "energy_model_main.py failed" }
+    if ($SkipDbPipeline) {
+        Write-Host "[replay] db pipeline: skipped"
+        Write-Host "[replay] done"
+        Write-Host "[replay] plan: $(Join-Path $dstRoot 'night_charge_plan.json')"
+        exit 0
+    }
     $env:CLOUD_JOB_SLOT = "23"
     $env:DATA_BACKEND = "sqlite"
     $env:DATA_DB_PATH = (Join-Path $dstRoot "replay.db")

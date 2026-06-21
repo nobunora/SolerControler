@@ -302,9 +302,18 @@ $driveBackupFolderResolved = $DriveBackupFolderId
 if (-not $driveBackupFolderResolved -and $envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID")) {
     $driveBackupFolderResolved = [string]$envMap["DRIVE_BACKUP_FOLDER_ID"]
 }
-$creds = Get-MonitorCredentials
 $usernameSecret = "kp-monitor-username"
 $passwordSecret = "kp-monitor-password"
+
+function Test-SecretExists {
+    param([string]$SecretName)
+    try {
+        Invoke-GCloud secrets describe $SecretName --project $ProjectId | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
 
 function Upsert-SecretVersion {
     param([string]$SecretName, [string]$SecretValue)
@@ -336,8 +345,20 @@ function Upsert-SecretVersion {
     }
 }
 
-Upsert-SecretVersion -SecretName $usernameSecret -SecretValue $creds.username
-Upsert-SecretVersion -SecretName $passwordSecret -SecretValue $creds.password
+$creds = $null
+try {
+    $creds = Get-MonitorCredentials
+} catch {
+    if ((Test-SecretExists -SecretName $usernameSecret) -and (Test-SecretExists -SecretName $passwordSecret)) {
+        Write-Warning "Monitor credentials were not found locally; reusing existing Secret Manager secrets."
+    } else {
+        throw
+    }
+}
+if ($null -ne $creds) {
+    Upsert-SecretVersion -SecretName $usernameSecret -SecretValue $creds.username
+    Upsert-SecretVersion -SecretName $passwordSecret -SecretValue $creds.password
+}
 
 $secretEnvList = @(
     "KP_MONITOR_USERNAME=${usernameSecret}:latest",
@@ -400,13 +421,43 @@ $commonEnv = @(
     "PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS=7",
     "PV_ARRAY_WEATHER_REGRESSION_BLEND=0.1",
     "PV_ARRAY_WEATHER_REGRESSION_RIDGE=0.01",
+    "HOURLY_WEATHER_PV_SHAPE_ENABLED=true",
+    "HOURLY_WEATHER_PV_SHAPE_BLEND=0.75",
+    "HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD=70",
+    "HOURLY_WEATHER_RAIN_MM_THRESHOLD=0.1",
+    "HOURLY_WEATHER_LOW_SHORTWAVE_W_M2=120",
     "DAYTIME_SOC_COST_OPTIMIZATION_ENABLED=true",
     "SOC_COST_DAY_BUY_RATE_YEN_PER_KWH=39.10",
     "SOC_COST_NIGHT_RATE_YEN_PER_KWH=28.85",
     "SOC_COST_SELL_VALUE_RATIO=0.75",
     "SOC_COST_DAY_BUY_PENALTY_FACTOR=1.0",
     "SOC_COST_OPT_STEP_PERCENT=1.0",
-    "SOC_COST_RESPECT_MORNING_HEADROOM_CAP=false",
+    "SOC_COST_RESPECT_MORNING_HEADROOM_CAP=true",
+    "SOC_OBJECTIVE_MODE=tiered_expected_net_cost",
+    "SOC_TIERED_DAY_BUY_COST_ENABLED=true",
+    "SOC_EXPORT_VALUE_MODE=penalty",
+    "SOC_EXPORT_PENALTY_YEN_PER_KWH=",
+    "SOC_SELL_REVENUE_YEN_PER_KWH=0",
+    "SOC_MONTHLY_TIER_LANDING_ENABLED=true",
+    "SOC_MONTHLY_TIER_CLOSE_DAY=14",
+    "SOC_MONTHLY_TIER_RECENT_DAYS=7",
+    "SOC_EXPECTED_REST_OF_MONTH_DAY_BUY_KWH=",
+    "SOC_TIER1_UNDERUSE_PENALTY_YEN_PER_KWH=0.2",
+    "SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH=30",
+    "SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH=8",
+    "SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH=20",
+    "SOC_PEAK_UNMET_PENALTY_ENABLED=true",
+    "SOC_PEAK_UNMET_TARGET_SOC_PERCENT=95",
+    "SOC_PEAK_UNMET_BASE_FACTOR=1.0",
+    "SOC_PEAK_UNMET_RISK_FACTOR=2.0",
+    "SOC_PEAK_UNMET_MAX_FACTOR=2.0",
+    "DAYTIME_NET_SURPLUS_HEADROOM_GUARD_ENABLED=true",
+    "DAYTIME_NET_SURPLUS_HEADROOM_MIN_KWH=1.0",
+    "DAYTIME_NET_SURPLUS_HEADROOM_RATIO=0.65",
+    "DAYTIME_NET_SURPLUS_HEADROOM_MAX_KWH=6.0",
+    "DAYTIME_NET_SURPLUS_HEADROOM_MIN_SOLAR_SHARE=0.55",
+    "DAYTIME_NET_SURPLUS_HEADROOM_RAIN_RELAX_HOURS=7",
+    "DAYTIME_NET_SURPLUS_HEADROOM_LOW_SHORTWAVE_RELAX_HOURS=5",
     "PV_FORECAST_ERROR_MIN_SAMPLE_DAYS=5",
     "PV_FORECAST_ERROR_RATIO_MEAN=1.0",
     "PV_FORECAST_ERROR_RATIO_STD=0.30",

@@ -237,6 +237,40 @@ def test_cost_optimizer_expands_load_scenarios_and_normalizes_probability() -> N
     assert any("load_high" in s.label for s in result.forecast_scenarios)
 
 
+def test_cost_optimizer_returns_selected_and_rejected_candidate_summaries() -> None:
+    hourly_pv = {10: 2.0, 11: 2.0}
+    hourly_load = {7: 1.0, 18: 1.0, 19: 1.0}
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10.0,
+        soc_now_percent=0.0,
+        reserve_soc_percent=0.0,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        uncertainty=uncertainty,
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=39.10,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.75,
+        ),
+        soc_step_percent=10.0,
+    )
+
+    assert result is not None
+    assert result.candidate_summaries
+    assert result.candidate_summaries[0].target_soc_percent == result.target_soc_7_percent
+    assert result.candidate_summaries[0].rejection_reason == "selected"
+    assert any(summary.rejection_reason != "selected" for summary in result.candidate_summaries)
+
+
 def test_cost_optimizer_sell_loss_override_changes_cost() -> None:
     hourly_pv = {12: 5.0}
     hourly_load = {}
@@ -282,6 +316,73 @@ def test_cost_optimizer_sell_loss_override_changes_cost() -> None:
 
     assert overridden.expected_sell_opportunity_cost_yen > base.expected_sell_opportunity_cost_yen
     assert overridden.total_expected_cost_yen > base.total_expected_cost_yen
+
+
+def test_cost_model_can_penalize_or_credit_export() -> None:
+    penalty = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        export_value_mode="penalty",
+    )
+    revenue = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        export_value_mode="revenue",
+        sell_revenue_yen_per_kwh=16.0,
+    )
+    neutral = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        export_value_mode="neutral",
+    )
+
+    assert penalty.sell_opportunity_loss_yen_per_kwh == pytest.approx(39.10)
+    assert revenue.sell_opportunity_loss_yen_per_kwh == pytest.approx(-16.0)
+    assert neutral.sell_opportunity_loss_yen_per_kwh == pytest.approx(0.0)
+
+
+def test_cost_model_uses_tiered_day_buy_increment_cost() -> None:
+    cost_model = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        tariff_mode="night8_tiered",
+        monthly_day_buy_kwh_before_target=89.0,
+        day_tier1_upper_kwh=90.0,
+        day_tier2_upper_kwh=230.0,
+        day_tier1_rate_yen_per_kwh=31.80,
+        day_tier2_rate_yen_per_kwh=39.10,
+        day_tier3_rate_yen_per_kwh=43.62,
+    )
+
+    assert cost_model.day_buy_cost_yen(2.0) == pytest.approx(31.80 + 39.10)
+
+
+def test_cost_model_monthly_tier_landing_penalty_discourages_tier_crossing() -> None:
+    cost_model = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        tariff_mode="night8_tiered",
+        monthly_day_buy_kwh_before_target=80.0,
+        expected_rest_of_month_day_buy_kwh=8.0,
+        monthly_tier_landing_enabled=True,
+        day_tier1_upper_kwh=90.0,
+        day_tier2_upper_kwh=230.0,
+        tier1_underuse_penalty_yen_per_kwh=0.2,
+        tier1_crossing_penalty_yen_per_kwh=30.0,
+    )
+
+    assert cost_model.monthly_tier_landing_penalty_yen(1.0) == pytest.approx(0.2)
+    assert cost_model.monthly_tier_landing_penalty_yen(4.0) == pytest.approx(60.0)
 
 
 def test_cost_optimizer_peak_penalty_factor_scales_cost() -> None:

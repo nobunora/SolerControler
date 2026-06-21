@@ -16,7 +16,12 @@ from app.energy_model import (
 )
 from energy_model_main import (
     _build_forecast_correction,
+    _daytime_net_surplus_headroom_guard,
     _historical_daytime_soc_gain_guard,
+    _hourly_weather_summary,
+    _monthly_day_buy_kwh_before_target,
+    _expected_rest_of_month_day_buy_kwh,
+    _reshape_hourly_pv_by_weather,
     _estimate_remaining_overnight_discharge_kwh,
     _risk_adjusted_peak_penalty,
 )
@@ -51,6 +56,25 @@ def test_effective_capacity_includes_degradation_and_temperature() -> None:
     coeff = _coeff()
     # cycle=100, temp=35 => 10*(1-0.1)*(1-0.1) = 8.1
     assert effective_capacity_kwh(coeff, cycle_count=100.0, battery_temp_c=35.0) == pytest.approx(8.1)
+
+
+def test_monthly_day_buy_uses_billing_close_day(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SOC_MONTHLY_TIER_CLOSE_DAY", "14")
+    rows = [
+        {"dt": datetime(2026, 6, 14, 12), "buy": 10.0},
+        {"dt": datetime(2026, 6, 15, 12), "buy": 1.0},
+        {"dt": datetime(2026, 6, 20, 12), "buy": 2.0},
+        {"dt": datetime(2026, 6, 21, 12), "buy": 4.0},
+        {"dt": datetime(2026, 7, 15, 12), "buy": 8.0},
+    ]
+
+    before = _monthly_day_buy_kwh_before_target(rows, target_date="2026-06-21")
+    rest = _expected_rest_of_month_day_buy_kwh(rows, target_date="2026-06-21")
+
+    assert before["kwh"] == pytest.approx(3.0)
+    assert before["billing_period_start"] == "2026-06-15"
+    assert before["billing_period_end"] == "2026-07-14"
+    assert rest["remaining_days_after_target"] == 23
 
 
 def test_compute_night_charge_target() -> None:
@@ -223,6 +247,81 @@ def test_optimize_target_soc_for_daytime_respects_max_target_cap() -> None:
 
     assert result is not None
     assert result.target_soc_7_percent <= 80.0
+
+
+def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:
+    hourly = [
+        {
+            "hour": hour,
+            "weather_code": 61 if hour in {9, 10} else 3,
+            "precipitation_mm": 0.2 if hour in {9, 10} else 0.0,
+            "shortwave_radiation_w_m2": 80.0 if hour in {11, 12} else 300.0,
+            "temp_c": 20.0,
+        }
+        for hour in range(7, 18)
+    ]
+
+    summary = _hourly_weather_summary(hourly)
+
+    assert summary["rain_hours_7_17"] == 2
+    assert summary["low_shortwave_hours_9_15"] == 2
+    assert summary["dominant_weather_class_7_17"] == "cloudy"
+
+
+def test_reshape_hourly_pv_by_weather_preserves_total_and_moves_shape(monkeypatch) -> None:
+    monkeypatch.setenv("HOURLY_WEATHER_PV_SHAPE_ENABLED", "true")
+    monkeypatch.setenv("HOURLY_WEATHER_PV_SHAPE_BLEND", "1.0")
+    hourly_pv = {hour: 1.0 for hour in range(7, 23)}
+    forecast = {
+        "source": "test",
+        "hourly_weather": [
+            {"hour": hour, "shortwave_radiation_w_m2": 1000.0 if hour == 12 else 0.0}
+            for hour in range(7, 23)
+        ],
+    }
+
+    reshaped, rationale = _reshape_hourly_pv_by_weather(hourly_pv, forecast)
+
+    assert rationale["enabled"] is True
+    assert sum(reshaped.values()) == pytest.approx(sum(hourly_pv.values()))
+    assert reshaped[12] == pytest.approx(sum(hourly_pv.values()))
+    assert reshaped[11] == pytest.approx(0.0)
+
+
+def test_daytime_net_surplus_headroom_guard_caps_only_clear_surplus_days(monkeypatch) -> None:
+    monkeypatch.setenv("DAYTIME_NET_SURPLUS_HEADROOM_GUARD_ENABLED", "true")
+    monkeypatch.setenv("DAYTIME_NET_SURPLUS_HEADROOM_MIN_KWH", "1.0")
+    monkeypatch.setenv("DAYTIME_NET_SURPLUS_HEADROOM_RATIO", "0.5")
+    hourly_load = {hour: 1.0 for hour in range(7, 18)}
+    hourly_pv = {hour: 2.0 for hour in range(7, 18)}
+    forecast = {
+        "hourly_weather_summary": {
+            "rain_hours_7_17": 0,
+            "low_shortwave_hours_9_15": 0,
+        }
+    }
+
+    guard = _daytime_net_surplus_headroom_guard(
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        forecast=forecast,
+        effective_capacity_kwh_value=10.0,
+        reserve_soc_percent=0.0,
+    )
+
+    assert guard["applied"] is True
+    assert guard["cap_target_soc_percent"] < 100.0
+
+    rainy = _daytime_net_surplus_headroom_guard(
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        forecast={"hourly_weather_summary": {"rain_hours_7_17": 8, "low_shortwave_hours_9_15": 0}},
+        effective_capacity_kwh_value=10.0,
+        reserve_soc_percent=0.0,
+    )
+
+    assert rainy["applied"] is False
+    assert rainy["reason"] == "rain_or_low_radiation_relaxed"
 
 
 def test_historical_daytime_soc_gain_guard_uses_lower_quartile(monkeypatch) -> None:

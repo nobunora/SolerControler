@@ -244,7 +244,12 @@ def _pv_uncertainty_from_forecast(pv_forecast: dict[str, object] | None) -> PvFo
     )
 
 
-def _soc_cost_model_from_env(*, battery_round_trip_efficiency: float) -> SocCostModel:
+def _soc_cost_model_from_env(
+    *,
+    battery_round_trip_efficiency: float,
+    monthly_day_buy_kwh_before_target: float = 0.0,
+    expected_rest_of_month_day_buy_kwh: float = 0.0,
+) -> SocCostModel:
     """Prices intentionally live in one place so the objective is easy to audit."""
 
     day_rate = _env_float(
@@ -254,19 +259,173 @@ def _soc_cost_model_from_env(*, battery_round_trip_efficiency: float) -> SocCost
     night_rate = _env_float("SOC_COST_NIGHT_RATE_YEN_PER_KWH", _env_float("NIGHT8_NIGHT_RATE_YEN", 31.0))
     sell_value_ratio = _env_float_clamped("SOC_COST_SELL_VALUE_RATIO", 0.0, min_value=0.0, max_value=1.0)
     day_buy_penalty = max(0.0, _env_float("SOC_COST_DAY_BUY_PENALTY_FACTOR", 1.0))
+    export_value_mode = os.getenv("SOC_EXPORT_VALUE_MODE", "penalty").strip().lower() or "penalty"
+    sell_revenue = max(0.0, _env_float("SOC_SELL_REVENUE_YEN_PER_KWH", 0.0))
     charge_efficiency = _env_float(
         "SOC_COST_USABLE_CHARGE_EFFICIENCY",
         _env_float("SOC_COST_CHARGE_EFFICIENCY", battery_round_trip_efficiency),
     )
-    sell_loss_override = _env_float("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", 38.75)
+    sell_loss_raw = os.getenv("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", "").strip()
+    sell_loss_override = (
+        _env_float("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", 0.0)
+        if sell_loss_raw
+        else _env_float("SOC_EXPORT_PENALTY_YEN_PER_KWH", max(0.0, day_rate))
+        if export_value_mode == "penalty"
+        else None
+    )
+    tariff_mode = os.getenv("COST_TARIFF_MODE", "night8_tiered").strip().lower() or "night8_tiered"
+    if not _env_bool("SOC_TIERED_DAY_BUY_COST_ENABLED", True):
+        tariff_mode = "flat"
     return SocCostModel(
         day_buy_rate_yen_per_kwh=max(0.0, day_rate),
         night_buy_rate_yen_per_kwh=max(0.0, night_rate),
         charge_efficiency=max(0.01, charge_efficiency),
         sell_value_ratio=sell_value_ratio,
         day_buy_penalty_factor=day_buy_penalty,
-        sell_opportunity_loss_yen_per_kwh_override=max(0.0, sell_loss_override),
+        sell_opportunity_loss_yen_per_kwh_override=(
+            max(0.0, sell_loss_override) if sell_loss_override is not None else None
+        ),
+        export_value_mode=export_value_mode,
+        sell_revenue_yen_per_kwh=sell_revenue,
+        tariff_mode=tariff_mode,
+        monthly_day_buy_kwh_before_target=max(
+            0.0,
+            _env_float("SOC_MONTHLY_DAY_BUY_KWH_BEFORE_TARGET", monthly_day_buy_kwh_before_target),
+        ),
+        day_tier1_upper_kwh=_env_float("NIGHT8_DAY_TIER1_UPPER_KWH", 90.0),
+        day_tier2_upper_kwh=_env_float("NIGHT8_DAY_TIER2_UPPER_KWH", 230.0),
+        day_tier1_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER1_YEN", 31.80),
+        day_tier2_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER2_YEN", 39.10),
+        day_tier3_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER3_YEN", 43.62),
+        monthly_tier_landing_enabled=_env_bool("SOC_MONTHLY_TIER_LANDING_ENABLED", False),
+        expected_rest_of_month_day_buy_kwh=max(
+            0.0,
+            _env_float("SOC_EXPECTED_REST_OF_MONTH_DAY_BUY_KWH", expected_rest_of_month_day_buy_kwh),
+        ),
+        tier1_underuse_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER1_UNDERUSE_PENALTY_YEN_PER_KWH", 0.2),
+        ),
+        tier1_crossing_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH", 30.0),
+        ),
+        tier2_extra_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH", 8.0),
+        ),
+        tier3_extra_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH", 20.0),
+        ),
     )
+
+
+def _build_plan_quality(
+    *,
+    forecast: dict[str, object],
+    optimization_payload: dict[str, object] | None,
+    result_payload: dict[str, object],
+) -> dict[str, object]:
+    reasons: list[str] = []
+    source = str(forecast.get("source") or "")
+    status = "normal"
+    should_apply = True
+    conservative = False
+
+    if source == "date-only-fallback":
+        status = "forecast_fallback"
+        conservative = True
+        reasons.append("daily_forecast_api_failed")
+    elif source == "env-override":
+        reasons.append("forecast_env_override")
+
+    if forecast.get("daily_forecast_error"):
+        status = "forecast_fallback"
+        conservative = True
+        reasons.append("daily_forecast_error_present")
+
+    if not forecast.get("date"):
+        status = "partial_data"
+        should_apply = False
+        conservative = True
+        reasons.append("missing_forecast_date")
+
+    if result_payload.get("target_soc_7_percent") is None:
+        status = "unsafe_to_apply"
+        should_apply = False
+        conservative = True
+        reasons.append("missing_target_soc")
+
+    if optimization_payload is None:
+        reasons.append("cost_optimizer_unavailable_or_legacy_selected")
+
+    return {
+        "status": status,
+        "should_apply": should_apply,
+        "conservative": conservative,
+        "source": source or "unknown",
+        "reasons": reasons or ["all_required_inputs_available"],
+    }
+
+
+def _active_constraint_names(
+    *,
+    morning_headroom_guard: dict[str, object],
+    daytime_net_surplus_headroom_guard: dict[str, object],
+    historical_soc_gain_guard: dict[str, object],
+    overnight_discharge_guard: dict[str, object],
+    respect_morning_headroom_guard: bool,
+) -> list[str]:
+    active = ["reserve_soc"]
+    if overnight_discharge_guard.get("enabled"):
+        active.append("overnight_discharge_guard")
+    if respect_morning_headroom_guard and morning_headroom_guard.get("applied"):
+        active.append("morning_pv_headroom_guard")
+    if daytime_net_surplus_headroom_guard.get("applied"):
+        active.append("daytime_net_surplus_headroom_guard")
+    if historical_soc_gain_guard.get("applied"):
+        active.append("historical_daytime_soc_gain_guard")
+    return active
+
+
+def _candidate_reason_summary(optimization_payload: dict[str, object] | None) -> list[dict[str, object]]:
+    if not isinstance(optimization_payload, dict):
+        return []
+    summaries = optimization_payload.get("candidate_summaries")
+    if not isinstance(summaries, (list, tuple)):
+        return []
+    out: list[dict[str, object]] = []
+    for item in summaries:
+        if not isinstance(item, dict):
+            continue
+        if item.get("rejection_reason") == "selected":
+            continue
+        out.append(
+            {
+                "target_soc_percent": item.get("target_soc_percent"),
+                "reason": item.get("rejection_reason"),
+                "total_expected_cost_yen": item.get("total_expected_cost_yen"),
+                "expected_day_buy_kwh": item.get("expected_day_buy_kwh"),
+                "expected_sell_kwh": item.get("expected_sell_kwh"),
+                "expected_peak_unmet_kwh": item.get("expected_peak_unmet_kwh"),
+            }
+        )
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _decision_cost_breakdown(optimization_payload: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(optimization_payload, dict):
+        return {}
+    return {
+        "night_charge_yen": optimization_payload.get("night_charge_cost_yen"),
+        "expected_day_buy_yen": optimization_payload.get("expected_day_buy_cost_yen"),
+        "expected_sell_loss_yen": optimization_payload.get("expected_sell_opportunity_cost_yen"),
+        "expected_peak_unmet_yen": optimization_payload.get("expected_peak_unmet_cost_yen"),
+        "total_expected_yen": optimization_payload.get("total_expected_cost_yen"),
+    }
 
 
 def _list_value(values, index: int):
@@ -291,6 +450,155 @@ def _weather_class(weather_code: int | None) -> str:
     if 95 <= weather_code <= 99:
         return "storm"
     return "other"
+
+
+def _hourly_weather_summary(hourly_weather: list[dict[str, object]]) -> dict[str, object]:
+    daytime = [
+        row for row in hourly_weather
+        if isinstance(row, dict) and 7 <= int(row.get("hour") or -1) < 18
+    ]
+    solar = [
+        row for row in hourly_weather
+        if isinstance(row, dict) and 9 <= int(row.get("hour") or -1) < 16
+    ]
+    rain_probability_threshold = _env_float("HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD", 70.0)
+    rain_mm_threshold = _env_float("HOURLY_WEATHER_RAIN_MM_THRESHOLD", 0.1)
+    low_shortwave_threshold = _env_float("HOURLY_WEATHER_LOW_SHORTWAVE_W_M2", 120.0)
+
+    rain_hours = 0
+    low_shortwave_hours = 0
+    shortwave_sum = 0.0
+    weather_codes: list[int] = []
+    temp_values: list[float] = []
+    for row in daytime:
+        code = _to_optional_int(row.get("weather_code"))
+        if code is not None:
+            weather_codes.append(code)
+        temp = _to_optional_float(row.get("temp_c"))
+        if temp is not None:
+            temp_values.append(temp)
+        precip = _to_optional_float(row.get("precipitation_mm")) or 0.0
+        precip_probability = _to_optional_float(row.get("precipitation_probability"))
+        if (
+            _weather_class(code) in {"rain", "storm"}
+            or precip >= rain_mm_threshold
+            or (precip_probability is not None and precip_probability >= rain_probability_threshold)
+        ):
+            rain_hours += 1
+    for row in solar:
+        shortwave = _to_optional_float(row.get("shortwave_radiation_w_m2")) or 0.0
+        shortwave_sum += shortwave
+        if shortwave <= low_shortwave_threshold:
+            low_shortwave_hours += 1
+
+    dominant_code = None
+    if weather_codes:
+        dominant_code = max(set(weather_codes), key=weather_codes.count)
+    return {
+        "daytime_hour_count": len(daytime),
+        "solar_hour_count": len(solar),
+        "rain_hours_7_17": rain_hours,
+        "low_shortwave_hours_9_15": low_shortwave_hours,
+        "shortwave_sum_9_15_wh_m2": round(shortwave_sum, 3),
+        "dominant_weather_code_7_17": dominant_code,
+        "dominant_weather_class_7_17": _weather_class(dominant_code),
+        "mean_temp_c_7_17": round(sum(temp_values) / len(temp_values), 3) if temp_values else None,
+    }
+
+
+def _hourly_weather_records_from_open_meteo(
+    hourly: dict[str, object],
+    *,
+    target_date: str,
+    suffix: str = "",
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    times = hourly.get("time", [])
+    if not isinstance(times, list):
+        return out
+    for idx, raw_time in enumerate(times):
+        time_text = str(raw_time)
+        if not time_text.startswith(f"{target_date}T"):
+            continue
+        try:
+            hour = int(time_text.split("T", 1)[1].split(":", 1)[0])
+        except (IndexError, ValueError):
+            continue
+        weather_code = _to_optional_int(_list_value(hourly.get(f"weather_code{suffix}"), idx))
+        out.append(
+            {
+                "time": time_text,
+                "hour": hour,
+                "weather_code": weather_code,
+                "weather_class": _weather_class(weather_code),
+                "precipitation_mm": _to_optional_float(_list_value(hourly.get(f"precipitation{suffix}"), idx)),
+                "precipitation_probability": _to_optional_float(
+                    _list_value(hourly.get(f"precipitation_probability{suffix}"), idx)
+                ),
+                "cloud_cover": _to_optional_float(_list_value(hourly.get(f"cloud_cover{suffix}"), idx)),
+                "shortwave_radiation_w_m2": _to_optional_float(
+                    _list_value(hourly.get(f"shortwave_radiation{suffix}"), idx)
+                ),
+                "temp_c": _to_optional_float(_list_value(hourly.get(f"temperature_2m{suffix}"), idx)),
+            }
+        )
+    return out
+
+
+def _fetch_open_meteo_previous_day1_forecast(
+    *,
+    lat: float,
+    lon: float,
+    timezone: str,
+    target_date: str,
+) -> dict[str, object]:
+    model = os.getenv("OPEN_METEO_PREVIOUS_RUNS_MODEL", "jma_seamless").strip() or "jma_seamless"
+    suffix = "_previous_day1"
+    url = "https://previous-runs-api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": timezone,
+        "start_date": target_date,
+        "end_date": target_date,
+        "models": model,
+        "hourly": (
+            "weather_code_previous_day1,precipitation_previous_day1,"
+            "precipitation_probability_previous_day1,cloud_cover_previous_day1,"
+            "shortwave_radiation_previous_day1,temperature_2m_previous_day1"
+        ),
+    }
+    resp = requests.get(url, params=params, timeout=20)
+    resp.raise_for_status()
+    hourly = resp.json().get("hourly", {})
+    if not isinstance(hourly, dict):
+        raise RuntimeError("Open-Meteo previous runs response has no hourly data")
+    hourly_weather = _hourly_weather_records_from_open_meteo(hourly, target_date=target_date, suffix=suffix)
+    if not hourly_weather:
+        raise RuntimeError(f"Open-Meteo previous runs hourly forecast is empty: {target_date}")
+    summary = _hourly_weather_summary(hourly_weather)
+    dominant_code = _to_optional_int(summary.get("dominant_weather_code_7_17"))
+    shortwave_sum_wh = _to_optional_float(summary.get("shortwave_sum_9_15_wh_m2")) or 0.0
+    return {
+        "date": target_date,
+        "sun_hours": None,
+        "temp_c": _to_optional_float(summary.get("mean_temp_c_7_17")),
+        "weather_code": dominant_code,
+        "weather_class": _weather_class(dominant_code),
+        "precipitation_sum_mm": sum(
+            _to_optional_float(row.get("precipitation_mm")) or 0.0 for row in hourly_weather
+        ),
+        "precipitation_probability_mean": None,
+        "shortwave_radiation_sum_mj_m2": shortwave_sum_wh * 3600.0 / 1_000_000.0,
+        "hourly_weather": hourly_weather,
+        "hourly_weather_summary": summary,
+        "historical_forecast": {
+            "enabled": True,
+            "source": "open-meteo-previous-runs-day1",
+            "model": model,
+            "endpoint": "previous-runs-api.open-meteo.com",
+        },
+    }
 
 
 def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: str | None = None) -> dict[str, object]:
@@ -343,33 +651,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
             raise RuntimeError(f"指定日の予報を取得できませんでした: {target_date}") from exc
     weather_code = _to_optional_int(_list_value(daily.get("weather_code"), target_index))
     forecast_date = str(times[target_index])
-    hourly_weather: list[dict[str, object]] = []
-    hourly_times = hourly.get("time", []) if isinstance(hourly, dict) else []
-    if isinstance(hourly_times, list):
-        for idx, raw_time in enumerate(hourly_times):
-            time_text = str(raw_time)
-            if not time_text.startswith(f"{forecast_date}T"):
-                continue
-            try:
-                hour = int(time_text.split("T", 1)[1].split(":", 1)[0])
-            except (IndexError, ValueError):
-                continue
-            hourly_weather.append(
-                {
-                    "time": time_text,
-                    "hour": hour,
-                    "weather_code": _to_optional_int(_list_value(hourly.get("weather_code"), idx)),
-                    "weather_class": _weather_class(_to_optional_int(_list_value(hourly.get("weather_code"), idx))),
-                    "precipitation_mm": _to_optional_float(_list_value(hourly.get("precipitation"), idx)),
-                    "precipitation_probability": _to_optional_float(
-                        _list_value(hourly.get("precipitation_probability"), idx)
-                    ),
-                    "cloud_cover": _to_optional_float(_list_value(hourly.get("cloud_cover"), idx)),
-                    "shortwave_radiation_w_m2": _to_optional_float(
-                        _list_value(hourly.get("shortwave_radiation"), idx)
-                    ),
-                }
-            )
+    hourly_weather = _hourly_weather_records_from_open_meteo(hourly, target_date=forecast_date) if isinstance(hourly, dict) else []
     return {
         "date": forecast_date,
         "sun_hours": (_to_optional_float(_list_value(sunshine, target_index)) or 0.0) / 3600.0,
@@ -384,6 +666,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
             _list_value(daily.get("shortwave_radiation_sum"), target_index)
         ),
         "hourly_weather": hourly_weather,
+        "hourly_weather_summary": _hourly_weather_summary(hourly_weather),
     }
 
 
@@ -394,7 +677,7 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
         date_override = date_override or datetime.now().date().isoformat()
         temp_override = os.getenv("FORECAST_TEMP_C_OVERRIDE", "").strip() or "20"
         weather_code = _to_optional_int(os.getenv("FORECAST_WEATHER_CODE_OVERRIDE", "").strip() or None)
-        return {
+        forecast = {
             "date": date_override,
             "sun_hours": float(sun_override),
             "temp_c": float(temp_override),
@@ -408,8 +691,39 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
                 os.getenv("FORECAST_SHORTWAVE_RADIATION_SUM_MJ_M2_OVERRIDE", "").strip() or None
             ),
             "hourly_weather": [],
+            "hourly_weather_summary": {},
             "source": "env-override",
         }
+        if _env_bool("OPEN_METEO_PREVIOUS_DAY1_FORECAST_ENABLED", False):
+            try:
+                previous = _fetch_open_meteo_previous_day1_forecast(
+                    lat=lat,
+                    lon=lon,
+                    timezone=timezone,
+                    target_date=date_override,
+                )
+                for key in (
+                    "weather_code",
+                    "weather_class",
+                    "precipitation_sum_mm",
+                    "precipitation_probability_mean",
+                    "shortwave_radiation_sum_mj_m2",
+                    "hourly_weather",
+                    "hourly_weather_summary",
+                    "historical_forecast",
+                ):
+                    if previous.get(key) is not None:
+                        forecast[key] = previous[key]
+                if previous.get("temp_c") is not None and not os.getenv("FORECAST_TEMP_C_OVERRIDE", "").strip():
+                    forecast["temp_c"] = previous["temp_c"]
+                forecast["source"] = "env-override+open-meteo-previous-runs-day1"
+            except Exception as exc:
+                forecast["historical_forecast"] = {
+                    "enabled": True,
+                    "source": "open-meteo-previous-runs-day1",
+                    "error": str(exc),
+                }
+        return forecast
     try:
         forecast = _forecast_for_date(lat=lat, lon=lon, timezone=timezone, target_date=date_override or None)
         forecast["source"] = "open-meteo-forecast"
@@ -435,6 +749,8 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
             "precipitation_sum_mm": None,
             "precipitation_probability_mean": None,
             "shortwave_radiation_sum_mj_m2": None,
+            "hourly_weather": [],
+            "hourly_weather_summary": {},
             "source": "date-only-fallback",
             "daily_forecast_error": str(exc),
         }
@@ -672,7 +988,7 @@ def _build_hourly_pv_forecast(
     fallback_total_kwh: float,
 ) -> dict[int, float]:
     from_forecast = _hourly_pv_kwh_from_forecast(pv_forecast, target_date=target_date)
-    if from_forecast:
+    if from_forecast and sum(max(0.0, value) for value in from_forecast.values()) > 0:
         return from_forecast
 
     hours = list(range(7, 23))
@@ -680,6 +996,52 @@ def _build_hourly_pv_forecast(
     pv_profile = _normalize_profile(pv_profile_raw, hours=hours)
     total = max(0.0, fallback_total_kwh)
     return {h: total * pv_profile[h] for h in hours}
+
+
+def _reshape_hourly_pv_by_weather(
+    hourly_pv_kwh: dict[int, float],
+    forecast: dict[str, object],
+) -> tuple[dict[int, float], dict[str, object]]:
+    if not _env_bool("HOURLY_WEATHER_PV_SHAPE_ENABLED", True):
+        return hourly_pv_kwh, {"enabled": False, "reason": "disabled"}
+    hourly_weather = forecast.get("hourly_weather")
+    if not isinstance(hourly_weather, list):
+        return hourly_pv_kwh, {"enabled": False, "reason": "no_hourly_weather"}
+
+    weights: dict[int, float] = {}
+    for row in hourly_weather:
+        if not isinstance(row, dict):
+            continue
+        hour = _to_optional_int(row.get("hour"))
+        if hour is None or hour < 7 or hour >= 23:
+            continue
+        shortwave = _to_optional_float(row.get("shortwave_radiation_w_m2"))
+        if shortwave is None:
+            continue
+        weights[hour] = max(0.0, shortwave)
+    if not weights or sum(weights.values()) <= 0:
+        return hourly_pv_kwh, {"enabled": False, "reason": "no_positive_shortwave"}
+
+    original_total = sum(max(0.0, value) for value in hourly_pv_kwh.values())
+    if original_total <= 0:
+        return hourly_pv_kwh, {"enabled": False, "reason": "no_hourly_pv_total"}
+
+    total_weight = sum(weights.values())
+    reshaped = {hour: original_total * (weights.get(hour, 0.0) / total_weight) for hour in range(7, 23)}
+    blend = _env_float_clamped("HOURLY_WEATHER_PV_SHAPE_BLEND", 0.75, min_value=0.0, max_value=1.0)
+    out: dict[int, float] = {}
+    for hour in range(7, 23):
+        original = max(0.0, hourly_pv_kwh.get(hour, 0.0))
+        out[hour] = original * (1.0 - blend) + reshaped.get(hour, 0.0) * blend
+    return out, {
+        "enabled": True,
+        "method": "blend_existing_pv_shape_with_hourly_shortwave",
+        "blend": blend,
+        "source": forecast.get("source"),
+        "original_total_kwh": round(original_total, 4),
+        "reshaped_total_kwh": round(sum(out.values()), 4),
+        "shortwave_hours": sorted(weights),
+    }
 
 
 def _estimate_sunset_hour(hourly_pv_kwh: dict[int, float]) -> int:
@@ -729,6 +1091,86 @@ def _morning_pv_headroom_guard(
         "morning_deficit_kwh": morning_deficit,
         "guard_headroom_kwh": guard_headroom,
         "cap_target_soc_percent": max(0.0, min(100.0, cap_target_soc)),
+    }
+
+
+def _daytime_net_surplus_headroom_guard(
+    *,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    forecast: dict[str, object],
+    effective_capacity_kwh_value: float,
+    reserve_soc_percent: float,
+) -> dict[str, object]:
+    enabled = _env_bool("DAYTIME_NET_SURPLUS_HEADROOM_GUARD_ENABLED", True)
+    hours = list(range(7, 18))
+    solar_hours = list(range(9, 16))
+    net_by_hour = {
+        hour: max(0.0, hourly_pv_kwh.get(hour, 0.0) - hourly_load_kwh.get(hour, 0.0))
+        for hour in hours
+    }
+    expected_surplus = sum(net_by_hour.values())
+    solar_surplus = sum(net_by_hour.get(hour, 0.0) for hour in solar_hours)
+    min_surplus = _env_float("DAYTIME_NET_SURPLUS_HEADROOM_MIN_KWH", 1.0)
+    guard_ratio = _env_float_clamped("DAYTIME_NET_SURPLUS_HEADROOM_RATIO", 0.65, min_value=0.0, max_value=1.0)
+    max_guard_kwh = _env_float("DAYTIME_NET_SURPLUS_HEADROOM_MAX_KWH", 6.0)
+    min_solar_surplus_share = _env_float_clamped(
+        "DAYTIME_NET_SURPLUS_HEADROOM_MIN_SOLAR_SHARE",
+        0.55,
+        min_value=0.0,
+        max_value=1.0,
+    )
+    summary = forecast.get("hourly_weather_summary")
+    rain_hours = 0
+    low_shortwave_hours = 0
+    if isinstance(summary, dict):
+        rain_hours = int(_to_optional_float(summary.get("rain_hours_7_17")) or 0)
+        low_shortwave_hours = int(_to_optional_float(summary.get("low_shortwave_hours_9_15")) or 0)
+    rain_relax_hours = int(_env_float("DAYTIME_NET_SURPLUS_HEADROOM_RAIN_RELAX_HOURS", 7.0))
+    low_shortwave_relax_hours = int(_env_float("DAYTIME_NET_SURPLUS_HEADROOM_LOW_SHORTWAVE_RELAX_HOURS", 5.0))
+    solar_share = solar_surplus / expected_surplus if expected_surplus > 0 else 0.0
+    rainy_or_low_radiation = rain_hours >= rain_relax_hours or low_shortwave_hours >= low_shortwave_relax_hours
+    usable_surplus = min(max_guard_kwh, expected_surplus * guard_ratio)
+    capacity = max(0.0, effective_capacity_kwh_value)
+    applied = bool(
+        enabled
+        and capacity > 0
+        and expected_surplus >= min_surplus
+        and solar_share >= min_solar_surplus_share
+        and not rainy_or_low_radiation
+    )
+    cap_target_soc = 100.0
+    if applied:
+        cap_target_soc = max(reserve_soc_percent, 100.0 - (usable_surplus / capacity * 100.0))
+
+    if not enabled:
+        reason = "disabled"
+    elif expected_surplus < min_surplus:
+        reason = "insufficient_net_surplus"
+    elif solar_share < min_solar_surplus_share:
+        reason = "surplus_not_concentrated_in_solar_hours"
+    elif rainy_or_low_radiation:
+        reason = "rain_or_low_radiation_relaxed"
+    else:
+        reason = "ok"
+
+    return {
+        "enabled": enabled,
+        "applied": applied,
+        "reason": reason,
+        "hours": hours,
+        "solar_hours": solar_hours,
+        "expected_net_surplus_kwh": round(expected_surplus, 4),
+        "solar_net_surplus_kwh": round(solar_surplus, 4),
+        "solar_surplus_share": round(solar_share, 4),
+        "guard_ratio": guard_ratio,
+        "min_surplus_kwh": min_surplus,
+        "max_guard_kwh": max_guard_kwh,
+        "usable_headroom_kwh": round(usable_surplus if applied else 0.0, 4),
+        "cap_target_soc_percent": round(max(0.0, min(100.0, cap_target_soc)), 3),
+        "rain_hours_7_17": rain_hours,
+        "low_shortwave_hours_9_15": low_shortwave_hours,
+        "net_surplus_by_hour_kwh": {str(hour): round(net_by_hour[hour], 4) for hour in hours},
     }
 
 
@@ -976,6 +1418,126 @@ def _clock_minutes(value: dt_time) -> int:
     return value.hour * 60 + value.minute
 
 
+def _is_within_window(minute_of_day: int, *, start_minute: int, end_minute: int) -> bool:
+    if start_minute == end_minute:
+        return True
+    if start_minute < end_minute:
+        return start_minute <= minute_of_day < end_minute
+    return minute_of_day >= start_minute or minute_of_day < end_minute
+
+
+def _billing_period_for_target(target_day: date) -> tuple[date, date, int]:
+    raw = os.getenv(
+        "SOC_MONTHLY_TIER_CLOSE_DAY",
+        os.getenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14"),
+    ).strip()
+    try:
+        close_day = max(1, min(28, int(raw)))
+    except ValueError:
+        close_day = 14
+
+    if target_day.day <= close_day:
+        period_end = target_day.replace(day=close_day)
+        previous_month_end = period_end.replace(day=1) - timedelta(days=1)
+        period_start = previous_month_end.replace(day=close_day + 1)
+    else:
+        next_month = (target_day.replace(day=28) + timedelta(days=4)).replace(day=1)
+        period_start = target_day.replace(day=close_day + 1)
+        period_end = next_month.replace(day=close_day)
+    return period_start, period_end, close_day
+
+
+def _monthly_day_buy_kwh_before_target(
+    rows: list[dict[str, float | datetime]],
+    *,
+    target_date: str,
+) -> dict[str, object]:
+    try:
+        target_day = date.fromisoformat(target_date)
+    except ValueError:
+        return {"kwh": 0.0, "source": "invalid_target_date", "target_date": target_date}
+    day_start = _parse_hhmm(os.getenv("NIGHT8_DAY_START_HHMM", "07:00"), default="07:00")
+    day_end = _parse_hhmm(os.getenv("NIGHT8_DAY_END_HHMM", "23:00"), default="23:00")
+    start_minute = _clock_minutes(day_start)
+    end_minute = _clock_minutes(day_end)
+    period_start, period_end, close_day = _billing_period_for_target(target_day)
+    total = 0.0
+    sample_days: set[str] = set()
+    for row in rows:
+        dt = row.get("dt")
+        if not isinstance(dt, datetime):
+            continue
+        row_day = dt.date()
+        if row_day < period_start or row_day >= target_day or row_day > period_end:
+            continue
+        minute = dt.hour * 60 + dt.minute
+        if not _is_within_window(minute, start_minute=start_minute, end_minute=end_minute):
+            continue
+        total += max(0.0, float(row.get("buy", 0.0) or 0.0))
+        sample_days.add(row_day.isoformat())
+    return {
+        "kwh": round(total, 4),
+        "source": "csv_month_to_target_daytime_buy",
+        "target_date": target_date,
+        "billing_period_start": period_start.isoformat(),
+        "billing_period_end": period_end.isoformat(),
+        "billing_close_day": close_day,
+        "day_window": f"{day_start.strftime('%H:%M')}-{day_end.strftime('%H:%M')}",
+        "sample_day_count": len(sample_days),
+        "sample_days": sorted(sample_days)[-10:],
+    }
+
+
+def _expected_rest_of_month_day_buy_kwh(
+    rows: list[dict[str, float | datetime]],
+    *,
+    target_date: str,
+) -> dict[str, object]:
+    try:
+        target_day = date.fromisoformat(target_date)
+    except ValueError:
+        return {"kwh": 0.0, "source": "invalid_target_date", "target_date": target_date}
+
+    lookback_days = max(1, int(_env_float("SOC_MONTHLY_TIER_RECENT_DAYS", 7.0)))
+    day_start = _parse_hhmm(os.getenv("NIGHT8_DAY_START_HHMM", "07:00"), default="07:00")
+    day_end = _parse_hhmm(os.getenv("NIGHT8_DAY_END_HHMM", "23:00"), default="23:00")
+    start_minute = _clock_minutes(day_start)
+    end_minute = _clock_minutes(day_end)
+    period_start, period_end, close_day = _billing_period_for_target(target_day)
+    daily: dict[date, float] = {}
+    for row in rows:
+        dt = row.get("dt")
+        if not isinstance(dt, datetime):
+            continue
+        row_day = dt.date()
+        if row_day < period_start or row_day >= target_day:
+            continue
+        minute = dt.hour * 60 + dt.minute
+        if not _is_within_window(minute, start_minute=start_minute, end_minute=end_minute):
+            continue
+        daily[row_day] = daily.get(row_day, 0.0) + max(0.0, float(row.get("buy", 0.0) or 0.0))
+
+    recent_days = sorted(daily)[-lookback_days:]
+    recent_values = [daily[day] for day in recent_days]
+    avg = statistics.mean(recent_values) if recent_values else 0.0
+    remaining_days_after_target = max(0, (period_end - target_day).days)
+    expected = avg * remaining_days_after_target
+    return {
+        "kwh": round(expected, 4),
+        "source": "recent_daytime_buy_average",
+        "target_date": target_date,
+        "billing_period_start": period_start.isoformat(),
+        "billing_period_end": period_end.isoformat(),
+        "billing_close_day": close_day,
+        "day_window": f"{day_start.strftime('%H:%M')}-{day_end.strftime('%H:%M')}",
+        "lookback_days": lookback_days,
+        "sample_day_count": len(recent_days),
+        "recent_daily_avg_kwh": round(avg, 4),
+        "remaining_days_after_target": remaining_days_after_target,
+        "sample_days": [day.isoformat() for day in recent_days],
+    }
+
+
 def _estimate_remaining_overnight_discharge_kwh(
     rows: list[dict[str, float | datetime]],
     *,
@@ -1097,12 +1659,19 @@ def main() -> int:
         target_precipitation_sum_mm=_to_optional_float(forecast.get("precipitation_sum_mm")),
     )
     pv_totals = _pv_forecast_totals(pv_array_forecast)
-    predicted_pv_override = _to_optional_float(pv_totals.get("total_kwh"))
+    predicted_pv_total_raw = _to_optional_float(pv_totals.get("total_kwh"))
+    predicted_pv_override = predicted_pv_total_raw
+    if predicted_pv_override is not None and predicted_pv_override <= 0:
+        predicted_pv_override = None
     predicted_morning_pv_override = _to_optional_float(pv_totals.get("morning_kwh"))
+    if predicted_morning_pv_override is not None and predicted_morning_pv_override <= 0:
+        predicted_morning_pv_override = None
     predicted_midday_surplus_override = _estimate_midday_surplus_from_pv_forecast(
         pv_forecast=pv_array_forecast,
         consumption_forecast=consumption_forecast,
     )
+    if predicted_pv_total_raw is not None and predicted_pv_total_raw <= 0:
+        predicted_midday_surplus_override = None
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
         pv_array_forecast["surplus_estimate"] = {
             "midday_surplus_kwh": predicted_midday_surplus_override,
@@ -1116,6 +1685,14 @@ def main() -> int:
         target_date=tomorrow_date,
     )
     expected_overnight_discharge_kwh = _to_optional_float(overnight_discharge_guard.get("expected_kwh")) or 0.0
+    monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
+        rows,
+        target_date=tomorrow_date,
+    )
+    expected_rest_of_month_day_buy = _expected_rest_of_month_day_buy_kwh(
+        rows,
+        target_date=tomorrow_date,
+    )
     inp = NightChargeInputs(
         soc_now_percent=latest_soc,
         sun_hours_forecast=sun_h,
@@ -1146,6 +1723,10 @@ def main() -> int:
         target_date=tomorrow_date,
         fallback_total_kwh=result.predicted_pv_kwh,
     )
+    raw_hourly_pv_forecast, hourly_weather_pv_shape = _reshape_hourly_pv_by_weather(
+        raw_hourly_pv_forecast,
+        forecast,
+    )
     forecast_correction = _build_forecast_correction(
         rows=rows,
         hourly_load_forecast=raw_hourly_load_forecast,
@@ -1165,12 +1746,24 @@ def main() -> int:
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         reserve_soc_percent=inp.reserve_soc_percent,
     )
+    daytime_net_surplus_headroom_guard = _daytime_net_surplus_headroom_guard(
+        hourly_load_kwh=hourly_load_forecast,
+        hourly_pv_kwh=hourly_pv_forecast,
+        forecast=forecast,
+        effective_capacity_kwh_value=result.effective_capacity_kwh,
+        reserve_soc_percent=inp.reserve_soc_percent,
+    )
     historical_soc_gain_guard = _historical_daytime_soc_gain_guard(
         rows,
         reserve_soc_percent=inp.reserve_soc_percent,
         target_date=tomorrow_date,
     )
     legacy_max_target_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+    if daytime_net_surplus_headroom_guard.get("applied"):
+        legacy_max_target_soc = min(
+            legacy_max_target_soc,
+            _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
+        )
     if historical_soc_gain_guard.get("applied"):
         legacy_max_target_soc = min(
             legacy_max_target_soc,
@@ -1203,8 +1796,10 @@ def main() -> int:
             "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
             "morning_pv_headroom_guard": morning_headroom_guard,
+            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
             "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
             "sunset_hour": sunset_hour,
+            "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
         }
@@ -1217,11 +1812,22 @@ def main() -> int:
         )
         cost_model = _soc_cost_model_from_env(
             battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
+            monthly_day_buy_kwh_before_target=(
+                _to_optional_float(monthly_day_buy_before_target.get("kwh")) or 0.0
+            ),
+            expected_rest_of_month_day_buy_kwh=(
+                _to_optional_float(expected_rest_of_month_day_buy.get("kwh")) or 0.0
+            ),
         )
-        respect_guard = _env_bool("SOC_COST_RESPECT_MORNING_HEADROOM_CAP", False)
+        respect_guard = _env_bool("SOC_COST_RESPECT_MORNING_HEADROOM_CAP", True)
         cost_max_soc = 100.0
         if respect_guard:
             cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+        if daytime_net_surplus_headroom_guard.get("applied"):
+            cost_max_soc = min(
+                cost_max_soc,
+                _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
+            )
         if historical_soc_gain_guard.get("applied"):
             cost_max_soc = min(
                 cost_max_soc,
@@ -1262,11 +1868,15 @@ def main() -> int:
                     "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
                 ),
                 "morning_pv_headroom_guard": morning_headroom_guard,
+                "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
                 "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
                 "respect_morning_headroom_guard": respect_guard,
                 "max_target_soc_percent_after_guards": cost_max_soc,
                 "forecast_correction": forecast_correction.get("rationale", {}),
+                "hourly_weather_pv_shape": hourly_weather_pv_shape,
                 "overnight_discharge_guard": overnight_discharge_guard,
+                "monthly_day_buy_before_target": monthly_day_buy_before_target,
+                "expected_rest_of_month_day_buy": expected_rest_of_month_day_buy,
                 "soc_cost_risk": {
                     "expected_day_buy_kwh": cost_optimization.expected_day_buy_kwh_risk,
                     "expected_sell_kwh": cost_optimization.expected_sell_kwh_risk,
@@ -1275,7 +1885,35 @@ def main() -> int:
                     "buy_risk": cost_optimization.buy_risk,
                     "sell_risk": cost_optimization.sell_risk,
                     "peak_unmet_penalty_factor": peak_penalty_factor,
+                    "export_value_mode": cost_model.export_value_mode,
+                    "sell_revenue_yen_per_kwh": cost_model.sell_revenue_yen_per_kwh,
                     "sell_opportunity_loss_yen_per_kwh": cost_model.sell_opportunity_loss_yen_per_kwh,
+                    "tariff_mode": cost_model.tariff_mode,
+                    "monthly_day_buy_kwh_before_target": cost_model.monthly_day_buy_kwh_before_target,
+                    "expected_rest_of_month_day_buy_kwh": cost_model.expected_rest_of_month_day_buy_kwh,
+                    "monthly_tier_landing_enabled": cost_model.monthly_tier_landing_enabled,
+                    "monthly_tier_landing_penalty_yen": (
+                        cost_optimization.expected_monthly_tier_landing_penalty_yen
+                    ),
+                    "projected_monthly_day_buy_kwh": round(
+                        cost_model.monthly_day_buy_kwh_before_target
+                        + cost_model.expected_rest_of_month_day_buy_kwh
+                        + cost_optimization.expected_day_buy_kwh,
+                        4,
+                    ),
+                    "monthly_tier_landing_penalties": {
+                        "tier1_underuse_yen_per_kwh": cost_model.tier1_underuse_penalty_yen_per_kwh,
+                        "tier1_crossing_yen_per_kwh": cost_model.tier1_crossing_penalty_yen_per_kwh,
+                        "tier2_extra_yen_per_kwh": cost_model.tier2_extra_penalty_yen_per_kwh,
+                        "tier3_extra_yen_per_kwh": cost_model.tier3_extra_penalty_yen_per_kwh,
+                    },
+                    "day_buy_tiers": {
+                        "tier1_upper_kwh": cost_model.day_tier1_upper_kwh,
+                        "tier2_upper_kwh": cost_model.day_tier2_upper_kwh,
+                        "tier1_rate_yen_per_kwh": cost_model.day_tier1_rate_yen_per_kwh,
+                        "tier2_rate_yen_per_kwh": cost_model.day_tier2_rate_yen_per_kwh,
+                        "tier3_rate_yen_per_kwh": cost_model.day_tier3_rate_yen_per_kwh,
+                    },
                     "scenario_count": len(cost_optimization.forecast_scenarios),
                     "scenario_method": "pv_sigma_x_load_scenarios_with_weather_upside",
                     "weather_upside_probability": weather_upside_probability,
@@ -1326,8 +1964,32 @@ def main() -> int:
     coefficients["pv_forecast_error_ratio_variance"] = pv_uncertainty_for_payload.variance_multiplier
     coefficients["pv_forecast_error_ratio_sample_count"] = float(pv_uncertainty_for_payload.sample_count)
 
+    plan_quality = _build_plan_quality(
+        forecast=forecast,
+        optimization_payload=optimization_payload,
+        result_payload=result_payload,
+    )
+    active_constraints = _active_constraint_names(
+        morning_headroom_guard=morning_headroom_guard,
+        daytime_net_surplus_headroom_guard=daytime_net_surplus_headroom_guard,
+        historical_soc_gain_guard=historical_soc_gain_guard,
+        overnight_discharge_guard=overnight_discharge_guard,
+        respect_morning_headroom_guard=(
+            bool(optimization_payload.get("respect_morning_headroom_guard"))
+            if isinstance(optimization_payload, dict)
+            else True
+        ),
+    )
+    rejected_candidates = _candidate_reason_summary(optimization_payload)
+    cost_breakdown = _decision_cost_breakdown(optimization_payload)
+    objective_name = (
+        "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
+        if cost_optimization_payload is not None else "legacy_peak_soc_objective"
+    )
+
     payload = {
         "csv_paths": [str(p) for p in csv_paths],
+        "plan_quality": plan_quality,
         "forecast": forecast,
         "pv_array_forecast": pv_array_forecast,
         "historical_profile": hist,
@@ -1339,15 +2001,23 @@ def main() -> int:
         "result": result_payload,
         "daytime_soc_optimization": optimization_payload,
         "decision_rationale": {
-            "objective": (
-                "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
-                if cost_optimization_payload is not None else "legacy_peak_soc_objective"
+            "plan_quality": plan_quality,
+            "objective": objective_name,
+            "selected_reason": (
+                "lowest_total_cost_with_active_constraints"
+                if cost_optimization_payload is not None else "legacy_peak_soc_objective_fallback"
             ),
+            "active_constraints": active_constraints,
+            "rejected_candidates": rejected_candidates,
+            "cost_breakdown_yen": cost_breakdown,
             "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
             "morning_pv_headroom_guard": morning_headroom_guard,
+            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
+            "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "forecast_correction": forecast_correction.get("rationale", {}),
             "overnight_discharge_guard": overnight_discharge_guard,
             "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
+            "raw_target_soc_7_percent": result_payload.get("target_soc_7_percent_base"),
             "final_target_soc_7_percent": result_payload.get("target_soc_7_percent"),
             "final_required_night_charge_kwh": result_payload.get("required_night_charge_kwh"),
         },
