@@ -84,14 +84,7 @@ def _read_operation_conditions_config() -> dict[str, Any]:
     }
 
 
-def _read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
-    path = Path(os.getenv("NIGHT_CHARGE_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+def _extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {}
     rationale = data.get("decision_rationale")
@@ -107,6 +100,38 @@ def _read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
         "forecast_correction": correction if isinstance(correction, dict) else {},
         "hourly_weather_pv_shape": hourly_shape if isinstance(hourly_shape, dict) else {},
     }
+
+
+def _read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
+    path = Path(os.getenv("NIGHT_CHARGE_PLAN_PATH", "artifacts/night_charge_plan.json"))
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return _extract_pv_forecast_diagnostics(data)
+
+
+def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str, Any]:
+    try:
+        snap = client.collection("night_charge_plans").document("latest").get()
+    except Exception:
+        return {}
+    if not snap.exists:
+        return {}
+    row = snap.to_dict() or {}
+    plan_text = str(row.get("plan_json") or "").strip()
+    if plan_text:
+        try:
+            plan = json.loads(plan_text)
+        except Exception:
+            plan = {}
+        if isinstance(plan, dict):
+            diagnostics = _extract_pv_forecast_diagnostics(plan)
+            if diagnostics:
+                return diagnostics
+    return _extract_pv_forecast_diagnostics(row)
 
 
 def _find_variable_condition_value(conditions: dict[str, Any], *, target_id: str, default: str) -> str:
@@ -1393,7 +1418,9 @@ def _load_firestore_slice(
                 energy_daily=energy_daily,
                 end_date_iso=end_date_iso,
             ),
-            pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
+            pv_forecast_diagnostics=(
+                _read_latest_pv_forecast_diagnostics_from_firestore(client) if include_static else {}
+            ),
         ),
         meta=meta,
     )
