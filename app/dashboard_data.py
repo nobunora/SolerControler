@@ -25,6 +25,7 @@ class DashboardData:
     forecast_hourly: list[dict[str, Any]] = field(default_factory=list)
     latest_schedule: dict[str, Any] = field(default_factory=dict)
     dashboard_warnings: list[dict[str, Any]] = field(default_factory=list)
+    pv_forecast_diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,31 @@ def _read_operation_conditions_config() -> dict[str, Any]:
         "priority_order": data.get("priority_order") if isinstance(data.get("priority_order"), list) else default["priority_order"],
         "fixed": data.get("fixed") if isinstance(data.get("fixed"), list) else [],
         "variable": data.get("variable") if isinstance(data.get("variable"), list) else [],
+    }
+
+
+def _read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
+    path = Path(os.getenv("NIGHT_CHARGE_PLAN_PATH", "artifacts/night_charge_plan.json"))
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    rationale = data.get("decision_rationale")
+    optimization = data.get("daytime_soc_optimization")
+    source = rationale if isinstance(rationale, dict) else optimization if isinstance(optimization, dict) else {}
+    physical = source.get("pv_physical_forecast") if isinstance(source, dict) else None
+    correction = source.get("forecast_correction") if isinstance(source, dict) else None
+    hourly_shape = source.get("hourly_weather_pv_shape") if isinstance(source, dict) else None
+    forecast = data.get("forecast")
+    return {
+        "plan_date": forecast.get("date") if isinstance(forecast, dict) else None,
+        "physical": physical if isinstance(physical, dict) else {},
+        "forecast_correction": correction if isinstance(correction, dict) else {},
+        "hourly_weather_pv_shape": hourly_shape if isinstance(hourly_shape, dict) else {},
     }
 
 
@@ -785,7 +811,7 @@ def _load_sqlite_slice(
                 params = _rows_to_dicts(
                     conn.execute(
                         """
-                        SELECT name, mean_value, variance, sample_count, hit_rate
+                        SELECT name, mean_value, variance, sample_count
                         FROM model_parameters
                         ORDER BY name
                         """
@@ -847,6 +873,7 @@ def _load_sqlite_slice(
                     energy_daily=energy_daily,
                     end_date_iso=end_date_iso,
                 ),
+                pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
             ),
             meta=meta,
         )
@@ -1031,7 +1058,7 @@ def _load_postgres_slice(
 
                 cur.execute(
                     """
-                    SELECT name, mean_value, variance, sample_count, hit_rate
+                    SELECT name, mean_value, variance, sample_count
                     FROM model_parameters
                     ORDER BY name
                     """
@@ -1091,6 +1118,7 @@ def _load_postgres_slice(
                         energy_daily=energy_daily,
                         end_date_iso=end_date_iso,
                     ),
+                    pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
                 ),
                 meta=meta,
             )
@@ -1311,7 +1339,6 @@ def _load_firestore_slice(
                     "mean_value": row.get("mean_value"),
                     "variance": row.get("variance"),
                     "sample_count": row.get("sample_count"),
-                    "hit_rate": row.get("hit_rate"),
                 }
             )
         latest_events: list[dict[str, Any]] = []
@@ -1366,6 +1393,7 @@ def _load_firestore_slice(
                 energy_daily=energy_daily,
                 end_date_iso=end_date_iso,
             ),
+            pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
         ),
         meta=meta,
     )

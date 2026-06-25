@@ -84,7 +84,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
         try:
             rows = conn.execute(
                 """
-                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh
+                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_shortwave_radiation_w_m2
                 FROM forecast_hourly
                 WHERE date < ?
                 ORDER BY date, hour
@@ -104,6 +104,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
         out.setdefault(str(row["date"]), {})[hour] = {
             "pv": max(0.0, float(row["forecast_pv_kwh"] or 0.0)),
             "load": max(0.0, float(row["forecast_load_kwh"] or 0.0)),
+            "shortwave": max(0.0, float(row["forecast_shortwave_radiation_w_m2"] or 0.0)),
         }
     return out
 
@@ -135,6 +136,7 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
         out.setdefault(day, {})[hour] = {
             "pv": max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0),
             "load": max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0),
+            "shortwave": max(0.0, to_float(row.get("forecast_shortwave_radiation_w_m2")) or 0.0),
         }
     return out
 
@@ -398,6 +400,7 @@ def _build_forecast_correction(
     lon: float,
     timezone: str,
     forecast: dict[str, object],
+    skip_pv_correction: bool = False,
 ) -> dict[str, object]:
     enabled = env_bool("FORECAST_CORRECTION_ENABLED", default=True)
     if not enabled:
@@ -468,8 +471,9 @@ def _build_forecast_correction(
     )
     evening_delta = float(temperature_correction.get("multiplier_delta") or 0.0)
 
+    pv_multiplier = 1.0 if skip_pv_correction else pv_ratio
     corrected_pv = {
-        hour: max(0.0, value) * pv_ratio
+        hour: max(0.0, value) * pv_multiplier
         for hour, value in hourly_pv_forecast.items()
     }
     corrected_load: dict[int, float] = {}
@@ -493,7 +497,8 @@ def _build_forecast_correction(
             "history_source": history_source,
             "history_days": history_dates[-14:],
             "pv_ratio_ewma_raw": round(pv_ratio_raw, 6),
-            "pv_ratio_ewma_applied": round(pv_ratio, 6),
+            "pv_ratio_ewma_applied": round(pv_multiplier, 6),
+            "pv_ratio_ewma_skipped": bool(skip_pv_correction),
             "pv_ratio_floor": pv_min,
             "pv_ratio_cap": pv_max,
             "pv_ewma_alpha": pv_alpha,

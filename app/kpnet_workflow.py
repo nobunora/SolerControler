@@ -4,6 +4,7 @@ import csv
 import json
 import logging
 import math
+import os
 import re
 import statistics
 import time
@@ -897,6 +898,10 @@ def _build_dynamic_forced_profile(
     night_soc_lower_code = _pick_max_code(value_maps["SocSafetyMode"])
     day_soc_lower_code = _pick_min_code(value_maps["SocEconomyMode"])
     contact_soc_lower_code = _pick_max_code(value_maps["SocContactInput"])
+    slot23_guard_applied = os.getenv("CLOUD_JOB_SLOT", "").strip() == "23"
+    if slot23_guard_applied:
+        contact_soc_lower_code = _pick_ceil_code(value_maps["SocContactInput"], 100.0)
+        soc_charge_code = _pick_min_code(value_maps["SocChargeMode"])
 
     summary["night_charge_plan"] = {
         "plan_path": str(plan.plan_path),
@@ -927,6 +932,11 @@ def _build_dynamic_forced_profile(
         "soc_economy_mode": day_soc_lower_code,
         "soc_contact_input": contact_soc_lower_code,
         "soc_charge_mode": soc_charge_code,
+        "slot23_discharge_guard": {
+            "applied": slot23_guard_applied,
+            "reason": "set_target_soc_100_and_charge_upper_0_at_23_to_prevent_night_discharge"
+            if slot23_guard_applied else "not_slot_23",
+        },
         "battery_operating_mode_preference": night_mode_preference,
         "battery_operating_mode": night_mode_code,
         "day_discharge_window_start": f"{discharge_start_h:02d}:{discharge_start_m:02d}",

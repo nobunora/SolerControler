@@ -205,6 +205,45 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     assert profile.discharge_end_m == "0"
 
 
+def test_build_dynamic_forced_profile_applies_slot23_discharge_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUD_JOB_SLOT", "23")
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text("年月日,時刻,充電電力量[kWh]\n2026/05/01,23:30,0.0\n", encoding="utf-8")
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-05-03"},
+                "result": {
+                    "required_night_charge_kwh": 0.0,
+                    "target_soc_7_percent": 35.0,
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    cfg = _build_cfg(plan_path=plan_path)
+    value_maps = {
+        "BatteryOperatingMode": {"1": "グリーンモード", "3": "強制充電モード"},
+        "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
+        "SocEconomyMode": {"0": "0%", "20": "20%"},
+        "SocContactInput": {"0": "0%", "100": "100%"},
+        "SocChargeMode": {"0": "0%", "40": "40%", "80": "80%"},
+    }
+    summary: dict[str, object] = {}
+
+    profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
+
+    assert profile.soc_contact_input == "100"
+    assert profile.soc_charge_mode == "0"
+    assert summary["night_charge_plan"]["slot23_discharge_guard"]["applied"] is True
+
+
 def test_build_dynamic_forced_profile_times_rounded_soc_limit_by_raw_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

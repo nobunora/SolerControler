@@ -461,3 +461,35 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(1.35)
     assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2)
     assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(2.0)
+
+
+def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypatch) -> None:
+    monkeypatch.setenv("PV_RATIO_EWMA_ALPHA", "0.5")
+    monkeypatch.setenv("PV_RATIO_EWMA_MIN", "0.9")
+    monkeypatch.setenv("PV_RATIO_EWMA_MAX", "1.35")
+
+    def fake_history(*, target_date: str):
+        return {"2026-05-30": {7: {"pv": 1.0, "load": 1.0}}}, "test_history"
+
+    def fake_temperature(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str, archive: bool):
+        return {day: {hour: 20.0 for hour in range(23)} for day in ["2026-05-30", "2026-05-31"]}
+
+    monkeypatch.setattr("app.forecast_correction._load_forecast_hourly_history", fake_history)
+    monkeypatch.setattr("app.forecast_correction._fetch_hourly_temperatures", fake_temperature)
+
+    correction = _build_forecast_correction(
+        rows=[{"dt": datetime.fromisoformat("2026-05-30T07:00:00"), "pv": 4.0, "load": 1.0}],
+        hourly_load_forecast={7: 1.0},
+        hourly_pv_forecast={7: 2.0},
+        target_date="2026-05-31",
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        forecast={"date": "2026-05-31", "temp_c": 20.0},
+        skip_pv_correction=True,
+    )
+
+    rationale = correction["rationale"]
+    assert rationale["pv_ratio_ewma_raw"] > 1.0
+    assert rationale["pv_ratio_ewma_skipped"] is True
+    assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(2.0)

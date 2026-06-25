@@ -36,7 +36,8 @@ from app.soc_cost_optimizer import (
     optimize_soc_by_expected_cost,
     to_plain_dict,
 )
-from app.forecast_correction import _build_forecast_correction, _risk_adjusted_peak_penalty
+from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history, _risk_adjusted_peak_penalty
+from app.pv_physical_forecast import build_physical_pv_candidate
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -1727,6 +1728,24 @@ def main() -> int:
         raw_hourly_pv_forecast,
         forecast,
     )
+    forecast_history_for_physical, physical_history_source = _load_forecast_hourly_history(target_date=tomorrow_date)
+    physical_pv_candidate = build_physical_pv_candidate(
+        rows=rows,
+        forecast_history=forecast_history_for_physical,
+        existing_hourly_pv=raw_hourly_pv_forecast,
+        forecast=forecast,
+        target_date=tomorrow_date,
+        lat=lat,
+        lon=lon,
+        timezone=timezone,
+    )
+    physical_pv_diagnostics = {
+        **physical_pv_candidate.diagnostics,
+        "history_source": physical_history_source,
+    }
+    physical_pv_selected = bool(physical_pv_diagnostics.get("enabled"))
+    if physical_pv_selected:
+        raw_hourly_pv_forecast = physical_pv_candidate.hourly_pv_kwh
     forecast_correction = _build_forecast_correction(
         rows=rows,
         hourly_load_forecast=raw_hourly_load_forecast,
@@ -1736,6 +1755,7 @@ def main() -> int:
         lon=lon,
         timezone=timezone,
         forecast=forecast,
+        skip_pv_correction=physical_pv_selected,
     )
     hourly_load_forecast = forecast_correction["hourly_load_kwh"]  # type: ignore[assignment]
     hourly_pv_forecast = forecast_correction["hourly_pv_kwh"]  # type: ignore[assignment]
@@ -1800,6 +1820,7 @@ def main() -> int:
             "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
             "sunset_hour": sunset_hour,
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
+            "pv_physical_forecast": physical_pv_diagnostics,
             "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
         }
@@ -1873,6 +1894,7 @@ def main() -> int:
                 "respect_morning_headroom_guard": respect_guard,
                 "max_target_soc_percent_after_guards": cost_max_soc,
                 "forecast_correction": forecast_correction.get("rationale", {}),
+                "pv_physical_forecast": physical_pv_diagnostics,
                 "hourly_weather_pv_shape": hourly_weather_pv_shape,
                 "overnight_discharge_guard": overnight_discharge_guard,
                 "monthly_day_buy_before_target": monthly_day_buy_before_target,
@@ -1963,6 +1985,14 @@ def main() -> int:
     coefficients["pv_forecast_error_ratio_std"] = pv_uncertainty_for_payload.std_multiplier
     coefficients["pv_forecast_error_ratio_variance"] = pv_uncertainty_for_payload.variance_multiplier
     coefficients["pv_forecast_error_ratio_sample_count"] = float(pv_uncertainty_for_payload.sample_count)
+    physical_scales = physical_pv_diagnostics.get("scales") if isinstance(physical_pv_diagnostics, dict) else None
+    if isinstance(physical_scales, dict):
+        radiation_scale = _to_optional_float(physical_scales.get("radiation_scale"))
+        global_bias_scale = _to_optional_float(physical_scales.get("global_bias_scale"))
+        if radiation_scale is not None:
+            coefficients["physical_pv_radiation_scale"] = radiation_scale
+        if global_bias_scale is not None:
+            coefficients["physical_pv_global_bias_scale"] = global_bias_scale
 
     plan_quality = _build_plan_quality(
         forecast=forecast,
@@ -2014,6 +2044,7 @@ def main() -> int:
             "morning_pv_headroom_guard": morning_headroom_guard,
             "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
+            "pv_physical_forecast": physical_pv_diagnostics,
             "forecast_correction": forecast_correction.get("rationale", {}),
             "overnight_discharge_guard": overnight_discharge_guard,
             "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),

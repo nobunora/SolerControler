@@ -77,6 +77,7 @@ def _empty_dashboard_payload() -> dict:
         "model_parameters": [],
         "latest_schedule": {},
         "dashboard_warnings": [],
+        "pv_forecast_diagnostics": {},
         "meta": {
             "window_days": 31,
             "oldest_loaded_date": None,
@@ -319,11 +320,18 @@ def _html(payload: dict, script_nonce: str) -> str:
     table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
     th, td { padding: 7px 5px; border-bottom: 1px solid #eaf0f6; text-align: left; overflow-wrap: anywhere; word-break: break-word; }
     th { background: #f8fbff; }
+    .diag-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 10px 0 14px; }
+    .diag-kpi { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfdff; }
+    .diag-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .diag-value { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+    .diag-path { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .diag-chip { border: 1px solid #d8e6f2; border-radius: 999px; padding: 4px 8px; background: #f8fbff; font-size: 12px; }
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
       .full { grid-column: auto; }
       .chart-box { height: 240px; }
       .battery-life-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .diag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .battery-life-chart { height: 220px; }
       .hero h1 { font-size: 19px; }
     }
@@ -350,6 +358,22 @@ def _html(payload: dict, script_nonce: str) -> str:
         <h2>0.1 時間別予測（最新計画）</h2>
         <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・予想消費電量を表示します。</p>
         <div class="chart-box"><canvas id="hourlyForecastChart"></canvas></div>
+      </article>
+
+      <article class="card full">
+        <h2>0.2 PV予測診断（最新計画）</h2>
+        <p id="pvForecastDiagNote" class="desc">予測候補、採用経路、係数の状態を表示します。</p>
+        <div class="diag-grid" aria-label="PV予測診断サマリー">
+          <div class="diag-kpi"><span class="diag-label">採用モデル</span><span id="pvDiagMethod" class="diag-value">-</span></div>
+          <div class="diag-kpi"><span class="diag-label">計画日</span><span id="pvDiagDate" class="diag-value">-</span></div>
+          <div class="diag-kpi"><span class="diag-label">global scale</span><span id="pvDiagScale" class="diag-value">-</span></div>
+          <div class="diag-kpi"><span class="diag-label">データ状態</span><span id="pvDiagQuality" class="diag-value">-</span></div>
+        </div>
+        <div id="pvDiagPath" class="diag-path" aria-label="PV予測判断経路"></div>
+        <table id="pvCandidateTable">
+          <thead><tr><th>候補</th><th>合計kWh</th><th>状態</th><th>備考</th></tr></thead>
+          <tbody></tbody>
+        </table>
       </article>
 
       <article class="card full">
@@ -408,8 +432,8 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>6. 蓄電池容量予測（推定）</h2>
-        <p class="desc">表示期間の実測充放電量とモデルパラメータから、等価サイクル・推定容量・12ヶ月先の容量推移を見ます。実容量を直接測った診断値ではなく、制御には使わない可視化用の推定です。</p>
+        <h2>6. 蓄電池容量推定（実績）</h2>
+        <p class="desc">表示期間の実測充放電量と実績気温から、月別の推定容量内訳を表示します。未来予測ではなく、制御には使わない可視化用の推定です。</p>
         <div class="battery-life-card">
           <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
             <div class="battery-life-kpi"><span class="battery-life-label">累計充電</span><span id="lifeTotalCharge" class="battery-life-value">-</span></div>
@@ -426,7 +450,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       <article class="card full">
         <h2>7. 蓄電池方程式とパラメータ</h2>
         <div class="equation">
-          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh], <b>HT</b>=的中率[%]<br>
+          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
           (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
           (2) 朝不足: <b>DF = max(0, RM - PV<sub>07-10</sub>)</b><br>
           (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
@@ -435,11 +459,19 @@ def _html(payload: dict, script_nonce: str) -> str:
           条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 03ジョブが07:00カットオフで強制充電開始を逆算。 条件C: 充電開始は00:00未満にしない。<br>
           条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
           最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
-          的中率: <b>HT = max(0, 1 - sMAPE(SH実績, SH予測) / 2) × 100</b>
         </div>
+        <div class="equation" id="pvDeveloperSummary">
+          PV物理予測: 診断データ未生成
+        </div>
+        <table id="pvDeveloperTable">
+          <thead>
+            <tr><th>分類</th><th>変数</th><th>値</th><th>意味</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
         <table id="paramsTable">
           <thead>
-            <tr><th>短縮</th><th>パラメータ</th><th>意味</th><th>中心値</th><th>分散</th><th>サンプル数</th><th>的中率</th></tr>
+            <tr><th>短縮</th><th>パラメータ</th><th>意味</th><th>中心値</th><th>分散</th><th>サンプル数</th></tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -660,6 +692,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       params: [],
       latestSchedule: null,
       dashboardWarnings: [],
+      pvForecastDiagnostics: {},
       dates: [],
       loadingOlder: false,
     };
@@ -685,6 +718,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       pv_self_consumption_ratio: { code: "Sc", label: "PV自家消費率" },
       pv_array_calibration_factor: { code: "Pa", label: "面別PV予測の実績補正係数" },
       pv_array_total_capacity_kw: { code: "Pc", label: "面別PV設定の合計容量[kW]" },
+      pv_forecast_error_ratio_mean: { code: "Pem", label: "PV予測倍率の中心値（確率ではない）" },
+      pv_forecast_error_ratio_std: { code: "Pes", label: "PV予測倍率のばらつき（確率ではない）" },
+      pv_forecast_error_ratio_variance: { code: "Pev", label: "PV予測倍率の分散" },
+      pv_forecast_error_ratio_sample_count: { code: "Pen", label: "PV予測誤差サンプル数" },
+      physical_pv_radiation_scale: { code: "Prs", label: "短波放射からPVへ変換する物理モデル係数" },
+      physical_pv_global_bias_scale: { code: "Pbs", label: "物理PV予測の全体バイアス補正係数" },
       battery_temp_coeff_per_deg: { code: "Bt", label: "気温1℃あたり蓄電容量補正係数" },
       battery_cycle_capacity_fade_per_cycle: { code: "Cf", label: "1サイクルあたり容量劣化率" },
     };
@@ -760,6 +799,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         store.params = payload.model_parameters || [];
         store.latestSchedule = payload.latest_schedule || store.latestSchedule;
         store.dashboardWarnings = payload.dashboard_warnings || [];
+        store.pvForecastDiagnostics = payload.pv_forecast_diagnostics || {};
       }
       store.meta = payload.meta || store.meta;
       rebuildDateIndex();
@@ -1075,7 +1115,6 @@ def _html(payload: dict, script_nonce: str) -> str:
       tbody.innerHTML = "";
       for (const p of store.params) {
         const tr = document.createElement("tr");
-        const hit = p.hit_rate == null ? "未算出" : `${(n(p.hit_rate) * 100).toFixed(1)}%`;
         const meta = paramAlias[String(p.name || "")] || { code: "-", label: "補助パラメータ" };
         const values = [
           String(meta.code),
@@ -1084,7 +1123,6 @@ def _html(payload: dict, script_nonce: str) -> str:
           n(p.mean_value).toFixed(4),
           n(p.variance).toFixed(6),
           String(n(p.sample_count, 0)),
-          hit,
         ];
         for (const value of values) {
           const td = document.createElement("td");
@@ -1093,6 +1131,109 @@ def _html(payload: dict, script_nonce: str) -> str:
         }
         tbody.appendChild(tr);
       }
+    }
+
+    function setText(id, value) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value == null || value === "" ? "-" : String(value);
+    }
+
+    function fillPvForecastDiagnostics() {
+      const diag = store.pvForecastDiagnostics || {};
+      const physical = diag.physical || {};
+      const scales = physical.scales || {};
+      const quality = physical.data_quality || {};
+      const method = physical.selected_method || "not_generated";
+      setText("pvDiagMethod", method);
+      setText("pvDiagDate", diag.plan_date || "-");
+      setText("pvDiagScale", scales.global_bias_scale == null ? "-" : Number(scales.global_bias_scale).toFixed(4));
+      const globalDays = quality.global_days == null ? "-" : `${quality.global_days}/${quality.global_days_required || "-"}`;
+      setText("pvDiagQuality", physical.enabled ? `valid ${globalDays}` : (physical.fallback_reason || "not generated"));
+
+      const pathEl = document.getElementById("pvDiagPath");
+      pathEl.innerHTML = "";
+      const path = Array.isArray(physical.decision_path) ? physical.decision_path : [];
+      for (const item of path.length ? path : ["diagnostics_not_available"]) {
+        const span = document.createElement("span");
+        span.className = "diag-chip";
+        span.textContent = String(item);
+        pathEl.appendChild(span);
+      }
+
+      const tbody = document.querySelector("#pvCandidateTable tbody");
+      tbody.innerHTML = "";
+      const candidates = physical.candidates || {};
+      for (const [name, item] of Object.entries(candidates)) {
+        const tr = document.createElement("tr");
+        let status = item && item.status ? item.status : "";
+        if (!status && name === "existing" && method === "existing") status = "selected";
+        if (!status && name !== method) status = physical.fallback_reason ? "waiting" : "-";
+        let note = "";
+        if (name === method || (name === "existing" && method === "existing")) note = "selected";
+        else if (status === "waiting") note = physical.fallback_reason || "threshold not met";
+        const row = [
+          name,
+          item && item.total_kwh != null ? Number(item.total_kwh).toFixed(2) : "-",
+          status || "-",
+          note,
+        ];
+        for (const value of row) {
+          const td = document.createElement("td");
+          td.textContent = String(value);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      if (!tbody.children.length) {
+        const tr = document.createElement("tr");
+        for (const value of ["-", "-", "not generated", "night_charge_plan.json に診断がありません"]) {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+
+      fillPvDeveloperTable(diag, physical, scales, quality);
+    }
+
+    function addDeveloperRow(tbody, group, name, value, meaning) {
+      const tr = document.createElement("tr");
+      for (const cell of [group, name, value, meaning]) {
+        const td = document.createElement("td");
+        td.textContent = String(cell == null || cell === "" ? "-" : cell);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+
+    function fillPvDeveloperTable(diag, physical, scales, quality) {
+      const summary = document.getElementById("pvDeveloperSummary");
+      const tbody = document.querySelector("#pvDeveloperTable tbody");
+      if (!tbody) return;
+      tbody.innerHTML = "";
+      const input = physical.input || {};
+      const retirement = physical.retirement_recommendation || {};
+      const correction = diag.forecast_correction || {};
+      if (summary) {
+        const method = physical.selected_method || "not_generated";
+        const reason = physical.fallback_reason ? ` / ${physical.fallback_reason}` : "";
+        summary.innerHTML =
+          `PV物理予測: <b>${escapeHtml(method)}</b>${escapeHtml(reason)}<br>` +
+          `判断経路: <b>${escapeHtml((physical.decision_path || []).join(" → ") || "-")}</b>`;
+      }
+      addDeveloperRow(tbody, "入力", "lat/lon", `${input.lat ?? "-"} / ${input.lon ?? "-"}`, "太陽位置計算に使う設置地点");
+      addDeveloperRow(tbody, "入力", "roof_pitch_deg", input.roof_pitch_deg ?? "-", "一般工事勾配を前提にしたパネル傾斜角");
+      addDeveloperRow(tbody, "入力", "panel_weights", JSON.stringify(input.panel_weights || {}), "東/南/西の相対出力比");
+      addDeveloperRow(tbody, "入力", "shortwave_hours", (input.shortwave_hours || []).join(", "), "短波放射が使えた時間");
+      addDeveloperRow(tbody, "データ", "global_days", `${quality.global_days ?? 0}/${quality.global_days_required ?? "-"}`, "global scale採用に必要な有効日数");
+      addDeveloperRow(tbody, "データ", "daypart_min_samples", quality.daypart_min_samples ?? "-", "朝/昼/夕スケールの自動発動閾値");
+      addDeveloperRow(tbody, "データ", "bin_min_samples", quality.bin_min_samples ?? "-", "太陽高度×短波binスケールの自動発動閾値");
+      addDeveloperRow(tbody, "係数", "radiation_scale", scales.radiation_scale ?? "-", "短波放射からPVへ変換する基礎係数");
+      addDeveloperRow(tbody, "係数", "radiation_scale_source", scales.radiation_scale_source ?? "-", "基礎係数の取得元");
+      addDeveloperRow(tbody, "係数", "global_bias_scale", scales.global_bias_scale ?? "-", "平均誤差を0へ寄せる全体補正");
+      addDeveloperRow(tbody, "既存補正", "pv_ratio_ewma_skipped", correction.pv_ratio_ewma_skipped ?? "-", "物理PV採用時に既存PV EWMAを二重適用しないためのフラグ");
+      addDeveloperRow(tbody, "整理候補", "existing_pv_ewma", JSON.stringify((retirement.existing_pv_ewma || {})), "データ蓄積後に既存PV EWMAを整理するかの提案");
     }
 
     function commonOptions() {
@@ -1224,11 +1365,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       });
 
       charts.batteryLife = new Chart(document.getElementById("batteryLifeChart"), {
+        type: "bar",
         data: { labels: [], datasets: [
-          { type: "line", label: "推定容量(kWh)", data: [], yAxisID: "y", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, borderWidth: 2.4 },
-          { type: "bar", label: "サイクル劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#9ed8f466", borderColor: "#55acd8", borderWidth: 1, stack: "loss" },
-          { type: "bar", label: "温度容量補正(kWh)", data: [], yAxisID: "y2", backgroundColor: "#ffe08a99", borderColor: "#ef8e1d", borderWidth: 1, stack: "loss" },
-          { type: "bar", label: "カレンダー劣化(kWh/月)", data: [], yAxisID: "y2", backgroundColor: "#d8e6f299", borderColor: "#9dafbf", borderWidth: 1, stack: "loss" },
+          { label: "現在推定容量(kWh)", data: [], backgroundColor: "#147efb99", borderColor: "#147efb", borderWidth: 1, stack: "capacity" },
+          { label: "サイクル劣化(kWh)", data: [], backgroundColor: "#ef8e1d99", borderColor: "#d17814", borderWidth: 1, stack: "capacity" },
+          { label: "カレンダー劣化(kWh)", data: [], backgroundColor: "#9dafbf99", borderColor: "#7d8fa1", borderWidth: 1, stack: "capacity" },
+          { label: "温度容量補正(kWh)", data: [], backgroundColor: "#ffe08a99", borderColor: "#d8a900", borderWidth: 1, stack: "capacity" },
         ]},
         options: {
           ...commonOptions(),
@@ -1237,8 +1379,7 @@ def _html(payload: dict, script_nonce: str) -> str:
             legend: { labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } },
           },
           scales: {
-            y: { min: 0, max: 1, title: { display: true, text: "容量(kWh)", color: "#147efb" }, ticks: { color: "#147efb" }, border: { color: "#147efb" }, grid: { color: "#d8e6f2" } },
-            y2: { min: 0, max: 1, position: "right", title: { display: true, text: "容量低下(kWh)", color: "#ef8e1d" }, ticks: { color: "#ef8e1d" }, border: { color: "#ef8e1d" }, grid: { drawOnChartArea: false }, stacked: true },
+            y: { min: 0, max: 1, stacked: true, title: { display: true, text: "初期容量内訳(kWh)", color: "#147efb" }, ticks: { color: "#147efb" }, border: { color: "#147efb" }, grid: { color: "#d8e6f2" } },
             x: { stacked: true },
           },
         },
@@ -1383,15 +1524,6 @@ def _html(payload: dict, script_nonce: str) -> str:
       el.innerHTML = unit ? `${escapeHtml(text)}<small>${escapeHtml(unit)}</small>` : escapeHtml(text);
     }
 
-    function monthLabelFromDate(dateObj) {
-      return `${String(dateObj.getUTCMonth() + 1).padStart(2, "0")}月`;
-    }
-
-    function seasonalAverageTempC(monthIndex1) {
-      const normals = [5, 6, 10, 15, 20, 23, 27, 29, 25, 19, 13, 8];
-      return normals[Math.max(0, Math.min(11, monthIndex1 - 1))];
-    }
-
     function monthSpan(startIso, endIso) {
       const start = isoParts(startIso);
       const end = isoParts(endIso);
@@ -1417,40 +1549,61 @@ def _html(payload: dict, script_nonce: str) -> str:
       const cycleFadePerCycle = Math.max(0.00001, modelParam("battery_cycle_capacity_fade_per_cycle", 0.0003));
       const tempCoeffPerDeg = modelParam("battery_temp_coeff_per_deg", -0.005);
       const equivalentCycles = totalDischarge / baseCapacity;
-      const currentCapacity = Math.max(baseCapacity * 0.5, baseCapacity * (1 - cycleFadePerCycle * equivalentCycles));
+      const currentCycleLoss = Math.min(baseCapacity * 0.8, baseCapacity * cycleFadePerCycle * equivalentCycles);
+      const currentCapacity = Math.max(baseCapacity * 0.2, baseCapacity - currentCycleLoss);
       const currentSoh = currentCapacity / baseCapacity * 100;
       const months = range ? monthSpan(range.start, range.end) : 1;
       const monthlyEqCycles = equivalentCycles / months;
       const monthlyCycleLoss = baseCapacity * cycleFadePerCycle * monthlyEqCycles;
       const calendarLoss = baseCapacity * 0.00025;
 
-      let projectedAgedCapacity = currentCapacity;
+      const monthKeys = Array.from(new Set(dates.map((day) => day.slice(0, 7)))).sort();
       const labels = [];
       const capacities = [];
       const cycleLosses = [];
       const tempLosses = [];
       const calendarLosses = [];
+      let cumulativeDischarge = 0;
+      let monthIndex = 0;
+      for (const monthKey of monthKeys) {
+        monthIndex += 1;
+        let monthDischarge = 0;
+        let tempSum = 0;
+        let tempCount = 0;
+        for (const day of dates) {
+          if (!day.startsWith(monthKey)) continue;
+          const flow = store.batteryFlow.get(day);
+          monthDischarge += n(flow && flow.discharge_kwh);
+          const weather = store.sunshine.get(day);
+          const actualTemp = valueOrNull(weather && weather.actual_temp_c);
+          if (actualTemp !== null) {
+            tempSum += actualTemp;
+            tempCount += 1;
+          }
+        }
+        cumulativeDischarge += monthDischarge;
+        const cumulativeCycles = cumulativeDischarge / baseCapacity;
+        const cumulativeCycleLoss = Math.min(baseCapacity * 0.8, baseCapacity * cycleFadePerCycle * cumulativeCycles);
+        const cumulativeCalendarLoss = Math.min(baseCapacity * 0.8 - cumulativeCycleLoss, calendarLoss * monthIndex);
+        const agedCapacity = Math.max(baseCapacity * 0.2, baseCapacity - cumulativeCycleLoss - cumulativeCalendarLoss);
+        const avgTemp = tempCount ? tempSum / tempCount : null;
+        const tempFactor = avgTemp === null ? 1.0 : Math.max(0.7, 1 + tempCoeffPerDeg * (avgTemp - 25));
+        const tempLoss = Math.max(0, agedCapacity * (1 - tempFactor));
+        const projectedCapacity = Math.max(0, baseCapacity - cumulativeCycleLoss - cumulativeCalendarLoss - tempLoss);
+        labels.push(monthKey);
+        capacities.push(Number(projectedCapacity.toFixed(3)));
+        cycleLosses.push(Number(cumulativeCycleLoss.toFixed(4)));
+        tempLosses.push(Number(tempLoss.toFixed(4)));
+        calendarLosses.push(Number(cumulativeCalendarLoss.toFixed(4)));
+      }
+
+      const lossPerMonth = monthlyCycleLoss + calendarLoss;
+      const monthsTo80 = lossPerMonth > 0 ? Math.max(0, (currentCapacity - baseCapacity * 0.8) / lossPerMonth) : null;
       const latest = latestAvailableDate();
       const latestParts = isoParts(latest || todayIsoJst());
       const baseDate = latestParts
         ? new Date(Date.UTC(latestParts.year, latestParts.month - 1, 1))
         : new Date();
-      for (let i = 0; i < 12; i += 1) {
-        const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i + 1, 1));
-        const avgTemp = seasonalAverageTempC(d.getUTCMonth() + 1);
-        projectedAgedCapacity = Math.max(baseCapacity * 0.2, projectedAgedCapacity - monthlyCycleLoss - calendarLoss);
-        const tempFactor = Math.max(0.7, 1 + tempCoeffPerDeg * (avgTemp - 25));
-        const tempLoss = Math.max(0, projectedAgedCapacity * (1 - tempFactor));
-        const projectedCapacity = Math.max(baseCapacity * 0.2, projectedAgedCapacity - tempLoss);
-        labels.push(monthLabelFromDate(d));
-        capacities.push(Number(projectedCapacity.toFixed(3)));
-        cycleLosses.push(Number(monthlyCycleLoss.toFixed(4)));
-        tempLosses.push(Number(tempLoss.toFixed(4)));
-        calendarLosses.push(Number(calendarLoss.toFixed(4)));
-      }
-
-      const lossPerMonth = monthlyCycleLoss + calendarLoss;
-      const monthsTo80 = lossPerMonth > 0 ? Math.max(0, (currentCapacity - baseCapacity * 0.8) / lossPerMonth) : null;
       const year80 = monthsTo80 == null
         ? "-"
         : String(new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + Math.ceil(monthsTo80), 1)).getUTCFullYear());
@@ -1465,21 +1618,11 @@ def _html(payload: dict, script_nonce: str) -> str:
       chart.data.labels = labels;
       chart.data.datasets[0].data = capacities;
       chart.data.datasets[1].data = cycleLosses;
-      chart.data.datasets[2].data = tempLosses;
-      chart.data.datasets[3].data = calendarLosses;
-      const capMin = Math.min(...capacities, currentCapacity);
-      const capMax = Math.max(...capacities, currentCapacity);
-      const capPad = Math.max(0.05, (capMax - capMin) * 0.35);
-      chart.options.scales.y.min = Math.max(0, Math.floor((capMin - capPad) * 20) / 20);
-      chart.options.scales.y.max = Math.ceil((capMax + capPad) * 20) / 20;
-      chart.options.scales.y.ticks = { color: "#147efb", callback: (v) => `${Number(v).toFixed(2)}` };
-      const monthlyLossTotals = cycleLosses.map((v, i) => v + tempLosses[i] + calendarLosses[i]);
-      const minMonthlyLoss = Math.min(...monthlyLossTotals);
-      const maxMonthlyLoss = Math.max(...monthlyLossTotals);
-      const lossPad = Math.max(0.001, (maxMonthlyLoss - minMonthlyLoss) * 0.35);
-      chart.options.scales.y2.min = Math.max(0, Math.floor((minMonthlyLoss - lossPad) * 1000) / 1000);
-      chart.options.scales.y2.max = Math.ceil((maxMonthlyLoss + lossPad) * 1000) / 1000;
-      chart.options.scales.y2.ticks = { color: "#ef8e1d", callback: (v) => Number(v).toFixed(3) };
+      chart.data.datasets[2].data = calendarLosses;
+      chart.data.datasets[3].data = tempLosses;
+      chart.options.scales.y.min = 0;
+      chart.options.scales.y.max = Math.ceil(baseCapacity * 10) / 10;
+      chart.options.scales.y.ticks = { color: "#147efb", callback: (v) => `${Number(v).toFixed(1)}` };
       chart.update("none");
     }
 
@@ -1734,6 +1877,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
 
       fillParamsTable();
+      fillPvForecastDiagnostics();
       await refreshDashboard();
 
       const resizeAll = () => {
