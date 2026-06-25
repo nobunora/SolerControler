@@ -1,43 +1,52 @@
 # AGENTS.md
 
-Keep context small and act from evidence.
+Keep context small. Act from evidence.
 
 ## Core Rules
 
-- Read this file first. Open other docs only when needed.
-- Use PowerShell 7 (`pwsh`) by default; use Windows PowerShell only for compatibility issues.
+- Read this file first.
+- Use PowerShell 7 (`pwsh`) by default.
+- Do not scan all docs or all source files.
+- Start with metadata: `git status --short`, shallow listings, and `rg --files`.
+- Use `rg` before opening files.
+- Open only the needed index, file, and line range.
+- Full-file reads are allowed only for short files or when structure is required.
+- If broader reading is needed, say why before doing it.
 - Follow existing design, names, boundaries, and error handling.
-- Do not guess specs, compatibility, security, or external contracts. Ask or verify.
+- Do not guess specs, compatibility, security, money, or external contracts. Verify or ask.
 - Do not rename public APIs, DB fields, env keys, or integration fields unless required.
-- Report briefly: changed files, reason, checks run, risks.
+- Keep one main responsibility per file or function.
+- Keep diffs small and focused. Do not mix feature work, refactor, and formatting.
+- Do not leave debug code, commented-out code, or temporary bypasses.
+- Do not add dependencies unless need, maintenance cost, and risk are clear.
+- Report briefly: changed files, reason, checks run, risks, and open questions.
 
-## Reference Docs
+## Read Next
+
+- `docs/00_index.md`
+- Then choose one category index only when needed.
+- Project overview: `README.md` only when project specs or entrypoints are needed.
+
+## Compatibility Links
 
 - Token policy: `docs/codex_token_usage_rules.md`
 - Design judgment: `docs/design_intent_rules.md`
 - Review guide: `docs/code_review.md`
 - Bad patterns: `docs/bad_patterns.md`
 - Report template: `docs/report_template.md`
-- Project overview: `README.md`
 
-## Search Workflow
+## Working Rules
 
-- Start with metadata: `rg --files`, `Get-ChildItem`, or shallow directory listings.
-- Use `rg` before reading files. Full-file reads are a last resort.
-- Read only relevant line ranges and avoid rereading unchanged ranges.
-- Search symbols first, then inspect only the needed function/class blocks.
-- Exclude generated or bulky paths: `node_modules`, `dist`, `build`, `.next`, `.venv`, caches, logs, artifacts, and `.git`.
-- After discovery, summarize what matters and move to implementation.
+- Prefer focused tests near changed code first.
+- If behavior might change, say so explicitly.
+- For UI state, save flow, orchestration, preview, progress, or entrypoint wiring, read `docs/11_refactor_and_release.md` before editing.
+- Do not parallelize checks that fight with the same watcher, browser, or dev server.
+- If a command cannot run, give the exact reason and the command a human should run.
+- Keep generated, cache, build, log, and artifact paths out of normal reads.
 
 ## Subagents
 
 - Use subagents only when they reduce total work.
 - Give each subagent a clear role, scope, and stop condition.
-- Do not repeat the same exploration in both parent and subagent.
-- Parent agent integrates results, resolves conflicts, and avoids duplicate token spend.
-
-## Context Hygiene
-
-- Keep stable prompts, schemas, and project rules unchanged to maximize caching.
-- Do not paste large logs, CSVs, generated files, or test output; summarize them.
-- Prefer focused tests near changed code first.
+- Do not repeat the same exploration in parent and subagent.
+- Parent integrates results and resolves conflicts.
