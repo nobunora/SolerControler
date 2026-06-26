@@ -356,7 +356,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       <article class="card full">
         <h2>0.1 時間別予測（最新計画）</h2>
-        <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・予想消費電量を表示します。</p>
+        <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・消費電力量を表示します。消費は実績がある時間帯を実績、未到達時間帯を予測で表示します。</p>
         <div class="chart-box"><canvas id="hourlyForecastChart"></canvas></div>
       </article>
 
@@ -450,12 +450,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       <article class="card full">
         <h2>7. 蓄電池方程式とパラメータ</h2>
         <div class="equation">
-          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
+          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>NL</b>=夜間負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
           (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
           (2) 朝不足: <b>DF = max(0, RM - PV<sub>07-10</sub>)</b><br>
           (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
           (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
-          (5) 夜間充電量: <b>NC = max(0, ((RC - RS)/100 × Cp) / Ef)</b><br>
+          (5) 夜間充電量: <b>NC = max(0, ((RC × Cp/100) - max(0, RS × Cp/100 - NL)) / Ef)</b><br>
           条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 03ジョブが07:00カットオフで強制充電開始を逆算。 条件C: 充電開始は00:00未満にしない。<br>
           条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
           最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
@@ -1215,6 +1215,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const input = physical.input || {};
       const retirement = physical.retirement_recommendation || {};
       const correction = diag.forecast_correction || {};
+      const overnight = diag.overnight_load_forecast || {};
       if (summary) {
         const method = physical.selected_method || "not_generated";
         const reason = physical.fallback_reason ? ` / ${physical.fallback_reason}` : "";
@@ -1233,6 +1234,10 @@ def _html(payload: dict, script_nonce: str) -> str:
       addDeveloperRow(tbody, "係数", "radiation_scale_source", scales.radiation_scale_source ?? "-", "基礎係数の取得元");
       addDeveloperRow(tbody, "係数", "global_bias_scale", scales.global_bias_scale ?? "-", "平均誤差を0へ寄せる全体補正");
       addDeveloperRow(tbody, "既存補正", "pv_ratio_ewma_skipped", correction.pv_ratio_ewma_skipped ?? "-", "物理PV採用時に既存PV EWMAを二重適用しないためのフラグ");
+      addDeveloperRow(tbody, "夜間負荷", "expected_kwh", overnight.expected_kwh == null ? "-" : Number(overnight.expected_kwh).toFixed(2), "23-07の30分消費実績から見積もる翌朝までの負荷");
+      addDeveloperRow(tbody, "夜間負荷", "source", overnight.source || "-", "夜間負荷予測に使ったデータ源");
+      addDeveloperRow(tbody, "夜間負荷", "reason", overnight.reason || "-", "採用または未採用の理由");
+      addDeveloperRow(tbody, "夜間負荷", "sample_count", overnight.sample_count ?? "-", "推定に使えた過去夜間日数");
       addDeveloperRow(tbody, "整理候補", "existing_pv_ewma", JSON.stringify((retirement.existing_pv_ewma || {})), "データ蓄積後に既存PV EWMAを整理するかの提案");
     }
 
@@ -1266,7 +1271,7 @@ def _html(payload: dict, script_nonce: str) -> str:
           datasets: [
             { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
             { label: "予想充電量(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
-            { label: "予想消費電量(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
+            { label: "消費電力量 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
           ],
         },
         options: {
@@ -1491,7 +1496,13 @@ def _html(payload: dict, script_nonce: str) -> str:
       const labels = rows.map((row) => `${String(Number(row.hour)).padStart(2, "0")}:00`);
       const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
       const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
-      const load = rows.map((row) => row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh));
+      const load = rows.map((row) => row.actual_load_kwh == null ? (row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh)) : n(row.actual_load_kwh));
+      const actualHours = rows.filter((row) => row.actual_load_kwh != null).map((row) => Number(row.hour));
+      const latestActual = rows
+        .map((row) => row.latest_sample_at || "")
+        .filter(Boolean)
+        .sort()
+        .pop();
       chart.data.labels = labels;
       chart.data.datasets[0].data = pv;
       chart.data.datasets[1].data = charge;
@@ -1504,7 +1515,11 @@ def _html(payload: dict, script_nonce: str) -> str:
         const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
         const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
         const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
-        note.textContent = `${date} の1時間予測。発電 ${totalPv.toFixed(2)}kWh / 充電 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh`;
+        const actualText = actualHours.length
+          ? `消費実績 ${String(Math.min(...actualHours)).padStart(2, "0")}:00-${String(Math.max(...actualHours)).padStart(2, "0")}:59`
+          : "消費実績なし";
+        const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
+        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / 充電予測 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh（${actualText}${latestText}、以降は予測）`;
       }
       chart.update("none");
     }

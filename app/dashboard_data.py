@@ -93,12 +93,14 @@ def _extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
     physical = source.get("pv_physical_forecast") if isinstance(source, dict) else None
     correction = source.get("forecast_correction") if isinstance(source, dict) else None
     hourly_shape = source.get("hourly_weather_pv_shape") if isinstance(source, dict) else None
+    overnight = source.get("overnight_discharge_guard") if isinstance(source, dict) else None
     forecast = data.get("forecast")
     return {
         "plan_date": forecast.get("date") if isinstance(forecast, dict) else None,
         "physical": physical if isinstance(physical, dict) else {},
         "forecast_correction": correction if isinstance(correction, dict) else {},
         "hourly_weather_pv_shape": hourly_shape if isinstance(hourly_shape, dict) else {},
+        "overnight_load_forecast": overnight if isinstance(overnight, dict) else {},
     }
 
 
@@ -756,12 +758,23 @@ def _load_sqlite_slice(
             forecast_hourly = _rows_to_dicts(
                 conn.execute(
                     """
-                    SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
-                    FROM forecast_hourly
-                    WHERE date >= ? AND date <= ?
-                    ORDER BY date, hour
+                    SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                           fh.forecast_charge_kwh, ah.actual_load_kwh, ah.latest_sample_at,
+                           fh.source, fh.updated_at
+                    FROM forecast_hourly fh
+                    LEFT JOIN (
+                        SELECT substr(ts,1,10) AS date,
+                               CAST(strftime('%H', ts) AS INTEGER) AS hour,
+                               COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                               MAX(ts) AS latest_sample_at
+                        FROM monitoring_samples
+                        WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+                        GROUP BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
+                    ) ah ON ah.date = fh.date AND ah.hour = fh.hour
+                    WHERE fh.date >= ? AND fh.date <= ?
+                    ORDER BY fh.date, fh.hour
                     """,
-                    (start_date, end_date_iso),
+                    (start_date, end_date_iso, start_date, end_date_iso),
                 ).fetchall()
             )
         history_start = (start_obj - timedelta(days=14)).isoformat()
@@ -1014,12 +1027,23 @@ def _load_postgres_slice(
 
             cur.execute(
                 """
-                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
-                FROM forecast_hourly
-                WHERE date >= %s AND date <= %s
-                ORDER BY date, hour
+                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                       fh.forecast_charge_kwh, ah.actual_load_kwh, ah.latest_sample_at,
+                       fh.source, fh.updated_at
+                FROM forecast_hourly fh
+                LEFT JOIN (
+                    SELECT substring(ts,1,10) AS date,
+                           EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
+                           COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                           MAX(ts) AS latest_sample_at
+                    FROM monitoring_samples
+                    WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
+                    GROUP BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
+                ) ah ON ah.date = fh.date AND ah.hour = fh.hour
+                WHERE fh.date >= %s AND fh.date <= %s
+                ORDER BY fh.date, fh.hour
                 """,
-                (start_date, end_date_iso),
+                (start_date, end_date_iso, start_date, end_date_iso),
             )
             forecast_hourly = _rows_to_dicts(cur.fetchall())
 

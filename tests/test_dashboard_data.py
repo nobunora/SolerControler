@@ -98,6 +98,16 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
                 ("2026-05-02", 8, 0.3, 0.9, 0.0),
             ],
         )
+        conn.executemany(
+            """
+            INSERT INTO monitoring_samples(ts, load_kwh, ingested_at)
+            VALUES (?, ?, '2026-05-02T00:00:00')
+            """,
+            [
+                ("2026-05-02T07:00:00", 0.4),
+                ("2026-05-02T07:30:00", 0.5),
+            ],
+        )
         conn.commit()
     finally:
         conn.close()
@@ -106,6 +116,9 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
 
     assert [row["hour"] for row in sliced.data.forecast_hourly] == [7, 8]
     assert sliced.data.forecast_hourly[0]["forecast_charge_kwh"] == pytest.approx(0.4)
+    assert sliced.data.forecast_hourly[0]["actual_load_kwh"] == pytest.approx(0.9)
+    assert sliced.data.forecast_hourly[0]["latest_sample_at"] == "2026-05-02T07:30:00"
+    assert sliced.data.forecast_hourly[1]["actual_load_kwh"] is None
 
 
 def test_dashboard_slice_includes_battery_flow_daily(tmp_path: Path) -> None:

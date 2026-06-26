@@ -990,6 +990,7 @@ def _build_hourly_load_forecast(
     *,
     daytime_load_kwh: float,
     morning_load_kwh: float,
+    overnight_load_by_hour: dict[int, float] | None = None,
 ) -> dict[int, float]:
     morning_hours = [7, 8, 9]
     daytime_rest_hours = list(range(10, 23))
@@ -1007,6 +1008,10 @@ def _build_hourly_load_forecast(
         out[h] = morning_total * morning_profile[h]
     for h in daytime_rest_hours:
         out[h] = rest_total * rest_profile[h]
+    if overnight_load_by_hour:
+        for h, value in overnight_load_by_hour.items():
+            if 0 <= int(h) <= 23:
+                out[int(h)] = max(0.0, float(value or 0.0))
     return out
 
 
@@ -1568,37 +1573,44 @@ def _expected_rest_of_month_day_buy_kwh(
     }
 
 
-def _estimate_remaining_overnight_discharge_kwh(
+def _estimate_remaining_overnight_load_kwh(
     rows: list[dict[str, float | datetime]],
     *,
     target_date: str,
 ) -> dict[str, object]:
     if not _env_bool("OVERNIGHT_DISCHARGE_GUARD_ENABLED", True):
-        return {"enabled": False, "expected_kwh": 0.0, "reason": "disabled"}
+        return {"enabled": False, "expected_kwh": 0.0, "reason": "disabled", "source": "monitoring_load_kwh"}
     if not rows:
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "no_rows"}
+        return {"enabled": True, "expected_kwh": 0.0, "reason": "no_rows", "source": "monitoring_load_kwh"}
 
     latest_dt = rows[-1].get("dt")
     if not isinstance(latest_dt, datetime):
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "missing_latest_dt"}
+        return {"enabled": True, "expected_kwh": 0.0, "reason": "missing_latest_dt", "source": "monitoring_load_kwh"}
     try:
         target = date.fromisoformat(target_date)
     except ValueError:
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "invalid_target_date"}
+        return {"enabled": True, "expected_kwh": 0.0, "reason": "invalid_target_date", "source": "monitoring_load_kwh"}
 
     cutoff = _parse_hhmm(os.getenv("OVERNIGHT_DISCHARGE_GUARD_CUTOFF_HHMM", "07:00"), default="07:00")
     latest_clock = latest_dt.time()
     cutoff_minute = _clock_minutes(cutoff)
     if latest_dt.date() == target and _clock_minutes(latest_clock) >= cutoff_minute:
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "past_cutoff", "latest_sample_at": latest_dt.isoformat()}
+        return {
+            "enabled": True,
+            "expected_kwh": 0.0,
+            "reason": "past_cutoff",
+            "latest_sample_at": latest_dt.isoformat(),
+            "source": "monitoring_load_kwh",
+        }
 
     lookback_days = int(_env_float("OVERNIGHT_DISCHARGE_GUARD_LOOKBACK_DAYS", 21.0))
     min_days = int(_env_float("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", 3.0))
     percentile = _env_float_clamped("OVERNIGHT_DISCHARGE_GUARD_PERCENTILE", 75.0, min_value=0.0, max_value=100.0)
     floor_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_FLOOR_KWH", 0.0))
-    cap_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", 6.0))
+    cap_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", 12.0))
 
     by_day: dict[str, float] = {}
+    by_hour: dict[int, list[float]] = {}
     lower_bound = target - timedelta(days=max(1, lookback_days))
     latest_minute = _clock_minutes(latest_dt.time())
     for row in rows:
@@ -1606,6 +1618,12 @@ def _estimate_remaining_overnight_discharge_kwh(
         if not isinstance(row_dt, datetime):
             continue
         row_minute = _clock_minutes(row_dt.time())
+        if row_minute < cutoff_minute:
+            pass
+        elif row_minute >= 23 * 60:
+            pass
+        else:
+            continue
         candidate_target: date | None = None
         if row_minute > latest_minute:
             candidate_target = row_dt.date() + timedelta(days=1)
@@ -1613,10 +1631,10 @@ def _estimate_remaining_overnight_discharge_kwh(
             candidate_target = row_dt.date()
         if candidate_target is None or not (lower_bound <= candidate_target < target):
             continue
-        discharge = max(0.0, float(row.get("discharge", row.get("dchg", 0.0)) or 0.0))
-        charge = max(0.0, float(row.get("charge", row.get("chg", 0.0)) or 0.0))
+        load = max(0.0, float(row.get("load", 0.0) or 0.0))
         key = candidate_target.isoformat()
-        by_day[key] = by_day.get(key, 0.0) + max(0.0, discharge - charge)
+        by_day[key] = by_day.get(key, 0.0) + load
+        by_hour.setdefault(row_dt.hour, []).append(load)
 
     samples = [value for value in by_day.values() if value > 0.0]
     if len(samples) < min_days:
@@ -1627,6 +1645,8 @@ def _estimate_remaining_overnight_discharge_kwh(
             "sample_count": len(samples),
             "latest_sample_at": latest_dt.isoformat(),
             "cutoff_hhmm": cutoff.strftime("%H:%M"),
+            "source": "monitoring_load_kwh",
+            "hourly_load_forecast_kwh": {},
         }
 
     samples.sort()
@@ -1635,6 +1655,11 @@ def _estimate_remaining_overnight_discharge_kwh(
     else:
         estimate = float(statistics.quantiles(samples, n=100, method="inclusive")[max(0, int(percentile) - 1)])
     estimate = min(cap_kwh, max(floor_kwh, estimate))
+    hourly_load = {
+        hour: sum(values) / len(values)
+        for hour, values in sorted(by_hour.items())
+        if values
+    }
     return {
         "enabled": True,
         "expected_kwh": estimate,
@@ -1644,7 +1669,10 @@ def _estimate_remaining_overnight_discharge_kwh(
         "latest_sample_at": latest_dt.isoformat(),
         "cutoff_hhmm": cutoff.strftime("%H:%M"),
         "sample_days": sorted(by_day)[-min(10, len(by_day)):],
+        "source": "monitoring_load_kwh",
+        "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in hourly_load.items()},
     }
+
 
 
 def main() -> int:
@@ -1710,11 +1738,21 @@ def main() -> int:
         }
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
-    overnight_discharge_guard = _estimate_remaining_overnight_discharge_kwh(
+    overnight_discharge_guard = _estimate_remaining_overnight_load_kwh(
         rows,
         target_date=tomorrow_date,
     )
     expected_overnight_discharge_kwh = _to_optional_float(overnight_discharge_guard.get("expected_kwh")) or 0.0
+    overnight_load_by_hour_raw = overnight_discharge_guard.get("hourly_load_forecast_kwh")
+    overnight_load_by_hour: dict[int, float] = {}
+    if isinstance(overnight_load_by_hour_raw, dict):
+        for raw_hour, raw_value in overnight_load_by_hour_raw.items():
+            try:
+                hour = int(raw_hour)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= hour <= 23:
+                overnight_load_by_hour[hour] = max(0.0, _to_optional_float(raw_value) or 0.0)
     monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
         rows,
         target_date=tomorrow_date,
@@ -1746,6 +1784,7 @@ def main() -> int:
         rows,
         daytime_load_kwh=consumption_forecast.daytime_load_kwh,
         morning_load_kwh=consumption_forecast.morning_load_kwh,
+        overnight_load_by_hour=overnight_load_by_hour,
     )
     raw_hourly_pv_forecast = _build_hourly_pv_forecast(
         rows,
@@ -1788,6 +1827,8 @@ def main() -> int:
     )
     hourly_load_forecast = forecast_correction["hourly_load_kwh"]  # type: ignore[assignment]
     hourly_pv_forecast = forecast_correction["hourly_pv_kwh"]  # type: ignore[assignment]
+    for hour, value in overnight_load_by_hour.items():
+        hourly_load_forecast[hour] = value
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
     morning_headroom_guard = _morning_pv_headroom_guard(
         hourly_load_kwh=hourly_load_forecast,
