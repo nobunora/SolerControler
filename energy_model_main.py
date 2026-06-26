@@ -381,13 +381,42 @@ def _active_constraint_names(
     active = ["reserve_soc"]
     if overnight_discharge_guard.get("enabled"):
         active.append("overnight_discharge_guard")
-    if respect_morning_headroom_guard and morning_headroom_guard.get("applied"):
+    morning_enforced = morning_headroom_guard.get("enforced_as_target_cap", morning_headroom_guard.get("applied"))
+    daytime_enforced = daytime_net_surplus_headroom_guard.get(
+        "enforced_as_target_cap",
+        daytime_net_surplus_headroom_guard.get("applied"),
+    )
+    historical_enforced = historical_soc_gain_guard.get(
+        "enforced_as_target_cap",
+        historical_soc_gain_guard.get("applied"),
+    )
+    if respect_morning_headroom_guard and morning_enforced:
         active.append("morning_pv_headroom_guard")
-    if daytime_net_surplus_headroom_guard.get("applied"):
+    if daytime_enforced:
         active.append("daytime_net_surplus_headroom_guard")
-    if historical_soc_gain_guard.get("applied"):
+    if historical_enforced:
         active.append("historical_daytime_soc_gain_guard")
     return active
+
+
+def _uses_physical_pv_forecast(physical_pv_diagnostics: dict[str, object]) -> bool:
+    method = str(physical_pv_diagnostics.get("selected_method") or "").strip().lower()
+    return method.startswith("physical_")
+
+
+def _annotate_pv_headroom_guard_policy(
+    guard: dict[str, object],
+    *,
+    apply_caps: bool,
+    selected_method: str,
+) -> dict[str, object]:
+    out = dict(guard)
+    out["enforced_as_target_cap"] = bool(apply_caps and guard.get("applied"))
+    out["enforcement_policy"] = "existing_forecast_only"
+    out["pv_forecast_selected_method"] = selected_method or "unknown"
+    if guard.get("applied") and not apply_caps:
+        out["enforcement_skip_reason"] = "physical_pv_selected"
+    return out
 
 
 def _candidate_reason_summary(optimization_payload: dict[str, object] | None) -> list[dict[str, object]]:
@@ -1778,17 +1807,36 @@ def main() -> int:
         reserve_soc_percent=inp.reserve_soc_percent,
         target_date=tomorrow_date,
     )
-    legacy_max_target_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
-    if daytime_net_surplus_headroom_guard.get("applied"):
-        legacy_max_target_soc = min(
-            legacy_max_target_soc,
-            _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
-        )
-    if historical_soc_gain_guard.get("applied"):
-        legacy_max_target_soc = min(
-            legacy_max_target_soc,
-            _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
-        )
+    pv_selected_method = str(physical_pv_diagnostics.get("selected_method") or "existing")
+    apply_pv_headroom_caps = not _uses_physical_pv_forecast(physical_pv_diagnostics)
+    morning_headroom_guard_for_payload = _annotate_pv_headroom_guard_policy(
+        morning_headroom_guard,
+        apply_caps=apply_pv_headroom_caps,
+        selected_method=pv_selected_method,
+    )
+    daytime_net_surplus_headroom_guard_for_payload = _annotate_pv_headroom_guard_policy(
+        daytime_net_surplus_headroom_guard,
+        apply_caps=apply_pv_headroom_caps,
+        selected_method=pv_selected_method,
+    )
+    historical_soc_gain_guard_for_payload = _annotate_pv_headroom_guard_policy(
+        historical_soc_gain_guard,
+        apply_caps=apply_pv_headroom_caps,
+        selected_method=pv_selected_method,
+    )
+    legacy_max_target_soc = 100.0
+    if apply_pv_headroom_caps:
+        legacy_max_target_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
+        if daytime_net_surplus_headroom_guard.get("applied"):
+            legacy_max_target_soc = min(
+                legacy_max_target_soc,
+                _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
+            )
+        if historical_soc_gain_guard.get("applied"):
+            legacy_max_target_soc = min(
+                legacy_max_target_soc,
+                _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
+            )
     daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         soc_now_percent=latest_soc,
@@ -1815,9 +1863,9 @@ def main() -> int:
             "target_soc_7_percent_after_peak_objective": daytime_optimization.target_soc_7_percent,
             "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
-            "morning_pv_headroom_guard": morning_headroom_guard,
-            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
-            "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
+            "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
+            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
+            "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
             "sunset_hour": sunset_hour,
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "pv_physical_forecast": physical_pv_diagnostics,
@@ -1842,14 +1890,14 @@ def main() -> int:
         )
         respect_guard = _env_bool("SOC_COST_RESPECT_MORNING_HEADROOM_CAP", True)
         cost_max_soc = 100.0
-        if respect_guard:
+        if respect_guard and apply_pv_headroom_caps:
             cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
-        if daytime_net_surplus_headroom_guard.get("applied"):
+        if apply_pv_headroom_caps and daytime_net_surplus_headroom_guard.get("applied"):
             cost_max_soc = min(
                 cost_max_soc,
                 _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
             )
-        if historical_soc_gain_guard.get("applied"):
+        if apply_pv_headroom_caps and historical_soc_gain_guard.get("applied"):
             cost_max_soc = min(
                 cost_max_soc,
                 _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
@@ -1888,10 +1936,15 @@ def main() -> int:
                 "objective": (
                     "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
                 ),
-                "morning_pv_headroom_guard": morning_headroom_guard,
-                "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
-                "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
-                "respect_morning_headroom_guard": respect_guard,
+                "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
+                "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
+                "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
+                "respect_morning_headroom_guard": bool(respect_guard and apply_pv_headroom_caps),
+                "pv_headroom_cap_policy": {
+                    "apply_caps": apply_pv_headroom_caps,
+                    "reason": "existing_forecast_selected" if apply_pv_headroom_caps else "physical_pv_selected",
+                    "selected_method": pv_selected_method,
+                },
                 "max_target_soc_percent_after_guards": cost_max_soc,
                 "forecast_correction": forecast_correction.get("rationale", {}),
                 "pv_physical_forecast": physical_pv_diagnostics,
@@ -2000,9 +2053,9 @@ def main() -> int:
         result_payload=result_payload,
     )
     active_constraints = _active_constraint_names(
-        morning_headroom_guard=morning_headroom_guard,
-        daytime_net_surplus_headroom_guard=daytime_net_surplus_headroom_guard,
-        historical_soc_gain_guard=historical_soc_gain_guard,
+        morning_headroom_guard=morning_headroom_guard_for_payload,
+        daytime_net_surplus_headroom_guard=daytime_net_surplus_headroom_guard_for_payload,
+        historical_soc_gain_guard=historical_soc_gain_guard_for_payload,
         overnight_discharge_guard=overnight_discharge_guard,
         respect_morning_headroom_guard=(
             bool(optimization_payload.get("respect_morning_headroom_guard"))
@@ -2040,9 +2093,9 @@ def main() -> int:
             "active_constraints": active_constraints,
             "rejected_candidates": rejected_candidates,
             "cost_breakdown_yen": cost_breakdown,
-            "historical_daytime_soc_gain_guard": historical_soc_gain_guard,
-            "morning_pv_headroom_guard": morning_headroom_guard,
-            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard,
+            "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
+            "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
+            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "pv_physical_forecast": physical_pv_diagnostics,
             "forecast_correction": forecast_correction.get("rationale", {}),

@@ -15,6 +15,8 @@ from app.energy_model import (
     optimize_target_soc_for_daytime,
 )
 from energy_model_main import (
+    _active_constraint_names,
+    _annotate_pv_headroom_guard_policy,
     _build_forecast_correction,
     _daytime_net_surplus_headroom_guard,
     _historical_daytime_soc_gain_guard,
@@ -247,6 +249,28 @@ def test_optimize_target_soc_for_daytime_respects_max_target_cap() -> None:
 
     assert result is not None
     assert result.target_soc_7_percent <= 80.0
+
+
+def test_physical_pv_selection_marks_headroom_cap_not_enforced() -> None:
+    guard = {"enabled": True, "applied": True, "cap_target_soc_percent": 85.0}
+
+    annotated = _annotate_pv_headroom_guard_policy(
+        guard,
+        apply_caps=False,
+        selected_method="physical_global",
+    )
+    active = _active_constraint_names(
+        morning_headroom_guard={"applied": False},
+        daytime_net_surplus_headroom_guard={"applied": False},
+        historical_soc_gain_guard=annotated,
+        overnight_discharge_guard={"enabled": True},
+        respect_morning_headroom_guard=True,
+    )
+
+    assert annotated["applied"] is True
+    assert annotated["enforced_as_target_cap"] is False
+    assert annotated["enforcement_skip_reason"] == "physical_pv_selected"
+    assert "historical_daytime_soc_gain_guard" not in active
 
 
 def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:
