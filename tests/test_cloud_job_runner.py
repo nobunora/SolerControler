@@ -13,7 +13,6 @@ from cloud_job_runner import (
     _forecast_changed,
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
-    _night23_target_date,
     _persist_03_monitor_schedule_to_firestore,
     _required_charge_percent_from_plan,
     _run_adjust_03,
@@ -205,33 +204,6 @@ def test_compute_force_activation_delay_seconds_immediate_when_late() -> None:
     assert delay == 0
 
 
-def test_night23_target_date_uses_next_day_before_midnight(monkeypatch) -> None:
-    monkeypatch.delenv("FORECAST_DATE_OVERRIDE", raising=False)
-    monkeypatch.setenv("TIMEZONE", "Asia/Tokyo")
-    now = datetime(2026, 5, 26, 23, 10, tzinfo=ZoneInfo("Asia/Tokyo"))
-    assert _night23_target_date(now=now) == "2026-05-27"
-
-
-def test_night23_target_date_recovers_today_after_midnight(monkeypatch) -> None:
-    monkeypatch.delenv("FORECAST_DATE_OVERRIDE", raising=False)
-    monkeypatch.setenv("TIMEZONE", "Asia/Tokyo")
-    now = datetime(2026, 5, 27, 0, 55, tzinfo=ZoneInfo("Asia/Tokyo"))
-    assert _night23_target_date(now=now) == "2026-05-27"
-
-
-def test_night23_target_date_uses_tomorrow_after_recovery_cutoff(monkeypatch) -> None:
-    monkeypatch.delenv("FORECAST_DATE_OVERRIDE", raising=False)
-    monkeypatch.setenv("TIMEZONE", "Asia/Tokyo")
-    now = datetime(2026, 5, 27, 7, 1, tzinfo=ZoneInfo("Asia/Tokyo"))
-    assert _night23_target_date(now=now) == "2026-05-28"
-
-
-def test_night23_target_date_respects_explicit_override(monkeypatch) -> None:
-    monkeypatch.setenv("FORECAST_DATE_OVERRIDE", "2026-06-01")
-    now = datetime(2026, 5, 27, 0, 55, tzinfo=ZoneInfo("Asia/Tokyo"))
-    assert _night23_target_date(now=now) == "2026-06-01"
-
-
 def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
     monkeypatch.delenv("FORECAST_DATE_OVERRIDE", raising=False)
     monkeypatch.setenv("TIMEZONE", "Asia/Tokyo")
@@ -328,38 +300,30 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
     assert calls == [("forced", True), ("standby", False)]
 
 
-def test_run_night_23_ingests_csv_before_forecast(monkeypatch, tmp_path) -> None:
-    calls: list[tuple[str, dict[str, str]]] = []
+def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:
+    calls: list[tuple[str, bool]] = []
 
-    def fake_run(command, env_updates=None):
-        script = list(command)[-1]
-        calls.append((script, dict(env_updates or {})))
-        if script == "energy_model_main.py":
-            raise RuntimeError("forecast unavailable")
+    monkeypatch.delenv("NIGHT23_SETTINGS_PROFILE", raising=False)
+    monkeypatch.setattr(
+        "cloud_job_runner._run_settings_profile_with_retry",
+        lambda *, profile, dynamic_forced_profile, label: calls.append((profile, dynamic_forced_profile)),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_csv_with_retry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not fetch CSV")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_with_retry",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not run forecasts")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_db_pipeline_slot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not run data pipeline")),
+    )
 
-    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(tmp_path / "night_charge_plan.json"))
-    monkeypatch.setattr("cloud_job_runner._run", fake_run)
-    monkeypatch.setattr("cloud_job_runner._night23_target_date", lambda: "2026-05-27")
+    _run_night_23()
 
-    try:
-        _run_night_23()
-    except RuntimeError as exc:
-        assert "forecast unavailable" in str(exc)
-    else:
-        raise AssertionError("_run_night_23 should fail when forecast fails")
-
-    assert calls[:3] == [
-        ("kpnet_main.py", {"KP_WORKFLOW_MODE": "csv"}),
-        (
-            "db_pipeline_main.py",
-            {
-                "CLOUD_JOB_SLOT": "23",
-                "DATA_PIPELINE_INCLUDE_CSV": "true",
-                "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
-            },
-        ),
-        ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}),
-    ]
+    assert calls == [("standby", False)]
 
 
 def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:

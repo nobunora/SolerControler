@@ -681,27 +681,6 @@ def _parse_hhmm_minutes(value: str, *, default: str) -> int:
     return hh * 60 + mm
 
 
-def _night23_target_date(*, now: datetime | None = None) -> str:
-    explicit = os.getenv("FORECAST_DATE_OVERRIDE", "").strip()
-    if explicit:
-        return explicit
-    timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
-    current = now or datetime.now(ZoneInfo(timezone_name))
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=ZoneInfo(timezone_name))
-    else:
-        current = current.astimezone(ZoneInfo(timezone_name))
-
-    recovery_cutoff = _parse_hhmm_minutes(
-        os.getenv("NIGHT23_TARGET_TODAY_UNTIL_HHMM", "07:00"),
-        default="07:00",
-    )
-    current_minutes = current.hour * 60 + current.minute
-    if current_minutes < recovery_cutoff:
-        return current.date().isoformat()
-    return (current.date() + timedelta(days=1)).isoformat()
-
-
 def _adjust03_target_date(*, now: datetime | None = None) -> str:
     explicit = os.getenv("FORECAST_DATE_OVERRIDE", "").strip()
     if explicit:
@@ -1040,58 +1019,14 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
 
 def _run_night_23() -> None:
-    # 23:00 実行:
-    # 1) CSV取得 2) 実績だけ先行反映 3) 夜間計画計算 4) 強制充電設定登録
-    _run_csv_with_retry(label="23-csv")
-    # Forecast providers can fail transiently. Keep dashboard actuals moving even
-    # when the later planning phase cannot complete.
-    _run_db_pipeline_slot("23", include_csv=True, include_settings=False)
-    target_date = _night23_target_date()
-    print(f"[cloud_job_runner] 23-night target_date={target_date}", flush=True)
-    _run_with_retry(
-        [sys.executable, "energy_model_main.py"],
-        {"FORECAST_DATE_OVERRIDE": target_date},
-        label="23-night-plan",
-        attempts_env="NIGHT23_PLAN_RETRY_ATTEMPTS",
-        delay_env="NIGHT23_PLAN_RETRY_DELAY_SECONDS",
-        default_attempts=2,
-        default_delay_seconds=30.0,
-    )
-    plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    _persist_night_plan_to_firestore(plan_path, source="night23")
-    profile = "forced"
-    dynamic_forced_profile = True
-    if plan_path.exists():
-        try:
-            green_mode_max = float(os.getenv("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50").strip() or "50")
-            plan_meta = _read_plan_meta(plan_path)
-            stage_partial, required_charge_percent, target_soc = _should_stage_partial_forced(
-                plan_meta=plan_meta,
-                green_mode_max_charge_percent=green_mode_max,
-            )
-            if stage_partial:
-                # 強制充電モードは設定直後に充電開始するため、
-                # 51-99% の部分強制充電は 23時にはグリーン待機へ寄せ、
-                # 03時の再設定 + 監視停止処理で制御する。
-                profile = "green"
-                dynamic_forced_profile = True
-            print(
-                "[cloud_job_runner] 23-night plan "
-                f"target_soc={target_soc:.2f}% required={required_charge_percent:.2f}% "
-                f"stage_partial={stage_partial} profile={profile}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"[cloud_job_runner] 23-night partial-force staging skipped: {exc}", flush=True)
-    else:
-        print(f"[cloud_job_runner] 23-night plan missing: {plan_path}", flush=True)
-
+    # 23:00 is only a mode-control guard. Forecast/data work is centralized in
+    # the 04:00 controller, which still has enough time to reach 100% if needed.
+    profile = os.getenv("NIGHT23_SETTINGS_PROFILE", "standby").strip() or "standby"
     _run_settings_profile_with_retry(
         profile=profile,
-        dynamic_forced_profile=dynamic_forced_profile,
+        dynamic_forced_profile=False,
         label=f"23-settings-{profile}",
     )
-    _run_db_pipeline_slot("23", include_csv=False, include_settings=True)
 
 
 def _run_optional_04_exports_and_backups() -> None:
@@ -1222,7 +1157,7 @@ def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
 def _run_adjust_03() -> None:
     # 夜間コントローラ:
     # 1) 00時台にCSVを取得して現在SOCを把握
-    # 2) 必要なら3時台に23時計画と同じ対象日の予報だけ再確認
+    # 2) 当日分の最新予報を04:00時点で再生成
     # 3) 7時から逆算した時刻に強制充電を開始し、目標/7時まで監視
     _run_csv_with_retry(label="03-initial-csv")
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))

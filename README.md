@@ -1,6 +1,6 @@
 # Solar Controller Automation (Cloud Run Jobs)
 
-04:30 / 07:00（JST）を主系として自動実行する Python 実装です。23:00ジョブは残していますが、現在のデプロイ既定ではSchedulerをpauseし、必要時の手動実行/プレビュー用途に寄せています。
+23:00 / 04:00 / 07:00（JST）を Cloud Scheduler で自動実行する Python 実装です。23:00ジョブは外部データ取得や予測を行わず、4時判断まで待機モードへ寄せるためのモード変更だけを行います。
 
 1. ブラウザで 12 時間先の太陽日射時間を取得  
 2. モニタリングサービスにログインして CSV を取得  
@@ -94,7 +94,7 @@ python kpnet_main.py
   - 7時目標SOC
   - 夜間実測充電レート(kW推定)
   を使って、夜間グリーンモードの `SOC下限` / `SOC上限` / `充電開始時刻` を自動算出
-  - 23時設定時は `充電終了` を運用条件から決定し、逆算で開始時刻を決定（0:00を跨がない）
+  - 04:00夜間コントローラで当日計画を生成し、7時から逆算して開始時刻を決定
   - 既定条件: 曇り/雨相当（低日照予報）の日は `充電終了=07:00`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true` : 現在時刻で設定先を自動選択
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
@@ -102,7 +102,7 @@ python kpnet_main.py
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
 - 04:00夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
-  - 23時計画と同じ対象日のまま、必要時だけ3時台に予報を再確認
+  - 当日の最新天気予報と実測値から計画を毎回再生成
   - 家庭負荷補正を加味し、7時から逆算した時刻に強制充電を開始
   - 設定SOC到達後は待機モードへ切り替え、7時まで放電/過充電を抑える
   - 3時台の再計算で内容が変わった場合だけDB/ダッシュボードを更新
@@ -139,7 +139,8 @@ python kpnet_main.py
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
 - `OVERNIGHT_DISCHARGE_GUARD_CAP_KWH=2.0`（4:30以降7:00までの残り夜間放電見込みの上限）
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
-- `ADJUST03_REGENERATE_PLAN=true`（23時停止運用のため、04:00で当日計画を毎回再生成）
+- `NIGHT23_SETTINGS_PROFILE=standby`（23:00は外部データ取得/予測をせず、4時判断まで待機モードへ寄せる）
+- `ADJUST03_REGENERATE_PLAN=true`（04:00で当日計画を毎回再生成）
 - `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（04:00制御でSOC実測レートが取れない場合のフォールバック）
 - `ADJUST03_POST_CHARGE_HOLD_PROFILE=standby`（設定SOC到達後の7時までの維持プロファイル）
 - `ADJUST03_LOAD_ADVANCE_*`（朝の家庭負荷が高い場合に強制充電開始を前倒し）
@@ -160,7 +161,7 @@ python kpnet_main.py
 - `DATA_DB_PATH=artifacts/solar_monitor.db`
 - `DATA_BACKEND=sqlite|postgres|firestore`
 - `DATA_DB_SYNC_ENABLED=false`（既定。逐次Cloud Storage同期は無効化）
-- `DATA_DB_WRITE_ONLY_23=false`（23時Scheduler pause運用のため、04:30/07:00側でもDB永続化を許可）
+- `DATA_DB_WRITE_ONLY_23=false`（04:00/07:00側でもDB永続化を許可）
 - `DATA_WEEKLY_BACKUP_ENABLED=true`（週1回だけ差分バックアップ）
 - `DATA_WEEKLY_BACKUP_WEEKDAY=5`（土曜）
 - `DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly`
@@ -249,7 +250,7 @@ python .\scripts\merge_csvs.py --input-root artifacts --include-source-file
 
 ## 5. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 04:30夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。既定では23:00 Schedulerを作成/更新後にpauseし、04:30夜間コントローラを主系にします。
+推奨: 自動化スクリプトで 23:00 / 04:00夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。23:00は待機モードへの変更のみ、04:00にデータ取得・当日予測・バックアップ/Sheetsエクスポートを集約します。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -266,10 +267,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Docker build/push（Cloud Run Jobs runner は `requirements-runner.txt` を使い、未使用のPlaywright/Chromiumは含めない）
 - Secret Manager に監視ログイン情報登録
 - 実行用 / Scheduler用の専用サービスアカウント作成
-- Cloud Run Job 3本（23時用 / 04:30夜間コントローラ用 / 7時用）デプロイ
-- Cloud Scheduler 3本（`0 23 * * *`, `30 4 * * *`, `0 7 * * *` JST）作成/更新
-- `solar-battery-run-23` は既定でpause（23:00を有効化したい場合は `-Enable23Scheduler`）
-- `DRIVE_BACKUP_FOLDER_ID` が設定されている場合は Drive バックアップ Job も作成し、日次で `scripts/backup_drive.py --mode all` を実行
+- Cloud Run Job 3本（23時モード変更 / 04:00夜間コントローラ / 7時用）デプロイ
+- Cloud Scheduler 3本（`0 23 * * *`, `0 4 * * *`, `0 7 * * *` JST）作成/更新
+- `solar-battery-run-23` は待機モードへの変更用として有効化
+- `DRIVE_BACKUP_FOLDER_ID` が設定されている場合は、04:00ジョブ内で日次データバックアップを実行
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
 
 ```powershell
@@ -298,7 +299,7 @@ gcloud run jobs create $JOB_NAME `
   --env-vars-file=.env.prod
 ```
 
-## 6. 07:00/04:30/23:00 実行の Scheduler 設定例
+## 6. 07:00/04:00/23:00 実行の Scheduler 設定例
 
 ```powershell
 $SCHEDULER_REGION="asia-northeast1"
@@ -314,7 +315,7 @@ gcloud scheduler jobs create http "solar-battery-run-23" `
 
 gcloud scheduler jobs create http "solar-battery-run-03" `
   --location=$SCHEDULER_REGION `
-  --schedule="30 4 * * *" `
+  --schedule="0 4 * * *" `
   --time-zone="Asia/Tokyo" `
   --uri="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/solar-battery-03:run" `
   --http-method=POST `
@@ -350,10 +351,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
 ## 9. DB保存方針（今回の運用）
 
 - DB形式: `DATA_BACKEND=firestore`（推奨）または `sqlite` / `postgres`
-- 23時ジョブのみ `db_pipeline_main.py` を実行し、以下をDBに反映
+- 04:00ジョブで `db_pipeline_main.py` を実行し、以下をDBに反映
   - モニタリングCSVの30分データ
-  - 日照（翌日予測、当日実績）
-  - 23時設定結果 + 7時予定設定（23時時点の計画値）
+  - 日照・天気予報・当日計画
+  - 04:00設定結果 + 7時予定設定
 - 毎回のCloud Storage追加は行わない（無効化）
 - 週1回のみ、直近7日で更新された行を差分バックアップ（JSON）として保存
 

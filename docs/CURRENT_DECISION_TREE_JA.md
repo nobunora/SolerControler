@@ -11,19 +11,15 @@
 
 ```text
 ROOT: CLOUD_JOB_SLOT
-├─ in {"23", "night", "night23"}  ※現在のScheduler既定はpause
-│  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
-│  ├─ energy_model_main.py
-│  ├─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
-│  │                KP_FORCE_SETTINGS_PROFILE=forced,
-│  │                KP_DYNAMIC_FORCED_PROFILE=true,
-│  │                KP_DYNAMIC_MODE_SWITCH_BY_TIME=false)
-│  ├─ db_pipeline_main.py (CLOUD_JOB_SLOT=23)
-│  └─ sheets_export_main.py (optional)
+├─ in {"23", "night", "night23"}
+│  └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
+│                   KP_FORCE_SETTINGS_PROFILE=standby,
+│                   KP_DYNAMIC_FORCED_PROFILE=false,
+│                   KP_DYNAMIC_MODE_SWITCH_BY_TIME=false)
 ├─ in {"3", "03", "adjust", "adjust03"}
 │  ├─ kpnet_main.py (KP_WORKFLOW_MODE=csv)
 │  ├─ 当日 night_charge_plan.json を毎回再生成（失敗時は当日分を復元）
-│  ├─ 04:30時点の最新SOCから必要充電kWhを再見積もり
+│  ├─ 04:00ジョブで取得した最新SOCから必要充電kWhを再見積もり
 │  ├─ db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_DB_WRITE_ONLY_23=false, DATA_PREFER_NIGHT_PLAN_METRICS=true)
 │  ├─ 強制充電が必要(必要SOC差 >= KP_GREEN_MODE_MAX_CHARGE_PERCENT)なら:
 │  │  ├─ 07:00 逆算で「強制モード開始時刻」を算出
@@ -117,9 +113,9 @@ ROOT: charge_start_time
 └─ charge_start = max(0, charge_end - duration)
 ```
 
-03側の夜間コントローラでは、23時計画の `required_night_charge_kwh` をそのまま使わず、
-00時台に取り込んだ最新SOCと有効容量から必要充電kWhを再計算します。
-これにより、23時計画時点のSOC推定が古い場合でも、開始時刻を7時から再逆算します。
+03側の夜間コントローラでは、23時に予測や外部データ取得を行わず、
+04:00に取り込んだ最新SOC・天気予報・有効容量から必要充電kWhを計算します。
+これにより、開始時刻を7時から当日最新条件で再逆算します。
 
 KP-NET の `SocChargeMode` は候補値への丸めが必要なため、たとえば生目標が34%でも
 送信するSOC上限コードは40%になります。この場合でも開始時刻は40%到達ではなく、

@@ -537,6 +537,7 @@ $commonEnv = @(
     "NIGHT8_DAY_RATE_TIER2_YEN=39.10",
     "NIGHT8_DAY_RATE_TIER3_YEN=43.62",
     "NIGHT8_NIGHT_RATE_YEN=28.85",
+    "NIGHT23_SETTINGS_PROFILE=standby",
     "SHEETS_EXPORT_ENABLED=$([string](-not $DisableSheetsExport.IsPresent).ToString().ToLowerInvariant())",
     "SHEETS_EXPORT_SLOT_ONLY=03",
     "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
