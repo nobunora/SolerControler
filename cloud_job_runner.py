@@ -188,6 +188,7 @@ def _persist_03_monitor_schedule_to_firestore(
     default_power_kw: float,
     delay_seconds: int,
     charge_rate_info: dict[str, float | int | str | None] | None = None,
+    load_advance_info: dict[str, float | int | str | None] | None = None,
 ) -> bool:
     """Store the 03 controller decision so the dashboard never guesses it."""
     client = _open_firestore_for_plan()
@@ -227,6 +228,17 @@ def _persist_03_monitor_schedule_to_firestore(
                 "charge_rate_source": charge_rate_info.get("source"),
                 "charge_rate_sample_count": charge_rate_info.get("sample_count"),
                 "required_charge_percent_at_schedule": charge_rate_info.get("required_charge_percent"),
+            }
+        )
+    if load_advance_info:
+        detail.update(
+            {
+                "load_advance_minutes": load_advance_info.get("advance_minutes"),
+                "load_advance_source": load_advance_info.get("source"),
+                "load_advance_reason": load_advance_info.get("reason"),
+                "load_advance_avg_load_kw": load_advance_info.get("avg_load_kw"),
+                "load_advance_max_load_kw": load_advance_info.get("max_load_kw"),
+                "load_advance_sample_days": load_advance_info.get("sample_days"),
             }
         )
     try:
@@ -376,6 +388,65 @@ def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float
     return points
 
 
+def _estimate_household_load_start_advance_minutes(csv_paths: list[Path]) -> dict[str, float | int | str]:
+    enabled = os.getenv("ADJUST03_LOAD_ADVANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return {"enabled": False, "advance_minutes": 0, "source": "disabled"}
+    avg_threshold_kw = _env_float("ADJUST03_LOAD_ADVANCE_AVG_LOAD_KW", 1.2, min_value=0.0)
+    max_threshold_kw = _env_float("ADJUST03_LOAD_ADVANCE_MAX_LOAD_KW", 1.8, min_value=0.0)
+    avg_minutes = _env_int("ADJUST03_LOAD_ADVANCE_AVG_MINUTES", 15, min_value=0)
+    max_minutes = _env_int("ADJUST03_LOAD_ADVANCE_MAX_MINUTES", 10, min_value=0)
+    cap_minutes = _env_int("ADJUST03_LOAD_ADVANCE_CAP_MINUTES", 30, min_value=0)
+    lookback_days = _env_int("ADJUST03_LOAD_ADVANCE_LOOKBACK_DAYS", 7, min_value=1)
+
+    by_day: dict[str, list[float]] = {}
+    for csv_path in csv_paths:
+        if not csv_path.exists():
+            continue
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                date_text = (row.get("年月日") or "").strip()
+                time_text = (row.get("時刻") or "").strip()
+                load_text = (row.get("消費電力量[kWh]") or "").strip()
+                if not date_text or not time_text or not load_text:
+                    continue
+                try:
+                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
+                    load_kw = float(load_text) * 2.0
+                except (TypeError, ValueError):
+                    continue
+                hhmm = dt.strftime("%H:%M")
+                if "04:30" <= hhmm <= "07:00":
+                    by_day.setdefault(dt.date().isoformat(), []).append(max(0.0, load_kw))
+
+    recent_days = sorted(by_day)[-lookback_days:]
+    values = [value for day in recent_days for value in by_day[day]]
+    if not values:
+        return {"enabled": True, "advance_minutes": 0, "source": "no-load-samples", "sample_days": 0}
+    avg_load_kw = statistics.mean(values)
+    max_load_kw = max(values)
+    advance = 0
+    reasons: list[str] = []
+    if avg_load_kw >= avg_threshold_kw:
+        advance += avg_minutes
+        reasons.append("avg_load")
+    if max_load_kw >= max_threshold_kw:
+        advance += max_minutes
+        reasons.append("max_load")
+    advance = min(cap_minutes, advance)
+    return {
+        "enabled": True,
+        "advance_minutes": advance,
+        "avg_load_kw": round(avg_load_kw, 3),
+        "max_load_kw": round(max_load_kw, 3),
+        "sample_days": len(recent_days),
+        "sample_count": len(values),
+        "source": "recent-morning-load",
+        "reason": "+".join(reasons) if reasons else "below-threshold",
+    }
+
+
 def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
     """Estimate forced charging by observed SOC gain, not nominal kW.
 
@@ -496,6 +567,10 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
             "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
         },
     )
+
+
+def _post_charge_hold_profile() -> str:
+    return os.getenv("ADJUST03_POST_CHARGE_HOLD_PROFILE", "standby").strip().lower() or "standby"
 
 
 def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
@@ -776,7 +851,10 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         latest_soc_percent=latest_soc,
         csv_paths=csv_paths,
     )
-    start_advance_minutes = max(0, int(os.getenv("ADJUST03_FORCE_START_ADVANCE_MINUTES", "0").strip() or "0"))
+    base_start_advance_minutes = max(0, int(os.getenv("ADJUST03_FORCE_START_ADVANCE_MINUTES", "0").strip() or "0"))
+    load_advance_info = _estimate_household_load_start_advance_minutes(csv_paths)
+    load_advance_minutes = int(load_advance_info.get("advance_minutes", 0) or 0)
+    start_advance_minutes = base_start_advance_minutes + load_advance_minutes
     poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
     soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
@@ -788,8 +866,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         start_advance_minutes=start_advance_minutes,
     )
     if cutoff_seconds <= 0:
-        print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
-        _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-cutoff-green")
+        hold_profile = _post_charge_hold_profile()
+        print(f"[cloud_job_runner] 03-monitor cutoff already reached; switch to {hold_profile} immediately.", flush=True)
+        _run_03_settings_profile_with_db(
+            profile=hold_profile,
+            dynamic_forced_profile=False,
+            label=f"03-cutoff-{hold_profile}",
+        )
         return
 
     print(
@@ -799,6 +882,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         f"estimated={estimated_charge_minutes}min "
         f"rate={charge_rate_info.get('percent_per_hour')}%/h "
         f"samples={charge_rate_info.get('sample_count')} advance={start_advance_minutes}min "
+        f"load_advance={load_advance_minutes}min "
         f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
@@ -814,6 +898,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         default_power_kw=default_power_kw,
         delay_seconds=delay_seconds,
         charge_rate_info=charge_rate_info,
+        load_advance_info=load_advance_info,
     )
     refresh_hhmm = os.getenv("ADJUST03_REFRESH_HHMM", "03:10").strip() or "03:10"
     refresh_enabled = os.getenv("ADJUST03_REFRESH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
@@ -831,6 +916,9 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 latest_soc_percent=latest_soc,
                 csv_paths=csv_paths,
             )
+            load_advance_info = _estimate_household_load_start_advance_minutes(csv_paths)
+            load_advance_minutes = int(load_advance_info.get("advance_minutes", 0) or 0)
+            start_advance_minutes = base_start_advance_minutes + load_advance_minutes
             cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
             delay_seconds = _compute_force_activation_delay_seconds(
                 cutoff_seconds=cutoff_seconds,
@@ -843,6 +931,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
                 f"required={required_kwh:.3f}kWh "
                 f"rate={charge_rate_info.get('percent_per_hour')}%/h "
+                f"load_advance={load_advance_minutes}min "
                 f"delay_before_force={delay_seconds}s",
                 flush=True,
             )
@@ -858,6 +947,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 default_power_kw=default_power_kw,
                 delay_seconds=delay_seconds,
                 charge_rate_info=charge_rate_info,
+                load_advance_info=load_advance_info,
             )
     if delay_seconds > 0:
         _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")
@@ -868,8 +958,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
-        print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
-        _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-no-window-green")
+        hold_profile = _post_charge_hold_profile()
+        print(f"[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to {hold_profile}.", flush=True)
+        _run_03_settings_profile_with_db(
+            profile=hold_profile,
+            dynamic_forced_profile=False,
+            label=f"03-no-window-{hold_profile}",
+        )
         return
 
     print(
@@ -901,16 +996,14 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
             if latest_soc >= (target_soc - soc_margin):
-                if target_soc >= 100.0:
-                    print("[cloud_job_runner] 03-monitor target reached at 100%. keep forced until cutoff.", flush=True)
-                else:
-                    print("[cloud_job_runner] 03-monitor target reached. switch to green profile.", flush=True)
-                    _run_03_settings_profile_with_db(
-                        profile="green",
-                        dynamic_forced_profile=False,
-                        label="03-target-green",
-                    )
-                    return
+                hold_profile = _post_charge_hold_profile()
+                print(f"[cloud_job_runner] 03-monitor target reached. switch to {hold_profile} profile.", flush=True)
+                _run_03_settings_profile_with_db(
+                    profile=hold_profile,
+                    dynamic_forced_profile=False,
+                    label=f"03-target-{hold_profile}",
+                )
+                return
             if (
                 reapply_enabled
                 and previous_soc is not None
@@ -941,8 +1034,9 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             break
         time.sleep(poll_seconds)
 
-    print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
-    _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-timer-green")
+    hold_profile = _post_charge_hold_profile()
+    print(f"[cloud_job_runner] 03-monitor timer reached. switch to {hold_profile} profile.", flush=True)
+    _run_03_settings_profile_with_db(profile=hold_profile, dynamic_forced_profile=False, label=f"03-timer-{hold_profile}")
 
 
 def _run_night_23() -> None:

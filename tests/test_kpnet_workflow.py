@@ -11,6 +11,7 @@ from app.kpnet_workflow import (
     _build_dynamic_forced_profile,
     _in_time_window,
     _parse_hhmm,
+    _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
     _validate_base_url,
 )
@@ -105,6 +106,16 @@ def test_in_time_window_cross_midnight() -> None:
     assert _in_time_window(23 * 60 + 30, start, end)
     assert _in_time_window(6 * 60 + 59, start, end)
     assert not _in_time_window(12 * 60, start, end)
+
+
+def test_pick_battery_operating_mode_code_supports_standby() -> None:
+    assert (
+        _pick_battery_operating_mode_code(
+            {"0": "待機モード", "1": "グリーンモード", "3": "強制充電モード"},
+            prefer="standby",
+        )
+        == "0"
+    )
 
 
 def test_validate_base_url_enforces_https_and_host() -> None:

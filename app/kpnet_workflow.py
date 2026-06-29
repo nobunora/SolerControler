@@ -425,6 +425,8 @@ def _pick_battery_operating_mode_code(
         target_keywords = ("グリーン", "green")
     elif prefer_norm == "forced":
         target_keywords = ("強制", "forced")
+    elif prefer_norm == "standby":
+        target_keywords = ("待機", "standby")
     else:
         raise RuntimeError(f"未知の battery operating mode 指定です: {prefer}")
 
@@ -441,6 +443,8 @@ def _pick_battery_operating_mode_code(
         return "1"
     if prefer_norm == "forced" and "3" in value_map:
         return "3"
+    if prefer_norm == "standby" and "0" in value_map:
+        return "0"
 
     raise RuntimeError(
         "BatteryOperatingMode の候補から必要なモードを特定できませんでした "
@@ -674,6 +678,14 @@ GREEN_MODE_PROFILE = ProfileOverrides(
     agreement_ampere="50",
 )
 
+STANDBY_PROFILE = replace(
+    GREEN_MODE_PROFILE,
+    name="standby-mode",
+    battery_operating_mode="0",
+    soc_contact_input="0",
+    soc_charge_mode="0",
+)
+
 
 @dataclass(frozen=True)
 class KpNetConfig:
@@ -736,8 +748,8 @@ class KpNetConfig:
                 "KP_SETTINGS_SEQUENCE は forced-only / forced-then-green のいずれかを指定してください"
             )
         force_settings_profile = env("KP_FORCE_SETTINGS_PROFILE", default="auto").strip().lower()
-        if force_settings_profile not in {"auto", "forced", "green"}:
-            raise RuntimeError("KP_FORCE_SETTINGS_PROFILE は auto / forced / green のいずれかを指定してください")
+        if force_settings_profile not in {"auto", "forced", "green", "standby"}:
+            raise RuntimeError("KP_FORCE_SETTINGS_PROFILE は auto / forced / green / standby のいずれかを指定してください")
         dynamic_forced_profile = env_bool("KP_DYNAMIC_FORCED_PROFILE", default=True)
         dynamic_mode_switch_by_time = env_bool("KP_DYNAMIC_MODE_SWITCH_BY_TIME", default=True)
         night_charge_window_start = env("KP_NIGHT_CHARGE_WINDOW_START", default="23:00").strip()
@@ -1580,7 +1592,6 @@ def _run_settings_phase(
         )
     else:
         green_profile = GREEN_MODE_PROFILE
-
     profiles: tuple[ProfileOverrides, ...]
     if cfg.force_settings_profile == "forced":
         profiles = (forced_profile,)
@@ -1598,6 +1609,21 @@ def _run_settings_phase(
             "selected_profile": "green-mode",
         }
         LOGGER.info("Forced settings profile selected: green-mode")
+    elif cfg.force_settings_profile == "standby":
+        standby_profile = replace(
+            STANDBY_PROFILE,
+            battery_operating_mode=_pick_battery_operating_mode_code(
+                maps["BatteryOperatingMode"],
+                prefer="standby",
+            ),
+        )
+        profiles = (standby_profile,)
+        summary["time_based_mode_selection"] = {
+            "enabled": False,
+            "forced_profile": "standby-mode",
+            "selected_profile": "standby-mode",
+        }
+        LOGGER.info("Forced settings profile selected: standby-mode")
     elif cfg.dynamic_mode_switch_by_time:
         night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
         night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")

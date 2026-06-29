@@ -8,6 +8,7 @@ from cloud_job_runner import (
     _adjust03_target_date,
     _compute_force_activation_delay_seconds,
     _estimate_forced_charge_minutes,
+    _estimate_household_load_start_advance_minutes,
     _estimate_required_charge_kwh,
     _forecast_changed,
     _mask_env_updates,
@@ -156,6 +157,35 @@ def test_estimate_forced_charge_minutes_uses_empirical_soc_rate(tmp_path: Path, 
     assert info["percent_per_hour"] == 42.0
 
 
+def test_estimate_household_load_start_advance_minutes(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_ENABLED", "true")
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_AVG_LOAD_KW", "1.2")
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_MAX_LOAD_KW", "1.8")
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_AVG_MINUTES", "15")
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_MAX_MINUTES", "10")
+    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_CAP_MINUTES", "30")
+    csv_path = tmp_path / "kp.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,消費電力量[kWh]",
+                "2026/06/29,04:30,0.60",
+                "2026/06/29,05:00,0.80",
+                "2026/06/29,05:30,0.58",
+                "2026/06/29,06:00,0.56",
+                "2026/06/29,06:30,0.61",
+                "2026/06/29,07:00,0.97",
+            ]
+        ),
+        encoding="utf-8-sig",
+    )
+
+    info = _estimate_household_load_start_advance_minutes([csv_path])
+
+    assert info["advance_minutes"] == 25
+    assert info["reason"] == "avg_load+max_load"
+
+
 def test_compute_force_activation_delay_seconds() -> None:
     delay = _compute_force_activation_delay_seconds(
         cutoff_seconds=3 * 60 * 60,
@@ -253,7 +283,7 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
     ]
 
 
-def test_monitor_partial_forced_delays_forced_start_then_switches_green(
+def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -295,7 +325,7 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_green(
     _monitor_partial_forced_and_stop(plan_path)
 
     assert sleeps and sleeps[0] > 0
-    assert calls == [("forced", True), ("green", False)]
+    assert calls == [("forced", True), ("standby", False)]
 
 
 def test_run_night_23_ingests_csv_before_forecast(monkeypatch, tmp_path) -> None:

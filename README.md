@@ -100,10 +100,11 @@ python kpnet_main.py
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
   - 日中(放電開始は予報連動): 晴れ予報=06:00開始 / 曇り予報=07:00開始（終了は23:00）
   - この設定が `true` のときは `KP_SETTINGS_SEQUENCE` より時刻判定を優先
-- 04:30夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
+- 04:00夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
   - 23時計画と同じ対象日のまま、必要時だけ3時台に予報を再確認
-  - 7時から逆算した時刻に強制充電を開始
+  - 家庭負荷補正を加味し、7時から逆算した時刻に強制充電を開始
+  - 設定SOC到達後は待機モードへ切り替え、7時まで放電/過充電を抑える
   - 3時台の再計算で内容が変わった場合だけDB/ダッシュボードを更新
 - `KP_OPERATION_CONDITIONS_PATH`:
   - 固定条件 / 変動条件 / 優先順位 を外部JSONで管理
@@ -117,7 +118,7 @@ python kpnet_main.py
 - `KP_ALLOWED_HOSTS=ctrl.kp-net.com` : 接続先ホストを許可リスト化
 - `KP_WORKFLOW_MODE=csv|settings|all`
 - `KP_SETTINGS_SEQUENCE=forced-only|forced-then-green`
-- `KP_FORCE_SETTINGS_PROFILE=auto|forced|green`
+- `KP_FORCE_SETTINGS_PROFILE=auto|forced|green|standby`
 - `KP_DYNAMIC_FORCED_PROFILE=true|false`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true|false`
 - `KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json`
@@ -138,8 +139,10 @@ python kpnet_main.py
 - `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
 - `OVERNIGHT_DISCHARGE_GUARD_CAP_KWH=2.0`（4:30以降7:00までの残り夜間放電見込みの上限）
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
-- `ADJUST03_REGENERATE_PLAN=true`（23時停止運用のため、04:30で当日計画を毎回再生成）
-- `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（4:30制御でSOC実測レートが取れない場合のフォールバック）
+- `ADJUST03_REGENERATE_PLAN=true`（23時停止運用のため、04:00で当日計画を毎回再生成）
+- `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（04:00制御でSOC実測レートが取れない場合のフォールバック）
+- `ADJUST03_POST_CHARGE_HOLD_PROFILE=standby`（設定SOC到達後の7時までの維持プロファイル）
+- `ADJUST03_LOAD_ADVANCE_*`（朝の家庭負荷が高い場合に強制充電開始を前倒し）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`
 - `KP_DOWNLOAD_LATEST_MONTH=true`
 - `KP_CSV_OUTPUT_FORMAT=太陽光発電＋蓄電池`
