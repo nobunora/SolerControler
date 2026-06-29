@@ -1092,13 +1092,26 @@ def _run_night_23() -> None:
         label=f"23-settings-{profile}",
     )
     _run_db_pipeline_slot("23", include_csv=False, include_settings=True)
+
+
+def _run_optional_04_exports_and_backups() -> None:
     _run_optional(
         [sys.executable, "sheets_export_main.py"],
         {
-            "CLOUD_JOB_SLOT": "23",
+            "CLOUD_JOB_SLOT": "03",
         },
         label="sheets-export",
     )
+    if os.getenv("DRIVE_BACKUP_FOLDER_ID", "").strip():
+        _run_optional(
+            [sys.executable, "scripts/backup_drive.py", "--mode", os.getenv("DRIVE_BACKUP_MODE", "data").strip() or "data"],
+            {
+                "CLOUD_JOB_SLOT": "03",
+            },
+            label="drive-backup",
+        )
+    else:
+        print("[cloud_job_runner] drive-backup skipped: DRIVE_BACKUP_FOLDER_ID is empty", flush=True)
 
 
 def _read_plan_snapshot(plan_path: Path) -> tuple[str, float, float]:
@@ -1225,6 +1238,7 @@ def _run_adjust_03() -> None:
         },
     )
     _monitor_partial_forced_and_stop(plan_path)
+    _run_optional_04_exports_and_backups()
 
 
 def _run_day_07() -> None:

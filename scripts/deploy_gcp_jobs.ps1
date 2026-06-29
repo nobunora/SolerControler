@@ -224,6 +224,37 @@ function Pause-SchedulerIfExists {
     }
 }
 
+function Resume-SchedulerIfExists {
+    param([string]$Name, [string]$Location)
+    try {
+        Invoke-GCloud scheduler jobs resume $Name --location $Location --project $ProjectId | Out-Null
+    } catch {
+        Write-Warning "Scheduler not found or cannot resume: $Name ($Location)"
+    }
+}
+
+function Delete-SchedulerIfExists {
+    param([string]$Name, [string]$Location)
+    try {
+        Invoke-GCloud scheduler jobs describe $Name --location $Location --project $ProjectId | Out-Null
+        Invoke-GCloud scheduler jobs delete $Name --location $Location --project $ProjectId --quiet | Out-Null
+        Write-Host "Deleted scheduler: $Name ($Location)"
+    } catch {
+        Write-Warning "Scheduler not found or cannot delete: $Name ($Location)"
+    }
+}
+
+function Delete-RunJobIfExists {
+    param([string]$Name)
+    try {
+        Invoke-GCloud run jobs describe $Name --project $ProjectId --region $Region | Out-Null
+        Invoke-GCloud run jobs delete $Name --project $ProjectId --region $Region --quiet | Out-Null
+        Write-Host "Deleted Cloud Run job: $Name"
+    } catch {
+        Write-Warning "Cloud Run job not found or cannot delete: $Name"
+    }
+}
+
 if (-not $ProjectId) {
     $ProjectId = (Invoke-GCloud config get-value project).Trim()
 }
@@ -506,12 +537,14 @@ $commonEnv = @(
     "NIGHT8_DAY_RATE_TIER2_YEN=39.10",
     "NIGHT8_DAY_RATE_TIER3_YEN=43.62",
     "NIGHT8_NIGHT_RATE_YEN=28.85",
-    "SHEETS_EXPORT_ENABLED=false",
-    "SHEETS_EXPORT_SLOT_ONLY=23",
+    "SHEETS_EXPORT_ENABLED=$([string](-not $DisableSheetsExport.IsPresent).ToString().ToLowerInvariant())",
+    "SHEETS_EXPORT_SLOT_ONLY=03",
     "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
     "SHEETS_SPREADSHEET_ID=$sheetsIdResolved",
     "SHEETS_SPREADSHEET_TITLE=$SheetsSpreadsheetTitle",
-    "SHEETS_SHARE_EMAIL=$sheetsShareResolved"
+    "SHEETS_SHARE_EMAIL=$sheetsShareResolved",
+    "DRIVE_BACKUP_FOLDER_ID=$driveBackupFolderResolved",
+    "DRIVE_BACKUP_MODE=data"
 )
 $backendEnv = @()
 if ($DataBackend -eq "postgres") {
@@ -534,66 +567,23 @@ $commonEnvArg = [string]::Join(",", $commonEnv)
 $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
-Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23" --set-secrets $secretEnvArg
+Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_REFRESH_ENABLED=true,ADJUST03_REFRESH_HHMM=03:10,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_FORCE_START_ADVANCE_MINUTES=0,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby,ADJUST03_LOAD_ADVANCE_ENABLED=true,ADJUST03_LOAD_ADVANCE_AVG_LOAD_KW=1.2,ADJUST03_LOAD_ADVANCE_MAX_LOAD_KW=1.8,ADJUST03_LOAD_ADVANCE_AVG_MINUTES=15,ADJUST03_LOAD_ADVANCE_MAX_MINUTES=10,ADJUST03_LOAD_ADVANCE_CAP_MINUTES=30,ADJUST03_LOAD_ADVANCE_LOOKBACK_DAYS=7" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
 
-$deploySheetsJob = $sheetsExportEnabled -and [bool]$sheetsIdResolved
-if ($deploySheetsJob) {
-    $sheetsEnv = @(
-        "TIMEZONE=Asia/Tokyo",
-        "DATA_BACKEND=$DataBackend",
-        "DATA_DB_PATH=artifacts/solar_monitor.db",
-        "SHEETS_EXPORT_ENABLED=true",
-        "SHEETS_EXPORT_SLOT_ONLY=23",
-        "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
-        "SHEETS_SPREADSHEET_ID=$sheetsIdResolved",
-        "SHEETS_SPREADSHEET_TITLE=$SheetsSpreadsheetTitle",
-        "SHEETS_SHARE_EMAIL=$sheetsShareResolved",
-        "CLOUD_JOB_SLOT=23"
-    )
-    $sheetsEnv += $backendEnv
-    $sheetsEnvArg = [string]::Join(",", $sheetsEnv)
-    Invoke-GCloud run jobs deploy $SheetsJobName --project $ProjectId --region $Region --image $image --service-account $runSa --command python --args sheets_export_main.py --task-timeout 900 --max-retries 1 --set-env-vars $sheetsEnvArg
-} elseif ($sheetsExportEnabled) {
-    Write-Warning "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. Skipping $SheetsJobName deployment and scheduler."
+if ($sheetsExportEnabled -and -not [bool]$sheetsIdResolved) {
+    Write-Warning "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. 04:00 integrated export will skip."
 }
-
-$deployDriveBackupJob = [bool]$driveBackupFolderResolved
-if ($deployDriveBackupJob) {
-    $driveBackupMode = "all"
-    if ($DataBackend -ne "firestore") {
-        $driveBackupMode = "source"
-        Write-Warning "Drive backup data export is optimized for Firestore. Deploying source-only backup job because DATA_BACKEND=$DataBackend."
+if ($DriveBackupFolderId -or ($envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID") -and [string]$envMap["DRIVE_BACKUP_FOLDER_ID"])) {
+    if (-not [bool]$driveBackupFolderResolved) {
+        Write-Warning "Drive backup folder is configured, but the value is empty after resolution. 04:00 integrated backup will skip."
     }
-    $driveBackupEnv = @(
-        "TIMEZONE=Asia/Tokyo",
-        "DATA_BACKEND=$DataBackend",
-        "DATA_DB_PATH=artifacts/solar_monitor.db",
-        "DRIVE_BACKUP_FOLDER_ID=$driveBackupFolderResolved",
-        "DRIVE_BACKUP_MODE=$driveBackupMode",
-        "FIRESTORE_PROJECT_ID=$ProjectId",
-        "FIRESTORE_DATABASE_ID=(default)",
-        "CLOUD_JOB_SLOT=backup"
-    )
-    $driveBackupEnv += $backendEnv
-    $driveBackupEnvArg = [string]::Join(",", $driveBackupEnv)
-    $driveBackupArgs = "scripts/backup_drive.py,--mode,$driveBackupMode"
-    Invoke-GCloud run jobs deploy $DriveBackupJobName --project $ProjectId --region $Region --image $image --service-account $runSa --command python --args $driveBackupArgs --task-timeout 1800 --max-retries 1 --set-env-vars $driveBackupEnvArg
-} elseif ($DriveBackupFolderId -or ($envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID") -and [string]$envMap["DRIVE_BACKUP_FOLDER_ID"])) {
-    Write-Warning "Drive backup folder is configured, but the value is empty after resolution. Skipping Drive backup job."
 }
 
 Write-Host "Grant run.invoker to scheduler service account..."
 Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
-if ($deploySheetsJob) {
-    Invoke-GCloud run jobs add-iam-policy-binding $SheetsJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
-}
-if ($deployDriveBackupJob) {
-    Invoke-GCloud run jobs add-iam-policy-binding $DriveBackupJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
-}
 
 function Upsert-SchedulerRunJob {
     param(
@@ -620,17 +610,13 @@ Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 4 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
-if ($deploySheetsJob) {
-    Upsert-SchedulerRunJob -SchedulerName $SheetsSchedulerName -Schedule "20 0 * * *" -TargetJobName $SheetsJobName
-}
-if ($deployDriveBackupJob) {
-    Upsert-SchedulerRunJob -SchedulerName $DriveBackupSchedulerName -Schedule $DriveBackupSchedule -TargetJobName $DriveBackupJobName
-}
+Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
+Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
+Delete-RunJobIfExists -Name $SheetsJobName
+Delete-RunJobIfExists -Name $DriveBackupJobName
 
-if (-not $Enable23Scheduler) {
-    Write-Host "Pause 23:00 scheduler by default (04:30 controller is primary)."
-    Pause-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
-}
+Write-Host "Keep 23:00 scheduler enabled for battery mode control."
+Resume-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
 
 if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
     Write-Host "Pause legacy Tokyo schedulers (keep resources, stop execution)..."
@@ -647,20 +633,11 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00 manual/paused scheduler), $Job03Name (04:00 night controller), $Job07Name (07:00)"
-if ($deploySheetsJob) {
-    Write-Host "Sheets backup job: $SheetsJobName (00:20)"
-    Write-Host "Schedulers: solar-battery-run-23 (paused unless -Enable23Scheduler), solar-battery-run-03, solar-battery-run-07, $SheetsSchedulerName"
-} else {
-    Write-Host "Sheets backup job: skipped (SHEETS_SPREADSHEET_ID is empty)"
-    Write-Host "Schedulers: solar-battery-run-23 (paused unless -Enable23Scheduler), solar-battery-run-03, solar-battery-run-07"
-}
-if ($deployDriveBackupJob) {
-    Write-Host "Drive backup job: $DriveBackupJobName ($DriveBackupSchedule)"
-    Write-Host "Drive backup folder: $driveBackupFolderResolved"
-} else {
-    Write-Host "Drive backup job: skipped (DRIVE_BACKUP_FOLDER_ID is empty)"
-}
+Write-Host "Jobs: $Job23Name (23:00 mode control), $Job03Name (04:00 night controller + export/backup), $Job07Name (07:00)"
+Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
+Write-Host "Sheets export: integrated into $Job03Name"
+Write-Host "Drive backup: integrated into $Job03Name"
+Write-Host "Drive backup folder: $driveBackupFolderResolved"
 
 if (-not $SkipArtifactPrune) {
     Write-Host ""
