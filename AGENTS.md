@@ -47,6 +47,13 @@ Keep context small. Act from evidence.
 ## Subagents
 
 - Use subagents only when they reduce total work.
+- For light monitoring or repetitive wait/check tasks, delegate to a 5.4-series subagent when available.
 - Give each subagent a clear role, scope, and stop condition.
 - Do not repeat the same exploration in parent and subagent.
 - Parent integrates results and resolves conflicts.
+
+## Simulations
+
+- Run simulations against already-ingested local data by default.
+- Do not call forecast APIs, Sheets, Drive, or other external services during comparison simulations unless the user explicitly asks.
+- Prefer fast replay/diff scripts that reuse saved inputs over rerunning full production workflows.

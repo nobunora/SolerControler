@@ -486,6 +486,7 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     assert rationale["pv_ratio_ewma_applied"] == pytest.approx(1.35)
     assert rationale["pv_ratio_ewma_raw"] > rationale["pv_ratio_ewma_applied"]
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(1.35)
+    assert rationale["corrected_hourly_load_forecast_kwh"]["7"] == pytest.approx(1.2)
     assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2)
     assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(2.0)
 

@@ -203,7 +203,7 @@ def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Pa
                 "2026-06-03-03-monitor-schedule",
                 "03",
                 "forced-monitor",
-                "planned-force-start",
+                "forced-started",
                 "[]",
                 json.dumps(
                     {
@@ -230,7 +230,7 @@ def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Pa
 
     assert schedule["charge_start_time"] == "02:43"
     assert schedule["charge_end_time"] == "07:00"
-    assert schedule["status"] == "planned-force-start"
+    assert schedule["status"] == "forced-started"
     assert schedule["schedule_source"] == "03-monitor"
 
 

@@ -1828,7 +1828,7 @@ def main() -> int:
     hourly_load_forecast = forecast_correction["hourly_load_kwh"]  # type: ignore[assignment]
     hourly_pv_forecast = forecast_correction["hourly_pv_kwh"]  # type: ignore[assignment]
     for hour, value in overnight_load_by_hour.items():
-        hourly_load_forecast[hour] = value
+        hourly_load_forecast.setdefault(hour, value)
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
     morning_headroom_guard = _morning_pv_headroom_guard(
         hourly_load_kwh=hourly_load_forecast,

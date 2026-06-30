@@ -1,6 +1,6 @@
 # 現在の判定ルール（条件木）
 
-最終更新: 2026-06-13 (JST)
+最終更新: 2026-06-30 (JST)
 対象コード: `cloud_job_runner.py`, `app/kpnet_workflow.py`, `energy_model_main.py`, `config/operation_conditions.json`
 
 この文書は、現在実装されている「設定適用の判定ロジック」を条件木として整理したものです。
@@ -22,18 +22,18 @@ ROOT: CLOUD_JOB_SLOT
 │  ├─ 04:00ジョブで取得した最新SOCから必要充電kWhを再見積もり
 │  ├─ db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_DB_WRITE_ONLY_23=false, DATA_PREFER_NIGHT_PLAN_METRICS=true)
 │  ├─ 強制充電が必要(必要SOC差 >= KP_GREEN_MODE_MAX_CHARGE_PERCENT)なら:
-│  │  ├─ 07:00 逆算で「強制モード開始時刻」を算出
-│  │  ├─ 逆算時刻まで待機
-│  │  ├─ 待機中に ADJUST03_REFRESH_HHMM を跨ぐ場合のみ同じ対象日の予報を再取得
-│  │  ├─ 内容変化ありなら db_pipeline_main.py (CLOUD_JOB_SLOT=03, DATA_PREFER_NIGHT_PLAN_METRICS=true)
-│  │  ├─ 逆算時刻で kpnet_main.py(settings, forced, dynamic=true) を実行
+│  │  ├─ kpnet_main.py(settings, forced, dynamic=true) を即時実行
 │  │  ├─ settings_events を db_pipeline_main.py (CLOUD_JOB_SLOT=03) で保存
-│  │  └─ cutoff(07:00)までSOC監視
+│  │  ├─ 実測充電レートから充電完了予想時刻を計算
+│  │  ├─ 予想時刻の5分前を目安にSOCを再確認
+│  │  ├─ SOC未達なら予想時刻を再計算してcutoff(07:00)まで監視継続
+│  │  ├─ SOC到達なら kpnet_main.py(settings, standby, dynamic=false) で07:00まで待機
+│  │  └─ cutoff(07:00)到達なら kpnet_main.py(settings, green, dynamic=false) で日中運用へ戻す
 │  ├─ 強制充電が不要なら:
 │  │  ├─ kpnet_main.py(settings, forced, dynamic=true) で夜間プロファイルを反映
 │  │  └─ settings_events を db_pipeline_main.py (CLOUD_JOB_SLOT=03) で保存
 │  └─ 100%目標:
-│     └─ 目標到達後も07:00まで強制モードを維持し、早朝放電を避ける
+│     └─ 目標到達後は07:00まで待機モードを維持し、早朝放電と過充電を避ける
 └─ in {"7", "07", "day", "day07"}
    └─ kpnet_main.py (KP_WORKFLOW_MODE=settings,
                     KP_FORCE_SETTINGS_PROFILE=green,

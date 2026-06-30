@@ -1,5 +1,7 @@
 # 04:00夜間制御・家庭負荷補正・待機維持 実装報告
 
+> 注記: このレポートの「家庭負荷補正による開始前倒し」と「7時逆算開始」は、2026-06-30の04:00即時強制充電方式への変更で廃止済みです。現行仕様は `docs/CURRENT_DECISION_TREE_JA.md` を参照してください。
+
 作成日時: 2026-06-29 JST
 
 ## 背景
@@ -13,7 +15,7 @@
   - 03系夜間制御の後段切替先を `ADJUST03_POST_CHARGE_HOLD_PROFILE=standby` で指定可能にした。
   - 設定SOC到達後は、ターゲットSOCに関係なく待機モードへ切り替える。
   - タイマー到達時も待機モードへ切り替える。
-  - 直近朝負荷から開始前倒しを計算する `ADJUST03_LOAD_ADVANCE_*` を追加。
+  - 直近朝負荷から開始前倒しを計算する旧設定群を追加。
   - 03-monitor scheduleのdetailへ家庭負荷補正の理由と負荷値を保存する。
 - `app/kpnet_workflow.py`
   - `KP_FORCE_SETTINGS_PROFILE=standby` を追加。

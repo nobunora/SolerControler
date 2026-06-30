@@ -186,9 +186,7 @@ def _persist_03_monitor_schedule_to_firestore(
     required_kwh: float,
     estimated_charge_minutes: int,
     default_power_kw: float,
-    delay_seconds: int,
     charge_rate_info: dict[str, float | int | str | None] | None = None,
-    load_advance_info: dict[str, float | int | str | None] | None = None,
 ) -> bool:
     """Store the 03 controller decision so the dashboard never guesses it."""
     client = _open_firestore_for_plan()
@@ -218,7 +216,6 @@ def _persist_03_monitor_schedule_to_firestore(
         "latest_soc_percent_at_schedule": latest_soc,
         "required_night_charge_kwh_at_schedule": required_kwh,
         "estimated_charge_minutes": estimated_charge_minutes,
-        "delay_before_force_seconds": delay_seconds,
         "schedule_source": "03-monitor",
     }
     if charge_rate_info:
@@ -230,17 +227,6 @@ def _persist_03_monitor_schedule_to_firestore(
                 "required_charge_percent_at_schedule": charge_rate_info.get("required_charge_percent"),
             }
         )
-    if load_advance_info:
-        detail.update(
-            {
-                "load_advance_minutes": load_advance_info.get("advance_minutes"),
-                "load_advance_source": load_advance_info.get("source"),
-                "load_advance_reason": load_advance_info.get("reason"),
-                "load_advance_avg_load_kw": load_advance_info.get("avg_load_kw"),
-                "load_advance_max_load_kw": load_advance_info.get("max_load_kw"),
-                "load_advance_sample_days": load_advance_info.get("sample_days"),
-            }
-        )
     try:
         client.collection("settings_events").document(event_id).set(
             {
@@ -248,7 +234,7 @@ def _persist_03_monitor_schedule_to_firestore(
                 "run_id": event_id,
                 "slot": "03",
                 "profile": "forced-monitor",
-                "status": "planned-force-start",
+                "status": "forced-started",
                 "changed_fields_json": [],
                 "detail_json": detail,
                 "recorded_at": now_utc,
@@ -388,65 +374,6 @@ def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float
     return points
 
 
-def _estimate_household_load_start_advance_minutes(csv_paths: list[Path]) -> dict[str, float | int | str]:
-    enabled = os.getenv("ADJUST03_LOAD_ADVANCE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
-    if not enabled:
-        return {"enabled": False, "advance_minutes": 0, "source": "disabled"}
-    avg_threshold_kw = _env_float("ADJUST03_LOAD_ADVANCE_AVG_LOAD_KW", 1.2, min_value=0.0)
-    max_threshold_kw = _env_float("ADJUST03_LOAD_ADVANCE_MAX_LOAD_KW", 1.8, min_value=0.0)
-    avg_minutes = _env_int("ADJUST03_LOAD_ADVANCE_AVG_MINUTES", 15, min_value=0)
-    max_minutes = _env_int("ADJUST03_LOAD_ADVANCE_MAX_MINUTES", 10, min_value=0)
-    cap_minutes = _env_int("ADJUST03_LOAD_ADVANCE_CAP_MINUTES", 30, min_value=0)
-    lookback_days = _env_int("ADJUST03_LOAD_ADVANCE_LOOKBACK_DAYS", 7, min_value=1)
-
-    by_day: dict[str, list[float]] = {}
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                load_text = (row.get("消費電力量[kWh]") or "").strip()
-                if not date_text or not time_text or not load_text:
-                    continue
-                try:
-                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    load_kw = float(load_text) * 2.0
-                except (TypeError, ValueError):
-                    continue
-                hhmm = dt.strftime("%H:%M")
-                if "04:30" <= hhmm <= "07:00":
-                    by_day.setdefault(dt.date().isoformat(), []).append(max(0.0, load_kw))
-
-    recent_days = sorted(by_day)[-lookback_days:]
-    values = [value for day in recent_days for value in by_day[day]]
-    if not values:
-        return {"enabled": True, "advance_minutes": 0, "source": "no-load-samples", "sample_days": 0}
-    avg_load_kw = statistics.mean(values)
-    max_load_kw = max(values)
-    advance = 0
-    reasons: list[str] = []
-    if avg_load_kw >= avg_threshold_kw:
-        advance += avg_minutes
-        reasons.append("avg_load")
-    if max_load_kw >= max_threshold_kw:
-        advance += max_minutes
-        reasons.append("max_load")
-    advance = min(cap_minutes, advance)
-    return {
-        "enabled": True,
-        "advance_minutes": advance,
-        "avg_load_kw": round(avg_load_kw, 3),
-        "max_load_kw": round(max_load_kw, 3),
-        "sample_days": len(recent_days),
-        "sample_count": len(values),
-        "source": "recent-morning-load",
-        "reason": "+".join(reasons) if reasons else "below-threshold",
-    }
-
-
 def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
     """Estimate forced charging by observed SOC gain, not nominal kW.
 
@@ -520,6 +447,40 @@ def _estimate_forced_charge_minutes(
     return minutes, charge_rate_info
 
 
+class ForcedChargeCompletionEstimator:
+    """Estimate the next SOC confirmation time while forced charging is active."""
+
+    def __init__(self, *, rate_percent_per_hour: float, confirm_before_minutes: int = 5) -> None:
+        self.rate_percent_per_hour = max(1.0, float(rate_percent_per_hour))
+        self.confirm_before_minutes = max(0, int(confirm_before_minutes))
+
+    def remaining_minutes(self, *, target_soc: float, latest_soc: float) -> int:
+        required_percent = max(0.0, min(100.0, target_soc) - max(0.0, min(100.0, latest_soc)))
+        if required_percent <= 0:
+            return 0
+        return int(math.ceil((required_percent / self.rate_percent_per_hour) * 60.0))
+
+    def next_check_seconds(
+        self,
+        *,
+        target_soc: float,
+        latest_soc: float | None,
+        fallback_poll_seconds: int,
+        cutoff_seconds: int,
+    ) -> int:
+        fallback = max(60, int(fallback_poll_seconds))
+        cutoff = max(0, int(cutoff_seconds))
+        if cutoff <= 0:
+            return 0
+        if latest_soc is None:
+            return min(fallback, cutoff)
+        remaining = self.remaining_minutes(target_soc=target_soc, latest_soc=latest_soc)
+        if remaining <= 0:
+            return 0
+        check_seconds = max(60, (remaining - self.confirm_before_minutes) * 60)
+        return min(check_seconds, fallback, cutoff)
+
+
 def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
     hhmm = cutoff_hhmm.strip()
     if not hhmm or ":" not in hhmm:
@@ -530,16 +491,6 @@ def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
     now = datetime.now(ZoneInfo(timezone_name))
     cutoff = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     return max(0, int((cutoff - now).total_seconds()))
-
-
-def _compute_force_activation_delay_seconds(
-    *,
-    cutoff_seconds: int,
-    estimated_charge_minutes: int,
-    start_advance_minutes: int,
-) -> int:
-    lead_seconds = max(0, (estimated_charge_minutes + start_advance_minutes) * 60)
-    return max(0, cutoff_seconds - lead_seconds)
 
 
 def _sleep_with_progress(total_seconds: int, *, label: str, chunk_seconds: int = 300) -> None:
@@ -830,42 +781,31 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         latest_soc_percent=latest_soc,
         csv_paths=csv_paths,
     )
-    base_start_advance_minutes = max(0, int(os.getenv("ADJUST03_FORCE_START_ADVANCE_MINUTES", "0").strip() or "0"))
-    load_advance_info = _estimate_household_load_start_advance_minutes(csv_paths)
-    load_advance_minutes = int(load_advance_info.get("advance_minutes", 0) or 0)
-    start_advance_minutes = base_start_advance_minutes + load_advance_minutes
     poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
     soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
     cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
-    delay_seconds = _compute_force_activation_delay_seconds(
-        cutoff_seconds=cutoff_seconds,
-        estimated_charge_minutes=estimated_charge_minutes,
-        start_advance_minutes=start_advance_minutes,
-    )
     if cutoff_seconds <= 0:
-        hold_profile = _post_charge_hold_profile()
-        print(f"[cloud_job_runner] 03-monitor cutoff already reached; switch to {hold_profile} immediately.", flush=True)
+        print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
         _run_03_settings_profile_with_db(
-            profile=hold_profile,
+            profile="green",
             dynamic_forced_profile=False,
-            label=f"03-cutoff-{hold_profile}",
+            label="03-cutoff-green",
         )
         return
 
+    charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=0)
     print(
-        "[cloud_job_runner] 03-monitor schedule "
+        "[cloud_job_runner] 03-monitor immediate forced charge "
         f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
         f"required={required_kwh:.3f}kWh "
         f"estimated={estimated_charge_minutes}min "
         f"rate={charge_rate_info.get('percent_per_hour')}%/h "
-        f"samples={charge_rate_info.get('sample_count')} advance={start_advance_minutes}min "
-        f"load_advance={load_advance_minutes}min "
-        f"delay_before_force={delay_seconds}s poll={poll_seconds}s cutoff={cutoff_hhmm}",
+        f"samples={charge_rate_info.get('sample_count')} "
+        f"poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
-    charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
     _persist_03_monitor_schedule_to_firestore(
         plan_meta=plan_meta,
         charge_start_time=charge_start_hhmm,
@@ -875,74 +815,18 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         required_kwh=required_kwh,
         estimated_charge_minutes=estimated_charge_minutes,
         default_power_kw=default_power_kw,
-        delay_seconds=delay_seconds,
         charge_rate_info=charge_rate_info,
-        load_advance_info=load_advance_info,
     )
-    refresh_hhmm = os.getenv("ADJUST03_REFRESH_HHMM", "03:10").strip() or "03:10"
-    refresh_enabled = os.getenv("ADJUST03_REFRESH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
-    if refresh_enabled and delay_seconds > 0:
-        refresh_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=refresh_hhmm)
-        if 0 < refresh_seconds < delay_seconds:
-            _sleep_with_progress(refresh_seconds, label="03-monitor wait-for-refresh")
-            _refresh_plan_for_same_date_if_changed(plan_path)
-            plan_meta = _read_plan_meta(plan_path)
-            csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-            latest_soc = _latest_soc_percent(csv_paths)
-            required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
-            estimated_charge_minutes, charge_rate_info = _estimate_forced_charge_minutes(
-                plan_meta=plan_meta,
-                latest_soc_percent=latest_soc,
-                csv_paths=csv_paths,
-            )
-            load_advance_info = _estimate_household_load_start_advance_minutes(csv_paths)
-            load_advance_minutes = int(load_advance_info.get("advance_minutes", 0) or 0)
-            start_advance_minutes = base_start_advance_minutes + load_advance_minutes
-            cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
-            delay_seconds = _compute_force_activation_delay_seconds(
-                cutoff_seconds=cutoff_seconds,
-                estimated_charge_minutes=estimated_charge_minutes,
-                start_advance_minutes=start_advance_minutes,
-            )
-            target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
-            print(
-                "[cloud_job_runner] 03-monitor refreshed schedule "
-                f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'} "
-                f"required={required_kwh:.3f}kWh "
-                f"rate={charge_rate_info.get('percent_per_hour')}%/h "
-                f"load_advance={load_advance_minutes}min "
-                f"delay_before_force={delay_seconds}s",
-                flush=True,
-            )
-            charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
-            _persist_03_monitor_schedule_to_firestore(
-                plan_meta=plan_meta,
-                charge_start_time=charge_start_hhmm,
-                charge_end_time=cutoff_hhmm,
-                target_soc=target_soc,
-                latest_soc=latest_soc,
-                required_kwh=required_kwh,
-                estimated_charge_minutes=estimated_charge_minutes,
-                default_power_kw=default_power_kw,
-                delay_seconds=delay_seconds,
-                charge_rate_info=charge_rate_info,
-                load_advance_info=load_advance_info,
-            )
-    if delay_seconds > 0:
-        _sleep_with_progress(delay_seconds, label="03-monitor wait-for-forced-start")
 
-    # 強制充電モードは時間設定を無視して即時充電を開始するため、
-    # 7時逆算時刻でのみ強制モードへ切り替える。
     _run_03_settings_profile_with_db(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
-        hold_profile = _post_charge_hold_profile()
-        print(f"[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to {hold_profile}.", flush=True)
+        print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
         _run_03_settings_profile_with_db(
-            profile=hold_profile,
+            profile="green",
             dynamic_forced_profile=False,
-            label=f"03-no-window-{hold_profile}",
+            label="03-no-window-green",
         )
         return
 
@@ -961,6 +845,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     }
     reapply_after_polls = _env_int("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", 2, min_value=1)
     reapply_min_delta = _env_float("ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", 0.1, min_value=0.0)
+    confirm_before_minutes = _env_int("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", 5, min_value=0)
+    completion_estimator = ForcedChargeCompletionEstimator(
+        rate_percent_per_hour=float(charge_rate_info.get("percent_per_hour") or 1.0),
+        confirm_before_minutes=confirm_before_minutes,
+    )
     while time.time() - started_at < monitor_seconds:
         try:
             _run_csv_with_retry(label="03-monitor-csv")
@@ -1009,13 +898,25 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
 
         remaining = monitor_seconds - int(time.time() - started_at)
-        if remaining <= poll_seconds:
+        if remaining <= 0:
             break
-        time.sleep(poll_seconds)
+        next_check_seconds = completion_estimator.next_check_seconds(
+            target_soc=target_soc,
+            latest_soc=latest_soc,
+            fallback_poll_seconds=poll_seconds,
+            cutoff_seconds=remaining,
+        )
+        if next_check_seconds <= 0:
+            break
+        print(
+            "[cloud_job_runner] 03-monitor next check "
+            f"sleep={next_check_seconds}s remaining_to_cutoff={remaining}s",
+            flush=True,
+        )
+        time.sleep(next_check_seconds)
 
-    hold_profile = _post_charge_hold_profile()
-    print(f"[cloud_job_runner] 03-monitor timer reached. switch to {hold_profile} profile.", flush=True)
-    _run_03_settings_profile_with_db(profile=hold_profile, dynamic_forced_profile=False, label=f"03-timer-{hold_profile}")
+    print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
+    _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-timer-green")
 
 
 def _run_night_23() -> None:
@@ -1156,9 +1057,9 @@ def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
 
 def _run_adjust_03() -> None:
     # 夜間コントローラ:
-    # 1) 00時台にCSVを取得して現在SOCを把握
+    # 1) 04:00にCSVを取得して現在SOCを把握
     # 2) 当日分の最新予報を04:00時点で再生成
-    # 3) 7時から逆算した時刻に強制充電を開始し、目標/7時まで監視
+    # 3) すぐ強制充電を開始し、目標到達または7時まで監視
     _run_csv_with_retry(label="03-initial-csv")
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
     if not _ensure_night_plan_available(plan_path):

@@ -1,11 +1,12 @@
 # Solar Controller Automation (Cloud Run Jobs)
 
-23:00 / 04:00 / 07:00（JST）を Cloud Scheduler で自動実行する Python 実装です。23:00ジョブは外部データ取得や予測を行わず、4時判断まで待機モードへ寄せるためのモード変更だけを行います。
+23:00 / 04:00 / 07:00（JST）を Cloud Scheduler で自動実行する Python 実装です。現在の本番構成では、23:00ジョブは外部データ取得や予測を行わず、4時判断まで待機モードへ寄せるためのモード変更だけを行います。データ取得、当日予測、DB反映、Sheetsエクスポート、Google Driveデータバックアップは04:00ジョブに集約しています。
 
-1. ブラウザで 12 時間先の太陽日射時間を取得  
-2. モニタリングサービスにログインして CSV を取得  
-3. CSV と予報値から蓄電池設定を判定  
-4. 蓄電池設定（充電上限/モード）を更新
+1. 23:00に蓄電池を待機モードへ寄せる
+2. 04:00にモニタリングCSVと最新天気予報を取得する
+3. CSV、当日予報、料金条件から蓄電池設定を判定する
+4. 04:00ジョブ内で強制充電を開始し、目標到達後は待機モードで維持する
+5. 07:00に日中向けのグリーンモードへ切り替える
 
 実行基盤は **Cloud Run Jobs + Cloud Scheduler** を想定しています。
 
@@ -27,9 +28,10 @@
 
 ## データ保存（段階運用）
 
-- 現在: `artifacts/` に実行ごとの `summary.json` とCSVを保存
-- 推奨本番: `DATA_BACKEND=firestore` で Firestore に永続化（無料枠運用しやすい）
+- ローカル/検証: `artifacts/` に実行ごとの `summary.json` とCSVを保存
+- 本番: `DATA_BACKEND=firestore` で Firestore に永続化（無料枠運用しやすい）
 - 代替本番: `DATA_BACKEND=postgres` で Compute Engine 上 PostgreSQL に永続化
+- 復旧用バックアップ: 04:00ジョブ内で Firestore データを Google Drive へ退避
 
 注意: Cloud Run のコンテナファイルシステムはインメモリで、インスタンス停止時に永続化されません。  
 クラウド本番で履歴を残す場合は Firestore / PostgreSQL などのDB連携を使ってください。  
@@ -93,8 +95,8 @@ python kpnet_main.py
   - 必要充電量(kWh)
   - 7時目標SOC
   - 夜間実測充電レート(kW推定)
-  を使って、夜間グリーンモードの `SOC下限` / `SOC上限` / `充電開始時刻` を自動算出
-  - 04:00夜間コントローラで当日計画を生成し、7時から逆算して開始時刻を決定
+  を使って、夜間グリーンモードの `SOC下限` / `SOC上限` を自動算出
+  - 04:00夜間コントローラで当日計画を生成し、すぐ強制充電を開始
   - 既定条件: 曇り/雨相当（低日照予報）の日は `充電終了=07:00`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true` : 現在時刻で設定先を自動選択
   - 夜間(23:00-07:00): グリーンモード + SOC下限(安心)=最大値
@@ -103,9 +105,10 @@ python kpnet_main.py
 - 04:00夜間コントローラ（`CLOUD_JOB_SLOT=03`）:
   - CSVを1回取得
   - 当日の最新天気予報と実測値から計画を毎回再生成
-  - 家庭負荷補正を加味し、7時から逆算した時刻に強制充電を開始
+  - 強制充電を即時開始し、充電完了予想時刻の5分前を目安に再確認
   - 設定SOC到達後は待機モードへ切り替え、7時まで放電/過充電を抑える
-  - 3時台の再計算で内容が変わった場合だけDB/ダッシュボードを更新
+  - 7時に日中向けグリーンモードへ戻し、以後は従来どおり充電/放電を許可
+  - DB/ダッシュボード更新、Sheetsエクスポート、Driveデータバックアップを実行
 - `KP_OPERATION_CONDITIONS_PATH`:
   - 固定条件 / 変動条件 / 優先順位 を外部JSONで管理
   - 既定: `config/operation_conditions.json`
@@ -122,8 +125,6 @@ python kpnet_main.py
 - `KP_DYNAMIC_FORCED_PROFILE=true|false`
 - `KP_DYNAMIC_MODE_SWITCH_BY_TIME=true|false`
 - `KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json`
-- `ADJUST03_REFRESH_ENABLED=true`
-- `ADJUST03_REFRESH_HHMM=03:10`
 - `ADJUST03_SUN_EPSILON_H=0.05`
 - `ADJUST03_TEMP_EPSILON_C=0.2`
 - `ADJUST03_SOC_EPSILON_PERCENT=1.0`
@@ -142,8 +143,8 @@ python kpnet_main.py
 - `NIGHT23_SETTINGS_PROFILE=standby`（23:00は外部データ取得/予測をせず、4時判断まで待機モードへ寄せる）
 - `ADJUST03_REGENERATE_PLAN=true`（04:00で当日計画を毎回再生成）
 - `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（04:00制御でSOC実測レートが取れない場合のフォールバック）
+- `ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5`（充電完了予想時刻の5分前に再確認し、未達なら再計算して7時まで継続）
 - `ADJUST03_POST_CHARGE_HOLD_PROFILE=standby`（設定SOC到達後の7時までの維持プロファイル）
-- `ADJUST03_LOAD_ADVANCE_*`（朝の家庭負荷が高い場合に強制充電開始を前倒し）
 - `KP_CSV_TARGET_MONTHS=2026-04,2026-05`
 - `KP_DOWNLOAD_LATEST_MONTH=true`
 - `KP_CSV_OUTPUT_FORMAT=太陽光発電＋蓄電池`
@@ -161,34 +162,34 @@ python kpnet_main.py
 - `DATA_DB_PATH=artifacts/solar_monitor.db`
 - `DATA_BACKEND=sqlite|postgres|firestore`
 - `DATA_DB_SYNC_ENABLED=false`（既定。逐次Cloud Storage同期は無効化）
-- `DATA_DB_WRITE_ONLY_23=false`（04:00/07:00側でもDB永続化を許可）
+- `DATA_DB_WRITE_ONLY_23=false`（04:00ジョブでDB永続化を許可）
 - `DATA_WEEKLY_BACKUP_ENABLED=true`（週1回だけ差分バックアップ）
 - `DATA_WEEKLY_BACKUP_WEEKDAY=5`（土曜）
 - `DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly`
 - `DRIVE_BACKUP_FOLDER_ID`（Google Drive の共有フォルダID。完全復旧用の退避先）
-- `DRIVE_BACKUP_MODE=all|data|source`（既定は `all`。`source` は更新時のみ上書き）
+- `DRIVE_BACKUP_MODE=all|data|source`（Cloud Runの04:00ジョブでは `data` を指定。`source` は手動またはソース更新時に実行）
 - `DRIVE_BACKUP_REPO_ROOT`（空ならリポジトリルートを自動使用）
 - `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`（`DATA_BACKEND=postgres` 時）
 - `FIRESTORE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`（`DATA_BACKEND=firestore` 時）
 - `DRY_RUN=true` の間は設定登録は行わず、確認画面到達までを検証
 
-翌日予測から自動で設定登録する手順（ローカル実行）:
+当日予測から自動で設定登録する手順（ローカル実行）:
 
 ```powershell
 # 1) 最新CSV取得
 $env:KP_WORKFLOW_MODE='csv'
 python kpnet_main.py
 
-# 2) 翌日予測と実績から必要夜間充電量を算出
+# 2) 当日予測と実績から必要夜間充電量を算出
 python energy_model_main.py
 
-# 3) 設定実登録（時刻で自動切替: 夜間=グリーン / 日中=グリーン）
+# 3) 設定実登録
 $env:KP_WORKFLOW_MODE='settings'
 $env:DRY_RUN='false'
 python kpnet_main.py
 ```
 
-ローカルで翌朝7時に自動実行する（Windows タスク スケジューラ）:
+ローカルで翌朝7時に自動実行する補助スクリプト（Windows タスク スケジューラ）:
 
 ```powershell
 # 1回だけ（明日7:00）
@@ -218,7 +219,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
 - `all` モード
   - ソースは更新時だけ上書き
   - データは毎日上書き
-  - Cloud Scheduler では JST 01:10 の日次実行を想定
+- 本番のCloud Run運用
+  - 04:00ジョブ内で `scripts/backup_drive.py --mode data` を実行
+  - ソースバックアップはソース更新時に手動または別手順で実行
+  - バックアップ専用の Cloud Scheduler / Cloud Run Job は作成しない
 
 Drive 側は、共有フォルダを Cloud Run の実行サービスアカウントに編集権限で共有してください。
 このフォルダには `source.zip` / `source_manifest.json` / `data_snapshot.json.gz` / `data_manifest.json` を置きます。
@@ -250,7 +254,7 @@ python .\scripts\merge_csvs.py --input-root artifacts --include-source-file
 
 ## 5. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 04:00夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。23:00は待機モードへの変更のみ、04:00にデータ取得・当日予測・バックアップ/Sheetsエクスポートを集約します。
+推奨: 自動化スクリプトで 23:00 / 04:00夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。23:00は待機モードへの変更のみ、04:00にデータ取得・当日予測・DB反映・Sheetsエクスポート・Driveデータバックアップを集約します。
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
@@ -258,6 +262,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
   -Region us-central1 `
   -SchedulerRegion us-central1 `
   -DataBackend firestore `
+  -DriveBackupFolderId <DRIVE_FOLDER_ID> `
   -RunSmokeTest
 ```
 
@@ -270,13 +275,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
 - Cloud Run Job 3本（23時モード変更 / 04:00夜間コントローラ / 7時用）デプロイ
 - Cloud Scheduler 3本（`0 23 * * *`, `0 4 * * *`, `0 7 * * *` JST）作成/更新
 - `solar-battery-run-23` は待機モードへの変更用として有効化
-- `DRIVE_BACKUP_FOLDER_ID` が設定されている場合は、04:00ジョブ内で日次データバックアップを実行
+- SheetsエクスポートとDriveデータバックアップは04:00ジョブ内で実行
+- 既存の `solar-sheets-export*` / `solar-drive-backup*` 専用Job・Schedulerは削除
 - 東京リージョン（`asia-northeast1`）の既存Schedulerは `pause` して停止（削除しない）
+- Schedulerは3本に集約するため、Cloud Scheduler無料枠内に収まります
 
 ```powershell
 # 例: 環境
 $PROJECT_ID="YOUR_PROJECT"
-$REGION="asia-northeast1"
+$REGION="us-central1"
 $JOB_NAME="solar-battery-controller"
 $IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/solar-controller/runner:latest"
 
@@ -302,7 +309,7 @@ gcloud run jobs create $JOB_NAME `
 ## 6. 07:00/04:00/23:00 実行の Scheduler 設定例
 
 ```powershell
-$SCHEDULER_REGION="asia-northeast1"
+$SCHEDULER_REGION="us-central1"
 $PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
 
 gcloud scheduler jobs create http "solar-battery-run-23" `
@@ -355,6 +362,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\pre_release_check.ps1
   - モニタリングCSVの30分データ
   - 日照・天気予報・当日計画
   - 04:00設定結果 + 7時予定設定
+- 23:00ジョブは待機モード設定のみで、CSV取得・予測・DB反映は行わない
+- 07:00ジョブは日中グリーンモード設定のみで、DB反映は行わない
 - 毎回のCloud Storage追加は行わない（無効化）
 - 週1回のみ、直近7日で更新された行を差分バックアップ（JSON）として保存
 

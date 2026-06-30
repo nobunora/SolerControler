@@ -5,10 +5,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from cloud_job_runner import (
+    ForcedChargeCompletionEstimator,
     _adjust03_target_date,
-    _compute_force_activation_delay_seconds,
     _estimate_forced_charge_minutes,
-    _estimate_household_load_start_advance_minutes,
     _estimate_required_charge_kwh,
     _forecast_changed,
     _mask_env_updates,
@@ -156,52 +155,27 @@ def test_estimate_forced_charge_minutes_uses_empirical_soc_rate(tmp_path: Path, 
     assert info["percent_per_hour"] == 42.0
 
 
-def test_estimate_household_load_start_advance_minutes(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_ENABLED", "true")
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_AVG_LOAD_KW", "1.2")
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_MAX_LOAD_KW", "1.8")
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_AVG_MINUTES", "15")
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_MAX_MINUTES", "10")
-    monkeypatch.setenv("ADJUST03_LOAD_ADVANCE_CAP_MINUTES", "30")
-    csv_path = tmp_path / "kp.csv"
-    csv_path.write_text(
-        "\n".join(
-            [
-                "年月日,時刻,消費電力量[kWh]",
-                "2026/06/29,04:30,0.60",
-                "2026/06/29,05:00,0.80",
-                "2026/06/29,05:30,0.58",
-                "2026/06/29,06:00,0.56",
-                "2026/06/29,06:30,0.61",
-                "2026/06/29,07:00,0.97",
-            ]
-        ),
-        encoding="utf-8-sig",
-    )
+def test_forced_charge_completion_estimator_checks_before_predicted_completion() -> None:
+    estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=40.0, confirm_before_minutes=5)
 
-    info = _estimate_household_load_start_advance_minutes([csv_path])
-
-    assert info["advance_minutes"] == 25
-    assert info["reason"] == "avg_load+max_load"
+    assert estimator.remaining_minutes(target_soc=80.0, latest_soc=60.0) == 30
+    assert estimator.next_check_seconds(
+        target_soc=80.0,
+        latest_soc=60.0,
+        fallback_poll_seconds=3600,
+        cutoff_seconds=7200,
+    ) == 25 * 60
 
 
-def test_compute_force_activation_delay_seconds() -> None:
-    delay = _compute_force_activation_delay_seconds(
-        cutoff_seconds=3 * 60 * 60,
-        estimated_charge_minutes=90,
-        start_advance_minutes=0,
-    )
-    # 3h先のcutoffに対して、90分前に強制開始
-    assert delay == 90 * 60
+def test_forced_charge_completion_estimator_caps_to_poll_and_cutoff() -> None:
+    estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=20.0, confirm_before_minutes=5)
 
-
-def test_compute_force_activation_delay_seconds_immediate_when_late() -> None:
-    delay = _compute_force_activation_delay_seconds(
-        cutoff_seconds=30 * 60,
-        estimated_charge_minutes=90,
-        start_advance_minutes=0,
-    )
-    assert delay == 0
+    assert estimator.next_check_seconds(
+        target_soc=90.0,
+        latest_soc=10.0,
+        fallback_poll_seconds=180,
+        cutoff_seconds=120,
+    ) == 120
 
 
 def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
@@ -255,7 +229,7 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
     ]
 
 
-def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
+def test_monitor_partial_forced_starts_immediately_then_switches_green_at_cutoff(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -263,7 +237,8 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
     plan_path.write_text("{}", encoding="utf-8")
     calls: list[tuple[str, bool]] = []
     sleeps: list[int] = []
-    cutoff_values = iter([3600, 0, 0])
+    cutoff_values = iter([3600, 3600])
+    time_values = iter([0.0, 0.0, 0.0, 4000.0])
 
     monkeypatch.setattr(
         "cloud_job_runner._should_stage_partial_forced",
@@ -279,15 +254,23 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
     )
     monkeypatch.setattr(
         "cloud_job_runner._latest_soc_percent",
-        lambda _: None,
+        lambda _: 20.0,
     )
     monkeypatch.setattr(
         "cloud_job_runner._seconds_until_cutoff",
         lambda **kwargs: next(cutoff_values),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._sleep_with_progress",
-        lambda total_seconds, *, label, chunk_seconds=300: sleeps.append(total_seconds),
+        "cloud_job_runner._run_csv_with_retry",
+        lambda *, label="kpnet-csv": None,
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner.time.sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner.time.time",
+        lambda: next(time_values),
     )
     monkeypatch.setattr(
         "cloud_job_runner._run_settings_profile",
@@ -296,8 +279,8 @@ def test_monitor_partial_forced_delays_forced_start_then_switches_standby(
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert sleeps and sleeps[0] > 0
-    assert calls == [("forced", True), ("standby", False)]
+    assert sleeps == [180]
+    assert calls == [("forced", True), ("green", False)]
 
 
 def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:
@@ -392,13 +375,12 @@ def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> Non
         required_kwh=7.68,
         estimated_charge_minutes=257,
         default_power_kw=1.8,
-        delay_seconds=9382,
     )
 
     assert persisted is True
     event = writes[("settings_events", "2026-06-03-03-monitor-schedule")]
     assert event["slot"] == "03"
-    assert event["status"] == "planned-force-start"
+    assert event["status"] == "forced-started"
     assert event["detail_json"]["charge_start_time"] == "02:43"
     assert event["detail_json"]["charge_end_time"] == "07:00"
     assert writes[("night_charge_plans", "2026-06-03")]["monitor_schedule"]["schedule_source"] == "03-monitor"

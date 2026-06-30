@@ -236,6 +236,19 @@ def _temperature_feature_vector(features: dict[str, float | None]) -> list[float
     return [1.0, cdh28 / 10.0, (ewma_evening - 24.0) / 5.0, (night_min - 20.0) / 5.0]
 
 
+def _temperature_correction_hours() -> range:
+    raw = os.getenv("LOAD_TEMPERATURE_CORRECTION_HOURS", "0-23").strip()
+    if "-" not in raw:
+        return range(0, 24)
+    start_text, end_text = raw.split("-", 1)
+    try:
+        start = max(0, min(23, int(start_text.strip())))
+        end = max(start, min(23, int(end_text.strip())))
+    except ValueError:
+        return range(0, 24)
+    return range(start, end + 1)
+
+
 def _solve_ridge_regression(feature_rows: list[list[float]], targets: list[float], *, regularization: float) -> list[float]:
     if not feature_rows or len(feature_rows) != len(targets):
         return []
@@ -292,19 +305,20 @@ def _evening_temperature_correction(
     feature_rows: list[list[float]] = []
     residuals: list[float] = []
     training_days: list[str] = []
+    correction_hours = _temperature_correction_hours()
     for day in sorted(set(forecast_history) & set(actual_history) & set(historical_temperature_features)):
-        forecast_evening = sum(
+        forecast_load = sum(
             max(0.0, forecast_history[day].get(hour, {}).get("load", 0.0)) * max(0.0, load_ratio)
-            for hour in range(17, 23)
+            for hour in correction_hours
         )
-        actual_evening = sum(
+        actual_load = sum(
             max(0.0, actual_history[day].get(hour, {}).get("load", 0.0))
-            for hour in range(17, 23)
+            for hour in correction_hours
         )
-        if forecast_evening <= 0:
+        if forecast_load <= 0:
             continue
         feature_rows.append(_temperature_feature_vector(historical_temperature_features[day]))
-        residuals.append(_clip_float(actual_evening / forecast_evening - 1.0, min_val=-0.50, max_val=1.0))
+        residuals.append(_clip_float(actual_load / forecast_load - 1.0, min_val=-0.50, max_val=1.0))
         training_days.append(day)
 
     if len(feature_rows) < min_samples:
@@ -331,7 +345,8 @@ def _evening_temperature_correction(
     return {
         "enabled": True,
         "applied": True,
-        "method": "ridge_evening_load_residual",
+        "method": "ridge_all_hours_load_residual",
+        "applied_hours": [min(correction_hours), max(correction_hours)] if correction_hours else [],
         "sample_count": len(feature_rows),
         "training_days": training_days[-7:],
         "coefficients": [round(x, 6) for x in coefficients],
@@ -477,8 +492,9 @@ def _build_forecast_correction(
         for hour, value in hourly_pv_forecast.items()
     }
     corrected_load: dict[int, float] = {}
+    correction_hours = set(_temperature_correction_hours())
     for hour, value in hourly_load_forecast.items():
-        multiplier = load_ratio * (1.0 + evening_delta if 17 <= hour < 23 else 1.0)
+        multiplier = load_ratio * (1.0 + evening_delta if hour in correction_hours else 1.0)
         corrected_load[hour] = max(0.0, value) * max(0.0, multiplier)
 
     peak_penalty = _risk_adjusted_peak_penalty(

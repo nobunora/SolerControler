@@ -443,7 +443,6 @@ def _build_latest_schedule_from_events(
             "estimated_charge_power_kw",
             "schedule_source",
             "estimated_charge_minutes",
-            "delay_before_force_seconds",
             "estimated_charge_rate_percent_per_hour",
             "charge_rate_source",
             "charge_rate_sample_count",
