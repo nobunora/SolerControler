@@ -734,10 +734,10 @@ class KpNetConfig:
                 "(または HAR から取得できません)"
             )
 
-        raw_months = env("KP_CSV_TARGET_MONTHS", default="2026-04,2026-05")
+        raw_months = env("KP_CSV_TARGET_MONTHS", default="")
         months = [m.strip() for m in raw_months.split(",") if m.strip()]
         if not months:
-            months = ["2026-04", "2026-05"]
+            months = _default_csv_target_months()
 
         workflow_mode = env("KP_WORKFLOW_MODE", default="all").strip().lower()
         if workflow_mode not in {"all", "csv", "settings"}:
@@ -1429,6 +1429,16 @@ def _resolve_months(requested: list[str], available: list[str], include_latest: 
         if latest not in result:
             result.append(latest)
     return result
+
+
+def _default_csv_target_months(now: datetime | None = None) -> list[str]:
+    base = now or _now_in_timezone("Asia/Tokyo")
+    current = base.strftime("%Y-%m")
+    if base.month == 1:
+        previous = f"{base.year - 1}-12"
+    else:
+        previous = f"{base.year}-{base.month - 1:02d}"
+    return [previous, current]
 
 
 def _parse_csv_points(csv_path: Path) -> tuple[list[datetime], list[float], list[float]]:

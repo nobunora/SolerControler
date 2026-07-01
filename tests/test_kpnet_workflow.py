@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from app.kpnet_workflow import (
     KpNetConfig,
     NightChargePlan,
     _build_dynamic_forced_profile,
+    _default_csv_target_months,
     _in_time_window,
     _parse_hhmm,
     _pick_battery_operating_mode_code,
@@ -106,6 +108,11 @@ def test_in_time_window_cross_midnight() -> None:
     assert _in_time_window(23 * 60 + 30, start, end)
     assert _in_time_window(6 * 60 + 59, start, end)
     assert not _in_time_window(12 * 60, start, end)
+
+
+def test_default_csv_target_months_includes_previous_and_current_month() -> None:
+    assert _default_csv_target_months(datetime(2026, 7, 1, 4, 0)) == ["2026-06", "2026-07"]
+    assert _default_csv_target_months(datetime(2026, 1, 1, 4, 0)) == ["2025-12", "2026-01"]
 
 
 def test_pick_battery_operating_mode_code_supports_standby() -> None:

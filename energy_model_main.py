@@ -992,8 +992,11 @@ def _build_hourly_load_forecast(
     morning_load_kwh: float,
     overnight_load_by_hour: dict[int, float] | None = None,
 ) -> dict[int, float]:
+    overnight_hours = [0, 1, 2, 3, 4, 5, 6, 23]
     morning_hours = [7, 8, 9]
     daytime_rest_hours = list(range(10, 23))
+    early_overnight_profile = _historical_hourly_profile(rows, key="load", start_hour=0, end_hour_exclusive=7)
+    late_overnight_profile = _historical_hourly_profile(rows, key="load", start_hour=23, end_hour_exclusive=24)
     morning_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=7, end_hour_exclusive=10)
     rest_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=10, end_hour_exclusive=23)
     morning_profile = _normalize_profile(morning_profile_raw, hours=morning_hours)
@@ -1004,6 +1007,8 @@ def _build_hourly_load_forecast(
     rest_total = max(0.0, daytime_total - morning_total)
 
     out: dict[int, float] = {}
+    for h in overnight_hours:
+        out[h] = early_overnight_profile.get(h, late_overnight_profile.get(h, 0.0))
     for h in morning_hours:
         out[h] = morning_total * morning_profile[h]
     for h in daytime_rest_hours:

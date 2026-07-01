@@ -17,6 +17,7 @@ from app.energy_model import (
 from energy_model_main import (
     _active_constraint_names,
     _annotate_pv_headroom_guard_policy,
+    _build_hourly_load_forecast,
     _build_forecast_correction,
     _daytime_net_surplus_headroom_guard,
     _historical_daytime_soc_gain_guard,
@@ -391,6 +392,27 @@ def test_estimate_remaining_overnight_load_uses_recent_matching_slots(monkeypatc
     assert guard["source"] == "monitoring_load_kwh"
     assert guard["hourly_load_forecast_kwh"]["23"] == pytest.approx(0.9)
     assert guard["hourly_load_forecast_kwh"]["0"] == pytest.approx(0.5)
+
+
+def test_build_hourly_load_forecast_fills_overnight_hours_from_history() -> None:
+    rows = [
+        {"dt": datetime.fromisoformat("2026-06-10T00:00:00"), "load": 0.4},
+        {"dt": datetime.fromisoformat("2026-06-11T00:00:00"), "load": 0.6},
+        {"dt": datetime.fromisoformat("2026-06-10T23:00:00"), "load": 0.8},
+        {"dt": datetime.fromisoformat("2026-06-11T23:00:00"), "load": 1.0},
+        {"dt": datetime.fromisoformat("2026-06-10T07:00:00"), "load": 1.0},
+        {"dt": datetime.fromisoformat("2026-06-10T10:00:00"), "load": 1.0},
+    ]
+
+    forecast = _build_hourly_load_forecast(
+        rows,
+        daytime_load_kwh=4.0,
+        morning_load_kwh=1.0,
+        overnight_load_by_hour={23: 0.7},
+    )
+
+    assert forecast[0] == pytest.approx(0.5)
+    assert forecast[23] == pytest.approx(0.7)
 
 
 def test_risk_adjusted_peak_penalty_requires_high_temp_and_pv_overconfidence(monkeypatch) -> None:
