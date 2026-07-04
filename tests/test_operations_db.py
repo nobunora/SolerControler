@@ -359,9 +359,17 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
                   }
                 ]
               },
+              "pv_array_forecast": {
+                "totals": {
+                  "total_kwh": 9.9,
+                  "morning_kwh": 9.9,
+                  "midday_kwh": 9.9,
+                  "evening_kwh": 9.9
+                }
+              },
               "daytime_soc_optimization": {
-                "hourly_pv_forecast_kwh": {"7": 1.2, "8": 0.3},
-                "hourly_load_forecast_kwh": {"7": 0.8, "8": 0.9}
+                "hourly_pv_forecast_kwh": {"7": 1.2, "8": 0.3, "10": 2.0, "16": 0.5},
+                "hourly_load_forecast_kwh": {"7": 0.8, "8": 0.9, "10": 0.4, "16": 0.2}
               }
             }
             """.strip(),
@@ -385,7 +393,12 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
             ORDER BY hour
             """
         ).fetchall()
-        assert [(r["date"], r["hour"]) for r in rows] == [("2026-05-03", 7), ("2026-05-03", 8)]
+        assert [(r["date"], r["hour"]) for r in rows] == [
+            ("2026-05-03", 7),
+            ("2026-05-03", 8),
+            ("2026-05-03", 10),
+            ("2026-05-03", 16),
+        ]
         assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.2)
         assert rows[0]["forecast_load_kwh"] == pytest.approx(0.8)
         assert rows[0]["forecast_charge_kwh"] == pytest.approx(0.4)
@@ -396,6 +409,18 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
         assert rows[0]["forecast_shortwave_radiation_w_m2"] == pytest.approx(88.0)
         assert rows[1]["forecast_charge_kwh"] == pytest.approx(0.0)
         assert rows[1]["forecast_weather_code"] == 3
+        daily = conn.execute(
+            """
+            SELECT forecast_pv_total_kwh, forecast_pv_morning_kwh,
+                   forecast_pv_midday_kwh, forecast_pv_evening_kwh
+            FROM sunshine_daily
+            WHERE date = '2026-05-03'
+            """
+        ).fetchone()
+        assert daily["forecast_pv_total_kwh"] == pytest.approx(4.0)
+        assert daily["forecast_pv_morning_kwh"] == pytest.approx(1.5)
+        assert daily["forecast_pv_midday_kwh"] == pytest.approx(2.0)
+        assert daily["forecast_pv_evening_kwh"] == pytest.approx(0.5)
     finally:
         conn.close()
 

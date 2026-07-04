@@ -72,6 +72,48 @@ def _extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, A
     return rows
 
 
+def _extract_final_pv_totals_from_plan(data: dict[str, Any]) -> dict[str, float | None]:
+    hourly_rows = _extract_hourly_forecast_from_plan(data)
+    if hourly_rows:
+        total = 0.0
+        morning = 0.0
+        midday = 0.0
+        evening = 0.0
+        peak = 0.0
+        for row in hourly_rows:
+            hour = to_int(row.get("hour"))
+            pv_kwh = max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0)
+            total += pv_kwh
+            peak = max(peak, pv_kwh)
+            if hour is None:
+                continue
+            if 7 <= hour < 10:
+                morning += pv_kwh
+            elif 10 <= hour < 16:
+                midday += pv_kwh
+            elif 16 <= hour < 23:
+                evening += pv_kwh
+        return {
+            "total_kwh": round(total, 4),
+            "morning_kwh": round(morning, 4),
+            "midday_kwh": round(midday, 4),
+            "evening_kwh": round(evening, 4),
+            "peak_kw": round(peak, 4),
+            "source": "daytime_soc_optimization.hourly_pv_forecast_kwh",
+        }
+
+    pv_forecast = data.get("pv_array_forecast", {})
+    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    return {
+        "total_kwh": to_float(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
+        "morning_kwh": to_float(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
+        "midday_kwh": to_float(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
+        "evening_kwh": to_float(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
+        "peak_kw": to_float(pv_totals.get("peak_kw") if isinstance(pv_totals, dict) else None),
+        "source": "pv_array_forecast.totals",
+    }
+
+
 def _safe_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -652,7 +694,7 @@ def ingest_sunshine_from_night_plan(
     tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
     tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
     pv_forecast = data.get("pv_array_forecast", {})
-    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    pv_totals = _extract_final_pv_totals_from_plan(data)
     pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
     forecast_source = str(
         (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)

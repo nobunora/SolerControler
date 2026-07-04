@@ -1038,6 +1038,31 @@ def _build_hourly_pv_forecast(
     return {h: total * pv_profile[h] for h in hours}
 
 
+def _hourly_pv_totals(hourly_pv_kwh: dict[int, float]) -> dict[str, float]:
+    total = 0.0
+    morning = 0.0
+    midday = 0.0
+    evening = 0.0
+    peak = 0.0
+    for hour, value in hourly_pv_kwh.items():
+        pv = max(0.0, float(value or 0.0))
+        total += pv
+        peak = max(peak, pv)
+        if 7 <= hour < 10:
+            morning += pv
+        elif 10 <= hour < 16:
+            midday += pv
+        elif 16 <= hour < 23:
+            evening += pv
+    return {
+        "total_kwh": round(total, 4),
+        "morning_kwh": round(morning, 4),
+        "midday_kwh": round(midday, 4),
+        "evening_kwh": round(evening, 4),
+        "peak_kw": round(peak, 4),
+    }
+
+
 def _reshape_hourly_pv_by_weather(
     hourly_pv_kwh: dict[int, float],
     forecast: dict[str, object],
@@ -2093,6 +2118,15 @@ def main() -> int:
         if global_bias_scale is not None:
             coefficients["physical_pv_global_bias_scale"] = global_bias_scale
 
+    final_pv_totals = _hourly_pv_totals(hourly_pv_forecast)
+    result_payload["final_predicted_pv_kwh"] = final_pv_totals["total_kwh"]
+    result_payload["final_predicted_morning_pv_kwh"] = final_pv_totals["morning_kwh"]
+    result_payload["final_predicted_midday_pv_kwh"] = final_pv_totals["midday_kwh"]
+    result_payload["final_predicted_evening_pv_kwh"] = final_pv_totals["evening_kwh"]
+    result_payload["final_pv_forecast_source"] = (
+        "physical_pv_forecast" if physical_pv_selected else "corrected_pv_forecast"
+    )
+
     plan_quality = _build_plan_quality(
         forecast=forecast,
         optimization_payload=optimization_payload,
@@ -2145,6 +2179,11 @@ def main() -> int:
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "pv_physical_forecast": physical_pv_diagnostics,
             "forecast_correction": forecast_correction.get("rationale", {}),
+            "final_pv_forecast": {
+                **final_pv_totals,
+                "source": result_payload["final_pv_forecast_source"],
+                "legacy_result_predicted_pv_kwh": result_payload.get("predicted_pv_kwh"),
+            },
             "overnight_discharge_guard": overnight_discharge_guard,
             "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
             "raw_target_soc_7_percent": result_payload.get("target_soc_7_percent_base"),

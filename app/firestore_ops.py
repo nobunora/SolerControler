@@ -11,6 +11,7 @@ from google.cloud import firestore
 
 from app.operations_db import (
     _extract_battery_daily_from_summary,
+    _extract_final_pv_totals_from_plan,
     _extract_hourly_forecast_from_plan,
     _fetch_open_meteo_daily_actual,
     _is_within_window,
@@ -112,7 +113,7 @@ def ingest_sunshine_from_night_plan(
     tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
     tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
     pv_forecast = data.get("pv_array_forecast", {})
-    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast, dict) else {}
+    pv_totals = _extract_final_pv_totals_from_plan(data)
     pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
     forecast_source = str(
         (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)
