@@ -9,4 +9,4 @@ Good uses:
 - release gate summaries
 - short blocked-work notes that explain what changed and what remains
 
-Keep each entry concise and factual. Use `docs/08_report_template.md` when a fuller report is needed.
+Keep each entry concise and factual. Use `docs/current/agent/report_template.md` when a fuller report is needed.

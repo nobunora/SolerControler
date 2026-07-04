@@ -112,7 +112,7 @@ FirestoreをリモートCodexで読む場合は、読み取り専用に近い権
 ```text
 workブランチで作業してください。
 AGENTS.mdを最初に読み、必要なdocsだけ参照してください。
-docs/REMOTE_CODEX_SETUP_JA.mdの安全運用ルールに従ってください。
+docs/current/ops/REMOTE_CODEX_SETUP_JA.mdの安全運用ルールに従ってください。
 
 許可:
 - コード修正

@@ -375,7 +375,7 @@ pred_away(d) = max(standby_floor_kwh, pred_normal(d) * occupancy_factor)
 
 年に数回程度なら、`is_away` を学習特徴量として入れるより、予定ベースのオーバーライドとして扱う方が安定します。
 
-入力シートの詳細は `docs/OCCUPANCY_SCHEDULE_JA.md` を参照してください。
+入力シートの詳細は `docs/current/product/OCCUPANCY_SCHEDULE_JA.md` を参照してください。
 
 ## 現行実装上の注意
 

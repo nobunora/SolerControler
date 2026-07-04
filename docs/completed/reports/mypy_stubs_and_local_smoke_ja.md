@@ -6,8 +6,8 @@
 
 ## changed files
 
-- `docs/reports/shared_utils_constants_refactor_ja.md`
-- `docs/reports/mypy_stubs_and_local_smoke_ja.md`
+- `docs/completed/reports/shared_utils_constants_refactor_ja.md`
+- `docs/completed/reports/mypy_stubs_and_local_smoke_ja.md`
 
 ## commands run
 

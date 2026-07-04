@@ -97,4 +97,4 @@
 - `artifacts/cloud_pull_night_charge_plans.json`
 - `artifacts/overnight_guard_simulation.json`
 - `artifacts/overnight_guard_shortage_loss.json`
-- `docs/reports/overnight_discharge_guard_simulation_ja.md`
+- `docs/completed/reports/overnight_discharge_guard_simulation_ja.md`

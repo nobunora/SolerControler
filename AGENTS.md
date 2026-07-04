@@ -1,59 +1,35 @@
 # AGENTS.md
 
-Keep context small. Act from evidence.
+Read this first. Keep work evidence-based, small, and reviewable.
 
-## Core Rules
+## Defaults
 
-- Read this file first.
-- Use PowerShell 7 (`pwsh`) by default.
-- Do not scan all docs or all source files.
-- Start with metadata: `git status --short`, shallow listings, and `rg --files`.
-- Use `rg` before opening files.
-- Open only the needed index, file, and line range.
-- Full-file reads are allowed only for short files or when structure is required.
-- If broader reading is needed, say why before doing it.
-- Follow existing design, names, boundaries, and error handling.
-- Do not guess specs, compatibility, security, money, or external contracts. Verify or ask.
-- Do not rename public APIs, DB fields, env keys, or integration fields unless required.
-- Keep one main responsibility per file or function.
-- Keep diffs small and focused. Do not mix feature work, refactor, and formatting.
-- Do not leave debug code, commented-out code, or temporary bypasses.
-- Do not add dependencies unless need, maintenance cost, and risk are clear.
-- Report briefly: changed files, reason, checks run, risks, and open questions.
+- Use PowerShell 7 (`pwsh`) unless it fails.
+- Start with `git status --short`, shallow listings, and `rg`.
+- Open only the files and line ranges needed for the task.
+- Do not scan all docs, all source, generated files, caches, logs, or artifacts.
+- Prefer focused tests near the changed code.
 
-## Read Next
+## Change Style
 
-- `docs/00_index.md`
-- Then choose one category index only when needed.
-- Project overview: `README.md` only when project specs or entrypoints are needed.
-
-## Compatibility Links
-
-- Token policy: `docs/codex_token_usage_rules.md`
-- Design judgment: `docs/design_intent_rules.md`
-- Review guide: `docs/code_review.md`
-- Bad patterns: `docs/bad_patterns.md`
-- Report template: `docs/report_template.md`
-
-## Working Rules
-
-- Prefer focused tests near changed code first.
-- If behavior might change, say so explicitly.
-- For UI state, save flow, orchestration, preview, progress, or entrypoint wiring, read `docs/11_refactor_and_release.md` before editing.
-- Do not parallelize checks that fight with the same watcher, browser, or dev server.
-- If a command cannot run, give the exact reason and the command a human should run.
-- Keep generated, cache, build, log, and artifact paths out of normal reads.
+- Make the smallest meaningful change that fixes the verified cause.
+- Keep one logical unit per patch: do not mix fixes, refactors, formatting, and cleanup.
+- Follow existing names, boundaries, data fields, env keys, and error handling.
+- Do not add dependencies or change external contracts without user approval.
+- Leave no debug code, temporary bypasses, or commented-out code.
 
 ## Subagents
 
 - Use subagents only when they reduce total work.
-- For light monitoring or repetitive wait/check tasks, delegate to a 5.4-series subagent when available.
-- Give each subagent a clear role, scope, and stop condition.
-- Do not repeat the same exploration in parent and subagent.
-- Parent integrates results and resolves conflicts.
+- Treat each subagent as a brilliant specialist with very short memory.
+- Give each subagent a role, exact scope, files or commands to inspect, expected output, and stop condition.
+- Parent must not repeat the same exploration, implementation, or verification; parent only integrates results and resolves conflicts.
+- Close each subagent as soon as its task is complete.
 
-## Simulations
+## More Rules
 
-- Run simulations against already-ingested local data by default.
-- Do not call forecast APIs, Sheets, Drive, or other external services during comparison simulations unless the user explicitly asks.
-- Prefer fast replay/diff scripts that reuse saved inputs over rerunning full production workflows.
+- Token and exploration rules: read `docs/current/agent/codex_token_usage_rules.md` only when the task needs broad code search, MCP/tool exploration, subagents, or simulation loops.
+- Design and refactor judgment: read `docs/current/agent/agent_working_rules.md` only when changing architecture, splitting work across subagents, or when a patch would touch several files.
+- AI Pwsh Bridge command-generation and Markdown authoring rules: read `docs/current/agent/ai_pwsh_bridge_usage_rules.md` before generating executable bridge commands, patching Markdown through PowerShell, or handling LF/CRLF warnings.
+- Report template: read `docs/current/agent/report_template.md` only after the user explicitly asks for a report.
+- Do not create milestone reports or files under `docs/completed/reports/` unless the user explicitly asks.

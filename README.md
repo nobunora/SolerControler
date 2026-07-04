@@ -10,20 +10,36 @@
 
 実行基盤は **Cloud Run Jobs + Cloud Scheduler** を想定しています。
 
+## リポジトリ構成
+
+ルート直下には、Docker、Cloud Run、pytest、pip が既定名で参照するファイルだけを残します。
+
+- `app/`: アプリケーション本体
+- `tests/`: テスト
+- `scripts/`: 運用・検証・デプロイ用スクリプト
+- `config/`: 固定設定ファイル
+- `docs/`: 現行資料、完了済み記録、アーカイブ
+- `articles/`: 外部公開向けの記事
+- `sample_data/`: ローカル検証用サンプル
+- `artifacts/`: 実行生成物（git管理外）
+- `*_main.py`, `cloud_job_runner.py`, `dashboard_server.py`: ローカル実行、Cloud Run、テストから直接参照されるエントリポイント
+- `Dockerfile*`, `cloudbuild*.yaml`, `requirements*.txt`, `pyproject.toml`, `pytest.ini`: 標準ツールがルートで参照する設定
+
 ## 公開向け説明文と画面イメージ
 
-- 説明文（日本語）: [docs/PUBLIC_DESCRIPTION_JA.md](docs/PUBLIC_DESCRIPTION_JA.md)
-- Codexトークン節約運用ルール: [docs/codex_token_usage_rules.md](docs/codex_token_usage_rules.md)
-- リモートCodex安全運用セットアップ: [docs/REMOTE_CODEX_SETUP_JA.md](docs/REMOTE_CODEX_SETUP_JA.md)
-- Google Cloud運用前提: [docs/GCP_OPERATION_JA.md](docs/GCP_OPERATION_JA.md)
-- Google Cloud無料運用（初心者向け手順）: [docs/GCP_FREE_BEGINNER_JA.md](docs/GCP_FREE_BEGINNER_JA.md)
-- 運用条件ファイルガイド: [docs/OPERATION_CONDITIONS_GUIDE.md](docs/OPERATION_CONDITIONS_GUIDE.md)
-- 現在の判定ルール（条件木）: [docs/CURRENT_DECISION_TREE_JA.md](docs/CURRENT_DECISION_TREE_JA.md)
-- 東・南・西アレイ発電予測: [docs/PV_ARRAY_FORECAST_JA.md](docs/PV_ARRAY_FORECAST_JA.md)
-- 消費電力量予測モデル仕様: [docs/CONSUMPTION_FORECAST_MODEL_JA.md](docs/CONSUMPTION_FORECAST_MODEL_JA.md)
-- 不在予定入力シート仕様: [docs/OCCUPANCY_SCHEDULE_JA.md](docs/OCCUPANCY_SCHEDULE_JA.md)
-- Google Cloud料金情報CLI: [docs/GCP_PRICING_CLI_JA.md](docs/GCP_PRICING_CLI_JA.md)
-- Google Cloud実費確認CLI: [docs/GCP_ACTUAL_COST_CLI_JA.md](docs/GCP_ACTUAL_COST_CLI_JA.md)
+- Docs整理索引: [docs/README.md](docs/README.md)
+- 説明文（日本語）: [docs/current/product/PUBLIC_DESCRIPTION_JA.md](docs/current/product/PUBLIC_DESCRIPTION_JA.md)
+- Codexトークン節約運用ルール: [docs/current/agent/codex_token_usage_rules.md](docs/current/agent/codex_token_usage_rules.md)
+- リモートCodex安全運用セットアップ: [docs/current/ops/REMOTE_CODEX_SETUP_JA.md](docs/current/ops/REMOTE_CODEX_SETUP_JA.md)
+- Google Cloud運用前提: [docs/current/ops/GCP_OPERATION_JA.md](docs/current/ops/GCP_OPERATION_JA.md)
+- Google Cloud無料運用（初心者向け手順）: [docs/current/ops/GCP_FREE_BEGINNER_JA.md](docs/current/ops/GCP_FREE_BEGINNER_JA.md)
+- 運用条件ファイルガイド: [docs/current/product/OPERATION_CONDITIONS_GUIDE.md](docs/current/product/OPERATION_CONDITIONS_GUIDE.md)
+- 現在の判定ルール（条件木）: [docs/current/product/CURRENT_DECISION_TREE_JA.md](docs/current/product/CURRENT_DECISION_TREE_JA.md)
+- 東・南・西アレイ発電予測: [docs/current/product/PV_ARRAY_FORECAST_JA.md](docs/current/product/PV_ARRAY_FORECAST_JA.md)
+- 消費電力量予測モデル仕様: [docs/current/product/CONSUMPTION_FORECAST_MODEL_JA.md](docs/current/product/CONSUMPTION_FORECAST_MODEL_JA.md)
+- 不在予定入力シート仕様: [docs/current/product/OCCUPANCY_SCHEDULE_JA.md](docs/current/product/OCCUPANCY_SCHEDULE_JA.md)
+- Google Cloud料金情報CLI: [docs/current/ops/GCP_PRICING_CLI_JA.md](docs/current/ops/GCP_PRICING_CLI_JA.md)
+- Google Cloud実費確認CLI: [docs/current/ops/GCP_ACTUAL_COST_CLI_JA.md](docs/current/ops/GCP_ACTUAL_COST_CLI_JA.md)
 - ダッシュボードPNG: [docs/images/dashboard.png](docs/images/dashboard.png)
 
 ## データ保存（段階運用）

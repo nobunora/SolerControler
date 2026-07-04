@@ -27,7 +27,7 @@
 - `scripts/merge_csvs.py`
 - `tests/test_csv_merge.py`
 - `README.md`
-- `docs/reports/milestone_merge_csvs_dedup_ja.md`
+- `docs/completed/reports/milestone_merge_csvs_dedup_ja.md`
 
 ## Scope Not Changed
 

@@ -26,8 +26,8 @@
 - `.env.example`
 - `README.md`
 - `app/kpnet_workflow.py`
-- `docs/CURRENT_DECISION_TREE_JA.md`
-- `docs/OPERATION_CONDITIONS_GUIDE.md`
+- `docs/current/product/CURRENT_DECISION_TREE_JA.md`
+- `docs/current/product/OPERATION_CONDITIONS_GUIDE.md`
 - `scripts/deploy_gcp_jobs.ps1`
 - `tests/test_kpnet_workflow.py`
 

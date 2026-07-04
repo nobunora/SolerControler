@@ -15,7 +15,7 @@ Read `README.md` or other docs only when the task needs specs, operations, or de
 ## Read Policy
 
 - Do not read all docs.
-- Use `docs/00_index.md` first, then one category index.
+- Use `docs/README.md` first, then one category index.
 - Prefer symbol search and targeted ranges.
 - Full-file reads are for short files or required structure.
 - Avoid rereading unchanged ranges.
@@ -37,7 +37,7 @@ Read `README.md` or other docs only when the task needs specs, operations, or de
 
 ## Report Policy
 
-Keep reports short unless `docs/report_template.md` is needed:
+Keep reports short unless `docs/current/agent/report_template.md` is needed:
 
 - what changed
 - why it changed

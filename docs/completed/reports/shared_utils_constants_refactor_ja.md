@@ -27,7 +27,7 @@
 - `app/energy_model.py`
 - `app/soc_cost_optimizer.py`
 - `tests/test_utils.py`
-- `docs/reports/shared_utils_constants_refactor_ja.md`
+- `docs/completed/reports/shared_utils_constants_refactor_ja.md`
 
 ## commands run
 

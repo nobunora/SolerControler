@@ -63,5 +63,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check_gcp_free_tie
 
 ## 初心者向けの無料運用手順
 
-- [docs/GCP_FREE_BEGINNER_JA.md](GCP_FREE_BEGINNER_JA.md)
-- [docs/OPERATION_CONDITIONS_GUIDE.md](OPERATION_CONDITIONS_GUIDE.md)
+- [docs/current/ops/GCP_FREE_BEGINNER_JA.md](GCP_FREE_BEGINNER_JA.md)
+- [docs/current/product/OPERATION_CONDITIONS_GUIDE.md](../product/OPERATION_CONDITIONS_GUIDE.md)

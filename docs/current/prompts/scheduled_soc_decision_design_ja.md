@@ -62,8 +62,8 @@
 
 1. 作業開始時チェックを行う。
    - `git status --short`
-   - 既存の `docs/CURRENT_DECISION_TREE_JA.md`
-   - 既存の `docs/OPERATION_CONDITIONS_GUIDE.md`
+   - 既存の `docs/current/product/CURRENT_DECISION_TREE_JA.md`
+   - 既存の `docs/current/product/OPERATION_CONDITIONS_GUIDE.md`
    - 直近の関連レポート
    - ここで既存文書が十分なら、それを土台にして差分だけ調べる。
 
@@ -117,7 +117,7 @@
 
 ## 成果物
 
-`docs/reports/` 配下に日本語Markdownレポートを1つ作成する。
+`docs/completed/reports/` 配下に日本語Markdownレポートを1つ作成する。
 ファイル名は日時が分かる名前にする。
 
 レポートには以下を含める。

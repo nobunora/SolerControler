@@ -25,7 +25,7 @@
 
 ## ダッシュボード例
 
-![ダッシュボード例](images/dashboard.png)
+![ダッシュボード例](../../images/dashboard.png)
 
 - 最新計画の1時間ごとの予想発電量・予想充電量・予想消費電量を折れ線グラフで表示
 - 日照時間、発電量、消費量は予測・実績・差分を表示
@@ -37,4 +37,4 @@
 
 ## Google Cloud運用前提の説明
 
-- [docs/GCP_OPERATION_JA.md](GCP_OPERATION_JA.md)
+- [docs/current/ops/GCP_OPERATION_JA.md](../ops/GCP_OPERATION_JA.md)

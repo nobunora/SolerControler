@@ -7,14 +7,14 @@
 
 ## changed files
 
-- `docs/reports/soc_decision_design_20260621-0837_ja.md`
+- `docs/completed/reports/soc_decision_design_20260621-0837_ja.md`
 
 ## commands run
 
 - `git status --short`
 - `Get-ChildItem docs -File | Select-Object Name,Length,LastWriteTime | Sort-Object LastWriteTime -Descending | Format-Table -AutoSize`
-- `Get-Content docs/CURRENT_DECISION_TREE_JA.md -TotalCount 220`
-- `Get-Content docs/OPERATION_CONDITIONS_GUIDE.md -TotalCount 240`
+- `Get-Content docs/current/product/CURRENT_DECISION_TREE_JA.md -TotalCount 220`
+- `Get-Content docs/current/product/OPERATION_CONDITIONS_GUIDE.md -TotalCount 240`
 - `Get-ChildItem docs/reports -File | Select-Object Name,LastWriteTime | Sort-Object LastWriteTime -Descending | Format-Table -AutoSize`
 - `Get-ChildItem -Path . -File | Select-Object Name,Length | Sort-Object Name | Format-Table -AutoSize`
 - `Select-String -Path energy_model_main.py -Pattern 'def |class |target_soc_7_percent|required_night_charge_kwh|night_charge_plan|soc_cost_optimizer|forecast_sun_hours|plan_quality|decision_rationale'`
@@ -38,8 +38,8 @@
 - `Get-Content logs/codex-soc-decision-design-20260621-083203.log -TotalCount 220`
 - `Get-Content logs/codex-soc-decision-design-20260621-082959.log -TotalCount 220`
 - `Get-Content logs/codex-soc-decision-design-20260621-012000.log -TotalCount 220`
-- `Get-Content docs/report_template.md -TotalCount 220`
-- `Get-Content docs/reports/shared_utils_constants_refactor_ja.md -TotalCount 220`
+- `Get-Content docs/current/agent/report_template.md -TotalCount 220`
+- `Get-Content docs/completed/reports/shared_utils_constants_refactor_ja.md -TotalCount 220`
 - `Get-Date -Format 'yyyyMMdd-HHmm'`
 - `Get-Content artifacts/night_charge_plan.json -Raw | ConvertFrom-Json`
 - `Get-Content artifacts/local-smoke-kpnet/night_charge_plan.json -Raw | ConvertFrom-Json`
@@ -53,8 +53,8 @@
 
 ### 参照した設計文書とコード位置
 
-- `docs/CURRENT_DECISION_TREE_JA.md`
-- `docs/OPERATION_CONDITIONS_GUIDE.md`
+- `docs/current/product/CURRENT_DECISION_TREE_JA.md`
+- `docs/current/product/OPERATION_CONDITIONS_GUIDE.md`
 - `energy_model_main.py:1058-1355`
 - `app/energy_model.py:232-391`
 - `app/soc_cost_optimizer.py:272-485`

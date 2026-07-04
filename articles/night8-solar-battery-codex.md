@@ -99,8 +99,8 @@ published: true
 ここでは概要だけにして、深掘りはリポジトリ参照にしています。
 
 - Repository: https://github.com/nobunora/SolerControler
-- 運用説明: `docs/GCP_OPERATION_JA.md`
-- 無料運用ガイド: `docs/GCP_FREE_BEGINNER_JA.md`
+- 運用説明: `docs/current/ops/GCP_OPERATION_JA.md`
+- 無料運用ガイド: `docs/current/ops/GCP_FREE_BEGINNER_JA.md`
 
 ## おわりに
 

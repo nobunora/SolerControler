@@ -25,7 +25,7 @@
 
 - `app/drive_backup.py`
 - `tests/test_drive_backup.py`
-- `docs/reports/milestone_drive_backup_all_ja.md`
+- `docs/completed/reports/milestone_drive_backup_all_ja.md`
 
 ## Scope Not Changed
 

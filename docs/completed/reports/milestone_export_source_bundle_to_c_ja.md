@@ -24,7 +24,7 @@
 ## Files Changed
 
 - `scripts/export_source_bundle_to_c.ps1`
-- `docs/reports/milestone_export_source_bundle_to_c_ja.md`
+- `docs/completed/reports/milestone_export_source_bundle_to_c_ja.md`
 
 ## Scope Not Changed
 
