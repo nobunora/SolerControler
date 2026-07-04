@@ -457,15 +457,41 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         raise RuntimeError(f"夜間充電計画ファイルが見つかりません: {plan_path}")
 
     raw = json.loads(plan_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RuntimeError("夜間充電計画のルートがJSON objectではありません")
     result = raw.get("result", {})
     forecast = raw.get("forecast", {})
     inputs = raw.get("inputs", {})
+    plan_quality = raw.get("plan_quality", {})
+    if not isinstance(result, dict):
+        raise RuntimeError("夜間充電計画のresultがJSON objectではありません")
+    if not isinstance(forecast, dict):
+        raise RuntimeError("夜間充電計画のforecastがJSON objectではありません")
+    if inputs is None:
+        inputs = {}
+    if not isinstance(inputs, dict):
+        raise RuntimeError("夜間充電計画のinputsがJSON objectではありません")
+    if isinstance(plan_quality, dict) and plan_quality.get("should_apply") is False:
+        raise RuntimeError(f"夜間充電計画は適用不可です: plan_quality={plan_quality}")
 
-    required_night_charge_kwh = float(result.get("required_night_charge_kwh", 0.0))
-    target_soc_7_percent = float(result.get("target_soc_7_percent", 0.0))
-    soc_now_percent = to_float(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None
-    effective_capacity_kwh = to_float(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None
-    forecast_date = str(forecast.get("date", ""))
+    required_night_charge_kwh = _required_plan_float(
+        result,
+        key="required_night_charge_kwh",
+        min_value=0.0,
+        name="result.required_night_charge_kwh",
+    )
+    target_soc_7_percent = _required_plan_float(
+        result,
+        key="target_soc_7_percent",
+        min_value=0.0,
+        max_value=100.0,
+        name="result.target_soc_7_percent",
+    )
+    soc_now_percent = to_float(inputs.get("soc_now_percent"))
+    effective_capacity_kwh = to_float(result.get("effective_capacity_kwh"))
+    forecast_date = str(forecast.get("date", "")).strip()
+    if not forecast_date:
+        raise RuntimeError("夜間充電計画にforecast.dateが含まれていません")
     forecast_sun_hours: float | None = None
     forecast_sun_hours_raw = forecast.get("sun_hours", None)
     if forecast_sun_hours_raw is not None and str(forecast_sun_hours_raw).strip():
@@ -487,6 +513,29 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         effective_capacity_kwh=effective_capacity_kwh,
         csv_paths=csv_paths,
     )
+
+
+def _required_plan_float(
+    source: dict[str, Any],
+    *,
+    key: str,
+    name: str,
+    min_value: float | None = None,
+    max_value: float | None = None,
+) -> float:
+    if key not in source:
+        raise RuntimeError(f"夜間充電計画に{name}が含まれていません")
+    try:
+        value = float(source[key])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"夜間充電計画の{name}が数値ではありません: {source[key]!r}") from exc
+    if not math.isfinite(value):
+        raise RuntimeError(f"夜間充電計画の{name}が有限値ではありません: {source[key]!r}")
+    if min_value is not None and value < min_value:
+        raise RuntimeError(f"夜間充電計画の{name}が下限未満です: {value}")
+    if max_value is not None and value > max_value:
+        raise RuntimeError(f"夜間充電計画の{name}が上限超過です: {value}")
+    return value
 
 
 def _estimate_charge_power_kw(
@@ -883,13 +932,14 @@ def _build_dynamic_forced_profile(
         duration_clipped = True
 
     charge_start_minute = max(0, charge_end_minute - duration_minutes)
-    charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
-        start_minute=charge_start_minute,
-        end_minute=charge_end_minute,
-        window_name="charge",
-        conditions=conditions,
-        summary=summary,
-    )
+    if duration_minutes > 0:
+        charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
+            start_minute=charge_start_minute,
+            end_minute=charge_end_minute,
+            window_name="charge",
+            conditions=conditions,
+            summary=summary,
+        )
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
     discharge_start_h, discharge_start_m = _resolve_day_discharge_start_hhmm(
@@ -1402,6 +1452,8 @@ def _build_payload(
         "socEconomyMode",
         "socContactInput",
         "socChargeMode",
+        "onPowerOutageMode",
+        "onPowerOutageChargePowerW",
         "chargeStartTimeH",
         "chargeStartTimeM",
         "chargeEndTimeH",
@@ -1697,7 +1749,7 @@ def _run_settings_phase(
                     "confirm_path": str(confirm_path),
                 }
             )
-            continue
+            raise RuntimeError(f"KP-NET setting confirmation failed for profile={profile.name}: {err or title}")
 
         if cfg.dry_run:
             summary["setting_results"].append(

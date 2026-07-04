@@ -399,6 +399,8 @@ def _default_latest_schedule(plan_date: str | None = None) -> dict[str, Any]:
         "settings_completed_status": None,
         "settings_completed_at": None,
         "settings_completed_profile": None,
+        "settings_completed_run_id": None,
+        "settings_completed_source_doc_id": None,
         "constraints": conditions,
     }
 
@@ -415,14 +417,20 @@ def _build_latest_schedule_from_events(
     schedule_source_locked = False
     for row in event_rows:
         status = str(row.get("status", "") or "")
-        if completed_row is None and status in {"applied", "skipped-no-change"}:
-            completed_row = row
         detail = _json_object_or_empty(row.get("detail_json"))
         if not detail:
             continue
         detail_plan_date = str(detail.get("plan_date") or "").strip()
+        if plan_date and not detail_plan_date:
+            continue
         if plan_date and detail_plan_date and detail_plan_date != plan_date:
             continue
+        if (
+            completed_row is None
+            and status in {"applied", "skipped-no-change"}
+            and (not plan_date or detail_plan_date == plan_date)
+        ):
+            completed_row = row
         is_monitor_schedule = str(detail.get("schedule_source") or "") == "03-monitor"
         if schedule_source_locked and not is_monitor_schedule:
             continue
@@ -468,18 +476,36 @@ def _build_latest_schedule_from_events(
         schedule["settings_completed_status"] = str(completed_row.get("status", ""))
         schedule["settings_completed_at"] = str(completed_row.get("recorded_at", ""))
         schedule["settings_completed_profile"] = str(completed_row.get("profile", ""))
+        schedule["settings_completed_run_id"] = str(completed_row.get("run_id", ""))
+        schedule["settings_completed_source_doc_id"] = str(completed_row.get("source_doc_id", ""))
 
     if battery_row:
-        target_soc = to_float(battery_row.get("setting_soc_target_percent"))
+        battery_date = str(battery_row.get("date") or "")
+        battery_matches_plan = not plan_date or not battery_date or battery_date == plan_date
+        target_soc = to_float(battery_row.get("setting_soc_target_percent")) if battery_matches_plan else None
         if target_soc is not None:
             schedule["soc_charge_mode"] = str(int(round(target_soc)))
-        if schedule.get("plan_date") is None and battery_row.get("date"):
+        if schedule.get("plan_date") is None and battery_date:
             schedule["plan_date"] = str(battery_row.get("date"))
+        source_status = str(battery_row.get("source_status") or "")
+        if (
+            not schedule.get("settings_completed")
+            and source_status in {"applied", "skipped-no-change"}
+            and battery_matches_plan
+        ):
+            schedule["settings_completed"] = True
+            schedule["settings_completed_status"] = source_status
+            schedule["settings_completed_at"] = str(battery_row.get("updated_at") or "")
+            schedule["settings_completed_profile"] = str(battery_row.get("source_profile") or "")
+            schedule["settings_completed_run_id"] = str(battery_row.get("settings_run_id") or "")
+            schedule["settings_completed_source_doc_id"] = str(battery_row.get("source_doc_id") or "")
 
     charge_start = _parse_hhmm_minutes(str(schedule.get("charge_start_time") or ""))
     charge_end = _parse_hhmm_minutes(str(schedule.get("charge_end_time") or ""))
     power_kw = to_float(schedule.get("estimated_charge_power_kw")) or 1.8
-    night_kwh = to_float(battery_row.get("night_charge_kwh") if battery_row else None) or 0.0
+    battery_date = str(battery_row.get("date") if battery_row else "")
+    battery_matches_plan = bool(battery_row) and (not plan_date or not battery_date or battery_date == plan_date)
+    night_kwh = to_float(battery_row.get("night_charge_kwh") if battery_matches_plan else None) or 0.0
 
     if charge_start is None and charge_end is not None and night_kwh > 0 and power_kw > 0:
         duration_minutes = int(math.ceil((night_kwh / power_kw) * 60.0))
@@ -859,7 +885,7 @@ def _load_sqlite_slice(
                 latest_events = _rows_to_dicts(
                     conn.execute(
                         """
-                        SELECT slot, profile, status, detail_json, recorded_at
+                        SELECT event_id, run_id, slot, profile, status, detail_json, source_doc_id, recorded_at
                         FROM settings_events
                         ORDER BY recorded_at DESC, event_id DESC
                         LIMIT 40
@@ -870,7 +896,7 @@ def _load_sqlite_slice(
             if _sqlite_table_exists(conn, "battery_daily_metrics"):
                 latest_battery = conn.execute(
                     """
-                    SELECT date, setting_soc_target_percent, night_charge_kwh
+                    SELECT *
                     FROM battery_daily_metrics
                     ORDER BY date DESC
                     LIMIT 1
@@ -1115,7 +1141,7 @@ def _load_postgres_slice(
 
                 cur.execute(
                     """
-                    SELECT slot, profile, status, detail_json, recorded_at
+                    SELECT event_id, run_id, slot, profile, status, detail_json, source_doc_id, recorded_at
                     FROM settings_events
                     ORDER BY recorded_at DESC, event_id DESC
                     LIMIT 40
@@ -1125,7 +1151,7 @@ def _load_postgres_slice(
 
                 cur.execute(
                     """
-                    SELECT date, setting_soc_target_percent, night_charge_kwh
+                    SELECT *
                     FROM battery_daily_metrics
                     ORDER BY date DESC
                     LIMIT 1
@@ -1395,10 +1421,13 @@ def _load_firestore_slice(
             row = doc.to_dict() or {}
             latest_events.append(
                 {
+                    "event_id": row.get("event_id") or doc.id,
+                    "run_id": row.get("run_id"),
                     "slot": row.get("slot"),
                     "profile": row.get("profile"),
                     "status": row.get("status"),
                     "detail_json": row.get("detail_json"),
+                    "source_doc_id": row.get("source_doc_id") or doc.id,
                     "recorded_at": row.get("recorded_at"),
                 }
             )

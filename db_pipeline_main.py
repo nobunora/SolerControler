@@ -8,6 +8,8 @@ from pathlib import Path
 from app import operations_db as sqlite_ops
 from app.weekly_backup import create_weekly_diff_backup
 
+_SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
+
 
 def _env_bool(name: str, default: bool = True) -> bool:
     raw = os.getenv(name, "").strip().lower()
@@ -25,6 +27,23 @@ def _collect_csv_paths(csv_run_dir: Path) -> list[Path]:
         if path.exists():
             csv_paths.append(path)
     return csv_paths
+
+
+def _settings_summary_successful(summary_path: Path) -> bool:
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if summary.get("error"):
+        return False
+    results = summary.get("setting_results")
+    if not isinstance(results, list) or not results:
+        return False
+    return all(
+        isinstance(item, dict)
+        and str(item.get("status", "")).strip() in _SUCCESSFUL_SETTING_STATUSES
+        for item in results
+    )
 
 
 def _record_planned_day_mode_sqlite(conn, *, settings_summary_path: Path, recorded_at: str) -> None:
@@ -102,12 +121,16 @@ def _ingest_sqlite(
             )
             if cfg.slot == "23":
                 _record_planned_day_mode_sqlite(conn, settings_summary_path=summary_path, recorded_at=now_iso)
-            sqlite_ops.upsert_battery_daily_metrics(
-                conn,
-                summary_path=summary_path,
-                updated_at=now_iso,
-                night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
-            )
+            if _settings_summary_successful(summary_path):
+                sqlite_ops.upsert_battery_daily_metrics(
+                    conn,
+                    summary_path=summary_path,
+                    updated_at=now_iso,
+                    night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+                    slot=cfg.slot,
+                )
+            else:
+                print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
         pv_charge_end_updated = sqlite_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
         print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
@@ -189,12 +212,16 @@ def _ingest_postgres(
             )
             if cfg.slot == "23":
                 postgres_ops.record_planned_day_mode(conn, settings_summary_path=summary_path, recorded_at=now_iso)
-            postgres_ops.upsert_battery_daily_metrics(
-                conn,
-                summary_path=summary_path,
-                updated_at=now_iso,
-                night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
-            )
+            if _settings_summary_successful(summary_path):
+                postgres_ops.upsert_battery_daily_metrics(
+                    conn,
+                    summary_path=summary_path,
+                    updated_at=now_iso,
+                    night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+                    slot=cfg.slot,
+                )
+            else:
+                print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
         pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
         print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
@@ -271,12 +298,16 @@ def _ingest_firestore(
         )
         if cfg.slot == "23":
             firestore_ops.record_planned_day_mode(client, settings_summary_path=summary_path, recorded_at=now_iso)
-        firestore_ops.upsert_battery_daily_metrics(
-            client,
-            summary_path=summary_path,
-            updated_at=now_iso,
-            night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
-        )
+        if _settings_summary_successful(summary_path):
+            firestore_ops.upsert_battery_daily_metrics(
+                client,
+                summary_path=summary_path,
+                updated_at=now_iso,
+                night_plan_path=cfg.artifacts_dir / "night_charge_plan.json",
+                slot=cfg.slot,
+            )
+        else:
+            print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
     pv_charge_end_updated = firestore_ops.recalc_battery_pv_charge_end_soc(client, updated_at=now_iso)
     print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 

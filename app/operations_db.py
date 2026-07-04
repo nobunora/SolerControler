@@ -286,6 +286,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             pv_charge_end_soc_percent REAL,
             pv_charge_end_at TEXT,
             end_of_day_soc_percent REAL,
+            settings_run_id TEXT,
+            source_doc_id TEXT,
+            source_status TEXT,
+            source_profile TEXT,
+            plan_quality_status TEXT,
+            plan_should_apply INTEGER,
             updated_at TEXT NOT NULL
         );
 
@@ -359,6 +365,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         {
             "pv_charge_end_soc_percent": "REAL",
             "pv_charge_end_at": "TEXT",
+            "settings_run_id": "TEXT",
+            "source_doc_id": "TEXT",
+            "source_status": "TEXT",
+            "source_profile": "TEXT",
+            "plan_quality_status": "TEXT",
+            "plan_should_apply": "INTEGER",
         },
     )
     _ensure_sqlite_columns(
@@ -411,6 +423,10 @@ def _extract_battery_daily_from_summary(
     np_root = night_plan if isinstance(night_plan, dict) else {}
     np_result = np_root.get("result", {}) if isinstance(np_root.get("result", {}), dict) else {}
     np_forecast = np_root.get("forecast", {}) if isinstance(np_root.get("forecast", {}), dict) else {}
+    np_quality = np_root.get("plan_quality", {}) if isinstance(np_root.get("plan_quality", {}), dict) else {}
+    if np_quality.get("should_apply") is False:
+        np_result = {}
+    source = _extract_settings_metric_source(summary=summary, night_plan=night_plan)
     prefer_night_plan = env("DATA_PREFER_NIGHT_PLAN_METRICS", default="false").strip().lower() in {
         "1",
         "true",
@@ -448,6 +464,43 @@ def _extract_battery_daily_from_summary(
         # Actual PV-charge-end SOC must come from monitoring CSV samples.
         "pv_charge_end_soc": None,
         "pv_charge_end_at": None,
+        **source,
+    }
+
+
+def _extract_settings_metric_source(
+    *,
+    summary: dict[str, Any],
+    night_plan: dict[str, Any] | None,
+) -> dict[str, Any]:
+    results = summary.get("setting_results")
+    source_item: dict[str, Any] = {}
+    source_index = 0
+    if isinstance(results, list):
+        for idx, item in enumerate(results):
+            if not isinstance(item, dict):
+                continue
+            source_item = item
+            source_index = idx
+            if str(item.get("status", "")).strip() in {"applied", "skipped-no-change"}:
+                break
+    run_id = str(summary.get("run_id") or "").strip()
+    status = str(source_item.get("status") or "").strip()
+    profile = str(source_item.get("profile") or "").strip()
+    source_doc_id = str(source_item.get("source_doc_id") or "").strip()
+    slot = str(summary.get("_metrics_slot") or "").strip()
+    if not source_doc_id and run_id and slot and profile:
+        source_doc_id = f"{run_id}-{slot}-{source_index:02d}-{profile}"
+    np_root = night_plan if isinstance(night_plan, dict) else {}
+    np_quality = np_root.get("plan_quality", {}) if isinstance(np_root.get("plan_quality", {}), dict) else {}
+    plan_should_apply = np_quality.get("should_apply")
+    return {
+        "settings_run_id": run_id,
+        "source_doc_id": source_doc_id,
+        "source_status": status,
+        "source_profile": profile,
+        "plan_quality_status": str(np_quality.get("status") or "").strip(),
+        "plan_should_apply": int(plan_should_apply) if isinstance(plan_should_apply, bool) else None,
     }
 
 
@@ -958,10 +1011,14 @@ def upsert_battery_daily_metrics(
     summary_path: Path,
     updated_at: str,
     night_plan_path: Path | None = None,
+    slot: str | None = None,
 ) -> None:
     if not summary_path.exists():
         return
     summary = _read_summary(summary_path)
+    summary.setdefault("run_id", summary_path.parent.name)
+    if slot:
+        summary["_metrics_slot"] = slot
     night_plan = _read_json_if_exists(night_plan_path)
     metrics = _extract_battery_daily_from_summary(summary=summary, night_plan=night_plan)
     if metrics is None:
@@ -972,21 +1029,49 @@ def upsert_battery_daily_metrics(
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
+    settings_run_id = metrics["settings_run_id"]
+    source_doc_id = metrics["source_doc_id"]
+    source_status = metrics["source_status"]
+    source_profile = metrics["source_profile"]
+    plan_quality_status = metrics["plan_quality_status"]
+    plan_should_apply = metrics["plan_should_apply"]
     conn.execute(
         """
         INSERT INTO battery_daily_metrics (
             date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
-            pv_charge_end_soc_percent, pv_charge_end_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            pv_charge_end_soc_percent, pv_charge_end_at,
+            settings_run_id, source_doc_id, source_status, source_profile,
+            plan_quality_status, plan_should_apply, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date) DO UPDATE SET
             setting_soc_target_percent=excluded.setting_soc_target_percent,
             night_charge_kwh=excluded.night_charge_kwh,
             pv_max_charge_kwh=excluded.pv_max_charge_kwh,
             pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
             pv_charge_end_at=excluded.pv_charge_end_at,
+            settings_run_id=excluded.settings_run_id,
+            source_doc_id=excluded.source_doc_id,
+            source_status=excluded.source_status,
+            source_profile=excluded.source_profile,
+            plan_quality_status=excluded.plan_quality_status,
+            plan_should_apply=excluded.plan_should_apply,
             updated_at=excluded.updated_at
         """,
-        (date, target_soc, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc, pv_charge_end_at, updated_at),
+        (
+            date,
+            target_soc,
+            night_charge_kwh,
+            pv_max_charge_kwh,
+            pv_charge_end_soc,
+            pv_charge_end_at,
+            settings_run_id,
+            source_doc_id,
+            source_status,
+            source_profile,
+            plan_quality_status,
+            plan_should_apply,
+            updated_at,
+        ),
     )
     conn.commit()
 

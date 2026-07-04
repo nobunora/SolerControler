@@ -237,6 +237,7 @@ def ingest_settings_summary(
                 "status": status,
                 "changed_fields_json": changed_fields,
                 "detail_json": item,
+                "source_doc_id": event_id,
                 "recorded_at": ingested_at,
             },
             merge=True,
@@ -460,10 +461,14 @@ def upsert_battery_daily_metrics(
     summary_path: Path,
     updated_at: str,
     night_plan_path: Path | None = None,
+    slot: str | None = None,
 ) -> None:
     if not summary_path.exists():
         return
     summary = _read_summary(summary_path)
+    summary.setdefault("run_id", summary_path.parent.name)
+    if slot:
+        summary["_metrics_slot"] = slot
     night_plan = _read_json_if_exists(night_plan_path)
     metrics = _extract_battery_daily_from_summary(summary=summary, night_plan=night_plan)
     if metrics is None:
@@ -474,6 +479,7 @@ def upsert_battery_daily_metrics(
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
+    plan_should_apply = metrics["plan_should_apply"]
     client.collection("battery_daily_metrics").document(date).set(
         {
             "date": date,
@@ -482,6 +488,12 @@ def upsert_battery_daily_metrics(
             "pv_max_charge_kwh": pv_max_charge_kwh,
             "pv_charge_end_soc_percent": pv_charge_end_soc,
             "pv_charge_end_at": pv_charge_end_at,
+            "settings_run_id": metrics["settings_run_id"],
+            "source_doc_id": metrics["source_doc_id"],
+            "source_status": metrics["source_status"],
+            "source_profile": metrics["source_profile"],
+            "plan_quality_status": metrics["plan_quality_status"],
+            "plan_should_apply": bool(plan_should_apply) if plan_should_apply is not None else None,
             "updated_at": updated_at,
         },
         merge=True,

@@ -13,6 +13,8 @@ from cloud_job_runner import (
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _persist_03_monitor_schedule_to_firestore,
+    _read_plan_meta,
+    _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
     _run_adjust_03,
     _run_night_23,
@@ -110,6 +112,50 @@ def test_stage_partial_forced_includes_100_percent(monkeypatch) -> None:
     assert staged is True
     assert required_pct == 70.0
     assert target_soc == 100.0
+
+
+def test_read_plan_meta_rejects_missing_target(tmp_path: Path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        """
+        {
+          "forecast": {"date": "2026-05-27"},
+          "result": {"required_night_charge_kwh": 0.0}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        _read_plan_meta(plan_path)
+    except RuntimeError as exc:
+        assert "target_soc_7_percent" in str(exc)
+    else:
+        raise AssertionError("missing target_soc_7_percent must be rejected")
+
+
+def test_read_plan_meta_rejects_plan_quality_should_apply_false(tmp_path: Path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        """
+        {
+          "forecast": {"date": "2026-05-27"},
+          "plan_quality": {"should_apply": false},
+          "result": {
+            "target_soc_7_percent": 40.0,
+            "required_night_charge_kwh": 0.0
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        _read_plan_meta(plan_path)
+    except RuntimeError as exc:
+        assert "not safe to apply" in str(exc)
+    else:
+        raise AssertionError("plan_quality.should_apply=false must be rejected")
 
 
 def test_estimate_required_charge_kwh_uses_latest_soc(monkeypatch) -> None:
@@ -340,6 +386,54 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
     assert ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}) in calls
     assert persisted == ["adjust03-regenerated"]
     assert monitored == [plan_path]
+
+
+def test_refresh_plan_changed_disables_settings_ingestion(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        """
+        {
+          "forecast": {"date": "2026-05-27", "sun_hours": 5.0, "temp_c": 20.0},
+          "result": {
+            "target_soc_7_percent": 40.0,
+            "required_night_charge_kwh": 0.0,
+            "predicted_midday_surplus_kwh": 1.0
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    db_calls: list[dict[str, str]] = []
+
+    def fake_run_with_retry(*args, **kwargs) -> None:
+        plan_path.write_text(
+            """
+            {
+              "forecast": {"date": "2026-05-27", "sun_hours": 6.0, "temp_c": 20.0},
+              "result": {
+                "target_soc_7_percent": 40.0,
+                "required_night_charge_kwh": 0.0,
+                "predicted_midday_surplus_kwh": 1.0
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("cloud_job_runner._run_with_retry", fake_run_with_retry)
+    monkeypatch.setattr("cloud_job_runner._persist_night_plan_to_firestore", lambda _path, *, source: True)
+    monkeypatch.setattr("cloud_job_runner._run", lambda _command, env_updates=None: db_calls.append(dict(env_updates or {})))
+
+    assert _refresh_plan_for_same_date_if_changed(plan_path) is True
+
+    assert db_calls == [
+        {
+            "CLOUD_JOB_SLOT": "03",
+            "DATA_DB_WRITE_ONLY_23": "false",
+            "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
+            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+        }
+    ]
 
 
 def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> None:

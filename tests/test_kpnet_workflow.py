@@ -9,12 +9,16 @@ import pytest
 from app.kpnet_workflow import (
     KpNetConfig,
     NightChargePlan,
+    ProfileOverrides,
+    _build_payload,
     _build_dynamic_forced_profile,
     _default_csv_target_months,
     _in_time_window,
+    _load_night_charge_plan,
     _parse_hhmm,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
+    _run_settings_phase,
     _validate_base_url,
 )
 
@@ -93,6 +97,18 @@ def _build_cfg(*, plan_path: Path) -> KpNetConfig:
     )
 
 
+def _value_maps() -> dict[str, dict[str, str]]:
+    return {
+        "BatteryOperatingMode": {"0": "待機モード", "1": "グリーンモード", "2": "経済モード", "3": "強制充電モード"},
+        "SocSafetyMode": {"0": "0%", "50": "50%", "100": "100%"},
+        "SocEconomyMode": {"0": "0%", "20": "20%"},
+        "SocContactInput": {"0": "0%", "100": "100%"},
+        "SocChargeMode": {"0": "0%", "10": "10%", "30": "30%", "50": "50%"},
+        "OnPowerOutageChargePowerW": {"0": "0W", "65535": "最大"},
+        "AgreementAmpere": {"50": "50A"},
+    }
+
+
 def test_parse_hhmm_valid_and_invalid() -> None:
     assert _parse_hhmm("07:30", name="X") == (7, 30)
     assert _parse_hhmm(" 23:00 ", name="X") == (23, 0)
@@ -143,6 +159,115 @@ def test_validate_base_url_enforces_https_and_host() -> None:
             enforce_https=True,
             allowed_hosts=["ctrl.kp-net.com"],
         )
+
+
+def test_build_payload_detects_outage_only_drift() -> None:
+    current = {
+        "batteryOperatingMode": "1",
+        "socSafetyMode": "0",
+        "socEconomyMode": "0",
+        "socContactInput": "0",
+        "socChargeMode": "0",
+        "onPowerOutageMode": "0",
+        "onPowerOutageChargePowerW": "0",
+        "chargeStartTimeH": "23",
+        "chargeStartTimeM": "0",
+        "chargeEndTimeH": "7",
+        "chargeEndTimeM": "0",
+        "dischargeStartTimeH": "7",
+        "dischargeStartTimeM": "0",
+        "dischargeEndTimeH": "23",
+        "dischargeEndTimeM": "0",
+        "agreementAmpere": "50",
+    }
+    overrides = ProfileOverrides(
+        name="outage-check",
+        battery_operating_mode="1",
+        soc_safety_mode="0",
+        soc_economy_mode="0",
+        soc_contact_input="0",
+        soc_charge_mode="0",
+        charge_start_h="23",
+        charge_start_m="0",
+        charge_end_h="7",
+        charge_end_m="0",
+        discharge_start_h="7",
+        discharge_start_m="0",
+        discharge_end_h="23",
+        discharge_end_m="0",
+        agreement_ampere="50",
+        on_power_outage_mode="1",
+        on_power_outage_charge_power_w="65535",
+    )
+
+    _payload, changed_fields = _build_payload(
+        csrf_setting="csrf",
+        pcsid="pcsid",
+        current=current,
+        overrides=overrides,
+        value_maps=_value_maps(),
+    )
+
+    assert changed_fields == ["onPowerOutageMode", "onPowerOutageChargePowerW"]
+
+
+def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def open_settings_page(self) -> None:
+            return None
+
+        def read_current_settings(self) -> dict[str, str]:
+            return {}
+
+        def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+            return _value_maps()
+
+        def confirm_setting(self, payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            return False, "confirm title", "confirm error", "<html>failed</html>"
+
+    base_cfg = _build_cfg(plan_path=tmp_path / "missing_night_charge_plan.json")
+    cfg = KpNetConfig(
+        **{
+            **base_cfg.__dict__,
+            "dynamic_forced_profile": False,
+            "force_settings_profile": "forced",
+        }
+    )
+    summary: dict[str, object] = {"setting_results": []}
+
+    with pytest.raises(RuntimeError, match="confirmation failed"):
+        _run_settings_phase(client=FakeClient(), cfg=cfg, run_dir=tmp_path, summary=summary)
+
+    assert summary["setting_results"] == [
+        {
+            "profile": "night-green",
+            "changed_fields": [
+                "batteryOperatingMode",
+                "socSafetyMode",
+                "socEconomyMode",
+                "socContactInput",
+                "socChargeMode",
+                "onPowerOutageMode",
+                "onPowerOutageChargePowerW",
+                "chargeStartTimeH",
+                "chargeStartTimeM",
+                "chargeEndTimeH",
+                "chargeEndTimeM",
+                "dischargeStartTimeH",
+                "dischargeStartTimeM",
+                "dischargeEndTimeH",
+                "dischargeEndTimeM",
+                "agreementAmpere",
+            ],
+            "status": "confirm-failed",
+            "title": "confirm title",
+            "error": "confirm error",
+            "confirm_path": str(tmp_path / "confirm_night-green.html"),
+        }
+    ]
 
 
 def test_night_mode_preference_uses_target_soc_above_green_ceiling(tmp_path: Path) -> None:
@@ -431,7 +556,40 @@ def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
 
     assert profile.discharge_start_h == expected_discharge_start_h
     assert profile.discharge_start_m == "0"
+    assert profile.charge_start_h == expected_charge_end_h
+    assert profile.charge_start_m == "0"
     assert profile.charge_end_h == expected_charge_end_h
+
+
+@pytest.mark.parametrize(
+    "plan_payload",
+    [
+        {"forecast": {"date": "2026-05-03"}, "result": {"target_soc_7_percent": 10.0}, "csv_paths": ["x.csv"]},
+        {"forecast": {"date": "2026-05-03"}, "result": {"required_night_charge_kwh": 0.0}, "csv_paths": ["x.csv"]},
+        {
+            "forecast": {"date": ""},
+            "result": {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 10.0},
+            "csv_paths": ["x.csv"],
+        },
+        {
+            "forecast": {"date": "2026-05-03"},
+            "plan_quality": {"should_apply": False},
+            "result": {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 10.0},
+            "csv_paths": ["x.csv"],
+        },
+        {
+            "forecast": {"date": "2026-05-03"},
+            "result": {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 101.0},
+            "csv_paths": ["x.csv"],
+        },
+    ],
+)
+def test_load_night_charge_plan_rejects_unsafe_plan(tmp_path: Path, plan_payload: dict[str, object]) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        _load_night_charge_plan(plan_path)
 
 
 def test_build_dynamic_forced_profile_switches_to_forced_mode_when_charge_need_is_high(

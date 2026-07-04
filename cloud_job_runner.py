@@ -53,25 +53,77 @@ def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = N
 
 def _to_float_or_none(value: object) -> float | None:
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(result):
+        return None
+    return result
 
 
 def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
     obj = json.loads(plan_path.read_text(encoding="utf-8"))
+    if not isinstance(obj, dict):
+        raise RuntimeError(f"night plan root must be an object: {plan_path}")
     forecast = obj.get("forecast", {})
     result = obj.get("result", {})
     inputs = obj.get("inputs", {})
+    plan_quality = obj.get("plan_quality", {})
+    if not isinstance(forecast, dict):
+        raise RuntimeError(f"night plan forecast must be an object: {plan_path}")
+    if not isinstance(result, dict):
+        raise RuntimeError(f"night plan result must be an object: {plan_path}")
+    if inputs is None:
+        inputs = {}
+    if not isinstance(inputs, dict):
+        raise RuntimeError(f"night plan inputs must be an object: {plan_path}")
+    if isinstance(plan_quality, dict) and plan_quality.get("should_apply") is False:
+        raise RuntimeError(f"night plan is not safe to apply: plan_quality={plan_quality}")
+    forecast_date = str(forecast.get("date", "")).strip()
+    if not forecast_date:
+        raise RuntimeError(f"night plan forecast.date is missing: {plan_path}")
+    target_soc = _required_plan_float(
+        result,
+        key="target_soc_7_percent",
+        min_value=0.0,
+        max_value=100.0,
+        plan_path=plan_path,
+    )
+    required_kwh = _required_plan_float(
+        result,
+        key="required_night_charge_kwh",
+        min_value=0.0,
+        plan_path=plan_path,
+    )
     return {
-        "date": str(forecast.get("date", "")).strip(),
+        "date": forecast_date,
         "sun_hours": _to_float_or_none(forecast.get("sun_hours", 0.0)) or 0.0,
         "temp_c": _to_float_or_none(forecast.get("temp_c", 0.0)) or 0.0,
-        "target_soc_7_percent": _to_float_or_none(result.get("target_soc_7_percent", 0.0)) or 0.0,
-        "required_night_charge_kwh": _to_float_or_none(result.get("required_night_charge_kwh", 0.0)) or 0.0,
-        "soc_now_percent": _to_float_or_none(inputs.get("soc_now_percent")) if isinstance(inputs, dict) else None,
-        "effective_capacity_kwh": _to_float_or_none(result.get("effective_capacity_kwh")) if isinstance(result, dict) else None,
+        "target_soc_7_percent": target_soc,
+        "required_night_charge_kwh": required_kwh,
+        "soc_now_percent": _to_float_or_none(inputs.get("soc_now_percent")),
+        "effective_capacity_kwh": _to_float_or_none(result.get("effective_capacity_kwh")),
     }
+
+
+def _required_plan_float(
+    source: dict,
+    *,
+    key: str,
+    plan_path: Path,
+    min_value: float | None = None,
+    max_value: float | None = None,
+) -> float:
+    if key not in source:
+        raise RuntimeError(f"night plan result.{key} is missing: {plan_path}")
+    value = _to_float_or_none(source.get(key))
+    if value is None:
+        raise RuntimeError(f"night plan result.{key} is not a finite number: {plan_path}")
+    if min_value is not None and value < min_value:
+        raise RuntimeError(f"night plan result.{key} is below {min_value}: {value}")
+    if max_value is not None and value > max_value:
+        raise RuntimeError(f"night plan result.{key} is above {max_value}: {value}")
+    return value
 
 
 def _read_plan_json(plan_path: Path) -> dict:
@@ -689,7 +741,7 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
         default_delay_seconds=30.0,
     )
     _persist_night_plan_to_firestore(plan_path, source="adjust03-regenerated")
-    return plan_path.exists()
+    return plan_path.exists() and _night_plan_file_date(plan_path) == target_date
 
 
 def _night_plan_file_date(plan_path: Path) -> str:
@@ -758,7 +810,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     if not stage_partial:
         print(
-            "[cloud_job_runner] 03-monitor skip "
+            "[cloud_job_runner] 03-monitor partial-monitor not needed; "
             f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%; apply dynamic night profile.",
             flush=True,
         )
@@ -1049,6 +1101,7 @@ def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
             {
                 "CLOUD_JOB_SLOT": "03",
                 "DATA_DB_WRITE_ONLY_23": "false",
+                "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
                 "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
             },
         )

@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from app.dashboard_data import load_dashboard_slice
+from app.dashboard_data import _build_latest_schedule_from_events, load_dashboard_slice
 from app.operations_db import ensure_schema, open_db
 
 
@@ -232,6 +232,93 @@ def test_dashboard_prefers_03_monitor_schedule_over_estimated_start(tmp_path: Pa
     assert schedule["charge_end_time"] == "07:00"
     assert schedule["status"] == "forced-started"
     assert schedule["schedule_source"] == "03-monitor"
+
+
+def test_latest_schedule_does_not_complete_from_different_plan_date() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {
+                "run_id": "old-run",
+                "slot": "03",
+                "profile": "night-green",
+                "status": "applied",
+                "detail_json": json.dumps({"plan_date": "2026-06-02", "charge_end_time": "06:00"}),
+                "source_doc_id": "old-doc",
+                "recorded_at": "2026-06-02T03:00:00Z",
+            },
+            {
+                "run_id": "failed-current",
+                "slot": "03",
+                "profile": "night-green",
+                "status": "confirm-failed",
+                "detail_json": json.dumps({"plan_date": "2026-06-03", "charge_end_time": "07:00"}),
+                "source_doc_id": "failed-doc",
+                "recorded_at": "2026-06-03T03:00:00Z",
+            },
+        ],
+        battery_row=None,
+        plan_date="2026-06-03",
+    )
+
+    assert schedule["charge_end_time"] == "07:00"
+    assert schedule["status"] == "confirm-failed"
+    assert schedule["settings_completed"] is False
+    assert schedule["settings_completed_status"] is None
+
+
+def test_latest_schedule_uses_battery_metric_provenance_for_completion() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[],
+        battery_row={
+            "date": "2026-06-03",
+            "setting_soc_target_percent": 80,
+            "night_charge_kwh": 0,
+            "source_status": "applied",
+            "source_profile": "night-green",
+            "settings_run_id": "settings-run",
+            "source_doc_id": "settings-run-03-00-night-green",
+            "updated_at": "2026-06-03T03:10:00Z",
+        },
+        plan_date="2026-06-03",
+    )
+
+    assert schedule["settings_completed"] is True
+    assert schedule["settings_completed_status"] == "applied"
+    assert schedule["settings_completed_profile"] == "night-green"
+    assert schedule["settings_completed_run_id"] == "settings-run"
+    assert schedule["settings_completed_source_doc_id"] == "settings-run-03-00-night-green"
+
+
+def test_latest_schedule_ignores_battery_metric_from_different_plan_date() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {
+                "run_id": "legacy-run",
+                "slot": "03",
+                "profile": "night-green",
+                "status": "applied",
+                "detail_json": json.dumps({"charge_end_time": "06:00"}),
+                "source_doc_id": "legacy-doc",
+                "recorded_at": "2026-05-03T03:00:00Z",
+            },
+        ],
+        battery_row={
+            "date": "2026-05-03",
+            "setting_soc_target_percent": 80,
+            "night_charge_kwh": 4.2,
+            "source_status": "applied",
+            "source_profile": "night-green",
+            "settings_run_id": "legacy-run",
+            "source_doc_id": "legacy-doc",
+            "updated_at": "2026-05-03T03:10:00Z",
+        },
+        plan_date="2026-06-30",
+    )
+
+    assert schedule["settings_completed"] is False
+    assert schedule["settings_completed_status"] is None
+    assert schedule["charge_start_time"] is None
+    assert schedule["status"] == "fallback-default"
 
 
 def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_warning(tmp_path: Path) -> None:

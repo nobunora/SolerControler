@@ -161,6 +161,126 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         conn.close()
 
 
+def test_upsert_battery_daily_metrics_records_source_provenance(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        summary_path = tmp_path / "20260705-010203" / "kpnet_summary.json"
+        summary_path.parent.mkdir()
+        summary_path.write_text(
+            """
+            {
+              "run_id": "20260705-010203",
+              "setting_results": [
+                {"profile": "night-green", "status": "applied", "changed_fields": ["socChargeMode"]}
+              ],
+              "night_charge_plan": {
+                "forecast_date": "2026-07-05",
+                "target_soc_7_percent_raw": 44.0,
+                "required_night_charge_kwh": 1.2
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+        night_plan_path = tmp_path / "night_charge_plan.json"
+        night_plan_path.write_text(
+            """
+            {
+              "forecast": {"date": "2026-07-05"},
+              "plan_quality": {"status": "normal", "should_apply": true},
+              "result": {
+                "required_night_charge_kwh": 1.2,
+                "predicted_midday_surplus_kwh": 2.3,
+                "target_soc_7_percent": 44.0
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+
+        upsert_battery_daily_metrics(
+            conn,
+            summary_path=summary_path,
+            updated_at="2026-07-05T01:10:00Z",
+            night_plan_path=night_plan_path,
+            slot="03",
+        )
+        row = conn.execute(
+            """
+            SELECT settings_run_id, source_doc_id, source_status, source_profile,
+                   plan_quality_status, plan_should_apply
+            FROM battery_daily_metrics
+            WHERE date='2026-07-05'
+            """
+        ).fetchone()
+        assert row is not None
+        assert tuple(row) == (
+            "20260705-010203",
+            "20260705-010203-03-00-night-green",
+            "applied",
+            "night-green",
+            "normal",
+            1,
+        )
+    finally:
+        conn.close()
+
+
+def test_upsert_battery_daily_metrics_ignores_unsafe_night_plan_result(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        summary_path = tmp_path / "kpnet_summary.json"
+        summary_path.write_text(
+            """
+            {
+              "night_charge_plan": {
+                "forecast_date": "2026-05-03"
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+        night_plan_path = tmp_path / "night_charge_plan.json"
+        night_plan_path.write_text(
+            """
+            {
+              "forecast": {"date": "2026-05-03"},
+              "plan_quality": {"should_apply": false},
+              "result": {
+                "required_night_charge_kwh": 9.9,
+                "predicted_midday_surplus_kwh": 8.8,
+                "target_soc_7_percent": 77.0
+              }
+            }
+            """.strip(),
+            encoding="utf-8",
+        )
+
+        upsert_battery_daily_metrics(
+            conn,
+            summary_path=summary_path,
+            updated_at="2026-05-03T00:00:00Z",
+            night_plan_path=night_plan_path,
+        )
+        row = conn.execute(
+            """
+            SELECT setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh
+            FROM battery_daily_metrics
+            WHERE date='2026-05-03'
+            """
+        ).fetchone()
+        assert row is not None
+        assert row[0] is None
+        assert row[1] is None
+        assert row[2] is None
+    finally:
+        conn.close()
+
+
 def test_recalc_battery_pv_charge_end_soc_uses_latest_solar_charge_sample_per_day(tmp_path: Path) -> None:
     db_path = tmp_path / "solar.db"
     conn = open_db(db_path)

@@ -119,6 +119,12 @@ def ensure_schema(conn) -> None:
             pv_charge_end_soc_percent DOUBLE PRECISION,
             pv_charge_end_at TEXT,
             end_of_day_soc_percent DOUBLE PRECISION,
+            settings_run_id TEXT,
+            source_doc_id TEXT,
+            source_status TEXT,
+            source_profile TEXT,
+            plan_quality_status TEXT,
+            plan_should_apply BOOLEAN,
             updated_at TEXT NOT NULL
         )
         """,
@@ -176,6 +182,12 @@ def ensure_schema(conn) -> None:
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_shortwave_radiation_w_m2 DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_soc_percent DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_at TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS settings_run_id TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS source_doc_id TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS source_status TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS source_profile TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS plan_quality_status TEXT",
+            "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS plan_should_apply BOOLEAN",
             "ALTER TABLE settings_events ADD COLUMN IF NOT EXISTS source_doc_id TEXT",
         ]:
             cur.execute(column_sql)
@@ -611,10 +623,14 @@ def upsert_battery_daily_metrics(
     summary_path: Path,
     updated_at: str,
     night_plan_path: Path | None = None,
+    slot: str | None = None,
 ) -> None:
     if not summary_path.exists():
         return
     summary = _read_summary(summary_path)
+    summary.setdefault("run_id", summary_path.parent.name)
+    if slot:
+        summary["_metrics_slot"] = slot
     night_plan = _read_json_if_exists(night_plan_path)
     metrics = _extract_battery_daily_from_summary(summary=summary, night_plan=night_plan)
     if metrics is None:
@@ -625,22 +641,50 @@ def upsert_battery_daily_metrics(
     pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
+    settings_run_id = metrics["settings_run_id"]
+    source_doc_id = metrics["source_doc_id"]
+    source_status = metrics["source_status"]
+    source_profile = metrics["source_profile"]
+    plan_quality_status = metrics["plan_quality_status"]
+    plan_should_apply = metrics["plan_should_apply"]
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO battery_daily_metrics (
                 date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
-                pv_charge_end_soc_percent, pv_charge_end_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                pv_charge_end_soc_percent, pv_charge_end_at,
+                settings_run_id, source_doc_id, source_status, source_profile,
+                plan_quality_status, plan_should_apply, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(date) DO UPDATE SET
                 setting_soc_target_percent=excluded.setting_soc_target_percent,
                 night_charge_kwh=excluded.night_charge_kwh,
                 pv_max_charge_kwh=excluded.pv_max_charge_kwh,
                 pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
                 pv_charge_end_at=excluded.pv_charge_end_at,
+                settings_run_id=excluded.settings_run_id,
+                source_doc_id=excluded.source_doc_id,
+                source_status=excluded.source_status,
+                source_profile=excluded.source_profile,
+                plan_quality_status=excluded.plan_quality_status,
+                plan_should_apply=excluded.plan_should_apply,
                 updated_at=excluded.updated_at
             """,
-            (date, target_soc, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc, pv_charge_end_at, updated_at),
+            (
+                date,
+                target_soc,
+                night_charge_kwh,
+                pv_max_charge_kwh,
+                pv_charge_end_soc,
+                pv_charge_end_at,
+                settings_run_id,
+                source_doc_id,
+                source_status,
+                source_profile,
+                plan_quality_status,
+                bool(plan_should_apply) if plan_should_apply is not None else None,
+                updated_at,
+            ),
         )
     conn.commit()
 
