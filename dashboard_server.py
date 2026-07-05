@@ -390,19 +390,13 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>1.1 日照時間（予測と実績）</h2>
-        <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
-        <div class="chart-box"><canvas id="sunChart"></canvas></div>
-      </article>
-
-      <article class="card">
-        <h2>1.2 発電量（予測と実績）</h2>
+        <h2>1.1 発電量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="pvChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>1.3 消費量（予測と実績）</h2>
+        <h2>1.2 消費量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="loadChart"></canvas></div>
       </article>
@@ -711,8 +705,6 @@ def _html(payload: dict, script_nonce: str) -> str:
       soc_drift_per_slot: { code: "Sd", label: "30分ごとのSOC自然変動" },
       battery_round_trip_efficiency: { code: "Ef", label: "蓄電池の往復効率" },
       battery_usable_capacity_kwh: { code: "Cp", label: "実効蓄電容量[kWh]" },
-      pv_kwh_per_sunhour: { code: "Kp", label: "日照1時間あたりPV発電量[kWh]" },
-      pv_temp_coeff_per_deg: { code: "Kt", label: "気温1℃あたりPV補正係数" },
       pv_direct_use_ratio: { code: "Kr", label: "朝のPV直接利用率" },
       pv_to_battery_ratio: { code: "Ks", label: "余剰PVの蓄電寄与率" },
       pv_self_consumption_ratio: { code: "Sc", label: "PV自家消費率" },
@@ -1280,21 +1272,6 @@ def _html(payload: dict, script_nonce: str) -> str:
         },
       });
 
-      charts.sun = new Chart(document.getElementById("sunChart"), {
-        data: {
-          labels: [],
-          datasets: [
-            { type: "line", label: "予測(時間)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25 },
-            { type: "line", label: "実績(時間)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
-            { type: "bar", label: "差分(時間)", data: [], backgroundColor: "#ef8e1d66", borderColor: "#ef8e1d" },
-          ],
-        },
-        options: {
-          ...commonOptions(),
-          scales: { y: { min: -1, max: 1, title: { display: true, text: "h" }, grid: { color: "#d8e6f2" } } },
-        },
-      });
-
       charts.pv = new Chart(document.getElementById("pvChart"), {
         data: {
           labels: [],
@@ -1651,12 +1628,6 @@ def _html(payload: dict, script_nonce: str) -> str:
       const isWeekly = periodState.mode === "year";
       const bucketLabel = isWeekly ? "週次" : "日次";
       const perUnit = isWeekly ? "週" : "日";
-      const sunForecast = buckets.map((bucket) => sumBucket(bucket, store.sunshine, "forecast_hours"));
-      const sunActual = buckets.map((bucket) => sumBucket(bucket, store.sunshine, "actual_hours"));
-      const sunDiff = buckets.map((_bucket, i) => diffOrNull(sunActual[i], sunForecast[i]));
-
-      updateForecastActualChart(charts.sun, labels, sunForecast, sunActual, sunDiff, "h");
-
       const pvForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_pv_kwh"));
       const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
@@ -1955,7 +1926,7 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _build_session_cookie(self) -> str:
-        ttl = int(_env("DASHBOARD_SESSION_TTL_SECONDS", "604800"))
+        ttl = int(_env("DASHBOARD_SESSION_TTL_SECONDS", "31536000"))
         exp = int(time.time()) + max(60, ttl)
         token = f"{exp}.{_sign_session(exp)}"
         bits = [

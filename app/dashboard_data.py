@@ -231,35 +231,15 @@ def _build_cost_monthly(cost_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     return out
 
 
-def _model_param_value(params: list[dict[str, Any]], name: str, default: float) -> float:
-    for row in params:
-        if str(row.get("name", "")).strip() != name:
-            continue
-        value = to_float(row.get("mean_value"))
-        if value is not None:
-            return value
-    return default
-
-
 def _forecast_pv_kwh(
     sunshine_row: dict[str, Any] | None,
-    *,
-    pv_kwh_per_sunhour: float,
-    pv_temp_coeff_per_deg: float,
 ) -> float | None:
     if not sunshine_row:
         return None
     array_forecast = to_float(sunshine_row.get("forecast_pv_total_kwh"))
     if array_forecast is not None:
         return max(0.0, array_forecast)
-    sun_hours = to_float(sunshine_row.get("forecast_hours"))
-    if sun_hours is None:
-        return None
-    temp_c = to_float(sunshine_row.get("forecast_temp_c"))
-    if temp_c is None:
-        temp_c = 25.0
-    factor = max(0.0, 1.0 + pv_temp_coeff_per_deg * (temp_c - 25.0))
-    return max(0.0, pv_kwh_per_sunhour * sun_hours * factor)
+    return None
 
 
 def _rolling_load_forecast(
@@ -292,10 +272,7 @@ def _build_energy_daily(
     end_date_iso: str,
     sunshine_daily: list[dict[str, Any]],
     monitoring_daily: list[dict[str, Any]],
-    model_parameters: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    pv_kwh_per_sunhour = _model_param_value(model_parameters, "pv_kwh_per_sunhour", 1.45)
-    pv_temp_coeff_per_deg = _model_param_value(model_parameters, "pv_temp_coeff_per_deg", -0.0035)
     sunshine_by_day = {str(row.get("date")): row for row in sunshine_daily if row.get("date")}
     actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
     dates = {
@@ -307,11 +284,7 @@ def _build_energy_daily(
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
         sunshine = sunshine_by_day.get(day)
-        forecast_pv = _forecast_pv_kwh(
-            sunshine,
-            pv_kwh_per_sunhour=pv_kwh_per_sunhour,
-            pv_temp_coeff_per_deg=pv_temp_coeff_per_deg,
-        )
+        forecast_pv = _forecast_pv_kwh(sunshine)
         out.append(
             {
                 "date": day,
@@ -834,23 +807,11 @@ def _load_sqlite_slice(
                     (start_date, end_date_iso),
                 ).fetchall()
             )
-        params_for_energy = []
-        if _sqlite_table_exists(conn, "model_parameters"):
-            params_for_energy = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT name, mean_value
-                    FROM model_parameters
-                    ORDER BY name
-                    """
-                ).fetchall()
-            )
         energy_daily = _build_energy_daily(
             start_date=start_date,
             end_date_iso=end_date_iso,
             sunshine_daily=sunshine,
             monitoring_daily=monitoring_daily,
-            model_parameters=params_for_energy,
         )
 
         cost_monthly: list[dict[str, Any]] = []
@@ -1101,20 +1062,11 @@ def _load_postgres_slice(
             )
             battery_flow_daily = _rows_to_dicts(cur.fetchall())
 
-            cur.execute(
-                """
-                SELECT name, mean_value
-                FROM model_parameters
-                ORDER BY name
-                """
-            )
-            params_for_energy = _rows_to_dicts(cur.fetchall())
             energy_daily = _build_energy_daily(
                 start_date=start_date,
                 end_date_iso=end_date_iso,
                 sunshine_daily=sunshine,
                 monitoring_daily=monitoring_daily,
-                model_parameters=params_for_energy,
             )
 
             cost_monthly: list[dict[str, Any]] = []
@@ -1324,8 +1276,6 @@ def _load_firestore_slice(
         start_date=start_date,
         end_date_iso=end_date_iso,
         fields=[
-            "forecast_hours",
-            "actual_hours",
             "forecast_temp_c",
             "actual_temp_c",
             "forecast_pv_total_kwh",
@@ -1372,21 +1322,11 @@ def _load_firestore_slice(
         for row in monitoring_daily
         if start_date <= str(row.get("date", "")) <= end_date_iso
     ]
-    params_for_energy: list[dict[str, Any]] = []
-    for doc in client.collection("model_parameters").order_by("name").stream():
-        row = doc.to_dict() or {}
-        params_for_energy.append(
-            {
-                "name": row.get("name", doc.id),
-                "mean_value": row.get("mean_value"),
-            }
-        )
     energy_daily = _build_energy_daily(
         start_date=start_date,
         end_date_iso=end_date_iso,
         sunshine_daily=sunshine,
         monitoring_daily=monitoring_daily,
-        model_parameters=params_for_energy,
     )
 
     cost_monthly: list[dict[str, Any]] = []

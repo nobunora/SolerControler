@@ -407,7 +407,7 @@ python dashboard_server.py
 - `DASHBOARD_BASIC_USER` / `DASHBOARD_BASIC_PASSWORD` 設定時は Basic認証が有効になります。
 - 次の形式で初回アクセスすると、認証情報をURLセーフBase64化した `auth` クエリからセッションCookieを発行し、`/` にリダイレクトします。
 - `http://127.0.0.1:8080/?auth=<urlsafe_base64("user:password")>`
-- Cookieは `HttpOnly` / `SameSite=Strict`（HTTPS時は `Secure`）です。
+- Cookieは `HttpOnly` / `SameSite=Strict`（HTTPS時は `Secure`）です。既定の有効期限は1年です。
 
 PNGモック生成:
 

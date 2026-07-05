@@ -14,16 +14,8 @@ def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:
         ensure_schema(conn)
         conn.execute(
             """
-            INSERT INTO model_parameters(name, mean_value, variance, sample_count, hit_rate, updated_at)
-            VALUES
-              ('pv_kwh_per_sunhour', 2.0, 0.0, 1, NULL, '2026-05-02T00:00:00'),
-              ('pv_temp_coeff_per_deg', -0.01, 0.0, 1, NULL, '2026-05-02T00:00:00')
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO sunshine_daily(date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c, source, updated_at)
-            VALUES ('2026-05-02', 3.0, 2.8, 30.0, 29.0, 'test', '2026-05-02T00:00:00')
+            INSERT INTO sunshine_daily(date, forecast_pv_total_kwh, source, updated_at)
+            VALUES ('2026-05-02', 5.7, 'test', '2026-05-02T00:00:00')
             """
         )
         conn.executemany(
@@ -59,10 +51,9 @@ def test_dashboard_uses_pv_array_forecast_when_present(tmp_path: Path) -> None:
         conn.execute(
             """
             INSERT INTO sunshine_daily(
-                date, forecast_hours, actual_hours, forecast_temp_c, actual_temp_c,
-                forecast_pv_total_kwh, source, updated_at
+                date, forecast_pv_total_kwh, source, updated_at
             )
-            VALUES ('2026-05-02', 3.0, 2.8, 30.0, 29.0, 8.4, 'test', '2026-05-02T00:00:00')
+            VALUES ('2026-05-02', 8.4, 'test', '2026-05-02T00:00:00')
             """
         )
         conn.execute(
@@ -359,8 +350,8 @@ def test_dashboard_does_not_warn_stale_csv_for_today_window(tmp_path: Path, monk
         ensure_schema(conn)
         conn.execute(
             """
-            INSERT INTO sunshine_daily(date, forecast_hours, source, updated_at)
-            VALUES ('2026-06-05', 3.0, 'test', '2026-06-04T23:00:00')
+            INSERT INTO sunshine_daily(date, source, updated_at)
+            VALUES ('2026-06-05', 'test', '2026-06-04T23:00:00')
             """
         )
         conn.execute(
