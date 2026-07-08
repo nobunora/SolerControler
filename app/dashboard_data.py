@@ -13,6 +13,9 @@ from typing import Any
 from app.utils import to_float
 
 
+_SETTINGS_COMPLETED_STATUSES = {"applied", "skipped-no-change", "skipped-no-charge"}
+
+
 @dataclass(frozen=True)
 class DashboardData:
     sunshine_daily: list[dict[str, Any]]
@@ -400,7 +403,7 @@ def _build_latest_schedule_from_events(
             continue
         if (
             completed_row is None
-            and status in {"applied", "skipped-no-change"}
+            and status in _SETTINGS_COMPLETED_STATUSES
             and (not plan_date or detail_plan_date == plan_date)
         ):
             completed_row = row
@@ -463,7 +466,7 @@ def _build_latest_schedule_from_events(
         source_status = str(battery_row.get("source_status") or "")
         if (
             not schedule.get("settings_completed")
-            and source_status in {"applied", "skipped-no-change"}
+            and source_status in _SETTINGS_COMPLETED_STATUSES
             and battery_matches_plan
         ):
             schedule["settings_completed"] = True
@@ -534,17 +537,23 @@ def _build_dashboard_warnings(
                 },
             )
 
-        night_charge = to_float(latest_battery.get("night_charge_kwh")) or 0.0
+        schedule_plan_date = str(latest_schedule.get("plan_date") or "")
+        schedule_battery = next(
+            (row for row in battery_daily if str(row.get("date") or "") == schedule_plan_date),
+            None,
+        )
+        night_charge = to_float(schedule_battery.get("night_charge_kwh")) if schedule_battery else 0.0
+        night_charge = night_charge or 0.0
         source = str(latest_schedule.get("schedule_source") or "")
         charge_start_time = str(latest_schedule.get("charge_start_time") or "").strip()
-        if night_charge > 0.1 and source != "03-monitor" and not charge_start_time:
+        if night_charge > 0.1 and source not in {"03-monitor", "03-dynamic"} and not charge_start_time:
             add(
                 "monitor_schedule_missing",
                 "warning",
                 "03実行計画が未記録",
                 "夜間充電が必要な日に、03ジョブが決めた実開始時刻を確認できません。",
                 {
-                    "date": latest_battery.get("date"),
+                    "date": schedule_plan_date,
                     "night_charge_kwh": night_charge,
                     "schedule_source": source or None,
                 },
@@ -571,7 +580,7 @@ def _build_dashboard_warnings(
 
     completed = bool(latest_schedule.get("settings_completed"))
     status = str(latest_schedule.get("settings_completed_status") or latest_schedule.get("status") or "")
-    if not completed and status not in {"applied", "skipped-no-change"}:
+    if not completed and status not in _SETTINGS_COMPLETED_STATUSES:
         add(
             "settings_completion_unconfirmed",
             "warning",

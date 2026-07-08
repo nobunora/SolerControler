@@ -13,6 +13,7 @@ from cloud_job_runner import (
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _persist_03_monitor_schedule_to_firestore,
+    _persist_03_no_charge_decision_to_firestore,
     _read_plan_meta,
     _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
@@ -298,6 +299,11 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
     )
     monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
     monkeypatch.setattr("cloud_job_runner._latest_soc_percent", lambda _: 10.0)
+    persisted: list[dict] = []
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_no_charge_decision_to_firestore",
+        lambda **kwargs: persisted.append(kwargs) or True,
+    )
     monkeypatch.setattr(
         "cloud_job_runner._run_settings_profile",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no KP-NET setting change expected")),
@@ -308,6 +314,19 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
     )
 
     _monitor_partial_forced_and_stop(plan_path)
+
+    assert persisted == [
+        {
+            "plan_meta": {
+                "required_night_charge_kwh": 0.2,
+                "target_soc_7_percent": 2.0,
+                "effective_capacity_kwh": 10.0,
+            },
+            "target_soc": 2.0,
+            "latest_soc": 10.0,
+            "required_kwh": 0.0,
+        }
+    ]
 
 
 def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cutoff(
@@ -513,3 +532,41 @@ def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> Non
     assert event["detail_json"]["charge_start_time"] == "02:43"
     assert event["detail_json"]["charge_end_time"] == "07:00"
     assert writes[("night_charge_plans", "2026-06-03")]["monitor_schedule"]["schedule_source"] == "03-monitor"
+
+
+def test_persist_03_no_charge_decision_records_completed_event(monkeypatch) -> None:
+    writes: dict[tuple[str, str], dict] = {}
+
+    class FakeDocument:
+        def __init__(self, collection_name: str, document_id: str) -> None:
+            self.collection_name = collection_name
+            self.document_id = document_id
+
+        def set(self, payload: dict, merge: bool = False) -> None:
+            writes[(self.collection_name, self.document_id)] = payload
+
+    class FakeCollection:
+        def __init__(self, collection_name: str) -> None:
+            self.collection_name = collection_name
+
+        def document(self, document_id: str) -> FakeDocument:
+            return FakeDocument(self.collection_name, document_id)
+
+    class FakeClient:
+        def collection(self, collection_name: str) -> FakeCollection:
+            return FakeCollection(collection_name)
+
+    monkeypatch.setattr("cloud_job_runner._open_firestore_for_plan", lambda: FakeClient())
+
+    persisted = _persist_03_no_charge_decision_to_firestore(
+        plan_meta={"date": "2026-07-09"},
+        target_soc=0.0,
+        latest_soc=0.0,
+        required_kwh=0.0,
+    )
+
+    assert persisted is True
+    event = writes[("settings_events", "2026-07-09-03-no-charge")]
+    assert event["status"] == "skipped-no-charge"
+    assert event["detail_json"]["plan_date"] == "2026-07-09"
+    assert event["detail_json"]["schedule_source"] == "03-no-charge"

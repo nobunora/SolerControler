@@ -856,6 +856,21 @@ def ingest_settings_summary(
         profile = str(item.get("profile", "unknown"))
         status = str(item.get("status", "unknown"))
         changed_fields = item.get("changed_fields", [])
+        detail = dict(item)
+        night_plan = summary.get("night_charge_plan")
+        if slot in {"3", "03"} and isinstance(night_plan, dict):
+            detail.update(
+                {
+                    "plan_date": night_plan.get("forecast_date"),
+                    "charge_start_time": night_plan.get("charge_start_time"),
+                    "charge_end_time": night_plan.get("charge_end_time"),
+                    "soc_charge_mode": night_plan.get("soc_charge_mode"),
+                    "battery_operating_mode": night_plan.get("battery_operating_mode_preference"),
+                    "estimated_charge_power_kw": night_plan.get("estimated_charge_power_kw"),
+                    "estimated_charge_minutes": night_plan.get("duration_minutes"),
+                    "schedule_source": "03-dynamic",
+                }
+            )
         conn.execute(
             """
             INSERT INTO settings_events (
@@ -868,7 +883,7 @@ def ingest_settings_summary(
                 profile,
                 status,
                 _safe_json(changed_fields),
-                _safe_json(item),
+                _safe_json(detail),
                 f"{run_id}-{slot}-{idx:02d}-{profile}",
                 ingested_at,
             ),

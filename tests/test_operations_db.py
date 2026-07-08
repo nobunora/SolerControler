@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import pytest
 from app import operations_db as ops
 from app.operations_db import (
     ensure_schema,
+    ingest_settings_summary,
     ingest_monitoring_csvs,
     ingest_sunshine_from_night_plan,
     open_db,
@@ -17,6 +19,48 @@ from app.operations_db import (
     upsert_battery_daily_metrics,
     upsert_model_parameters_from_plan,
 )
+
+
+def test_ingest_settings_summary_adds_03_dynamic_schedule(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    summary_path = tmp_path / "kpnet_summary.json"
+    summary_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-03",
+                "setting_results": [
+                    {"profile": "night-green", "status": "applied", "changed_fields": ["chargeStartTimeH"]}
+                ],
+                "night_charge_plan": {
+                    "forecast_date": "2026-07-08",
+                    "charge_start_time": "06:56",
+                    "charge_end_time": "07:00",
+                    "soc_charge_mode": "10",
+                    "battery_operating_mode_preference": "forced",
+                    "estimated_charge_power_kw": 3.69,
+                    "duration_minutes": 4,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        ingest_settings_summary(
+            conn,
+            settings_summary_path=summary_path,
+            slot="03",
+            ingested_at="2026-07-07T19:04:39Z",
+        )
+        row = conn.execute("SELECT detail_json FROM settings_events").fetchone()
+    finally:
+        conn.close()
+
+    detail = json.loads(row["detail_json"])
+    assert detail["plan_date"] == "2026-07-08"
+    assert detail["charge_start_time"] == "06:56"
+    assert detail["schedule_source"] == "03-dynamic"
 
 
 def test_ingest_and_cost_daily(tmp_path: Path) -> None:

@@ -312,6 +312,61 @@ def _persist_03_monitor_schedule_to_firestore(
         return False
 
 
+def _persist_03_no_charge_decision_to_firestore(
+    *,
+    plan_meta: dict[str, float | str | None],
+    target_soc: float,
+    latest_soc: float | None,
+    required_kwh: float,
+) -> bool:
+    client = _open_firestore_for_plan()
+    if client is None:
+        return False
+    plan_date = str(plan_meta.get("date") or "").strip()
+    if not plan_date:
+        return False
+
+    now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
+    event_id = f"{plan_date}-03-no-charge"
+    detail = {
+        "plan_date": plan_date,
+        "charge_end_time": os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00",
+        "soc_charge_mode": str(int(round(target_soc))),
+        "mode": "standby",
+        "battery_operating_mode": "standby",
+        "latest_soc_percent_at_schedule": latest_soc,
+        "required_night_charge_kwh_at_schedule": required_kwh,
+        "schedule_source": "03-no-charge",
+    }
+    try:
+        client.collection("settings_events").document(event_id).set(
+            {
+                "event_id": event_id,
+                "run_id": event_id,
+                "slot": "03",
+                "profile": "standby",
+                "status": "skipped-no-charge",
+                "changed_fields_json": [],
+                "detail_json": detail,
+                "recorded_at": now_utc,
+            },
+            merge=True,
+        )
+        client.collection("night_charge_plans").document(plan_date).set(
+            {"monitor_decision": detail, "monitor_decision_updated_at": now_utc},
+            merge=True,
+        )
+        client.collection("night_charge_plans").document("latest").set(
+            {"monitor_decision": detail, "monitor_decision_updated_at": now_utc},
+            merge=True,
+        )
+        print(f"[cloud_job_runner] persisted 03 no-charge decision date={plan_date}", flush=True)
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] 03 no-charge decision persistence failed: {exc}", flush=True)
+        return False
+
+
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     soc_now_raw = plan_meta.get("soc_now_percent", None)
@@ -822,6 +877,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         required_charge_percent=required_charge_percent,
         required_charge_kwh=required_kwh,
     ):
+        _persist_03_no_charge_decision_to_firestore(
+            plan_meta=plan_meta,
+            target_soc=target_soc,
+            latest_soc=latest_soc,
+            required_kwh=required_kwh,
+        )
         print(
             "[cloud_job_runner] 03-monitor charge not needed; keep standby until 07:00 green transition. "
             f"required={required_charge_percent:.2f}% required_kwh={required_kwh:.3f} "

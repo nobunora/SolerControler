@@ -226,6 +226,21 @@ def ingest_settings_summary(
         profile = str(item.get("profile", "unknown"))
         status = str(item.get("status", "unknown"))
         changed_fields = item.get("changed_fields", [])
+        detail = dict(item)
+        night_plan = summary.get("night_charge_plan")
+        if slot in {"3", "03"} and isinstance(night_plan, dict):
+            detail.update(
+                {
+                    "plan_date": night_plan.get("forecast_date"),
+                    "charge_start_time": night_plan.get("charge_start_time"),
+                    "charge_end_time": night_plan.get("charge_end_time"),
+                    "soc_charge_mode": night_plan.get("soc_charge_mode"),
+                    "battery_operating_mode": night_plan.get("battery_operating_mode_preference"),
+                    "estimated_charge_power_kw": night_plan.get("estimated_charge_power_kw"),
+                    "estimated_charge_minutes": night_plan.get("duration_minutes"),
+                    "schedule_source": "03-dynamic",
+                }
+            )
         event_id = f"{run_id}-{slot}-{idx}-{profile}"
         doc_ref = client.collection("settings_events").document(event_id)
         batch.set(
@@ -237,7 +252,7 @@ def ingest_settings_summary(
                 "profile": profile,
                 "status": status,
                 "changed_fields_json": changed_fields,
-                "detail_json": item,
+                "detail_json": detail,
                 "source_doc_id": event_id,
                 "recorded_at": ingested_at,
             },

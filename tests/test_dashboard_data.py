@@ -3,7 +3,11 @@ import json
 
 import pytest
 
-from app.dashboard_data import _build_latest_schedule_from_events, load_dashboard_slice
+from app.dashboard_data import (
+    _build_dashboard_warnings,
+    _build_latest_schedule_from_events,
+    load_dashboard_slice,
+)
 from app.operations_db import ensure_schema, open_db
 
 
@@ -278,6 +282,59 @@ def test_latest_schedule_uses_battery_metric_provenance_for_completion() -> None
     assert schedule["settings_completed_profile"] == "night-green"
     assert schedule["settings_completed_run_id"] == "settings-run"
     assert schedule["settings_completed_source_doc_id"] == "settings-run-03-00-night-green"
+
+
+def test_latest_schedule_treats_no_charge_decision_as_completed() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {
+                "run_id": "2026-07-09-03-no-charge",
+                "slot": "03",
+                "profile": "standby",
+                "status": "skipped-no-charge",
+                "detail_json": json.dumps(
+                    {
+                        "plan_date": "2026-07-09",
+                        "charge_end_time": "07:00",
+                        "schedule_source": "03-no-charge",
+                    }
+                ),
+                "source_doc_id": "2026-07-09-03-no-charge",
+                "recorded_at": "2026-07-08T19:04:00Z",
+            }
+        ],
+        battery_row=None,
+        plan_date="2026-07-09",
+    )
+
+    assert schedule["settings_completed"] is True
+    assert schedule["settings_completed_status"] == "skipped-no-charge"
+    assert schedule["schedule_source"] == "03-no-charge"
+
+
+def test_dashboard_warnings_do_not_mix_previous_battery_day_with_latest_plan() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={
+            "plan_date": "2026-07-09",
+            "status": "skipped-no-charge",
+            "settings_completed": True,
+            "settings_completed_status": "skipped-no-charge",
+            "schedule_source": "03-no-charge",
+        },
+        battery_daily=[
+            {
+                "date": "2026-07-08",
+                "setting_soc_target_percent": 2.0,
+                "night_charge_kwh": 0.194,
+            }
+        ],
+        energy_daily=[],
+        end_date_iso="2026-07-09",
+    )
+
+    assert {row["code"] for row in warnings}.isdisjoint(
+        {"monitor_schedule_missing", "settings_completion_unconfirmed"}
+    )
 
 
 def test_latest_schedule_ignores_battery_metric_from_different_plan_date() -> None:
