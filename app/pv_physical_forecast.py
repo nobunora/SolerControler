@@ -248,6 +248,13 @@ def _ratio_stats(values: list[float]) -> dict[str, float]:
     return {"count": float(len(values)), "scale": sum(values) / len(values)}
 
 
+def _blend_scale_by_sample_count(*, base_scale: float, candidate_scale: float, count: float, full_weight_count: int) -> float:
+    if count <= 0 or full_weight_count <= 0:
+        return base_scale
+    weight = _clip(count / float(full_weight_count), 0.0, 1.0)
+    return base_scale * (1.0 - weight) + candidate_scale * weight
+
+
 def _historical_scales(
     *,
     rows: list[dict[str, object]],
@@ -449,6 +456,7 @@ def build_physical_pv_candidate(
     global_scale = float(scales["global"]["scale"])  # type: ignore[index]
     hourly: dict[int, float] = {}
     bin_used = 0
+    bin_blended = 0
     daypart_used = 0
     for hour in HOURS:
         scale = global_scale
@@ -461,9 +469,20 @@ def build_physical_pv_candidate(
         f = features[hour]
         key = f"alt:{_bin(f['altitude_deg'], ALTITUDE_BINS)}|sw:{_bin(f['shortwave_ratio'], SHORTWAVE_RATIO_BINS)}"
         bin_stats = scales["bins"].get(key, {}) if isinstance(scales.get("bins"), dict) else {}
-        if float(bin_stats.get("count", 0.0)) >= bin_min:
-            scale = float(bin_stats.get("scale", scale))
-            bin_used += 1
+        bin_count = float(bin_stats.get("count", 0.0))
+        if bin_count > 0.0:
+            bin_scale = float(bin_stats.get("scale", scale))
+            if bin_count >= bin_min:
+                scale = bin_scale
+                bin_used += 1
+            else:
+                scale = _blend_scale_by_sample_count(
+                    base_scale=scale,
+                    candidate_scale=bin_scale,
+                    count=bin_count,
+                    full_weight_count=bin_min,
+                )
+                bin_blended += 1
             selected_method = "physical_altitude_shortwave"
         hourly[hour] = max(0.0, shape[hour] * base_scale * scale)
 
@@ -497,6 +516,7 @@ def build_physical_pv_candidate(
             "daypart_min_samples": daypart_min,
             "bin_min_samples": bin_min,
             "bin_hours_used": bin_used,
+            "bin_hours_blended_below_min": bin_blended,
             "daypart_hours_used": daypart_used,
             "history_days": scales["history_days"],
         },

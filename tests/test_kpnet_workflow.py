@@ -292,6 +292,32 @@ def test_night_mode_preference_uses_target_soc_above_green_ceiling(tmp_path: Pat
     assert force_charge is True
 
 
+def test_night_mode_preference_uses_forced_for_adjust03_charge_need(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUD_JOB_SLOT", "03")
+    plan = NightChargePlan(
+        plan_path=tmp_path / "night_charge_plan.json",
+        forecast_date="2026-06-02",
+        forecast_sun_hours=4.0,
+        required_night_charge_kwh=0.2,
+        target_soc_7_percent=20.0,
+        soc_now_percent=18.0,
+        effective_capacity_kwh=9.0,
+        csv_paths=[],
+    )
+
+    preference, required_pct, force_charge = _pick_night_mode_preference(
+        plan=plan,
+        green_mode_max_charge_percent=50.0,
+    )
+
+    assert preference == "forced"
+    assert required_pct == 2.0
+    assert force_charge is True
+
+
 def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     csv_path = tmp_path / "sample.csv"
     csv_path.write_text(

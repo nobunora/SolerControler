@@ -37,7 +37,7 @@ def test_physical_pv_falls_back_without_shortwave(monkeypatch: pytest.MonkeyPatc
     assert candidate.diagnostics["fallback_reason"] == "shortwave_missing"
 
 
-def test_physical_pv_uses_global_scale_when_history_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_physical_pv_blends_bin_scale_when_history_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PHYSICAL_PV_FORECAST_ENABLED", "true")
     monkeypatch.setenv("PHYSICAL_PV_GLOBAL_MIN_DAYS", "2")
     monkeypatch.setenv("PHYSICAL_PV_DAYPART_MIN_SAMPLES", "999")
@@ -62,6 +62,7 @@ def test_physical_pv_uses_global_scale_when_history_is_ready(monkeypatch: pytest
     )
 
     assert candidate.diagnostics["enabled"] is True
-    assert candidate.diagnostics["selected_method"] == "physical_global"
-    assert "selected_physical_global" in candidate.diagnostics["decision_path"]
+    assert candidate.diagnostics["selected_method"] == "physical_altitude_shortwave"
+    assert "selected_physical_altitude_shortwave" in candidate.diagnostics["decision_path"]
+    assert candidate.diagnostics["data_quality"]["bin_hours_blended_below_min"] > 0
     assert sum(candidate.hourly_pv_kwh.values()) > 0

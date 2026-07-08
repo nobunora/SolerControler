@@ -247,6 +247,8 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
         "cloud_job_runner._read_plan_meta",
         lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 40.0},
     )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("cloud_job_runner._latest_soc_percent", lambda _: None)
     monkeypatch.setattr(
         "cloud_job_runner._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
@@ -275,7 +277,40 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
     ]
 
 
-def test_monitor_partial_forced_starts_immediately_then_switches_green_at_cutoff(
+def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "cloud_job_runner._should_stage_partial_forced",
+        lambda **kwargs: (False, 0.0, 2.0),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {
+            "required_night_charge_kwh": 0.2,
+            "target_soc_7_percent": 2.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("cloud_job_runner._latest_soc_percent", lambda _: 10.0)
+    monkeypatch.setattr(
+        "cloud_job_runner._run_settings_profile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no KP-NET setting change expected")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_db_pipeline_slot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no settings ingestion expected")),
+    )
+
+    _monitor_partial_forced_and_stop(plan_path)
+
+
+def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cutoff(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -326,7 +361,7 @@ def test_monitor_partial_forced_starts_immediately_then_switches_green_at_cutoff
     _monitor_partial_forced_and_stop(plan_path)
 
     assert sleeps == [180]
-    assert calls == [("forced", True), ("green", False)]
+    assert calls == [("forced", True), ("standby", False)]
 
 
 def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:

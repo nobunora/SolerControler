@@ -660,11 +660,17 @@ def _pick_night_mode_preference(
     green_mode_max_charge_percent: float,
 ) -> tuple[str, float, bool]:
     required_charge_percent = _required_charge_percent(plan)
+    slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
+    try:
+        no_charge_epsilon = max(0.0, float(env("ADJUST03_NO_CHARGE_PERCENT_EPSILON", default="0.5").strip() or "0.5"))
+    except ValueError:
+        no_charge_epsilon = 0.5
     # KP green mode has behaved as an absolute SOC ceiling, not just a
     # remaining-charge allowance. If the target SOC itself is above the green
     # ceiling, use forced mode and let the 03 job time/monitor the stop.
     force_charge = (
-        plan.target_soc_7_percent > green_mode_max_charge_percent
+        (slot in {"3", "03", "adjust", "adjust03"} and required_charge_percent > no_charge_epsilon)
+        or plan.target_soc_7_percent > green_mode_max_charge_percent
         or required_charge_percent >= green_mode_max_charge_percent
     )
     return ("forced" if force_charge else "green"), required_charge_percent, force_charge

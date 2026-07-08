@@ -351,6 +351,16 @@ def _should_stage_partial_forced(
     return stage_partial_forced, required_charge_percent, target_soc
 
 
+def _should_keep_standby_without_charge(
+    *,
+    required_charge_percent: float,
+    required_charge_kwh: float,
+) -> bool:
+    percent_epsilon = _env_float("ADJUST03_NO_CHARGE_PERCENT_EPSILON", 0.5, min_value=0.0)
+    kwh_epsilon = _env_float("ADJUST03_NO_CHARGE_KWH_EPSILON", 0.05, min_value=0.0)
+    return required_charge_percent <= percent_epsilon and required_charge_kwh <= kwh_epsilon
+
+
 def _estimate_required_charge_kwh(
     *,
     plan_meta: dict[str, float | str | None],
@@ -570,10 +580,6 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
             "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
         },
     )
-
-
-def _post_charge_hold_profile() -> str:
-    return os.getenv("ADJUST03_POST_CHARGE_HOLD_PROFILE", "standby").strip().lower() or "standby"
 
 
 def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
@@ -808,6 +814,21 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         plan_meta=plan_meta,
         green_mode_max_charge_percent=green_mode_max,
     )
+    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+    csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
+    latest_soc = _latest_soc_percent(csv_paths)
+    required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
+    if _should_keep_standby_without_charge(
+        required_charge_percent=required_charge_percent,
+        required_charge_kwh=required_kwh,
+    ):
+        print(
+            "[cloud_job_runner] 03-monitor charge not needed; keep standby until 07:00 green transition. "
+            f"required={required_charge_percent:.2f}% required_kwh={required_kwh:.3f} "
+            f"target_soc={target_soc:.2f}% latest_soc={latest_soc if latest_soc is not None else 'n/a'}",
+            flush=True,
+        )
+        return
     if not stage_partial:
         print(
             "[cloud_job_runner] 03-monitor partial-monitor not needed; "
@@ -824,10 +845,6 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     default_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8").strip() or "1.8")
     if default_power_kw <= 0:
         default_power_kw = 1.8
-    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-    csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-    latest_soc = _latest_soc_percent(csv_paths)
-    required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     estimated_charge_minutes, charge_rate_info = _estimate_forced_charge_minutes(
         plan_meta=plan_meta,
         latest_soc_percent=latest_soc,
@@ -839,11 +856,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if cutoff_seconds <= 0:
-        print("[cloud_job_runner] 03-monitor cutoff already reached; switch to green immediately.", flush=True)
+        print("[cloud_job_runner] 03-monitor cutoff already reached; keep standby until 07:00 job.", flush=True)
         _run_03_settings_profile_with_db(
-            profile="green",
+            profile="standby",
             dynamic_forced_profile=False,
-            label="03-cutoff-green",
+            label="03-cutoff-standby",
         )
         return
 
@@ -874,11 +891,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
-        print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to green.", flush=True)
+        print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to standby.", flush=True)
         _run_03_settings_profile_with_db(
-            profile="green",
+            profile="standby",
             dynamic_forced_profile=False,
-            label="03-no-window-green",
+            label="03-no-window-standby",
         )
         return
 
@@ -916,12 +933,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
             if latest_soc >= (target_soc - soc_margin):
-                hold_profile = _post_charge_hold_profile()
-                print(f"[cloud_job_runner] 03-monitor target reached. switch to {hold_profile} profile.", flush=True)
+                print("[cloud_job_runner] 03-monitor target reached. switch to standby profile.", flush=True)
                 _run_03_settings_profile_with_db(
-                    profile=hold_profile,
+                    profile="standby",
                     dynamic_forced_profile=False,
-                    label=f"03-target-{hold_profile}",
+                    label="03-target-standby",
                 )
                 return
             if (
@@ -967,8 +983,8 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         )
         time.sleep(next_check_seconds)
 
-    print("[cloud_job_runner] 03-monitor timer reached. switch to green profile.", flush=True)
-    _run_03_settings_profile_with_db(profile="green", dynamic_forced_profile=False, label="03-timer-green")
+    print("[cloud_job_runner] 03-monitor timer reached. switch to standby profile.", flush=True)
+    _run_03_settings_profile_with_db(profile="standby", dynamic_forced_profile=False, label="03-timer-standby")
 
 
 def _run_night_23() -> None:
