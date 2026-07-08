@@ -1264,11 +1264,23 @@ def _html(payload: dict, script_nonce: str) -> str:
             { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
             { label: "予想充電量(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
             { label: "消費電力量 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
+            { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: true },
           ],
         },
         options: {
           ...commonOptions(),
-          scales: { y: { min: 0, max: 1, title: { display: true, text: "kWh/h" }, grid: { color: "#d8e6f2" } } },
+          scales: {
+            y: { min: 0, max: 1, title: { display: true, text: "kWh/h" }, grid: { color: "#d8e6f2" } },
+            y2: {
+              min: 0,
+              max: 100,
+              position: "right",
+              title: { display: true, text: "予想SOC(%)", color: "#9a7a00" },
+              ticks: { color: "#9a7a00", callback: (v) => `${v}%` },
+              grid: { drawOnChartArea: false },
+              border: { color: "#9a7a00" },
+            },
+          },
         },
       });
 
@@ -1466,6 +1478,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         chart.data.datasets[0].data = [];
         chart.data.datasets[1].data = [];
         chart.data.datasets[2].data = [];
+        chart.data.datasets[3].data = [];
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
         chart.update("none");
         return;
@@ -1474,6 +1487,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
       const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
       const load = rows.map((row) => row.actual_load_kwh == null ? (row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh)) : n(row.actual_load_kwh));
+      const soc = estimateHourlyForecastSoc(rows, date);
       const actualHours = rows.filter((row) => row.actual_load_kwh != null).map((row) => Number(row.hour));
       const latestActual = rows
         .map((row) => row.latest_sample_at || "")
@@ -1484,21 +1498,70 @@ def _html(payload: dict, script_nonce: str) -> str:
       chart.data.datasets[0].data = pv;
       chart.data.datasets[1].data = charge;
       chart.data.datasets[2].data = load;
+      chart.data.datasets[3].data = soc;
       const axisMax = niceCeil(Math.max(1, maxPos([...pv, ...charge, ...load].filter((v) => v != null))));
       chart.options.scales.y.min = 0;
       chart.options.scales.y.max = axisMax;
       chart.options.scales.y.ticks = { callback: (v) => `${v}kWh` };
+      chart.options.scales.y2.min = 0;
+      chart.options.scales.y2.max = 100;
+      chart.options.scales.y2.ticks = { color: "#9a7a00", callback: (v) => `${v}%` };
+      chart.options.scales.y2.title = { display: true, text: "予想SOC(%)", color: "#9a7a00" };
       if (note) {
         const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
         const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
         const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
+        const socPeak = maxForecastSocPoint(labels, soc);
         const actualText = actualHours.length
           ? `消費実績 ${String(Math.min(...actualHours)).padStart(2, "0")}:00-${String(Math.max(...actualHours)).padStart(2, "0")}:59`
           : "消費実績なし";
         const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
-        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / 充電予測 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh（${actualText}${latestText}、以降は予測）`;
+        const socText = socPeak ? ` / 予想SOCピーク ${socPeak.label}ごろ ${socPeak.value.toFixed(0)}%` : "";
+        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / 充電予測 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測）`;
       }
       chart.update("none");
+    }
+
+    function estimateHourlyForecastSoc(rows, date) {
+      const sch = store.latestSchedule || {};
+      const batteryRow = date ? store.battery.get(date) : null;
+      const startSocRaw = Number(
+        (batteryRow && batteryRow.setting_soc_target_percent != null)
+          ? batteryRow.setting_soc_target_percent
+          : sch.soc_charge_mode
+      );
+      if (!Number.isFinite(startSocRaw)) return rows.map(() => null);
+      const capacityKwh = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
+      const roundTripEff = Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9)));
+      const chargeEff = Math.sqrt(roundTripEff);
+      const dischargeEff = Math.sqrt(roundTripEff);
+      let energyKwh = Math.max(0, Math.min(100, startSocRaw)) / 100 * capacityKwh;
+      return rows.map((row) => {
+        const hour = Number(row.hour);
+        const pvKwh = row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh);
+        const loadKwh = row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh);
+        const chargeKwh = row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh);
+        if (Number.isFinite(hour) && hour >= 7) {
+          if (chargeKwh != null && chargeKwh > 0) {
+            energyKwh += chargeKwh * chargeEff;
+          } else if (pvKwh != null && loadKwh != null) {
+            const net = pvKwh - loadKwh;
+            if (net >= 0) energyKwh += net * chargeEff;
+            else energyKwh += net / dischargeEff;
+          }
+        }
+        energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
+        return Math.round((energyKwh / capacityKwh) * 1000) / 10;
+      });
+    }
+
+    function maxForecastSocPoint(labels, values) {
+      let best = null;
+      values.forEach((value, idx) => {
+        if (value == null || !Number.isFinite(Number(value))) return;
+        if (!best || Number(value) > best.value) best = { label: labels[idx], value: Number(value) };
+      });
+      return best;
     }
 
     function modelParam(name, fallback) {
