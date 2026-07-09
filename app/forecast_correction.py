@@ -8,6 +8,7 @@ forecasts and return corrected hourly forecasts plus a human-readable rationale
 that can be persisted for later validation.
 """
 
+import math
 import os
 import sqlite3
 from datetime import datetime
@@ -206,11 +207,18 @@ def _fetch_hourly_temperatures(
 def _temperature_features_for_day(day: str, hourly_temps: dict[int, float]) -> dict[str, float | None]:
     if not hourly_temps:
         return {
+            "cooling_degree_hours_24": None,
             "cooling_degree_hours_28": None,
+            "cooling_degree_hours_32": None,
+            "hot_hours_35": None,
+            "max_temp_c": None,
             "temp_ewma_12h_evening": None,
             "night_min_temp_c": None,
         }
+    cdh24 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 24.0) for hour in range(0, 23))
     cdh28 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 28.0) for hour in range(0, 23))
+    cdh32 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 32.0) for hour in range(0, 23))
+    hot_hours_35 = sum(1 for hour in range(0, 23) if float(hourly_temps.get(hour, 0.0)) >= 35.0)
     night_values = [float(hourly_temps[hour]) for hour in range(0, 7) if hour in hourly_temps]
     alpha = 1.0 - pow(2.718281828459045, -1.0 / 12.0)
     ewma: float | None = None
@@ -223,17 +231,97 @@ def _temperature_features_for_day(day: str, hourly_temps: dict[int, float]) -> d
         ewma_by_hour[hour] = ewma
     evening_values = [ewma_by_hour[h] for h in range(17, 23) if h in ewma_by_hour]
     return {
+        "cooling_degree_hours_24": cdh24,
         "cooling_degree_hours_28": cdh28,
+        "cooling_degree_hours_32": cdh32,
+        "hot_hours_35": float(hot_hours_35),
+        "max_temp_c": max(float(value) for value in hourly_temps.values()),
         "temp_ewma_12h_evening": (sum(evening_values) / len(evening_values)) if evening_values else None,
         "night_min_temp_c": min(night_values) if night_values else None,
     }
 
 
 def _temperature_feature_vector(features: dict[str, float | None]) -> list[float]:
+    cdh24 = float(features.get("cooling_degree_hours_24") or 0.0)
     cdh28 = float(features.get("cooling_degree_hours_28") or 0.0)
+    cdh32 = float(features.get("cooling_degree_hours_32") or 0.0)
+    hot_hours_35 = float(features.get("hot_hours_35") or 0.0)
     ewma_evening = float(features.get("temp_ewma_12h_evening") or 24.0)
-    night_min = float(features.get("night_min_temp_c") or 20.0)
-    return [1.0, cdh28 / 10.0, (ewma_evening - 24.0) / 5.0, (night_min - 20.0) / 5.0]
+    night_min = float(features.get("night_min_temp_c") or 22.0)
+    return [
+        1.0,
+        cdh28 / 10.0,
+        (ewma_evening - 24.0) / 5.0,
+        (night_min - 20.0) / 5.0,
+        cdh24 / 24.0,
+        cdh32 / 8.0,
+        hot_hours_35 / 8.0,
+        max(0.0, ewma_evening - 30.0) / 6.0,
+        max(0.0, night_min - 26.0) / 6.0,
+    ]
+
+
+def _quantile(values: list[float], probability: float) -> float:
+    ordered = sorted(value for value in values if math.isfinite(value))
+    if not ordered:
+        return 1.0
+    position = max(0.0, min(1.0, probability)) * (len(ordered) - 1)
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def _bounded_exp(value: float) -> float:
+    return math.exp(max(-20.0, min(20.0, value)))
+
+
+def _temperature_prior_log_multiplier(features: dict[str, float | None]) -> float:
+    max_temp = float(features.get("max_temp_c") or 28.0)
+    heat_fraction = max(0.0, min(1.0, (max_temp - 28.0) / 12.0))
+    return math.log(1.18) * pow(heat_fraction, 1.25)
+
+
+def _effective_temperature_sample_count(
+    historical_features: list[dict[str, float | None]],
+    target_features: dict[str, float | None],
+) -> float:
+    target_max = float(target_features.get("max_temp_c") or 24.0)
+    return sum(
+        math.exp(-pow((float(features.get("max_temp_c") or 24.0) - target_max) / 3.0, 2.0))
+        for features in historical_features
+    )
+
+
+def _adaptive_load_scenarios(
+    residual_multipliers: list[float],
+    *,
+    confidence: float,
+) -> list[dict[str, float | str]]:
+    probabilities = (0.10, 0.30, 0.50, 0.70, 0.90)
+    prior = (0.82, 0.92, 1.00, 1.10, 1.22)
+    if residual_multipliers:
+        data = tuple(_quantile(residual_multipliers, probability) for probability in probabilities)
+    else:
+        data = prior
+    blended = [
+        _bounded_exp(
+            confidence * math.log(max(0.01, data_value))
+            + (1.0 - confidence) * math.log(prior_value)
+        )
+        for data_value, prior_value in zip(data, prior)
+    ]
+    median = max(0.01, blended[2])
+    return [
+        {
+            "label": f"load_q{int(probability * 100):02d}",
+            "probability": 0.20,
+            "multiplier": value / median,
+        }
+        for probability, value in zip(probabilities, blended)
+    ]
 
 
 def _temperature_correction_hours() -> range:
@@ -296,14 +384,13 @@ def _evening_temperature_correction(
 ) -> dict[str, object]:
     enabled = env_bool("EVENING_LOAD_TEMPERATURE_CORRECTION_ENABLED", default=True)
     min_samples = max(1, int(env_float("EVENING_LOAD_TEMPERATURE_MIN_SAMPLES", default=3.0)))
-    lower = env_float("EVENING_LOAD_TEMPERATURE_MIN_MULTIPLIER_DELTA", default=-0.10)
-    upper = env_float("EVENING_LOAD_TEMPERATURE_MAX_MULTIPLIER_DELTA", default=0.45)
     regularization = max(0.0, env_float("EVENING_LOAD_TEMPERATURE_RIDGE_LAMBDA", default=1.0))
     if not enabled:
         return {"enabled": False, "applied": False, "multiplier_delta": 0.0, "reason": "disabled"}
 
     feature_rows: list[list[float]] = []
-    residuals: list[float] = []
+    residual_targets: list[float] = []
+    feature_objects: list[dict[str, float | None]] = []
     training_days: list[str] = []
     correction_hours = _temperature_correction_hours()
     for day in sorted(set(forecast_history) & set(actual_history) & set(historical_temperature_features)):
@@ -317,8 +404,13 @@ def _evening_temperature_correction(
         )
         if forecast_load <= 0:
             continue
-        feature_rows.append(_temperature_feature_vector(historical_temperature_features[day]))
-        residuals.append(_clip_float(actual_load / forecast_load - 1.0, min_val=-0.50, max_val=1.0))
+        features = historical_temperature_features[day]
+        ratio = actual_load / forecast_load
+        if ratio <= 0.0 or not math.isfinite(ratio):
+            continue
+        feature_rows.append(_temperature_feature_vector(features))
+        residual_targets.append(ratio - 1.0)
+        feature_objects.append(features)
         training_days.append(day)
 
     if len(feature_rows) < min_samples:
@@ -331,7 +423,14 @@ def _evening_temperature_correction(
             "min_samples": min_samples,
         }
 
-    coefficients = _solve_ridge_regression(feature_rows, residuals, regularization=regularization)
+    median_residual = _quantile(residual_targets, 0.50)
+    absolute_deviations = [abs(value - median_residual) for value in residual_targets]
+    robust_scale = max(0.05, 1.4826 * _quantile(absolute_deviations, 0.50))
+    robust_targets = [
+        max(median_residual - 3.0 * robust_scale, min(median_residual + 3.0 * robust_scale, value))
+        for value in residual_targets
+    ]
+    coefficients = _solve_ridge_regression(feature_rows, robust_targets, regularization=regularization)
     if not coefficients:
         return {
             "enabled": True,
@@ -340,19 +439,52 @@ def _evening_temperature_correction(
             "reason": "fit_failed",
             "sample_count": len(feature_rows),
         }
-    raw_delta = sum(value * weight for value, weight in zip(_temperature_feature_vector(target_features), coefficients))
-    delta = _clip_float(raw_delta, min_val=lower, max_val=upper)
+    coefficients = [
+        *coefficients[:4],
+        *(max(0.0, value) for value in coefficients[4:]),
+    ]
+    target_vector = _temperature_feature_vector(target_features)
+    data_delta = sum(value * weight for value, weight in zip(target_vector, coefficients))
+    data_multiplier = max(0.01, 1.0 + data_delta)
+    data_log_multiplier = math.log(data_multiplier)
+    effective_samples = _effective_temperature_sample_count(feature_objects, target_features)
+    confidence = effective_samples / (effective_samples + 8.0)
+    prior_log_multiplier = _temperature_prior_log_multiplier(target_features)
+    blended_log_multiplier = (
+        confidence * data_log_multiplier
+        + (1.0 - confidence) * prior_log_multiplier
+    )
+
+    fitted_multipliers = [
+        max(0.01, 1.0 + sum(value * weight for value, weight in zip(row, coefficients)))
+        for row in feature_rows
+    ]
+    residual_multipliers = [
+        max(0.01, 1.0 + actual_delta) / max(0.01, fitted)
+        for actual_delta, fitted in zip(residual_targets, fitted_multipliers)
+    ]
+    residual_median = _quantile(residual_multipliers, 0.50)
+    multiplier = _bounded_exp(blended_log_multiplier) * max(0.01, residual_median)
+    load_scenarios = _adaptive_load_scenarios(
+        residual_multipliers,
+        confidence=confidence,
+    )
     return {
         "enabled": True,
         "applied": True,
-        "method": "ridge_all_hours_load_residual",
+        "method": "regularized_nonlinear_residual_with_log_space_blending",
         "applied_hours": [min(correction_hours), max(correction_hours)] if correction_hours else [],
         "sample_count": len(feature_rows),
+        "effective_temperature_sample_count": round(effective_samples, 4),
+        "confidence": round(confidence, 6),
         "training_days": training_days[-7:],
         "coefficients": [round(x, 6) for x in coefficients],
-        "raw_multiplier_delta": round(raw_delta, 6),
-        "multiplier_delta": round(delta, 6),
-        "bounds": [lower, upper],
+        "data_log_multiplier": round(data_log_multiplier, 6),
+        "prior_log_multiplier": round(prior_log_multiplier, 6),
+        "residual_median": round(residual_median, 6),
+        "multiplier": round(multiplier, 6),
+        "multiplier_delta": round(multiplier - 1.0, 6),
+        "load_scenarios": load_scenarios,
         "target_features": target_features,
     }
 
@@ -383,8 +515,6 @@ def _risk_adjusted_peak_penalty(
     if pv_overconfidence:
         risk_reasons.append("pv_overconfidence")
     applied_factor = base_factor
-    if high_temperature and pv_overconfidence:
-        applied_factor = min(risk_factor, max_factor)
     if not enabled:
         applied_factor = 0.0
     return {
@@ -397,6 +527,7 @@ def _risk_adjusted_peak_penalty(
         "risk_reasons": risk_reasons,
         "high_temperature": high_temperature,
         "pv_overconfidence": pv_overconfidence,
+        "temperature_uncertainty_integrated_in_load_scenarios": True,
         "thresholds": {
             "cooling_degree_hours_28": cdh_threshold,
             "temp_ewma_12h_evening": ewma_threshold,
@@ -485,6 +616,9 @@ def _build_forecast_correction(
         load_ratio=load_ratio,
     )
     evening_delta = float(temperature_correction.get("multiplier_delta") or 0.0)
+    load_scenarios = temperature_correction.get("load_scenarios")
+    if not isinstance(load_scenarios, list):
+        load_scenarios = _adaptive_load_scenarios([], confidence=0.0)
 
     pv_multiplier = 1.0 if skip_pv_correction else pv_ratio
     corrected_pv = {
@@ -506,10 +640,11 @@ def _build_forecast_correction(
         "enabled": True,
         "hourly_load_kwh": corrected_load,
         "hourly_pv_kwh": corrected_pv,
+        "load_scenarios": load_scenarios,
         "peak_penalty": peak_penalty,
         "rationale": {
             "enabled": True,
-            "method": "pv_load_ewma_with_evening_temperature_state",
+            "method": "pv_ewma_with_nonlinear_temperature_residual_distribution",
             "history_source": history_source,
             "history_days": history_dates[-14:],
             "pv_ratio_ewma_raw": round(pv_ratio_raw, 6),
@@ -528,6 +663,7 @@ def _build_forecast_correction(
             "load_sample_count": load_summary["sample_count"],
             "load_latest_days": load_summary["latest_days"],
             "evening_load_temperature": temperature_correction,
+            "load_scenarios": load_scenarios,
             "soc_peak_unmet_penalty": peak_penalty,
             "raw_hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "raw_hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},

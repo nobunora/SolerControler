@@ -14,6 +14,7 @@ from app.energy_model import (
     forecast_pv_energy_kwh,
     optimize_target_soc_for_daytime,
 )
+from app.forecast_correction import _evening_temperature_correction
 from energy_model_main import (
     _active_constraint_names,
     _annotate_pv_headroom_guard_policy,
@@ -23,6 +24,7 @@ from energy_model_main import (
     _historical_daytime_soc_gain_guard,
     _hourly_weather_summary,
     _monthly_day_buy_kwh_before_target,
+    _load_scenarios_for_cost_optimizer,
     _expected_rest_of_month_day_buy_kwh,
     _reshape_hourly_pv_by_weather,
     _estimate_remaining_overnight_load_kwh,
@@ -415,7 +417,7 @@ def test_build_hourly_load_forecast_fills_overnight_hours_from_history() -> None
     assert forecast[23] == pytest.approx(0.7)
 
 
-def test_risk_adjusted_peak_penalty_requires_high_temp_and_pv_overconfidence(monkeypatch) -> None:
+def test_risk_adjusted_peak_penalty_does_not_duplicate_temperature_uncertainty(monkeypatch) -> None:
     monkeypatch.setenv("SOC_PEAK_UNMET_BASE_FACTOR", "1")
     monkeypatch.setenv("SOC_PEAK_UNMET_RISK_FACTOR", "2")
     monkeypatch.setenv("SOC_PEAK_UNMET_MAX_FACTOR", "2")
@@ -445,8 +447,9 @@ def test_risk_adjusted_peak_penalty_requires_high_temp_and_pv_overconfidence(mon
         pv_ratio_raw=1.5,
         pv_ratio_applied=1.35,
     )
-    assert both["applied_factor"] == pytest.approx(2.0)
+    assert both["applied_factor"] == pytest.approx(1.0)
     assert both["risk_reasons"] == ["high_temperature", "pv_overconfidence"]
+    assert both["temperature_uncertainty_integrated_in_load_scenarios"] is True
 
 
 def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch) -> None:
@@ -510,7 +513,87 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(1.35)
     assert rationale["corrected_hourly_load_forecast_kwh"]["7"] == pytest.approx(1.2)
     assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2)
-    assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(2.0)
+    assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(1.0)
+    assert len(correction["load_scenarios"]) == 5
+
+
+def test_nonlinear_temperature_residual_grows_for_unseen_heat(monkeypatch) -> None:
+    monkeypatch.setenv("EVENING_LOAD_TEMPERATURE_MIN_SAMPLES", "3")
+    forecast_history = {}
+    actual_history = {}
+    temperature_history = {}
+    for index, temp in enumerate((24.0, 26.0, 28.0, 30.0, 32.0, 34.0), start=1):
+        day = f"2026-06-{index:02d}"
+        forecast_history[day] = {hour: {"load": 1.0} for hour in range(7, 23)}
+        actual_ratio = 1.0 + max(0.0, temp - 28.0) * 0.04
+        actual_history[day] = {hour: {"load": actual_ratio} for hour in range(7, 23)}
+        temperature_history[day] = {
+            "cooling_degree_hours_24": max(0.0, temp - 24.0) * 23.0,
+            "cooling_degree_hours_28": max(0.0, temp - 28.0) * 23.0,
+            "cooling_degree_hours_32": max(0.0, temp - 32.0) * 23.0,
+            "hot_hours_35": 0.0,
+            "max_temp_c": temp,
+            "temp_ewma_12h_evening": temp,
+            "night_min_temp_c": temp - 5.0,
+        }
+
+    mild = _evening_temperature_correction(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        historical_temperature_features=temperature_history,
+        target_features={
+            "cooling_degree_hours_24": 46.0,
+            "cooling_degree_hours_28": 0.0,
+            "cooling_degree_hours_32": 0.0,
+            "hot_hours_35": 0.0,
+            "max_temp_c": 28.0,
+            "temp_ewma_12h_evening": 28.0,
+            "night_min_temp_c": 23.0,
+        },
+        load_ratio=1.0,
+    )
+    hot = _evening_temperature_correction(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        historical_temperature_features=temperature_history,
+        target_features={
+            "cooling_degree_hours_24": 230.0,
+            "cooling_degree_hours_28": 138.0,
+            "cooling_degree_hours_32": 46.0,
+            "hot_hours_35": 12.0,
+            "max_temp_c": 40.0,
+            "temp_ewma_12h_evening": 36.0,
+            "night_min_temp_c": 29.0,
+        },
+        load_ratio=1.0,
+    )
+
+    assert hot["multiplier"] > mild["multiplier"]
+    assert 0.0 < hot["confidence"] < 1.0
+    assert [row["label"] for row in hot["load_scenarios"]] == [
+        "load_q10",
+        "load_q30",
+        "load_q50",
+        "load_q70",
+        "load_q90",
+    ]
+    assert hot["load_scenarios"][2]["multiplier"] == pytest.approx(1.0)
+
+
+def test_cost_optimizer_uses_adaptive_load_scenarios() -> None:
+    scenarios = _load_scenarios_for_cost_optimizer(
+        {
+            "load_scenarios": [
+                {"label": "load_q10", "probability": 0.2, "multiplier": 0.8},
+                {"label": "load_q50", "probability": 0.6, "multiplier": 1.0},
+                {"label": "load_q90", "probability": 0.2, "multiplier": 1.3},
+            ]
+        }
+    )
+
+    assert scenarios is not None
+    assert [scenario.label for scenario in scenarios] == ["load_q10", "load_q50", "load_q90"]
+    assert scenarios[-1].load_multiplier == pytest.approx(1.3)
 
 
 def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypatch) -> None:

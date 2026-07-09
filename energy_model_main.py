@@ -1423,9 +1423,25 @@ def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
     return base + (SigmaBucket("pv_upside_guard", upside_probability, upside_z),)
 
 
-def _load_scenarios_for_cost_optimizer() -> tuple[ForecastScenario, ...] | None:
+def _load_scenarios_for_cost_optimizer(
+    forecast_correction: dict[str, object] | None = None,
+) -> tuple[ForecastScenario, ...] | None:
     if not _env_bool("SOC_COST_LOAD_SCENARIOS_ENABLED", True):
         return None
+    adaptive = (forecast_correction or {}).get("load_scenarios")
+    if isinstance(adaptive, list):
+        scenarios: list[ForecastScenario] = []
+        for item in adaptive:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            probability = _to_optional_float(item.get("probability"))
+            multiplier = _to_optional_float(item.get("multiplier"))
+            if not label or probability is None or probability <= 0.0 or multiplier is None or multiplier <= 0.0:
+                continue
+            scenarios.append(ForecastScenario(label, probability, 1.0, multiplier))
+        if scenarios:
+            return tuple(scenarios)
     low_probability = _env_float_clamped("SOC_COST_LOAD_LOW_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
     high_probability = _env_float_clamped("SOC_COST_LOAD_HIGH_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
     mid_probability = max(0.0, 1.0 - low_probability - high_probability)
@@ -1974,7 +1990,7 @@ def main() -> int:
                 _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
             )
         sigma_buckets = _sigma_buckets_for_cost_optimizer()
-        load_scenarios = _load_scenarios_for_cost_optimizer()
+        load_scenarios = _load_scenarios_for_cost_optimizer(forecast_correction)
         weather_upside_probability = _weather_upside_probability_for_cost_optimizer(forecast)
         weather_upside_z = _env_float("SOC_COST_WEATHER_UPSIDE_SCENARIO_Z", 3.5)
         peak_penalty = forecast_correction.get("peak_penalty", {})
