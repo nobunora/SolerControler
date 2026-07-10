@@ -413,6 +413,7 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
     plan_path = tmp_path / "night_charge_plan.json"
     calls: list[tuple[str, dict[str, str]]] = []
     persisted: list[str] = []
+    feedback_targets: list[str] = []
     monitored: list[Path] = []
 
     def fake_run(command, env_updates=None):
@@ -432,12 +433,17 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
         "cloud_job_runner._persist_night_plan_to_firestore",
         lambda _path, *, source: persisted.append(source) or True,
     )
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_previous_day_soc_feedback",
+        lambda *, target_date, csv_paths: feedback_targets.append(target_date) or True,
+    )
     monkeypatch.setattr("cloud_job_runner._monitor_partial_forced_and_stop", lambda path: monitored.append(path))
 
     _run_adjust_03()
 
     assert ("kpnet_main.py", {"KP_WORKFLOW_MODE": "csv"}) in calls
     assert ("energy_model_main.py", {"FORECAST_DATE_OVERRIDE": "2026-05-27"}) in calls
+    assert feedback_targets == ["2026-05-27"]
     assert persisted == ["adjust03-regenerated"]
     assert monitored == [plan_path]
 

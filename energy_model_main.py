@@ -38,6 +38,7 @@ from app.soc_cost_optimizer import (
 )
 from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history, _risk_adjusted_peak_penalty
 from app.pv_physical_forecast import build_physical_pv_candidate
+from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -1997,6 +1998,17 @@ def main() -> int:
         peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
         peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
         peak_penalty_rate = cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
+        soc_decision_prior = load_soc_decision_prior_from_firestore(target_date=tomorrow_date)
+        prior_regret_curve = (
+            soc_decision_prior.get("regret_yen_by_soc")
+            if isinstance(soc_decision_prior, dict) and soc_decision_prior.get("applied")
+            else None
+        )
+        prior_weight = _to_optional_float(soc_decision_prior.get("weight") if isinstance(soc_decision_prior, dict) else None) or 0.0
+        prior_max_penalty = (
+            _to_optional_float(soc_decision_prior.get("max_penalty_yen") if isinstance(soc_decision_prior, dict) else None)
+            or 0.0
+        )
         cost_optimization = optimize_soc_by_expected_cost(
             capacity_kwh=result.effective_capacity_kwh,
             soc_now_percent=latest_soc,
@@ -2016,6 +2028,9 @@ def main() -> int:
             peak_soc_target_percent=peak_target_soc,
             peak_soc_unmet_penalty_yen_per_kwh=peak_penalty_rate,
             expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
+            decision_prior_regret_yen_by_soc=prior_regret_curve,
+            decision_prior_weight=prior_weight,
+            decision_prior_max_penalty_yen=prior_max_penalty,
         )
         if cost_optimization is not None:
             cost_optimization_payload = {
@@ -2037,6 +2052,7 @@ def main() -> int:
                 "pv_physical_forecast": physical_pv_diagnostics,
                 "hourly_weather_pv_shape": hourly_weather_pv_shape,
                 "overnight_discharge_guard": overnight_discharge_guard,
+                "soc_decision_feedback_prior": soc_decision_prior,
                 "monthly_day_buy_before_target": monthly_day_buy_before_target,
                 "expected_rest_of_month_day_buy": expected_rest_of_month_day_buy,
                 "soc_cost_risk": {
@@ -2195,6 +2211,10 @@ def main() -> int:
             "hourly_weather_pv_shape": hourly_weather_pv_shape,
             "pv_physical_forecast": physical_pv_diagnostics,
             "forecast_correction": forecast_correction.get("rationale", {}),
+            "soc_decision_feedback_prior": (
+                cost_optimization_payload.get("soc_decision_feedback_prior", {})
+                if isinstance(cost_optimization_payload, dict) else {}
+            ),
             "final_pv_forecast": {
                 **final_pv_totals,
                 "source": result_payload["final_pv_forecast_source"],

@@ -202,6 +202,7 @@ class SocCandidate:
     expected_peak_unmet_kwh: float
     expected_peak_unmet_cost_yen: float
     expected_monthly_tier_landing_penalty_yen: float
+    decision_prior_cost_yen: float
     total_expected_cost_yen: float
     scenario_replays: tuple[ScenarioReplay, ...]
 
@@ -215,6 +216,7 @@ class SocCandidateSummary:
     expected_sell_kwh: float
     expected_peak_unmet_kwh: float
     expected_monthly_tier_landing_penalty_yen: float
+    decision_prior_cost_yen: float
     rejection_reason: str
 
 
@@ -231,6 +233,7 @@ class SocCostOptimizationResult:
     expected_peak_unmet_kwh: float
     expected_peak_unmet_cost_yen: float
     expected_monthly_tier_landing_penalty_yen: float
+    decision_prior_cost_yen: float
     expected_day_buy_kwh_risk: float
     expected_sell_kwh_risk: float
     worst_case_day_buy_kwh: float
@@ -397,6 +400,45 @@ def _simulate_day(
     return buy_kwh, sell_kwh, _bounded_soc(max_soc), first_full_hour, _bounded_soc(end_soc)
 
 
+def _decision_prior_cost_yen(
+    *,
+    target_soc_percent: float,
+    regret_yen_by_soc: dict[float | str, float] | None,
+    weight: float,
+    max_penalty_yen: float,
+) -> float:
+    if not regret_yen_by_soc or weight <= 0.0 or max_penalty_yen <= 0.0:
+        return 0.0
+    points: list[tuple[float, float]] = []
+    for key, value in regret_yen_by_soc.items():
+        try:
+            target = float(key)
+            regret = float(value)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= target <= 100.0 and regret >= 0.0:
+            points.append((target, regret))
+    if not points:
+        return 0.0
+    points.sort(key=lambda item: item[0])
+    target_soc = _bounded_soc(target_soc_percent)
+    if target_soc <= points[0][0]:
+        regret = points[0][1]
+    elif target_soc >= points[-1][0]:
+        regret = points[-1][1]
+    else:
+        regret = 0.0
+        for (left_soc, left_regret), (right_soc, right_regret) in zip(points, points[1:]):
+            if left_soc <= target_soc <= right_soc:
+                if abs(right_soc - left_soc) < 1e-9:
+                    regret = min(left_regret, right_regret)
+                else:
+                    ratio = (target_soc - left_soc) / (right_soc - left_soc)
+                    regret = left_regret * (1.0 - ratio) + right_regret * ratio
+                break
+    return max(0.0, min(max_penalty_yen, regret * weight))
+
+
 def _candidate_summary(*, candidate: SocCandidate, best: SocCandidate) -> SocCandidateSummary:
     if abs(candidate.target_soc_percent - best.target_soc_percent) < 1e-9:
         reason = "selected"
@@ -423,6 +465,7 @@ def _candidate_summary(*, candidate: SocCandidate, best: SocCandidate) -> SocCan
         expected_sell_kwh=candidate.expected_sell_kwh,
         expected_peak_unmet_kwh=candidate.expected_peak_unmet_kwh,
         expected_monthly_tier_landing_penalty_yen=candidate.expected_monthly_tier_landing_penalty_yen,
+        decision_prior_cost_yen=candidate.decision_prior_cost_yen,
         rejection_reason=reason,
     )
 
@@ -446,6 +489,9 @@ def evaluate_soc_candidate(
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
     peak_soc_unmet_penalty_factor: float = 1.0,
     expected_overnight_discharge_kwh: float = 0.0,
+    decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None,
+    decision_prior_weight: float = 0.0,
+    decision_prior_max_penalty_yen: float = 0.0,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
@@ -519,12 +565,19 @@ def evaluate_soc_candidate(
         )
 
     monthly_tier_landing_penalty = cost_model.monthly_tier_landing_penalty_yen(expected_buy)
+    decision_prior_cost = _decision_prior_cost_yen(
+        target_soc_percent=target_soc,
+        regret_yen_by_soc=decision_prior_regret_yen_by_soc,
+        weight=max(0.0, decision_prior_weight),
+        max_penalty_yen=max(0.0, decision_prior_max_penalty_yen),
+    )
     total = (
         night_cost
         + expected_buy_cost
         + expected_sell_cost
         + expected_peak_unmet_cost
         + monthly_tier_landing_penalty
+        + decision_prior_cost
     )
     return SocCandidate(
         target_soc_percent=target_soc,
@@ -538,6 +591,7 @@ def evaluate_soc_candidate(
         expected_peak_unmet_kwh=expected_peak_unmet,
         expected_peak_unmet_cost_yen=expected_peak_unmet_cost,
         expected_monthly_tier_landing_penalty_yen=monthly_tier_landing_penalty,
+        decision_prior_cost_yen=decision_prior_cost,
         total_expected_cost_yen=total,
         scenario_replays=tuple(replays),
     )
@@ -564,6 +618,9 @@ def optimize_soc_by_expected_cost(
     peak_soc_unmet_penalty_yen_per_kwh: float = 0.0,
     peak_soc_unmet_penalty_factor: float = 1.0,
     expected_overnight_discharge_kwh: float = 0.0,
+    decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None,
+    decision_prior_weight: float = 0.0,
+    decision_prior_max_penalty_yen: float = 0.0,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -608,6 +665,9 @@ def optimize_soc_by_expected_cost(
             peak_soc_unmet_penalty_yen_per_kwh=peak_soc_unmet_penalty_yen_per_kwh,
             peak_soc_unmet_penalty_factor=peak_soc_unmet_penalty_factor,
             expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
+            decision_prior_regret_yen_by_soc=decision_prior_regret_yen_by_soc,
+            decision_prior_weight=decision_prior_weight,
+            decision_prior_max_penalty_yen=decision_prior_max_penalty_yen,
         )
         candidates.append(candidate)
         count += 1
@@ -660,6 +720,7 @@ def optimize_soc_by_expected_cost(
         expected_peak_unmet_kwh=best.expected_peak_unmet_kwh,
         expected_peak_unmet_cost_yen=best.expected_peak_unmet_cost_yen,
         expected_monthly_tier_landing_penalty_yen=best.expected_monthly_tier_landing_penalty_yen,
+        decision_prior_cost_yen=best.decision_prior_cost_yen,
         expected_day_buy_kwh_risk=best.expected_day_buy_kwh,
         expected_sell_kwh_risk=best.expected_sell_kwh,
         worst_case_day_buy_kwh=worst_case_day_buy,

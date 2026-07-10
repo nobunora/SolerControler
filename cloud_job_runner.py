@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
+from app.soc_decision_feedback import build_soc_decision_feedback
+
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
 
@@ -220,6 +222,47 @@ def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> 
     except Exception as exc:
         print(f"[cloud_job_runner] plan restore failed: {exc}", flush=True)
     return False
+
+
+def _persist_previous_day_soc_feedback(*, target_date: str, csv_paths: list[Path]) -> bool:
+    enabled = os.getenv("SOC_DECISION_FEEDBACK_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return False
+    client = _open_firestore_for_plan()
+    if client is None:
+        return False
+    try:
+        previous_date = (datetime.fromisoformat(target_date).date() - timedelta(days=1)).isoformat()
+    except ValueError:
+        print(f"[cloud_job_runner] SOC feedback skipped: invalid target_date={target_date}", flush=True)
+        return False
+    try:
+        snap = client.collection("night_charge_plans").document(previous_date).get()
+        if not snap.exists:
+            print(f"[cloud_job_runner] SOC feedback skipped: previous plan missing date={previous_date}", flush=True)
+            return False
+        data = snap.to_dict() or {}
+        plan_text = str(data.get("plan_json") or "").strip()
+        plan = json.loads(plan_text) if plan_text else data
+        feedback = build_soc_decision_feedback(
+            plan=plan,
+            csv_paths=csv_paths,
+            target_date=previous_date,
+            created_at=datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        )
+        if not feedback:
+            print(f"[cloud_job_runner] SOC feedback skipped: insufficient actual data date={previous_date}", flush=True)
+            return False
+        client.collection("soc_decision_feedback").document(previous_date).set(feedback, merge=True)
+        print(
+            "[cloud_job_runner] persisted SOC decision feedback "
+            f"date={previous_date} best={feedback.get('best_target_soc_percent')}%",
+            flush=True,
+        )
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] SOC feedback persistence failed: {exc}", flush=True)
+        return False
 
 
 def _hhmm_after_delay(*, timezone_name: str, delay_seconds: int) -> str:
@@ -1191,6 +1234,11 @@ def _run_adjust_03() -> None:
     # 2) 当日分の最新予報を04:00時点で再生成
     # 3) すぐ強制充電を開始し、目標到達または7時まで監視
     _run_csv_with_retry(label="03-initial-csv")
+    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+    _persist_previous_day_soc_feedback(
+        target_date=_adjust03_target_date(),
+        csv_paths=_latest_kpnet_csv_paths(artifacts_dir),
+    )
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
     if not _ensure_night_plan_available(plan_path):
         raise RuntimeError(f"night charge plan not found: {plan_path}")
