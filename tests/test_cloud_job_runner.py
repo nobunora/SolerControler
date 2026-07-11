@@ -249,7 +249,7 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
         lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 40.0},
     )
     monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._latest_soc_percent", lambda _: None)
+    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: None)
     monkeypatch.setattr(
         "cloud_job_runner._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
@@ -298,7 +298,7 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
         },
     )
     monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._latest_soc_percent", lambda _: 10.0)
+    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: 10.0)
     persisted: list[dict] = []
     monkeypatch.setattr(
         "cloud_job_runner._persist_03_no_charge_decision_to_firestore",
@@ -353,8 +353,8 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
         lambda _: [],
     )
     monkeypatch.setattr(
-        "cloud_job_runner._latest_soc_percent",
-        lambda _: 20.0,
+        "cloud_job_runner._latest_realtime_soc_percent",
+        lambda: 20.0,
     )
     monkeypatch.setattr(
         "cloud_job_runner._seconds_until_cutoff",
@@ -362,7 +362,7 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
     )
     monkeypatch.setattr(
         "cloud_job_runner._run_csv_with_retry",
-        lambda *, label="kpnet-csv": None,
+        lambda *, label="kpnet-csv": (_ for _ in ()).throw(AssertionError("03 monitor must not fetch CSV")),
     )
     monkeypatch.setattr(
         "cloud_job_runner.time.sleep",

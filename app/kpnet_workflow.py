@@ -21,7 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.constants import SOCBounds
-from app.utils import env, env_bool, load_dotenv_if_present, to_float
+from app.utils import env, env_bool, load_dotenv_if_present, parse_csv_float, to_float
 
 LOGGER = logging.getLogger(__name__)
 
@@ -366,6 +366,26 @@ def _pick_battery_operating_mode_code(
         "BatteryOperatingMode の候補から必要なモードを特定できませんでした "
         f"(prefer={prefer}, candidates={value_map})"
     )
+
+
+def _extract_simple_visualization_soc_percent(html: str) -> float | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for table in soup.select("table.data_table_bt"):
+        if table.select_one(".fa-battery-three-quarters, .fa-battery-full, .fa-battery-half, .fa-battery-empty"):
+            cell = table.select_one("td.rb_cell")
+            if cell:
+                value = parse_csv_float(cell.get_text(" ", strip=True), default=None)
+                if value is not None:
+                    return SOCBounds.clamp(float(value))
+
+    match = re.search(
+        r"fa-battery[^<]*</i>.*?<td[^>]*class=[\"'][^\"']*rb_cell[^\"']*[\"'][^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<span>\s*%",
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    return SOCBounds.clamp(float(match.group(1)))
 
 
 def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
@@ -1109,6 +1129,10 @@ class KpNetClient:
         if "ログイン" in _extract_title(top.text) and "ユーザID" in top.text:
             raise RuntimeError("ログインに失敗しました。ユーザIDまたはパスワードをご確認ください。")
         LOGGER.info("Login success")
+
+    def read_realtime_soc_percent(self) -> float | None:
+        resp = self._get("remotevisualization/simplevisualization/enduser")
+        return _extract_simple_visualization_soc_percent(resp.text)
 
     def logout(self) -> None:
         csrf = self.csrf_setting or self.csrf_top

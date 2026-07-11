@@ -13,6 +13,7 @@ from app.kpnet_workflow import (
     _build_payload,
     _build_dynamic_forced_profile,
     _default_csv_target_months,
+    _extract_simple_visualization_soc_percent,
     _in_time_window,
     _load_night_charge_plan,
     _parse_hhmm,
@@ -128,6 +129,20 @@ def test_in_time_window_cross_midnight() -> None:
 
 def test_default_csv_target_months_includes_previous_and_current_month() -> None:
     assert _default_csv_target_months(datetime(2026, 7, 1, 4, 0)) == ["2026-06", "2026-07"]
+
+
+def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
+    html = """
+    <table class="data_table01 data_table_bt">
+      <tr>
+        <th class="l_cell" rowspan="2"><i class="fas fa-battery-three-quarters"></i><br>蓄電池</th>
+        <th>運転状態</th><th class="rt_cell">蓄電残量</th>
+      </tr>
+      <tr><td>充電</td><td class="rb_cell"> 78 <span>%</span></td></tr>
+    </table>
+    """
+
+    assert _extract_simple_visualization_soc_percent(html) == 78.0
     assert _default_csv_target_months(datetime(2026, 1, 1, 4, 0)) == ["2025-12", "2026-01"]
 
 

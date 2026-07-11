@@ -161,34 +161,35 @@ def _persist_night_plan_to_firestore(plan_path: Path, *, source: str) -> bool:
     if client is None:
         return False
     try:
-        plan = _read_plan_json(plan_path)
+        from app.night_plan_archive import (
+            build_night_plan_firestore_document,
+            read_plan_file,
+            upload_night_plan_to_gcs,
+        )
+
+        plan = read_plan_file(plan_path)
         plan_date = _plan_date_from_json(plan)
         if not plan_date:
             print("[cloud_job_runner] plan persistence skipped; forecast.date missing", flush=True)
             return False
-        payload_text = json.dumps(plan, ensure_ascii=False, separators=(",", ":"))
         now = datetime.now(ZoneInfo("UTC")).isoformat()
-        doc = {
-            "date": plan_date,
-            "updated_at": now,
-            "source": source,
-            "plan_json": payload_text,
-            "forecast": plan.get("forecast", {}),
-            "result": plan.get("result", {}),
-            "decision_rationale": plan.get("decision_rationale", {}),
-            "daytime_soc_optimization": plan.get("daytime_soc_optimization", {}),
-            "pv_array_forecast_summary": {
-                "source": (plan.get("pv_array_forecast") or {}).get("source")
-                if isinstance(plan.get("pv_array_forecast"), dict) else None,
-                "provider": (plan.get("pv_array_forecast") or {}).get("provider")
-                if isinstance(plan.get("pv_array_forecast"), dict) else None,
-                "totals": (plan.get("pv_array_forecast") or {}).get("totals")
-                if isinstance(plan.get("pv_array_forecast"), dict) else None,
-            },
-        }
+        archive_info = upload_night_plan_to_gcs(plan, forecast_date=plan_date)
+        doc = build_night_plan_firestore_document(
+            plan,
+            source=source,
+            updated_at=now,
+            archive_info=archive_info,
+        )
         coll = client.collection("night_charge_plans")
         coll.document(plan_date).set(doc, merge=True)
-        coll.document("latest").set(doc, merge=True)
+        latest_doc = build_night_plan_firestore_document(
+            plan,
+            source=source,
+            updated_at=now,
+            force_inline_detail=True,
+            archive_info=archive_info,
+        )
+        coll.document("latest").set(latest_doc, merge=True)
         print(f"[cloud_job_runner] persisted night plan to Firestore date={plan_date}", flush=True)
         return True
     except Exception as exc:
@@ -201,6 +202,8 @@ def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> 
     if client is None:
         return False
     try:
+        from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
+
         candidates = [target_date] if target_date else []
         candidates.append("latest")
         for doc_id in candidates:
@@ -208,10 +211,9 @@ def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> 
             if not snap.exists:
                 continue
             data = snap.to_dict() or {}
-            plan_text = str(data.get("plan_json", "")).strip()
-            if not plan_text:
+            plan = load_night_plan_detail_from_firestore_doc(data)
+            if not plan:
                 continue
-            plan = json.loads(plan_text)
             plan_date = _plan_date_from_json(plan)
             if target_date and plan_date and plan_date != target_date:
                 continue
@@ -507,6 +509,17 @@ def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
                     latest_dt = dt
                     latest_soc = soc
     return latest_soc
+
+
+def _latest_realtime_soc_percent() -> float | None:
+    from app.kpnet_workflow import KpNetClient, KpNetConfig
+
+    client = KpNetClient(KpNetConfig.from_env())
+    client.login()
+    try:
+        return client.read_realtime_soc_percent()
+    finally:
+        client.logout()
 
 
 def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
@@ -914,7 +927,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-    latest_soc = _latest_soc_percent(csv_paths)
+    latest_soc = _latest_realtime_soc_percent()
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     if _should_keep_standby_without_charge(
         required_charge_percent=required_charge_percent,
@@ -1025,11 +1038,10 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     while time.time() - started_at < monitor_seconds:
         try:
-            _run_csv_with_retry(label="03-monitor-csv")
+            latest_soc = _latest_realtime_soc_percent()
         except Exception as exc:
-            print(f"[cloud_job_runner] 03-monitor csv retry exhausted; continue monitoring: {exc}", flush=True)
-        csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-        latest_soc = _latest_soc_percent(csv_paths)
+            latest_soc = None
+            print(f"[cloud_job_runner] 03-monitor realtime SOC unavailable: {exc}", flush=True)
         if latest_soc is not None:
             print(
                 f"[cloud_job_runner] 03-monitor latest_soc={latest_soc:.2f}% "
