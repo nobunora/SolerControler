@@ -112,7 +112,6 @@ def _month_key(month: str) -> tuple[int, int]:
 class NightChargePlan:
     plan_path: Path
     forecast_date: str
-    forecast_sun_hours: float | None
     required_night_charge_kwh: float
     target_soc_7_percent: float
     soc_now_percent: float | None
@@ -222,51 +221,13 @@ def _resolve_day_discharge_start_hhmm(
         cfg.day_discharge_window_start,
         name="KP_DAY_DISCHARGE_WINDOW_START",
     )
-    rule = _variable_rule(conditions, "day_discharge_start_by_forecast")
-    if rule is None:
-        summary["day_discharge_start_rule"] = {
-            "status": "rule-not-found",
-            "selected": "default",
-            "selected_start": f"{default_hh:02d}:{default_mm:02d}",
-        }
-        return default_hh, default_mm
-
-    threshold_raw = rule.get("sunny_min_sun_hours", 6.0)
-    try:
-        sunny_min_sun_hours = float(threshold_raw)
-    except (TypeError, ValueError):
-        sunny_min_sun_hours = 6.0
-
-    sunny_hh, sunny_mm = _parse_hhmm(
-        str(rule.get("sunny_start", "06:00")),
-        name="day_discharge_start_by_forecast.sunny_start",
-    )
-    cloudy_hh, cloudy_mm = _parse_hhmm(
-        str(rule.get("cloudy_start", "07:00")),
-        name="day_discharge_start_by_forecast.cloudy_start",
-    )
-
-    forecast_sun_hours = plan.forecast_sun_hours if plan is not None else None
-    if forecast_sun_hours is None:
-        selected = "default"
-        resolved_hh, resolved_mm = default_hh, default_mm
-    elif forecast_sun_hours >= sunny_min_sun_hours:
-        selected = "sunny"
-        resolved_hh, resolved_mm = sunny_hh, sunny_mm
-    else:
-        selected = "cloudy"
-        resolved_hh, resolved_mm = cloudy_hh, cloudy_mm
-
     summary["day_discharge_start_rule"] = {
-        "status": "applied",
-        "selected": selected,
-        "forecast_sun_hours": forecast_sun_hours,
-        "sunny_min_sun_hours": sunny_min_sun_hours,
-        "sunny_start": f"{sunny_hh:02d}:{sunny_mm:02d}",
-        "cloudy_start": f"{cloudy_hh:02d}:{cloudy_mm:02d}",
-        "selected_start": f"{resolved_hh:02d}:{resolved_mm:02d}",
+        "status": "fixed",
+        "selected": "default",
+        "selected_start": f"{default_hh:02d}:{default_mm:02d}",
+        "source": "KP_DAY_DISCHARGE_WINDOW_START",
     }
-    return resolved_hh, resolved_mm
+    return default_hh, default_mm
 
 
 def _resolve_night_charge_end_hhmm(
@@ -275,64 +236,19 @@ def _resolve_night_charge_end_hhmm(
     plan: NightChargePlan,
     summary: dict[str, Any],
 ) -> tuple[int, int]:
-    base_hh, base_mm = _resolve_hhmm(
+    hh, mm = _resolve_hhmm(
         conditions,
         rule_id="night_charge_end_time",
         key="value",
-        default_hhmm="06:00",
+        default_hhmm="07:00",
     )
-    rule = _variable_rule(conditions, "night_charge_end_by_forecast")
-    if rule is None:
-        summary["night_charge_end_rule"] = {
-            "status": "rule-not-found",
-            "selected": "base",
-            "selected_end": f"{base_hh:02d}:{base_mm:02d}",
-        }
-        return base_hh, base_mm
-
-    threshold_raw = rule.get("sunny_min_sun_hours", 6.0)
-    try:
-        sunny_min_sun_hours = float(threshold_raw)
-    except (TypeError, ValueError):
-        sunny_min_sun_hours = 6.0
-
-    # sunny_end を未指定にした場合、night_charge_end_time をそのまま使う
-    sunny_end_raw = str(rule.get("sunny_end", "")).strip()
-    if sunny_end_raw:
-        sunny_hh, sunny_mm = _parse_hhmm(
-            sunny_end_raw,
-            name="night_charge_end_by_forecast.sunny_end",
-        )
-    else:
-        sunny_hh, sunny_mm = base_hh, base_mm
-
-    cloudy_hh, cloudy_mm = _parse_hhmm(
-        str(rule.get("cloudy_or_rain_end", "07:00")),
-        name="night_charge_end_by_forecast.cloudy_or_rain_end",
-    )
-
-    forecast_sun_hours = plan.forecast_sun_hours
-    if forecast_sun_hours is None:
-        selected = "base"
-        resolved_hh, resolved_mm = base_hh, base_mm
-    elif forecast_sun_hours >= sunny_min_sun_hours:
-        selected = "sunny"
-        resolved_hh, resolved_mm = sunny_hh, sunny_mm
-    else:
-        selected = "cloudy_or_rain"
-        resolved_hh, resolved_mm = cloudy_hh, cloudy_mm
-
     summary["night_charge_end_rule"] = {
-        "status": "applied",
-        "selected": selected,
-        "forecast_sun_hours": forecast_sun_hours,
-        "sunny_min_sun_hours": sunny_min_sun_hours,
-        "base_end": f"{base_hh:02d}:{base_mm:02d}",
-        "sunny_end": f"{sunny_hh:02d}:{sunny_mm:02d}",
-        "cloudy_or_rain_end": f"{cloudy_hh:02d}:{cloudy_mm:02d}",
-        "selected_end": f"{resolved_hh:02d}:{resolved_mm:02d}",
+        "status": "fixed",
+        "selected": "base",
+        "selected_end": f"{hh:02d}:{mm:02d}",
+        "source": "night_charge_end_time",
     }
-    return resolved_hh, resolved_mm
+    return hh, mm
 
 
 def _apply_fixed_time_rules(
@@ -492,13 +408,6 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     forecast_date = str(forecast.get("date", "")).strip()
     if not forecast_date:
         raise RuntimeError("夜間充電計画にforecast.dateが含まれていません")
-    forecast_sun_hours: float | None = None
-    forecast_sun_hours_raw = forecast.get("sun_hours", None)
-    if forecast_sun_hours_raw is not None and str(forecast_sun_hours_raw).strip():
-        try:
-            forecast_sun_hours = float(forecast_sun_hours_raw)
-        except (TypeError, ValueError):
-            LOGGER.warning("Invalid forecast.sun_hours in night plan: %r", forecast_sun_hours_raw)
     csv_paths = [Path(str(p)) for p in raw.get("csv_paths", [])]
     if not csv_paths:
         raise RuntimeError("夜間充電計画にCSVパスが含まれていません")
@@ -506,7 +415,6 @@ def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     return NightChargePlan(
         plan_path=plan_path,
         forecast_date=forecast_date,
-        forecast_sun_hours=forecast_sun_hours,
         required_night_charge_kwh=required_night_charge_kwh,
         target_soc_7_percent=target_soc_7_percent,
         soc_now_percent=soc_now_percent,

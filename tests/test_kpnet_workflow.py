@@ -274,7 +274,6 @@ def test_night_mode_preference_uses_target_soc_above_green_ceiling(tmp_path: Pat
     plan = NightChargePlan(
         plan_path=tmp_path / "night_charge_plan.json",
         forecast_date="2026-06-02",
-        forecast_sun_hours=0.7,
         required_night_charge_kwh=3.7,
         target_soc_7_percent=80.0,
         soc_now_percent=39.0,
@@ -300,7 +299,6 @@ def test_night_mode_preference_uses_forced_for_adjust03_charge_need(
     plan = NightChargePlan(
         plan_path=tmp_path / "night_charge_plan.json",
         forecast_date="2026-06-02",
-        forecast_sun_hours=4.0,
         required_night_charge_kwh=0.2,
         target_soc_7_percent=20.0,
         soc_now_percent=18.0,
@@ -475,18 +473,8 @@ def test_build_dynamic_forced_profile_times_rounded_soc_limit_by_raw_target(
     assert night_plan_summary.get("charge_rate_percent_per_hour") == pytest.approx(40.0)
 
 
-@pytest.mark.parametrize(
-    ("sun_hours", "expected_discharge_start_h", "expected_charge_end_h"),
-    [
-        (8.0, "6", "6"),
-        (2.0, "7", "7"),
-    ],
-)
-def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
+def test_build_dynamic_forced_profile_uses_fixed_discharge_start_and_charge_end(
     tmp_path: Path,
-    sun_hours: float,
-    expected_discharge_start_h: str,
-    expected_charge_end_h: str,
 ) -> None:
     conditions_path = tmp_path / "operation_conditions.json"
     conditions_path.write_text(
@@ -513,29 +501,14 @@ def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
                         "id": "night_charge_end_time",
                         "enabled": True,
                         "priority": 500,
-                        "value": "06:00",
+                        "value": "07:00",
                     },
                     {
                         "id": "day_charge_window",
                         "enabled": True,
                         "priority": 400,
                         "start": "00:00",
-                        "end": "06:00",
-                    },
-                    {
-                        "id": "night_charge_end_by_forecast",
-                        "enabled": True,
-                        "priority": 450,
-                        "sunny_min_sun_hours": 6.0,
-                        "cloudy_or_rain_end": "07:00",
-                    },
-                    {
-                        "id": "day_discharge_start_by_forecast",
-                        "enabled": True,
-                        "priority": 350,
-                        "sunny_min_sun_hours": 6.0,
-                        "sunny_start": "06:00",
-                        "cloudy_start": "07:00",
+                        "end": "07:00",
                     },
                 ],
             },
@@ -558,7 +531,7 @@ def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
     plan_path.write_text(
         json.dumps(
             {
-                "forecast": {"date": "2026-05-03", "sun_hours": sun_hours},
+                "forecast": {"date": "2026-05-03", "sun_hours": 8.0},
                 "result": {
                     "required_night_charge_kwh": 0.0,
                     "target_soc_7_percent": 0.0,
@@ -580,11 +553,11 @@ def test_build_dynamic_forced_profile_switches_discharge_start_by_forecast(
     summary: dict[str, object] = {}
     profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=value_maps, summary=summary)
 
-    assert profile.discharge_start_h == expected_discharge_start_h
+    assert profile.discharge_start_h == "7"
     assert profile.discharge_start_m == "0"
-    assert profile.charge_start_h == expected_charge_end_h
+    assert profile.charge_start_h == "7"
     assert profile.charge_start_m == "0"
-    assert profile.charge_end_h == expected_charge_end_h
+    assert profile.charge_end_h == "7"
 
 
 @pytest.mark.parametrize(
