@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 
 from app.operations_db import (
     _extract_battery_daily_from_summary,
+    _extract_final_pv_source_from_plan,
     _extract_final_pv_totals_from_plan,
     _extract_hourly_forecast_from_plan,
     _fetch_open_meteo_today_actual,
@@ -258,11 +259,7 @@ def ingest_sunshine_from_night_plan(
     pv_forecast = data.get("pv_array_forecast", {})
     pv_totals = _extract_final_pv_totals_from_plan(data)
     pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
-    forecast_source = str(
-        (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)
-        or forecast.get("source")
-        or "forecast"
-    )
+    forecast_source = _extract_final_pv_source_from_plan(data)
     lat = float(env("FORECAST_LATITUDE", default="35.67452"))
     lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 

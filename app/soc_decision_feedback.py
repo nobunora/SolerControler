@@ -172,6 +172,38 @@ def _simulate_actual_day(
     }
 
 
+def _hourly_total(value: Any) -> float | None:
+    if not isinstance(value, dict):
+        return None
+    total = 0.0
+    found = False
+    for raw in value.values():
+        parsed = to_float(raw)
+        if parsed is None:
+            continue
+        total += max(0.0, parsed)
+        found = True
+    return total if found else None
+
+
+def _decision_features_from_plan_and_actual(plan: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
+    actual_pv = sum(actual["pv_by_hour"].values()) if isinstance(actual.get("pv_by_hour"), dict) else None
+    actual_load = sum(actual["load_by_hour"].values()) if isinstance(actual.get("load_by_hour"), dict) else None
+    forecast_load = _hourly_total(_nested(plan, "daytime_soc_optimization.hourly_load_forecast_kwh"))
+    if forecast_load is None:
+        forecast_load = to_float(_nested(plan, "consumption_forecast.daytime_load_kwh"))
+    return {
+        "forecast_pv_kwh": to_float(_nested(plan, "result.final_predicted_pv_kwh")),
+        "forecast_load_kwh": forecast_load,
+        "actual_pv_kwh": round(actual_pv, 4) if actual_pv is not None else None,
+        "actual_load_kwh": round(actual_load, 4) if actual_load is not None else None,
+        "forecast_shortwave_radiation_sum_mj_m2": to_float(_nested(plan, "forecast.shortwave_radiation_sum_mj_m2")),
+        "forecast_temp_c": to_float(_nested(plan, "forecast.temp_c")),
+        "weather_class": _nested(plan, "forecast.weather_class"),
+        "final_pv_forecast_source": _nested(plan, "result.final_pv_forecast_source"),
+    }
+
+
 def build_soc_decision_feedback(
     *,
     plan: dict[str, Any],
@@ -258,6 +290,7 @@ def build_soc_decision_feedback(
             "pv_kwh": round(sum(actual["pv_by_hour"].values()), 4),
             "load_kwh": round(sum(actual["load_by_hour"].values()), 4),
         },
+        "decision_features": _decision_features_from_plan_and_actual(plan, actual),
         "plan_reference": {
             "target_soc_7_percent": to_float(_nested(plan, "result.target_soc_7_percent")),
             "required_night_charge_kwh": to_float(_nested(plan, "result.required_night_charge_kwh")),
@@ -284,10 +317,106 @@ def _regret_map_from_doc(doc: dict[str, Any]) -> dict[float, float]:
     return out
 
 
+def _feedback_features(doc: dict[str, Any]) -> dict[str, Any]:
+    features = doc.get("decision_features")
+    if isinstance(features, dict):
+        return dict(features)
+    actual = doc.get("actual_summary")
+    plan = doc.get("plan_reference")
+    actual = actual if isinstance(actual, dict) else {}
+    plan = plan if isinstance(plan, dict) else {}
+    return {
+        "forecast_pv_kwh": to_float(plan.get("final_predicted_pv_kwh")),
+        "forecast_load_kwh": None,
+        "actual_pv_kwh": to_float(actual.get("pv_kwh")),
+        "actual_load_kwh": to_float(actual.get("load_kwh")),
+        "forecast_shortwave_radiation_sum_mj_m2": None,
+        "forecast_temp_c": None,
+        "weather_class": None,
+        "final_pv_forecast_source": None,
+    }
+
+
+def _relative_similarity(target: float | None, reference: float | None, *, full_diff_ratio: float) -> float | None:
+    if target is None or reference is None:
+        return None
+    if target <= 0.0 and reference <= 0.0:
+        return 1.0
+    denominator = max(abs(target), abs(reference), 0.01)
+    diff_ratio = abs(target - reference) / denominator
+    return max(0.0, min(1.0, 1.0 - diff_ratio / max(0.01, full_diff_ratio)))
+
+
+def _temperature_similarity(target: float | None, reference: float | None, *, full_diff_c: float) -> float | None:
+    if target is None or reference is None:
+        return None
+    return max(0.0, min(1.0, 1.0 - abs(target - reference) / max(0.1, full_diff_c)))
+
+
+def _feedback_similarity(doc: dict[str, Any], target_features: dict[str, Any] | None) -> dict[str, Any]:
+    if not target_features or not env_bool("SOC_DECISION_FEEDBACK_SIMILARITY_ENABLED", default=True):
+        return {"similarity": 1.0, "components": {}, "reason": "not_used"}
+
+    feedback = _feedback_features(doc)
+    components: dict[str, float] = {}
+    pv_target = to_float(target_features.get("forecast_pv_kwh"))
+    pv_reference = to_float(feedback.get("actual_pv_kwh"))
+    if pv_reference is None:
+        pv_reference = to_float(feedback.get("forecast_pv_kwh"))
+    pv_similarity = _relative_similarity(
+        pv_target,
+        pv_reference,
+        full_diff_ratio=max(0.01, env_float("SOC_DECISION_FEEDBACK_PV_FULL_DIFF_RATIO", default=0.50)),
+    )
+    if pv_similarity is not None:
+        components["pv_kwh"] = pv_similarity
+
+    load_similarity = _relative_similarity(
+        to_float(target_features.get("forecast_load_kwh")),
+        to_float(feedback.get("actual_load_kwh")) or to_float(feedback.get("forecast_load_kwh")),
+        full_diff_ratio=max(0.01, env_float("SOC_DECISION_FEEDBACK_LOAD_FULL_DIFF_RATIO", default=0.55)),
+    )
+    if load_similarity is not None:
+        components["load_kwh"] = load_similarity
+
+    shortwave_similarity = _relative_similarity(
+        to_float(target_features.get("forecast_shortwave_radiation_sum_mj_m2")),
+        to_float(feedback.get("forecast_shortwave_radiation_sum_mj_m2")),
+        full_diff_ratio=max(0.01, env_float("SOC_DECISION_FEEDBACK_SHORTWAVE_FULL_DIFF_RATIO", default=0.60)),
+    )
+    if shortwave_similarity is not None:
+        components["shortwave"] = shortwave_similarity
+
+    temp_similarity = _temperature_similarity(
+        to_float(target_features.get("forecast_temp_c")),
+        to_float(feedback.get("forecast_temp_c")),
+        full_diff_c=max(0.1, env_float("SOC_DECISION_FEEDBACK_TEMP_FULL_DIFF_C", default=10.0)),
+    )
+    if temp_similarity is not None:
+        components["temp_c"] = temp_similarity
+
+    target_source = str(target_features.get("final_pv_forecast_source") or "").strip()
+    feedback_source = str(feedback.get("final_pv_forecast_source") or "").strip()
+    if target_source and feedback_source and target_source != feedback_source:
+        components["source"] = max(
+            0.0,
+            min(1.0, env_float("SOC_DECISION_FEEDBACK_SOURCE_MISMATCH_FACTOR", default=0.80)),
+        )
+
+    if not components:
+        return {"similarity": 0.0, "components": {}, "reason": "missing_comparable_features"}
+    return {
+        "similarity": round(min(components.values()), 6),
+        "components": {key: round(value, 6) for key, value in sorted(components.items())},
+        "reason": "matched",
+    }
+
+
 def build_soc_decision_prior(
     feedback_docs: list[dict[str, Any]],
     *,
     target_date: str,
+    target_features: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not env_bool("SOC_DECISION_FEEDBACK_ENABLED", default=True):
         return {"enabled": False, "applied": False, "reason": "disabled"}
@@ -298,7 +427,7 @@ def build_soc_decision_prior(
 
     lookback_days = max(1, int(env_float("SOC_DECISION_FEEDBACK_LOOKBACK_DAYS", default=7.0)))
     min_day = target_day - timedelta(days=lookback_days)
-    usable: list[dict[str, Any]] = []
+    recent: list[dict[str, Any]] = []
     for doc in feedback_docs:
         day_text = str(doc.get("date") or "").strip()
         try:
@@ -306,18 +435,44 @@ def build_soc_decision_prior(
         except ValueError:
             continue
         if min_day <= day < target_day and _regret_map_from_doc(doc):
-            usable.append(doc)
-    usable.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
-    if not usable:
+            recent.append(doc)
+    recent.sort(key=lambda item: str(item.get("date") or ""), reverse=True)
+    if not recent:
         return {"enabled": True, "applied": False, "reason": "no_recent_feedback"}
 
     decay = max(0.1, min(1.0, env_float("SOC_DECISION_FEEDBACK_RECENCY_DECAY", default=0.75)))
+    min_similarity = max(0.0, min(1.0, env_float("SOC_DECISION_FEEDBACK_MIN_SIMILARITY", default=0.20)))
     weighted: dict[float, tuple[float, float]] = {}
     best_targets: list[float] = []
     source_dates: list[str] = []
-    for index, doc in enumerate(usable):
-        weight = decay ** index
-        source_dates.append(str(doc.get("date") or ""))
+    source_similarity: list[dict[str, Any]] = []
+    excluded_feedback: list[dict[str, Any]] = []
+    effective_similarity_count = 0.0
+    for index, doc in enumerate(recent):
+        similarity_info = _feedback_similarity(doc, target_features)
+        similarity = float(similarity_info.get("similarity") or 0.0)
+        day_text = str(doc.get("date") or "")
+        if similarity < min_similarity:
+            excluded_feedback.append(
+                {
+                    "date": day_text,
+                    "similarity": round(similarity, 6),
+                    "reason": similarity_info.get("reason"),
+                    "components": similarity_info.get("components", {}),
+                }
+            )
+            continue
+        weight = (decay ** index) * similarity
+        source_dates.append(day_text)
+        source_similarity.append(
+            {
+                "date": day_text,
+                "similarity": round(similarity, 6),
+                "weight": round(weight, 6),
+                "components": similarity_info.get("components", {}),
+            }
+        )
+        effective_similarity_count += similarity
         best = to_float(doc.get("best_target_soc_percent"))
         if best is not None:
             best_targets.append(best)
@@ -326,24 +481,37 @@ def build_soc_decision_prior(
             weighted[target] = (total + regret * weight, total_weight + weight)
 
     if not weighted:
-        return {"enabled": True, "applied": False, "reason": "empty_regret_curve"}
+        return {
+            "enabled": True,
+            "applied": False,
+            "reason": "no_similar_feedback" if target_features else "empty_regret_curve",
+            "target_date": target_date,
+            "considered_count": len(recent),
+            "excluded_feedback": excluded_feedback,
+            "target_features": target_features or {},
+        }
 
     confidence_days = max(0.1, env_float("SOC_DECISION_FEEDBACK_CONFIDENCE_DAYS", default=2.0))
-    confidence = len(usable) / (len(usable) + confidence_days)
+    confidence = effective_similarity_count / (effective_similarity_count + confidence_days)
     base_weight = max(0.0, env_float("SOC_DECISION_FEEDBACK_WEIGHT", default=0.35))
     applied_weight = base_weight * confidence
     max_penalty_yen = max(0.0, env_float("SOC_DECISION_FEEDBACK_MAX_PENALTY_YEN", default=30.0))
     return {
         "enabled": True,
         "applied": applied_weight > 0.0 and max_penalty_yen > 0.0,
-        "method": "recent_realized_soc_regret_curve",
-        "sample_count": len(usable),
+        "method": "similar_recent_realized_soc_regret_curve",
+        "sample_count": len(source_dates),
+        "considered_count": len(recent),
+        "excluded_count": len(excluded_feedback),
         "confidence": round(confidence, 6),
         "weight": round(applied_weight, 6),
         "base_weight": round(base_weight, 6),
         "max_penalty_yen": round(max_penalty_yen, 4),
         "target_date": target_date,
+        "target_features": target_features or {},
         "source_dates": source_dates,
+        "source_similarity": source_similarity,
+        "excluded_feedback": excluded_feedback[-10:],
         "best_target_soc_percent_median": round(float(median(best_targets)), 4) if best_targets else None,
         "regret_yen_by_soc": {
             str(int(target) if abs(target - round(target)) < 1e-9 else target): round(total / total_weight, 4)
@@ -353,7 +521,11 @@ def build_soc_decision_prior(
     }
 
 
-def load_soc_decision_prior_from_firestore(*, target_date: str) -> dict[str, Any]:
+def load_soc_decision_prior_from_firestore(
+    *,
+    target_date: str,
+    target_features: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not env_bool("SOC_DECISION_FEEDBACK_ENABLED", default=True):
         return {"enabled": False, "applied": False, "reason": "disabled"}
     backend = os.getenv("DATA_BACKEND", "").strip().lower()
@@ -365,7 +537,14 @@ def load_soc_decision_prior_from_firestore(*, target_date: str) -> dict[str, Any
 
         database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
         client = firestore.Client(project=project_id, database=database_id) if project_id else firestore.Client(database=database_id)
-        docs = [doc.to_dict() or {} for doc in client.collection("soc_decision_feedback").stream()]
+        target_day = date.fromisoformat(target_date)
+        lookback_days = max(1, int(env_float("SOC_DECISION_FEEDBACK_LOOKBACK_DAYS", default=7.0)))
+        docs: list[dict[str, Any]] = []
+        collection = client.collection("soc_decision_feedback")
+        for offset in range(1, lookback_days + 1):
+            snap = collection.document((target_day - timedelta(days=offset)).isoformat()).get()
+            if snap.exists:
+                docs.append(snap.to_dict() or {})
     except Exception as exc:
         return {"enabled": True, "applied": False, "reason": f"firestore_error:{exc}"}
-    return build_soc_decision_prior(docs, target_date=target_date)
+    return build_soc_decision_prior(docs, target_date=target_date, target_features=target_features)

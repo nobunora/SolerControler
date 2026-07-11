@@ -246,6 +246,55 @@ def _pv_uncertainty_from_forecast(pv_forecast: dict[str, object] | None) -> PvFo
     )
 
 
+def _physical_pv_uncertainty_from_diagnostics(diagnostics: dict[str, object]) -> PvForecastUncertainty:
+    data_quality = diagnostics.get("data_quality")
+    sample_count = 0
+    if isinstance(data_quality, dict):
+        sample_count = int(_to_optional_float(data_quality.get("global_days")) or 0)
+    std = max(0.0, _env_float("PHYSICAL_PV_FORECAST_ERROR_RATIO_STD", _env_float("PV_FORECAST_ERROR_RATIO_STD", 0.30)))
+    method = str(diagnostics.get("selected_method") or "physical")
+    return PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=std,
+        variance_multiplier=std * std,
+        sample_count=sample_count,
+        source=f"{method}_neutral_mean",
+    )
+
+
+def _selected_pv_uncertainty(
+    *,
+    physical_pv_selected: bool,
+    physical_pv_diagnostics: dict[str, object],
+    pv_array_forecast: dict[str, object] | None,
+) -> PvForecastUncertainty:
+    if physical_pv_selected:
+        return _physical_pv_uncertainty_from_diagnostics(physical_pv_diagnostics)
+    return _pv_uncertainty_from_forecast(pv_array_forecast if isinstance(pv_array_forecast, dict) else None)
+
+
+def _soc_decision_target_features(
+    *,
+    forecast: dict[str, object],
+    hourly_load_forecast: dict[int, float],
+    hourly_pv_forecast: dict[int, float],
+    final_pv_forecast_source: str,
+) -> dict[str, object]:
+    return {
+        "forecast_pv_kwh": round(sum(max(0.0, value) for value in hourly_pv_forecast.values()), 4),
+        "forecast_load_kwh": round(
+            sum(max(0.0, value) for hour, value in hourly_load_forecast.items() if 7 <= int(hour) < 23),
+            4,
+        ),
+        "forecast_shortwave_radiation_sum_mj_m2": _to_optional_float(
+            forecast.get("shortwave_radiation_sum_mj_m2")
+        ),
+        "forecast_temp_c": _to_optional_float(forecast.get("temp_c")),
+        "weather_class": forecast.get("weather_class"),
+        "final_pv_forecast_source": final_pv_forecast_source,
+    }
+
+
 def _soc_cost_model_from_env(
     *,
     battery_round_trip_efficiency: float,
@@ -1896,6 +1945,12 @@ def main() -> int:
         target_date=tomorrow_date,
     )
     pv_selected_method = str(physical_pv_diagnostics.get("selected_method") or "existing")
+    final_pv_forecast_source = "physical_pv_forecast" if physical_pv_selected else "corrected_pv_forecast"
+    selected_pv_uncertainty = _selected_pv_uncertainty(
+        physical_pv_selected=physical_pv_selected,
+        physical_pv_diagnostics=physical_pv_diagnostics,
+        pv_array_forecast=pv_array_forecast if isinstance(pv_array_forecast, dict) else None,
+    )
     apply_pv_headroom_caps = not _uses_physical_pv_forecast(physical_pv_diagnostics)
     morning_headroom_guard_for_payload = _annotate_pv_headroom_guard_policy(
         morning_headroom_guard,
@@ -1964,9 +2019,7 @@ def main() -> int:
     cost_optimization_payload: dict[str, object] | None = None
     cost_optimization_enabled = _env_bool("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", True)
     if cost_optimization_enabled:
-        pv_uncertainty = _apply_uncertainty_floor(
-            _pv_uncertainty_from_forecast(pv_array_forecast if isinstance(pv_array_forecast, dict) else None)
-        )
+        pv_uncertainty = _apply_uncertainty_floor(selected_pv_uncertainty)
         cost_model = _soc_cost_model_from_env(
             battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
             monthly_day_buy_kwh_before_target=(
@@ -1998,7 +2051,16 @@ def main() -> int:
         peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
         peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
         peak_penalty_rate = cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
-        soc_decision_prior = load_soc_decision_prior_from_firestore(target_date=tomorrow_date)
+        soc_decision_target_features = _soc_decision_target_features(
+            forecast=forecast,
+            hourly_load_forecast=hourly_load_forecast,
+            hourly_pv_forecast=hourly_pv_forecast,
+            final_pv_forecast_source=final_pv_forecast_source,
+        )
+        soc_decision_prior = load_soc_decision_prior_from_firestore(
+            target_date=tomorrow_date,
+            target_features=soc_decision_target_features,
+        )
         prior_regret_curve = (
             soc_decision_prior.get("regret_yen_by_soc")
             if isinstance(soc_decision_prior, dict) and soc_decision_prior.get("applied")
@@ -2134,9 +2196,7 @@ def main() -> int:
         if isinstance(arrays, list):
             total_capacity = sum(_to_optional_float(a.get("capacity_kw")) or 0.0 for a in arrays if isinstance(a, dict))
             coefficients["pv_array_total_capacity_kw"] = total_capacity
-    pv_uncertainty_for_payload = _pv_uncertainty_from_forecast(
-        pv_array_forecast if isinstance(pv_array_forecast, dict) else None
-    )
+    pv_uncertainty_for_payload = selected_pv_uncertainty
     coefficients["pv_forecast_error_ratio_mean"] = pv_uncertainty_for_payload.mean_multiplier
     coefficients["pv_forecast_error_ratio_std"] = pv_uncertainty_for_payload.std_multiplier
     coefficients["pv_forecast_error_ratio_variance"] = pv_uncertainty_for_payload.variance_multiplier
@@ -2155,9 +2215,7 @@ def main() -> int:
     result_payload["final_predicted_morning_pv_kwh"] = final_pv_totals["morning_kwh"]
     result_payload["final_predicted_midday_pv_kwh"] = final_pv_totals["midday_kwh"]
     result_payload["final_predicted_evening_pv_kwh"] = final_pv_totals["evening_kwh"]
-    result_payload["final_pv_forecast_source"] = (
-        "physical_pv_forecast" if physical_pv_selected else "corrected_pv_forecast"
-    )
+    result_payload["final_pv_forecast_source"] = final_pv_forecast_source
 
     plan_quality = _build_plan_quality(
         forecast=forecast,

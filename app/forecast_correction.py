@@ -11,7 +11,7 @@ that can be persisted for later validation.
 import math
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -75,10 +75,20 @@ def _actual_hourly_totals_by_day(
     return by_day
 
 
+def _forecast_history_start_date(*, target_date: str) -> str:
+    lookback_days = max(1, int(env_float("FORECAST_HOURLY_HISTORY_LOOKBACK_DAYS", default=60.0)))
+    try:
+        target_day = datetime.fromisoformat(target_date).date()
+    except ValueError:
+        return "0001-01-01"
+    return (target_day - timedelta(days=lookback_days)).isoformat()
+
+
 def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, dict[int, dict[str, float]]]:
     db_path = Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))
     if not db_path.exists():
         return {}
+    start_date = _forecast_history_start_date(target_date=target_date)
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -87,10 +97,10 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
                 """
                 SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_shortwave_radiation_w_m2
                 FROM forecast_hourly
-                WHERE date < ?
+                WHERE date >= ? AND date < ?
                 ORDER BY date, hour
                 """,
-                (target_date,),
+                (start_date, target_date),
             ).fetchall()
         finally:
             conn.close()
@@ -114,6 +124,7 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
     backend = os.getenv("DATA_BACKEND", "").strip().lower()
     if backend != "firestore" and not os.getenv("FIRESTORE_PROJECT_ID", "").strip():
         return {}
+    start_date = _forecast_history_start_date(target_date=target_date)
     try:
         from google.cloud import firestore
 
@@ -123,7 +134,12 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
             firestore.Client(project=project_id, database=database_id)
             if project_id else firestore.Client(database=database_id)
         )
-        docs = list(client.collection("forecast_hourly").where("date", "<", target_date).stream())
+        docs = list(
+            client.collection("forecast_hourly")
+            .where("date", ">=", start_date)
+            .where("date", "<", target_date)
+            .stream()
+        )
     except Exception:
         return {}
 

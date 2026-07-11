@@ -114,6 +114,28 @@ def _extract_final_pv_totals_from_plan(data: dict[str, Any]) -> dict[str, float 
     }
 
 
+def _extract_final_pv_source_from_plan(data: dict[str, Any]) -> str:
+    result = data.get("result", {})
+    if isinstance(result, dict):
+        source = str(result.get("final_pv_forecast_source") or "").strip()
+        if source:
+            return source
+    rationale = data.get("decision_rationale", {})
+    if isinstance(rationale, dict):
+        final_pv = rationale.get("final_pv_forecast", {})
+        if isinstance(final_pv, dict):
+            source = str(final_pv.get("source") or "").strip()
+            if source:
+                return source
+    pv_forecast = data.get("pv_array_forecast", {})
+    forecast = data.get("forecast", {})
+    return str(
+        (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)
+        or (forecast.get("source") if isinstance(forecast, dict) else None)
+        or "forecast"
+    )
+
+
 def _safe_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
@@ -696,11 +718,7 @@ def ingest_sunshine_from_night_plan(
     pv_forecast = data.get("pv_array_forecast", {})
     pv_totals = _extract_final_pv_totals_from_plan(data)
     pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
-    forecast_source = str(
-        (pv_forecast.get("source") if isinstance(pv_forecast, dict) else None)
-        or forecast.get("source")
-        or "forecast"
-    )
+    forecast_source = _extract_final_pv_source_from_plan(data)
     lat = float(env("FORECAST_LATITUDE", default="35.67452"))
     lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 

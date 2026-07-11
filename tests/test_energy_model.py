@@ -29,6 +29,7 @@ from energy_model_main import (
     _reshape_hourly_pv_by_weather,
     _estimate_remaining_overnight_load_kwh,
     _risk_adjusted_peak_penalty,
+    _selected_pv_uncertainty,
 )
 
 
@@ -626,3 +627,38 @@ def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypa
     assert rationale["pv_ratio_ewma_raw"] > 1.0
     assert rationale["pv_ratio_ewma_skipped"] is True
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(2.0)
+
+
+def test_selected_pv_uncertainty_uses_physical_neutral_mean(monkeypatch) -> None:
+    monkeypatch.setenv("PV_FORECAST_ERROR_MIN_SAMPLE_DAYS", "1")
+    monkeypatch.setenv("PHYSICAL_PV_FORECAST_ERROR_RATIO_STD", "0.22")
+    pv_array_forecast = {
+        "calibration": {
+            "forecast_error_distribution": {
+                "sample_count": 5,
+                "mean_multiplier": 0.55,
+                "std_multiplier": 0.11,
+                "source": "legacy_pv",
+            }
+        }
+    }
+
+    physical = _selected_pv_uncertainty(
+        physical_pv_selected=True,
+        physical_pv_diagnostics={
+            "selected_method": "physical_altitude_shortwave",
+            "data_quality": {"global_days": 8},
+        },
+        pv_array_forecast=pv_array_forecast,
+    )
+    legacy = _selected_pv_uncertainty(
+        physical_pv_selected=False,
+        physical_pv_diagnostics={},
+        pv_array_forecast=pv_array_forecast,
+    )
+
+    assert physical.mean_multiplier == pytest.approx(1.0)
+    assert physical.std_multiplier == pytest.approx(0.22)
+    assert physical.sample_count == 8
+    assert physical.source == "physical_altitude_shortwave_neutral_mean"
+    assert legacy.mean_multiplier == pytest.approx(0.55)

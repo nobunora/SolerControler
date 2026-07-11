@@ -403,7 +403,11 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
                   }
                 ]
               },
+              "result": {
+                "final_pv_forecast_source": "physical_pv_forecast"
+              },
               "pv_array_forecast": {
+                "source": "open_meteo_gti",
                 "totals": {
                   "total_kwh": 9.9,
                   "morning_kwh": 9.9,
@@ -456,7 +460,7 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
         daily = conn.execute(
             """
             SELECT forecast_pv_total_kwh, forecast_pv_morning_kwh,
-                   forecast_pv_midday_kwh, forecast_pv_evening_kwh
+                   forecast_pv_midday_kwh, forecast_pv_evening_kwh, source
             FROM sunshine_daily
             WHERE date = '2026-05-03'
             """
@@ -465,6 +469,7 @@ def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
         assert daily["forecast_pv_morning_kwh"] == pytest.approx(1.5)
         assert daily["forecast_pv_midday_kwh"] == pytest.approx(2.0)
         assert daily["forecast_pv_evening_kwh"] == pytest.approx(0.5)
+        assert daily["source"] == "physical_pv_forecast"
     finally:
         conn.close()
 

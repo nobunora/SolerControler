@@ -53,6 +53,8 @@ def test_build_soc_decision_feedback_finds_realized_best_soc(tmp_path: Path) -> 
 
     assert feedback is not None
     assert feedback["best_target_soc_percent"] == pytest.approx(20.0)
+    assert feedback["decision_features"]["actual_pv_kwh"] == pytest.approx(6.0)
+    assert feedback["decision_features"]["actual_load_kwh"] == pytest.approx(8.0)
     regret_at_zero = next(point["regret_yen"] for point in feedback["points"] if point["target_soc_percent"] == 0.0)
     assert regret_at_zero > 0.0
 
@@ -78,3 +80,33 @@ def test_build_soc_decision_prior_uses_recent_regret_curve(monkeypatch) -> None:
     assert prior["sample_count"] == 1
     assert prior["weight"] == pytest.approx(0.15)
     assert prior["regret_yen_by_soc"]["0"] == pytest.approx(90.0)
+
+
+def test_build_soc_decision_prior_excludes_dissimilar_pv_day(monkeypatch) -> None:
+    monkeypatch.setenv("SOC_DECISION_FEEDBACK_WEIGHT", "0.3")
+    monkeypatch.setenv("SOC_DECISION_FEEDBACK_CONFIDENCE_DAYS", "1")
+    prior = build_soc_decision_prior(
+        [
+            {
+                "date": "2026-07-10",
+                "best_target_soc_percent": 24.0,
+                "actual_summary": {"pv_kwh": 18.138, "load_kwh": 21.883},
+                "plan_reference": {"final_predicted_pv_kwh": 19.6471},
+                "points": [
+                    {"target_soc_percent": 24.0, "regret_yen": 0.0},
+                    {"target_soc_percent": 95.0, "regret_yen": 400.0},
+                ],
+            }
+        ],
+        target_date="2026-07-12",
+        target_features={
+            "forecast_pv_kwh": 7.4877,
+            "forecast_load_kwh": 18.0,
+            "final_pv_forecast_source": "physical_pv_forecast",
+        },
+    )
+
+    assert prior["applied"] is False
+    assert prior["reason"] == "no_similar_feedback"
+    assert prior["considered_count"] == 1
+    assert prior["excluded_feedback"][0]["date"] == "2026-07-10"
