@@ -9,6 +9,11 @@ from typing import Any
 
 from google.cloud import firestore
 
+from app.night_plan_archive import (
+    build_night_plan_firestore_document,
+    read_plan_file,
+    upload_night_plan_to_gcs,
+)
 from app.operations_db import (
     _extract_battery_daily_from_summary,
     _extract_final_pv_source_from_plan,
@@ -104,7 +109,7 @@ def ingest_sunshine_from_night_plan(
 ) -> None:
     if not night_plan_path.exists():
         return
-    data = json.loads(night_plan_path.read_text(encoding="utf-8"))
+    data = read_plan_file(night_plan_path)
     forecast = data.get("forecast", {})
     forecast_date = str(forecast.get("date", "")).strip()
     tomorrow_hours = forecast.get("sun_hours")
@@ -121,6 +126,18 @@ def ingest_sunshine_from_night_plan(
     lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 
     if forecast_date:
+        archive_info = upload_night_plan_to_gcs(data, forecast_date=forecast_date)
+        plan_doc = build_night_plan_firestore_document(
+            data,
+            source="night-charge-plan",
+            updated_at=ingested_at,
+            archive_info=archive_info,
+        )
+        client.collection("night_charge_plans").document(forecast_date).set(plan_doc, merge=True)
+        client.collection("night_charge_plans").document("latest").set(
+            {**plan_doc, "plan_json": json.dumps(data, ensure_ascii=False, separators=(",", ":"))},
+            merge=True,
+        )
         client.collection("sunshine_daily").document(forecast_date).set(
             {
                 "date": forecast_date,

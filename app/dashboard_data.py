@@ -126,16 +126,16 @@ def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str
     if not snap.exists:
         return {}
     row = snap.to_dict() or {}
-    plan_text = str(row.get("plan_json") or "").strip()
-    if plan_text:
-        try:
-            plan = json.loads(plan_text)
-        except Exception:
-            plan = {}
-        if isinstance(plan, dict):
-            diagnostics = _extract_pv_forecast_diagnostics(plan)
-            if diagnostics:
-                return diagnostics
+    try:
+        from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
+
+        plan = load_night_plan_detail_from_firestore_doc(row)
+    except Exception:
+        plan = None
+    if isinstance(plan, dict):
+        diagnostics = _extract_pv_forecast_diagnostics(plan)
+        if diagnostics:
+            return diagnostics
     return _extract_pv_forecast_diagnostics(row)
 
 

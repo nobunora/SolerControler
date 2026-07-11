@@ -29,6 +29,7 @@
     [string]$DriveBackupSchedulerName = "solar-drive-backup-daily",
     [string]$DriveBackupFolderId = "",
     [string]$DriveBackupSchedule = "10 1 * * *",
+    [string]$NightPlanArchiveGcsPrefix = "",
     [double]$MaxArtifactRegistryMB = 500.0,
     [double]$MaxCloudBuildBucketMB = 5120.0,
     [double]$MaxAppDataBucketMB = 5120.0,
@@ -278,7 +279,7 @@ if (-not $SkipCapacityCheck) {
 $image = "$Region-docker.pkg.dev/$ProjectId/$Repository/${ImageName}:latest"
 
 Write-Host "Enable required APIs..."
-Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com sheets.googleapis.com drive.googleapis.com --project $ProjectId
+Invoke-GCloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com cloudscheduler.googleapis.com secretmanager.googleapis.com firestore.googleapis.com storage.googleapis.com sheets.googleapis.com drive.googleapis.com --project $ProjectId
 
 $projectNumber = (Invoke-GCloud projects describe $ProjectId --format "value(projectNumber)").Trim()
 $computeSa = "$projectNumber-compute@developer.gserviceaccount.com"
@@ -292,6 +293,23 @@ Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccoun
 Invoke-GCloud iam service-accounts add-iam-policy-binding $schedulerSa --member "serviceAccount:$cloudSchedulerServiceAgent" --role "roles/iam.serviceAccountTokenCreator" --project $ProjectId | Out-Null
 Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/datastore.user" | Out-Null
 Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/serviceusage.serviceUsageConsumer" | Out-Null
+
+if (-not $NightPlanArchiveGcsPrefix) {
+    $NightPlanArchiveGcsPrefix = "gs://$ProjectId-solar-db-us/night_charge_plans"
+}
+$nightPlanArchiveBucket = ""
+if ($NightPlanArchiveGcsPrefix -match '^gs://([^/]+)') {
+    $nightPlanArchiveBucket = $Matches[1]
+}
+if (-not $nightPlanArchiveBucket) {
+    throw "NightPlanArchiveGcsPrefix must be a gs:// URI."
+}
+try {
+    Invoke-GCloud storage buckets describe "gs://$nightPlanArchiveBucket" --project $ProjectId | Out-Null
+} catch {
+    Invoke-GCloud storage buckets create "gs://$nightPlanArchiveBucket" --project $ProjectId --location "US" --uniform-bucket-level-access | Out-Null
+}
+Invoke-GCloud storage buckets add-iam-policy-binding "gs://$nightPlanArchiveBucket" --member "serviceAccount:$runSa" --role "roles/storage.objectAdmin" --project $ProjectId | Out-Null
 
 Write-Host "Ensure Artifact Registry repository..."
 $repoExists = $true
@@ -527,6 +545,8 @@ $commonEnv = @(
     "DATA_WEEKLY_BACKUP_ENABLED=true",
     "DATA_WEEKLY_BACKUP_WEEKDAY=5",
     "DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly",
+    "NIGHT_PLAN_ARCHIVE_GCS_PREFIX=$NightPlanArchiveGcsPrefix",
+    "NIGHT_PLAN_FIRESTORE_INLINE_DETAIL_DAYS=0",
     "DAY_RATE_YEN_PER_KWH=31",
     "COST_TARIFF_MODE=night8_tiered",
     "NIGHT8_DAY_START_HHMM=07:00",

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.firestore_ops import open_firestore
+from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
 from app.utils import parse_csv_float
 
 
@@ -158,12 +159,10 @@ def _load_plan(plan_date: str) -> dict[str, Any]:
     if not snap.exists:
         raise RuntimeError(f"night_charge_plans/{plan_date} was not found")
     data = snap.to_dict() or {}
-    plan_json = data.get("plan_json")
-    if isinstance(plan_json, str) and plan_json.strip():
-        try:
-            data["_plan"] = json.loads(plan_json)
-        except json.JSONDecodeError:
-            data["_plan"] = {}
+    try:
+        data["_plan"] = load_night_plan_detail_from_firestore_doc(data) or {}
+    except Exception:
+        data["_plan"] = {}
     return data
 
 
