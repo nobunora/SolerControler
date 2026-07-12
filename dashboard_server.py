@@ -1264,6 +1264,7 @@ def _html(payload: dict, script_nonce: str) -> str:
             { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
             { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
             { label: "家の消費 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
+            { type: "bar", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1 },
             { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: true },
           ],
         },
@@ -1479,6 +1480,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         chart.data.datasets[1].data = [];
         chart.data.datasets[2].data = [];
         chart.data.datasets[3].data = [];
+        chart.data.datasets[4].data = [];
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
         chart.update("none");
         return;
@@ -1487,6 +1489,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
       const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
       const load = rows.map((row) => row.actual_load_kwh == null ? (row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh)) : n(row.actual_load_kwh));
+      const nightGridCharge = estimateHourlyNightGridCharge(rows, date);
       const soc = estimateHourlyForecastSoc(rows, date);
       const actualHours = rows.filter((row) => row.actual_load_kwh != null).map((row) => Number(row.hour));
       const latestActual = rows
@@ -1498,8 +1501,9 @@ def _html(payload: dict, script_nonce: str) -> str:
       chart.data.datasets[0].data = pv;
       chart.data.datasets[1].data = charge;
       chart.data.datasets[2].data = load;
-      chart.data.datasets[3].data = soc;
-      const axisMax = niceCeil(Math.max(1, maxPos([...pv, ...charge, ...load].filter((v) => v != null))));
+      chart.data.datasets[3].data = nightGridCharge;
+      chart.data.datasets[4].data = soc;
+      const axisMax = niceCeil(Math.max(1, maxPos([...pv, ...charge, ...load, ...nightGridCharge].filter((v) => v != null))));
       chart.options.scales.y.min = 0;
       chart.options.scales.y.max = axisMax;
       chart.options.scales.y.ticks = { callback: (v) => `${v}kWh` };
@@ -1520,9 +1524,21 @@ def _html(payload: dict, script_nonce: str) -> str:
         const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
         const socText = socPeak ? ` / 予想SOCピーク ${socPeak.label}ごろ ${socPeak.value.toFixed(0)}%` : "";
         const nightText = nightCharge != null && nightCharge > 0 ? ` / 夜間系統充電 ${nightCharge.toFixed(2)}kWh` : "";
-        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測。夜間系統充電は家の消費に含めません）`;
+        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測。夜間系統充電は家の消費とは別の請求対象買電です）`;
       }
       chart.update("none");
+    }
+
+    function estimateHourlyNightGridCharge(rows, date) {
+      const batteryRow = date ? store.battery.get(date) : null;
+      const totalKwh = Math.max(0, Number(batteryRow && batteryRow.night_charge_kwh != null ? batteryRow.night_charge_kwh : 0) || 0);
+      const chargeIndexes = rows
+        .map((row, index) => ({ hour: Number(row.hour), index }))
+        .filter((item) => Number.isFinite(item.hour) && item.hour >= 4 && item.hour < 7)
+        .map((item) => item.index);
+      const perHourKwh = chargeIndexes.length ? totalKwh / chargeIndexes.length : 0;
+      const chargeIndexSet = new Set(chargeIndexes);
+      return rows.map((_, index) => chargeIndexSet.has(index) ? perHourKwh : 0);
     }
 
     function estimateHourlyForecastSoc(rows, date) {
@@ -1540,24 +1556,19 @@ def _html(payload: dict, script_nonce: str) -> str:
       const dischargeEff = Math.sqrt(roundTripEff);
       const targetSoc = Math.max(0, Math.min(100, targetSocRaw));
       const targetEnergyKwh = targetSoc / 100 * capacityKwh;
-      const nightChargeKwh = Math.max(0, Number(batteryRow && batteryRow.night_charge_kwh != null ? batteryRow.night_charge_kwh : 0) || 0);
+      const hourlyNightGridCharge = estimateHourlyNightGridCharge(rows, date);
+      const nightChargeKwh = hourlyNightGridCharge.reduce((total, value) => total + n(value), 0);
       // setting_soc_target_percent is the 07:00 target, so estimate the pre-charge SOC by backing out night charging.
       const startEnergyKwh = Math.max(0, Math.min(capacityKwh, targetEnergyKwh - nightChargeKwh * chargeEff));
-      const nightChargeHours = rows
-        .map((row) => Number(row.hour))
-        .filter((hour) => Number.isFinite(hour) && hour >= 4 && hour < 7);
-      const nightChargeEnergyPerHour = nightChargeHours.length
-        ? Math.max(0, targetEnergyKwh - startEnergyKwh) / nightChargeHours.length
-        : 0;
       let energyKwh = startEnergyKwh;
-      return rows.map((row) => {
+      return rows.map((row, index) => {
         const hour = Number(row.hour);
         const pvKwh = row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh);
         const loadKwh = row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh);
         const chargeKwh = row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh);
         if (!Number.isFinite(hour)) return null;
-        if (hour >= 4 && hour < 7 && nightChargeEnergyPerHour > 0) {
-          energyKwh += nightChargeEnergyPerHour;
+        if (hourlyNightGridCharge[index] > 0) {
+          energyKwh += hourlyNightGridCharge[index] * chargeEff;
         } else if (hour >= 7) {
           const socAtHourStart = Math.max(0, Math.min(capacityKwh, energyKwh));
           if (chargeKwh != null && chargeKwh > 0) {
