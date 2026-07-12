@@ -126,6 +126,37 @@ def test_cost_optimizer_charges_more_when_daytime_power_is_expensive() -> None:
     assert expensive_day.target_soc_7_percent > cheap_day.target_soc_7_percent
 
 
+def test_candidate_counts_night_charge_cost_and_reduces_day_buy() -> None:
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=50.0,
+        soc_now_percent=0.0,
+        capacity_kwh=10.0,
+        hourly_load_kwh={7: 5.0},
+        hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(
+            mean_multiplier=1.0,
+            std_multiplier=0.0,
+            variance_multiplier=0.0,
+            sample_count=1,
+            source="deterministic",
+        ),
+        cost_model=SocCostModel(
+            day_buy_rate_yen_per_kwh=40.0,
+            night_buy_rate_yen_per_kwh=20.0,
+            charge_efficiency=0.8,
+            sell_value_ratio=0.0,
+        ),
+    )
+
+    # 5 kWhを蓄電池へ残すため、夜間買電は効率損失込みで6.25 kWhとなる。
+    assert candidate.required_night_charge_kwh == pytest.approx(6.25)
+    assert candidate.night_charge_cost_yen == pytest.approx(125.0)
+    # 7時時点の5 kWhが家の負荷を賄い、日中買電を5 kWh削減する。
+    assert candidate.expected_day_buy_kwh == pytest.approx(0.0)
+    assert candidate.expected_day_buy_cost_yen == pytest.approx(0.0)
+    assert candidate.total_expected_cost_yen == pytest.approx(125.0)
+
+
 def test_decision_prior_regret_can_shift_close_soc_choice() -> None:
     result = optimize_soc_by_expected_cost(
         capacity_kwh=10.0,

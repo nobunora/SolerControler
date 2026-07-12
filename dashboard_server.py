@@ -1262,8 +1262,8 @@ def _html(payload: dict, script_nonce: str) -> str:
           labels: [],
           datasets: [
             { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
-            { label: "予想充電量(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
-            { label: "消費電力量 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
+            { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
+            { label: "家の消費 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
             { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: true },
           ],
         },
@@ -1511,13 +1511,16 @@ def _html(payload: dict, script_nonce: str) -> str:
         const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
         const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
         const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
+        const batteryRow = date ? store.battery.get(date) : null;
+        const nightCharge = batteryRow && batteryRow.night_charge_kwh != null ? n(batteryRow.night_charge_kwh) : null;
         const socPeak = maxForecastSocPoint(labels, soc);
         const actualText = actualHours.length
           ? `消費実績 ${String(Math.min(...actualHours)).padStart(2, "0")}:00-${String(Math.max(...actualHours)).padStart(2, "0")}:59`
           : "消費実績なし";
         const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
         const socText = socPeak ? ` / 予想SOCピーク ${socPeak.label}ごろ ${socPeak.value.toFixed(0)}%` : "";
-        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / 充電予測 ${totalCharge.toFixed(2)}kWh / 消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測）`;
+        const nightText = nightCharge != null && nightCharge > 0 ? ` / 夜間系統充電 ${nightCharge.toFixed(2)}kWh` : "";
+        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測。夜間系統充電は家の消費に含めません）`;
       }
       chart.update("none");
     }
@@ -1525,23 +1528,38 @@ def _html(payload: dict, script_nonce: str) -> str:
     function estimateHourlyForecastSoc(rows, date) {
       const sch = store.latestSchedule || {};
       const batteryRow = date ? store.battery.get(date) : null;
-      const startSocRaw = Number(
+      const targetSocRaw = Number(
         (batteryRow && batteryRow.setting_soc_target_percent != null)
           ? batteryRow.setting_soc_target_percent
           : sch.soc_charge_mode
       );
-      if (!Number.isFinite(startSocRaw)) return rows.map(() => null);
+      if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);
       const capacityKwh = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
       const roundTripEff = Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9)));
       const chargeEff = Math.sqrt(roundTripEff);
       const dischargeEff = Math.sqrt(roundTripEff);
-      let energyKwh = Math.max(0, Math.min(100, startSocRaw)) / 100 * capacityKwh;
+      const targetSoc = Math.max(0, Math.min(100, targetSocRaw));
+      const targetEnergyKwh = targetSoc / 100 * capacityKwh;
+      const nightChargeKwh = Math.max(0, Number(batteryRow && batteryRow.night_charge_kwh != null ? batteryRow.night_charge_kwh : 0) || 0);
+      // setting_soc_target_percent is the 07:00 target, so estimate the pre-charge SOC by backing out night charging.
+      const startEnergyKwh = Math.max(0, Math.min(capacityKwh, targetEnergyKwh - nightChargeKwh * chargeEff));
+      const nightChargeHours = rows
+        .map((row) => Number(row.hour))
+        .filter((hour) => Number.isFinite(hour) && hour >= 4 && hour < 7);
+      const nightChargeEnergyPerHour = nightChargeHours.length
+        ? Math.max(0, targetEnergyKwh - startEnergyKwh) / nightChargeHours.length
+        : 0;
+      let energyKwh = startEnergyKwh;
       return rows.map((row) => {
         const hour = Number(row.hour);
         const pvKwh = row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh);
         const loadKwh = row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh);
         const chargeKwh = row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh);
-        if (Number.isFinite(hour) && hour >= 7) {
+        if (!Number.isFinite(hour)) return null;
+        if (hour >= 4 && hour < 7 && nightChargeEnergyPerHour > 0) {
+          energyKwh += nightChargeEnergyPerHour;
+        } else if (hour >= 7) {
+          const socAtHourStart = Math.max(0, Math.min(capacityKwh, energyKwh));
           if (chargeKwh != null && chargeKwh > 0) {
             energyKwh += chargeKwh * chargeEff;
           } else if (pvKwh != null && loadKwh != null) {
@@ -1549,6 +1567,8 @@ def _html(payload: dict, script_nonce: str) -> str:
             if (net >= 0) energyKwh += net * chargeEff;
             else energyKwh += net / dischargeEff;
           }
+          energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
+          return Math.round((socAtHourStart / capacityKwh) * 1000) / 10;
         }
         energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
         return Math.round((energyKwh / capacityKwh) * 1000) / 10;
