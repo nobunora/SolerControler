@@ -426,31 +426,6 @@ def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None])
     return target_soc
 
 
-def _force_partial_soc_window() -> tuple[float, float]:
-    partial_min = float(os.getenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51").strip() or "51")
-    partial_max = float(os.getenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "100").strip() or "100")
-    return partial_min, partial_max
-
-
-def _should_stage_partial_forced(
-    *,
-    plan_meta: dict[str, float | str | None],
-    green_mode_max_charge_percent: float,
-) -> tuple[bool, float, float]:
-    required_charge_percent = _required_charge_percent_from_plan(plan_meta)
-    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
-    partial_min, partial_max = _force_partial_soc_window()
-    # KP green-mode charge limit acts as an absolute SOC ceiling in practice.
-    # A target above that ceiling needs forced mode even when the remaining
-    # charge delta is smaller than the green-mode limit.
-    force_charge = (
-        target_soc > green_mode_max_charge_percent
-        or required_charge_percent >= green_mode_max_charge_percent
-    )
-    stage_partial_forced = force_charge and partial_min <= target_soc <= partial_max
-    return stage_partial_forced, required_charge_percent, target_soc
-
-
 def _should_keep_standby_without_charge(
     *,
     required_charge_percent: float,
@@ -919,16 +894,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
         return
 
-    green_mode_max = float(os.getenv("KP_GREEN_MODE_MAX_CHARGE_PERCENT", "50").strip() or "50")
     plan_meta = _read_plan_meta(plan_path)
-    stage_partial, required_charge_percent, target_soc = _should_stage_partial_forced(
-        plan_meta=plan_meta,
-        green_mode_max_charge_percent=green_mode_max,
-    )
+    required_charge_percent = _required_charge_percent_from_plan(plan_meta)
+    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
     latest_soc = _latest_realtime_soc_percent()
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
+    if latest_soc is not None:
+        required_charge_percent = max(0.0, target_soc - latest_soc)
     if _should_keep_standby_without_charge(
         required_charge_percent=required_charge_percent,
         required_charge_kwh=required_kwh,
@@ -946,19 +920,6 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             flush=True,
         )
         return
-    if not stage_partial:
-        print(
-            "[cloud_job_runner] 03-monitor partial-monitor not needed; "
-            f"required={required_charge_percent:.2f}% target_soc={target_soc:.2f}%; apply dynamic night profile.",
-            flush=True,
-        )
-        _run_03_settings_profile_with_db(
-            profile="forced",
-            dynamic_forced_profile=True,
-            label="03-settings-night-profile",
-        )
-        return
-
     default_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "1.8").strip() or "1.8")
     if default_power_kw <= 0:
         default_power_kw = 1.8

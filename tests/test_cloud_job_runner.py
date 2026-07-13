@@ -19,7 +19,6 @@ from cloud_job_runner import (
     _required_charge_percent_from_plan,
     _run_adjust_03,
     _run_night_23,
-    _should_stage_partial_forced,
 )
 
 
@@ -61,58 +60,6 @@ def test_required_charge_percent_from_plan_uses_soc_delta() -> None:
         }
     )
     assert pct == 55.0
-
-
-def test_stage_partial_forced_enabled_for_51_to_99(monkeypatch) -> None:
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "99")
-    staged, required_pct, target_soc = _should_stage_partial_forced(
-        plan_meta={
-            "target_soc_7_percent": 80.0,
-            "soc_now_percent": 20.0,
-            "effective_capacity_kwh": 9.0,
-            "required_night_charge_kwh": 5.0,
-        },
-        green_mode_max_charge_percent=50.0,
-    )
-    assert staged is True
-    assert required_pct == 60.0
-    assert target_soc == 80.0
-
-
-def test_stage_partial_forced_uses_target_soc_above_green_ceiling(monkeypatch) -> None:
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "99")
-    staged, required_pct, target_soc = _should_stage_partial_forced(
-        plan_meta={
-            "target_soc_7_percent": 80.0,
-            "soc_now_percent": 39.0,
-            "effective_capacity_kwh": 9.0,
-            "required_night_charge_kwh": 3.7,
-        },
-        green_mode_max_charge_percent=50.0,
-    )
-
-    assert staged is True
-    assert required_pct == 41.0
-    assert target_soc == 80.0
-
-
-def test_stage_partial_forced_includes_100_percent(monkeypatch) -> None:
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MIN_PERCENT", "51")
-    monkeypatch.setenv("KP_FORCE_PARTIAL_SOC_MAX_PERCENT", "100")
-    staged, required_pct, target_soc = _should_stage_partial_forced(
-        plan_meta={
-            "target_soc_7_percent": 100.0,
-            "soc_now_percent": 30.0,
-            "effective_capacity_kwh": 9.0,
-            "required_night_charge_kwh": 6.0,
-        },
-        green_mode_max_charge_percent=50.0,
-    )
-    assert staged is True
-    assert required_pct == 70.0
-    assert target_soc == 100.0
 
 
 def test_read_plan_meta_rejects_missing_target(tmp_path: Path) -> None:
@@ -232,7 +179,7 @@ def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
     assert _adjust03_target_date(now=now) == "2026-05-27"
 
 
-def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
+def test_monitor_forced_charge_switches_to_standby_when_low_target_is_reached(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -241,15 +188,13 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
     calls: list[tuple[str, bool]] = []
 
     monkeypatch.setattr(
-        "cloud_job_runner._should_stage_partial_forced",
-        lambda **kwargs: (False, 10.0, 40.0),
-    )
-    monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
-        lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 40.0},
+        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 25.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: None)
+    soc_values = iter([0.0, 25.0])
+    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: next(soc_values))
+    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
         "cloud_job_runner._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
@@ -264,7 +209,7 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert calls == [("forced", True)]
+    assert calls == [("forced", True), ("standby", False)]
     assert db_calls == [
         (
             "03",
@@ -274,7 +219,16 @@ def test_monitor_partial_forced_applies_forced_immediately_when_not_staged(
                 "DATA_DB_WRITE_ONLY_23": "false",
                 "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
             },
-        )
+        ),
+        (
+            "03",
+            False,
+            True,
+            {
+                "DATA_DB_WRITE_ONLY_23": "false",
+                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
+            },
+        ),
     ]
 
 
@@ -285,10 +239,6 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
     plan_path = tmp_path / "night_charge_plan.json"
     plan_path.write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr(
-        "cloud_job_runner._should_stage_partial_forced",
-        lambda **kwargs: (False, 0.0, 2.0),
-    )
     monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
         lambda _: {
@@ -341,12 +291,8 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
     time_values = iter([0.0, 0.0, 0.0, 4000.0])
 
     monkeypatch.setattr(
-        "cloud_job_runner._should_stage_partial_forced",
-        lambda **kwargs: (True, 60.0, 80.0),
-    )
-    monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
-        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 80.0, "effective_capacity_kwh": 10.0},
+        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 25.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr(
         "cloud_job_runner._latest_kpnet_csv_paths",
