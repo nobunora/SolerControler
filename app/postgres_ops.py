@@ -117,7 +117,6 @@ def ensure_schema(conn) -> None:
             date TEXT PRIMARY KEY,
             setting_soc_target_percent DOUBLE PRECISION,
             night_charge_kwh DOUBLE PRECISION,
-            pv_max_charge_kwh DOUBLE PRECISION,
             pv_charge_end_soc_percent DOUBLE PRECISION,
             pv_charge_end_at TEXT,
             end_of_day_soc_percent DOUBLE PRECISION,
@@ -636,7 +635,6 @@ def upsert_battery_daily_metrics(
     date = str(metrics["date"])
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
-    pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
     settings_run_id = metrics["settings_run_id"]
@@ -649,15 +647,14 @@ def upsert_battery_daily_metrics(
         cur.execute(
             """
             INSERT INTO battery_daily_metrics (
-                date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
+                date, setting_soc_target_percent, night_charge_kwh,
                 pv_charge_end_soc_percent, pv_charge_end_at,
                 settings_run_id, source_doc_id, source_status, source_profile,
                 plan_quality_status, plan_should_apply, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(date) DO UPDATE SET
                 setting_soc_target_percent=excluded.setting_soc_target_percent,
                 night_charge_kwh=excluded.night_charge_kwh,
-                pv_max_charge_kwh=excluded.pv_max_charge_kwh,
                 pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
                 pv_charge_end_at=excluded.pv_charge_end_at,
                 settings_run_id=excluded.settings_run_id,
@@ -672,7 +669,6 @@ def upsert_battery_daily_metrics(
                 date,
                 target_soc,
                 night_charge_kwh,
-                pv_max_charge_kwh,
                 pv_charge_end_soc,
                 pv_charge_end_at,
                 settings_run_id,

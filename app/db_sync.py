@@ -74,7 +74,6 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "date",
             "setting_soc_target_percent",
             "night_charge_kwh",
-            "pv_max_charge_kwh",
             "pv_charge_end_soc_percent",
             "pv_charge_end_at",
             "end_of_day_soc_percent",

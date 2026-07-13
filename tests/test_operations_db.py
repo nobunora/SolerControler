@@ -187,7 +187,7 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         )
         row = conn.execute(
             """
-            SELECT date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc_percent, pv_charge_end_at
+            SELECT date, setting_soc_target_percent, night_charge_kwh, pv_charge_end_soc_percent, pv_charge_end_at
             FROM battery_daily_metrics
             WHERE date='2026-05-03'
             """
@@ -196,11 +196,9 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
         # summary値が優先される
         assert float(row[1]) == pytest.approx(15.4)
         assert float(row[2]) == pytest.approx(0.0)
-        # summaryに無い項目は night_charge_plan.result から補完される
-        assert float(row[3]) == pytest.approx(4.7620196164713535)
         # 太陽光充電終了時SOCは実測CSVから再計算するため、ここでは未設定
+        assert row[3] is None
         assert row[4] is None
-        assert row[5] is None
     finally:
         conn.close()
 
@@ -312,7 +310,7 @@ def test_upsert_battery_daily_metrics_ignores_unsafe_night_plan_result(tmp_path:
         )
         row = conn.execute(
             """
-            SELECT setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh
+            SELECT setting_soc_target_percent, night_charge_kwh
             FROM battery_daily_metrics
             WHERE date='2026-05-03'
             """
@@ -320,7 +318,6 @@ def test_upsert_battery_daily_metrics_ignores_unsafe_night_plan_result(tmp_path:
         assert row is not None
         assert row[0] is None
         assert row[1] is None
-        assert row[2] is None
     finally:
         conn.close()
 
@@ -332,10 +329,10 @@ def test_recalc_battery_pv_charge_end_soc_uses_latest_solar_charge_sample_per_da
         ensure_schema(conn)
         conn.execute(
             """
-            INSERT INTO battery_daily_metrics(date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh, pv_charge_end_soc_percent, pv_charge_end_at, updated_at)
+            INSERT INTO battery_daily_metrics(date, setting_soc_target_percent, night_charge_kwh, pv_charge_end_soc_percent, pv_charge_end_at, updated_at)
             VALUES
-              ('2026-05-01', 20, 1.0, 2.0, NULL, NULL, '2026-05-02T00:00:00Z'),
-              ('2026-05-02', 10, 0.5, 1.5, NULL, NULL, '2026-05-02T00:00:00Z')
+              ('2026-05-01', 20, 1.0, NULL, NULL, '2026-05-02T00:00:00Z'),
+              ('2026-05-02', 10, 0.5, NULL, NULL, '2026-05-02T00:00:00Z')
             """
         )
         conn.execute(

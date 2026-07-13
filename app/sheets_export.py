@@ -446,14 +446,6 @@ DATA_DESCRIPTION_ROWS: list[dict[str, str]] = [
     },
     {
         "sheet": "battery_daily_metrics",
-        "column": "pv_max_charge_kwh",
-        "description": "太陽光由来の最大充電量",
-        "unit": "kWh/day",
-        "source": "Battery operation pipeline",
-        "notes": "日中PVで蓄電池へ入れられた量の推定です。",
-    },
-    {
-        "sheet": "battery_daily_metrics",
         "column": "pv_charge_end_soc_percent",
         "description": "太陽光充電終了時SOC",
         "unit": "percent",
@@ -902,7 +894,6 @@ def run_export(*, slot: str) -> int:
                 "date",
                 "setting_soc_target_percent",
                 "night_charge_kwh",
-                "pv_max_charge_kwh",
                 "pv_charge_end_soc_percent",
                 "pv_charge_end_at",
                 "settings_run_id",

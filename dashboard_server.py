@@ -67,7 +67,7 @@ def _verify_session(token: str) -> bool:
 
 def _empty_dashboard_payload() -> dict:
     return {
-        "sunshine_daily": [],
+        "pv_daily": [],
         "forecast_hourly": [],
         "energy_daily": [],
         "cost_daily": [],
@@ -78,6 +78,7 @@ def _empty_dashboard_payload() -> dict:
         "latest_schedule": {},
         "dashboard_warnings": [],
         "pv_forecast_diagnostics": {},
+        "daily_review": {},
         "meta": {
             "window_days": 31,
             "oldest_loaded_date": None,
@@ -349,31 +350,16 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     <section class="grid">
       <article class="card full">
-        <h2>0. 制約管理ガントチャート（最新設定）</h2>
-        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。時間別の日中予測は下の折れ線グラフに分離しています。</p>
-        <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
+        <h2>1. 予実レビュー（最新実績日）</h2>
+        <p id="dailyReviewNote" class="desc">前日までの計画値とKP-NET実績を比較します。</p>
+        <div id="dailyReviewGrid" class="diag-grid" aria-label="予実レビュー"></div>
+        <div id="dailyReviewFindings" class="diag-path" aria-label="予実レビューの主な乖離"></div>
       </article>
 
       <article class="card full">
-        <h2>0.1 時間別予測（最新計画）</h2>
+        <h2>2. 時間別予測（最新計画）</h2>
         <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・消費電力量を表示します。消費は実績がある時間帯を実績、未到達時間帯を予測で表示します。</p>
         <div class="chart-box"><canvas id="hourlyForecastChart"></canvas></div>
-      </article>
-
-      <article class="card full">
-        <h2>0.2 PV予測診断（最新計画）</h2>
-        <p id="pvForecastDiagNote" class="desc">予測候補、採用経路、係数の状態を表示します。</p>
-        <div class="diag-grid" aria-label="PV予測診断サマリー">
-          <div class="diag-kpi"><span class="diag-label">採用モデル</span><span id="pvDiagMethod" class="diag-value">-</span></div>
-          <div class="diag-kpi"><span class="diag-label">計画日</span><span id="pvDiagDate" class="diag-value">-</span></div>
-          <div class="diag-kpi"><span class="diag-label">global scale</span><span id="pvDiagScale" class="diag-value">-</span></div>
-          <div class="diag-kpi"><span class="diag-label">データ状態</span><span id="pvDiagQuality" class="diag-value">-</span></div>
-        </div>
-        <div id="pvDiagPath" class="diag-path" aria-label="PV予測判断経路"></div>
-        <table id="pvCandidateTable">
-          <thead><tr><th>候補</th><th>合計kWh</th><th>状態</th><th>備考</th></tr></thead>
-          <tbody></tbody>
-        </table>
       </article>
 
       <article class="card full">
@@ -390,43 +376,43 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card">
-        <h2>1.1 発電量（予測と実績）</h2>
+        <h2>3.1 発電量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="pvChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>1.2 消費量（予測と実績）</h2>
+        <h2>3.2 消費量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="loadChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="dailyKwhTitle">2. 自家消費kWh（日）</h2>
+        <h2 id="dailyKwhTitle">4. 自家消費kWh（日）</h2>
         <p id="dailyKwhDesc" class="desc">青の棒: 日次自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyKwhChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="dailyYenTitle">3. 節約額（日）</h2>
+        <h2 id="dailyYenTitle">5. 節約額（日）</h2>
         <p id="dailyYenDesc" class="desc">橙の棒: 日次節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyYenChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>4. 自家消費と節約額（月）</h2>
+        <h2>6. 自家消費と節約額（月）</h2>
         <p class="desc">月単位の合計。左軸(kWh)、右軸(円)。</p>
         <div class="chart-box"><canvas id="monthlyCostChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="batteryTitle">5. 蓄電池計画値と実績（日次）</h2>
-        <p id="batteryDesc" class="desc">左軸はkWh/日、右軸はSOC(%)。夜間充電・PV蓄電余力は「日次の計画/予測値」で、瞬時充電電力(kW)ではありません。</p>
+        <h2 id="batteryTitle">7. 蓄電池計画値と実績（日次）</h2>
+        <p id="batteryDesc" class="desc">左軸は夜間充電量(kWh/日)、右軸はSOC(%)です。瞬時充電電力(kW)ではありません。</p>
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>6. 蓄電池容量推定（実績）</h2>
+        <h2>8. 蓄電池容量推定（実績）</h2>
         <p class="desc">表示期間の実測充放電量と実績気温から、月別の推定容量内訳を表示します。未来予測ではなく、制御には使わない可視化用の推定です。</p>
         <div class="battery-life-card">
           <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
@@ -442,7 +428,13 @@ def _html(payload: dict, script_nonce: str) -> str:
       </article>
 
       <article class="card full">
-        <h2>7. 蓄電池方程式とパラメータ</h2>
+        <h2>9. 制約管理ガントチャート（最新設定）</h2>
+        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。時間別の日中予測は上の折れ線グラフに分離しています。</p>
+        <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
+      </article>
+
+      <article class="card full">
+        <h2>10. 蓄電池方程式とパラメータ</h2>
         <div class="equation">
           変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>NL</b>=夜間負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
           (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
@@ -454,18 +446,9 @@ def _html(payload: dict, script_nonce: str) -> str:
           条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
           最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
         </div>
-        <div class="equation" id="pvDeveloperSummary">
-          PV物理予測: 診断データ未生成
-        </div>
-        <table id="pvDeveloperTable">
+        <table id="learningParamsTable">
           <thead>
-            <tr><th>分類</th><th>変数</th><th>値</th><th>意味</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-        <table id="paramsTable">
-          <thead>
-            <tr><th>短縮</th><th>パラメータ</th><th>意味</th><th>中心値</th><th>分散</th><th>サンプル数</th></tr>
+            <tr><th>分類</th><th>パラメータ</th><th>現在値</th><th>サンプル数</th><th>意味</th></tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -676,7 +659,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     const store = {
       meta: null,
-      sunshine: new Map(),
+      pvDaily: new Map(),
       hourly: new Map(),
       energy: new Map(),
       cost: new Map(),
@@ -687,6 +670,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       latestSchedule: null,
       dashboardWarnings: [],
       pvForecastDiagnostics: {},
+      dailyReview: {},
       dates: [],
       loadingOlder: false,
     };
@@ -709,15 +693,12 @@ def _html(payload: dict, script_nonce: str) -> str:
       pv_to_battery_ratio: { code: "Ks", label: "余剰PVの蓄電寄与率" },
       pv_self_consumption_ratio: { code: "Sc", label: "PV自家消費率" },
       pv_array_calibration_factor: { code: "Pa", label: "面別PV予測の実績補正係数" },
-      pv_array_total_capacity_kw: { code: "Pc", label: "面別PV設定の合計容量[kW]" },
       pv_forecast_error_ratio_mean: { code: "Pem", label: "PV予測倍率の中心値（確率ではない）" },
       pv_forecast_error_ratio_std: { code: "Pes", label: "PV予測倍率のばらつき（確率ではない）" },
       pv_forecast_error_ratio_variance: { code: "Pev", label: "PV予測倍率の分散" },
       pv_forecast_error_ratio_sample_count: { code: "Pen", label: "PV予測誤差サンプル数" },
       physical_pv_radiation_scale: { code: "Prs", label: "短波放射からPVへ変換する物理モデル係数" },
       physical_pv_global_bias_scale: { code: "Pbs", label: "物理PV予測の全体バイアス補正係数" },
-      battery_temp_coeff_per_deg: { code: "Bt", label: "気温1℃あたり蓄電容量補正係数" },
-      battery_cycle_capacity_fade_per_cycle: { code: "Cf", label: "1サイクルあたり容量劣化率" },
     };
 
     function mergeRows(map, rows) {
@@ -747,7 +728,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         : "";
       const hasScheduleForecast =
         scheduleDate &&
-        (store.sunshine.has(scheduleDate) ||
+        (store.pvDaily.has(scheduleDate) ||
           store.hourly.has(scheduleDate) ||
           store.energy.has(scheduleDate) ||
           store.battery.has(scheduleDate));
@@ -756,7 +737,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
     function rebuildDateIndex() {
       const all = new Set();
-      for (const k of store.sunshine.keys()) all.add(k);
+      for (const k of store.pvDaily.keys()) all.add(k);
       for (const k of store.hourly.keys()) all.add(k);
       for (const k of store.energy.keys()) all.add(k);
       for (const k of store.cost.keys()) all.add(k);
@@ -780,7 +761,7 @@ def _html(payload: dict, script_nonce: str) -> str:
     }
 
     function absorbSlice(payload, includeStatic) {
-      mergeRows(store.sunshine, payload.sunshine_daily || []);
+      mergeRows(store.pvDaily, payload.pv_daily || []);
       mergeHourlyRows(payload.forecast_hourly || []);
       mergeRows(store.energy, payload.energy_daily || []);
       mergeRows(store.cost, payload.cost_daily || []);
@@ -792,6 +773,7 @@ def _html(payload: dict, script_nonce: str) -> str:
         store.latestSchedule = payload.latest_schedule || store.latestSchedule;
         store.dashboardWarnings = payload.dashboard_warnings || [];
         store.pvForecastDiagnostics = payload.pv_forecast_diagnostics || {};
+        store.dailyReview = payload.daily_review || {};
       }
       store.meta = payload.meta || store.meta;
       rebuildDateIndex();
@@ -934,6 +916,42 @@ def _html(payload: dict, script_nonce: str) -> str:
       }).join("");
       root.classList.add("active");
       root.innerHTML = `<ul class="warning-list">${items}</ul>`;
+    }
+
+    function renderDailyReview() {
+      const review = store.dailyReview || {};
+      const note = document.getElementById("dailyReviewNote");
+      const grid = document.getElementById("dailyReviewGrid");
+      const findings = document.getElementById("dailyReviewFindings");
+      if (!note || !grid || !findings) return;
+      if (!review.date) {
+        note.textContent = "予実レビューに必要な実績データがまだありません。";
+        grid.innerHTML = "";
+        findings.innerHTML = "";
+        return;
+      }
+      const kwh = (value) => value == null ? "-" : `${n(value).toFixed(2)} kWh`;
+      const pct = (value) => value == null ? "-" : `${n(value).toFixed(0)}%`;
+      const items = [
+        ["設定SOC", pct(review.target_soc_percent)],
+        ["夜間充電", `${kwh(review.forecast_night_charge_kwh)} / 実績 ${kwh(review.actual_night_charge_kwh)}`],
+        ["PV発電", `${kwh(review.forecast_pv_kwh)} / 実績 ${kwh(review.actual_pv_kwh)}`],
+        ["家の消費", `${kwh(review.forecast_load_kwh)} / 実績 ${kwh(review.actual_load_kwh)}`],
+        ["日中買電", `${kwh(review.forecast_day_buy_kwh)} / 実績 ${kwh(review.actual_day_buy_kwh)}`],
+        ["売電", `${kwh(review.forecast_sell_kwh)} / 実績 ${kwh(review.actual_sell_kwh)}`],
+        ["SOC範囲", `${pct(review.actual_soc_min_percent)} - ${pct(review.actual_soc_max_percent)}`],
+        ["PV予測モデル", review.forecast_source || "-"],
+      ];
+      grid.innerHTML = items.map(([label, value]) => `<div class="diag-kpi"><span class="diag-label">${escapeHtml(label)}</span><span class="diag-value">${escapeHtml(value)}</span></div>`).join("");
+      const pvGap = review.forecast_pv_kwh == null || review.actual_pv_kwh == null ? null : n(review.actual_pv_kwh) - n(review.forecast_pv_kwh);
+      const chargeGap = review.forecast_night_charge_kwh == null || review.actual_night_charge_kwh == null ? null : n(review.actual_night_charge_kwh) - n(review.forecast_night_charge_kwh);
+      const chips = [];
+      if (pvGap != null) chips.push(`PV差分 ${pvGap >= 0 ? "+" : ""}${pvGap.toFixed(2)} kWh`);
+      if (chargeGap != null) chips.push(`夜間充電差分 ${chargeGap >= 0 ? "+" : ""}${chargeGap.toFixed(2)} kWh`);
+      if (review.actual_soc_max_percent != null) chips.push(`日中最大SOC ${pct(review.actual_soc_max_percent)}`);
+      findings.innerHTML = chips.map((item) => `<span class="diag-chip">${escapeHtml(item)}</span>`).join("");
+      const range = review.data_last_at ? `${String(review.data_last_at).slice(11, 16)}まで` : "終日";
+      note.textContent = `${review.date} の予測 / 実績。実績は ${range} の保存済みKP-NETデータです。`;
     }
 
     function latestAvailableDate() {
@@ -1102,96 +1120,17 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
     }
 
-    function fillParamsTable() {
-      const tbody = document.querySelector("#paramsTable tbody");
-      tbody.innerHTML = "";
-      for (const p of store.params) {
-        const tr = document.createElement("tr");
-        const meta = paramAlias[String(p.name || "")] || { code: "-", label: "補助パラメータ" };
-        const values = [
-          String(meta.code),
-          String(p.name ?? ""),
-          String(meta.label),
-          n(p.mean_value).toFixed(4),
-          n(p.variance).toFixed(6),
-          String(n(p.sample_count, 0)),
-        ];
-        for (const value of values) {
-          const td = document.createElement("td");
-          td.textContent = value;
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-    }
+    const staticParameterNames = new Set([
+      "battery_cycle_capacity_fade_per_cycle",
+      "battery_temp_coeff_per_deg",
+      "pv_array_total_capacity_kw",
+      "pv_kwh_per_sunhour",
+      "pv_temp_coeff_per_deg",
+    ]);
 
-    function setText(id, value) {
-      const el = document.getElementById(id);
-      if (el) el.textContent = value == null || value === "" ? "-" : String(value);
-    }
-
-    function fillPvForecastDiagnostics() {
-      const diag = store.pvForecastDiagnostics || {};
-      const physical = diag.physical || {};
-      const scales = physical.scales || {};
-      const quality = physical.data_quality || {};
-      const method = physical.selected_method || "not_generated";
-      setText("pvDiagMethod", method);
-      setText("pvDiagDate", diag.plan_date || "-");
-      setText("pvDiagScale", scales.global_bias_scale == null ? "-" : Number(scales.global_bias_scale).toFixed(4));
-      const globalDays = quality.global_days == null ? "-" : `${quality.global_days}/${quality.global_days_required || "-"}`;
-      setText("pvDiagQuality", physical.enabled ? `valid ${globalDays}` : (physical.fallback_reason || "not generated"));
-
-      const pathEl = document.getElementById("pvDiagPath");
-      pathEl.innerHTML = "";
-      const path = Array.isArray(physical.decision_path) ? physical.decision_path : [];
-      for (const item of path.length ? path : ["diagnostics_not_available"]) {
-        const span = document.createElement("span");
-        span.className = "diag-chip";
-        span.textContent = String(item);
-        pathEl.appendChild(span);
-      }
-
-      const tbody = document.querySelector("#pvCandidateTable tbody");
-      tbody.innerHTML = "";
-      const candidates = physical.candidates || {};
-      for (const [name, item] of Object.entries(candidates)) {
-        const tr = document.createElement("tr");
-        let status = item && item.status ? item.status : "";
-        if (!status && name === "existing" && method === "existing") status = "selected";
-        if (!status && name !== method) status = physical.fallback_reason ? "waiting" : "-";
-        let note = "";
-        if (name === method || (name === "existing" && method === "existing")) note = "selected";
-        else if (status === "waiting") note = physical.fallback_reason || "threshold not met";
-        const row = [
-          name,
-          item && item.total_kwh != null ? Number(item.total_kwh).toFixed(2) : "-",
-          status || "-",
-          note,
-        ];
-        for (const value of row) {
-          const td = document.createElement("td");
-          td.textContent = String(value);
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-      if (!tbody.children.length) {
-        const tr = document.createElement("tr");
-        for (const value of ["-", "-", "not generated", "night_charge_plan.json に診断がありません"]) {
-          const td = document.createElement("td");
-          td.textContent = value;
-          tr.appendChild(td);
-        }
-        tbody.appendChild(tr);
-      }
-
-      fillPvDeveloperTable(diag, physical, scales, quality);
-    }
-
-    function addDeveloperRow(tbody, group, name, value, meaning) {
+    function addLearningParameterRow(tbody, category, name, value, sampleCount, meaning) {
       const tr = document.createElement("tr");
-      for (const cell of [group, name, value, meaning]) {
+      for (const cell of [category, name, value, sampleCount, meaning]) {
         const td = document.createElement("td");
         td.textContent = String(cell == null || cell === "" ? "-" : cell);
         tr.appendChild(td);
@@ -1199,38 +1138,42 @@ def _html(payload: dict, script_nonce: str) -> str:
       tbody.appendChild(tr);
     }
 
-    function fillPvDeveloperTable(diag, physical, scales, quality) {
-      const summary = document.getElementById("pvDeveloperSummary");
-      const tbody = document.querySelector("#pvDeveloperTable tbody");
+    function fillLearningParamsTable(diag = {}) {
+      const tbody = document.querySelector("#learningParamsTable tbody");
       if (!tbody) return;
       tbody.innerHTML = "";
-      const input = physical.input || {};
-      const retirement = physical.retirement_recommendation || {};
+      for (const p of store.params) {
+        const name = String(p.name || "");
+        if (staticParameterNames.has(name)) continue;
+        const meta = paramAlias[name] || { label: "計画ごとに更新される補助係数" };
+        addLearningParameterRow(
+          tbody,
+          "モデル係数",
+          meta.label,
+          n(p.mean_value).toFixed(4),
+          n(p.sample_count, 0),
+          name,
+        );
+      }
+      const physical = diag.physical || {};
+      const scales = physical.scales || {};
+      const quality = physical.data_quality || {};
       const correction = diag.forecast_correction || {};
       const overnight = diag.overnight_load_forecast || {};
-      if (summary) {
-        const method = physical.selected_method || "not_generated";
-        const reason = physical.fallback_reason ? ` / ${physical.fallback_reason}` : "";
-        summary.innerHTML =
-          `PV物理予測: <b>${escapeHtml(method)}</b>${escapeHtml(reason)}<br>` +
-          `判断経路: <b>${escapeHtml((physical.decision_path || []).join(" → ") || "-")}</b>`;
+      addLearningParameterRow(tbody, "物理PV", "短波放射変換係数", scales.radiation_scale == null ? "-" : n(scales.radiation_scale).toFixed(4), scales.radiation_scale_fit?.sample_count, "短波放射からPVへの変換");
+      addLearningParameterRow(tbody, "物理PV", "全体バイアス補正", scales.global_bias_scale == null ? "-" : n(scales.global_bias_scale).toFixed(4), quality.global_days, "物理PVの実績比による全体補正");
+      for (const [period, item] of Object.entries(scales.daypart || {})) {
+        addLearningParameterRow(tbody, "物理PV", `時間帯補正 (${period})`, item?.scale == null ? "-" : n(item.scale).toFixed(4), item?.count, "朝・昼・夕の実績比補正");
       }
-      addDeveloperRow(tbody, "入力", "lat/lon", `${input.lat ?? "-"} / ${input.lon ?? "-"}`, "太陽位置計算に使う設置地点");
-      addDeveloperRow(tbody, "入力", "roof_pitch_deg", input.roof_pitch_deg ?? "-", "一般工事勾配を前提にしたパネル傾斜角");
-      addDeveloperRow(tbody, "入力", "panel_weights", JSON.stringify(input.panel_weights || {}), "東/南/西の相対出力比");
-      addDeveloperRow(tbody, "入力", "shortwave_hours", (input.shortwave_hours || []).join(", "), "短波放射が使えた時間");
-      addDeveloperRow(tbody, "データ", "global_days", `${quality.global_days ?? 0}/${quality.global_days_required ?? "-"}`, "global scale採用に必要な有効日数");
-      addDeveloperRow(tbody, "データ", "daypart_min_samples", quality.daypart_min_samples ?? "-", "朝/昼/夕スケールの自動発動閾値");
-      addDeveloperRow(tbody, "データ", "bin_min_samples", quality.bin_min_samples ?? "-", "太陽高度×短波binスケールの自動発動閾値");
-      addDeveloperRow(tbody, "係数", "radiation_scale", scales.radiation_scale ?? "-", "短波放射からPVへ変換する基礎係数");
-      addDeveloperRow(tbody, "係数", "radiation_scale_source", scales.radiation_scale_source ?? "-", "基礎係数の取得元");
-      addDeveloperRow(tbody, "係数", "global_bias_scale", scales.global_bias_scale ?? "-", "平均誤差を0へ寄せる全体補正");
-      addDeveloperRow(tbody, "既存補正", "pv_ratio_ewma_skipped", correction.pv_ratio_ewma_skipped ?? "-", "物理PV採用時に既存PV EWMAを二重適用しないためのフラグ");
-      addDeveloperRow(tbody, "夜間負荷", "expected_kwh", overnight.expected_kwh == null ? "-" : Number(overnight.expected_kwh).toFixed(2), "23-07の30分消費実績から見積もる翌朝までの負荷");
-      addDeveloperRow(tbody, "夜間負荷", "source", overnight.source || "-", "夜間負荷予測に使ったデータ源");
-      addDeveloperRow(tbody, "夜間負荷", "reason", overnight.reason || "-", "採用または未採用の理由");
-      addDeveloperRow(tbody, "夜間負荷", "sample_count", overnight.sample_count ?? "-", "推定に使えた過去夜間日数");
-      addDeveloperRow(tbody, "整理候補", "existing_pv_ewma", JSON.stringify((retirement.existing_pv_ewma || {})), "データ蓄積後に既存PV EWMAを整理するかの提案");
+      addLearningParameterRow(tbody, "PV補正", "PV比率EWMA", correction.pv_ratio_ewma_raw == null ? "-" : n(correction.pv_ratio_ewma_raw).toFixed(4), correction.pv_sample_count, "従来PV候補の実績比。物理PV採用時は二重適用しない");
+      addLearningParameterRow(tbody, "負荷補正", "負荷比率EWMA", correction.load_ratio_ewma_applied == null ? "-" : n(correction.load_ratio_ewma_applied).toFixed(4), correction.load_sample_count, "日別の消費予測に掛ける実績比補正");
+      const evening = correction.evening_load_temperature || {};
+      addLearningParameterRow(tbody, "負荷補正", "夜間気温補正倍率", evening.multiplier == null ? "-" : n(evening.multiplier).toFixed(4), evening.sample_count, "気温と夜間負荷残差から求める補正");
+      addLearningParameterRow(tbody, "夜間負荷", "翌朝までの予測消費", overnight.expected_kwh == null ? "-" : `${n(overnight.expected_kwh).toFixed(2)} kWh`, overnight.sample_count, "23:00-07:00の実績から推定");
+    }
+
+    function fillLearningParams() {
+      fillLearningParamsTable(store.pvForecastDiagnostics || {});
     }
 
     function commonOptions() {
@@ -1347,7 +1290,6 @@ def _html(payload: dict, script_nonce: str) -> str:
         data: { labels: [], datasets: [
           { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, pointHoverRadius: 4, borderWidth: 2.5 },
           { label: "夜間充電計画(kWh/日)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
-          { label: "太陽光蓄電余力予測(kWh/日)", data: [], yAxisID: "y", borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25 },
           { label: "太陽光充電終了時SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
         ]},
         options: {
@@ -1660,8 +1602,8 @@ def _html(payload: dict, script_nonce: str) -> str:
           if (!day.startsWith(monthKey)) continue;
           const flow = store.batteryFlow.get(day);
           monthDischarge += n(flow && flow.discharge_kwh);
-          const weather = store.sunshine.get(day);
-          const actualTemp = valueOrNull(weather && weather.actual_temp_c);
+          const pv = store.pvDaily.get(day);
+          const actualTemp = valueOrNull(pv && pv.actual_temp_c);
           if (actualTemp !== null) {
             tempSum += actualTemp;
             tempCount += 1;
@@ -1793,12 +1735,11 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       const batteryTarget = buckets.map((bucket) => averageBucket(bucket, store.battery, "setting_soc_target_percent"));
       const batteryNight = buckets.map((bucket) => sumBucket(bucket, store.battery, "night_charge_kwh"));
-      const batteryPvMax = buckets.map((bucket) => sumBucket(bucket, store.battery, "pv_max_charge_kwh"));
       const batteryPvChargeEndSoc = buckets.map((bucket) => averageBucket(bucket, store.battery, "pv_charge_end_soc_percent"));
 
       const batteryTitle = document.getElementById("batteryTitle");
       const batteryDesc = document.getElementById("batteryDesc");
-      if (batteryTitle) batteryTitle.textContent = `5. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
+      if (batteryTitle) batteryTitle.textContent = `7. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
       if (batteryDesc) {
         batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。太陽光充電終了時SOCは、その日にPV発電中の充電が最後に発生した時点のSOCです。`;
       }
@@ -1806,20 +1747,17 @@ def _html(payload: dict, script_nonce: str) -> str:
       charts.battery.data.labels = labels;
       charts.battery.data.datasets[0].label = isWeekly ? "平均設定SOC(%)" : "設定SOC(%)";
       charts.battery.data.datasets[1].label = `夜間充電計画(kWh/${perUnit})`;
-      charts.battery.data.datasets[2].label = `太陽光蓄電余力予測(kWh/${perUnit})`;
-      charts.battery.data.datasets[3].label = isWeekly ? "平均太陽光充電終了時SOC(%)" : "太陽光充電終了時SOC(%)";
+      charts.battery.data.datasets[2].label = isWeekly ? "平均太陽光充電終了時SOC(%)" : "太陽光充電終了時SOC(%)";
       charts.battery.data.datasets[0].data = batteryTarget;
       charts.battery.data.datasets[1].data = batteryNight;
-      charts.battery.data.datasets[2].data = batteryPvMax;
-      charts.battery.data.datasets[3].data = batteryPvChargeEndSoc;
-      charts.battery.data.datasets[3].hidden = !batteryPvChargeEndSoc.some((v) => v != null);
+      charts.battery.data.datasets[2].data = batteryPvChargeEndSoc;
+      charts.battery.data.datasets[2].hidden = !batteryPvChargeEndSoc.some((v) => v != null);
       const batterySoc = [
         ...batteryTarget.filter((v) => v != null),
         ...batteryPvChargeEndSoc.filter((v) => v != null),
       ];
       const batteryKwh = [
         ...batteryNight.filter((v) => v != null),
-        ...batteryPvMax.filter((v) => v != null),
       ];
       const batteryDual = dualScales(batteryKwh, batterySoc, { leftUnit: "kWh", rightUnit: "%"});
       charts.battery.options.scales.y = {
@@ -1882,6 +1820,7 @@ def _html(payload: dict, script_nonce: str) -> str:
       }
       updatePeriodControls();
       renderDashboardWarnings();
+      renderDailyReview();
       renderConstraintGantt();
       renderHourlyForecast();
       renderWindow();
@@ -1937,7 +1876,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 
       const initialPayload = window.__DASHBOARD_DATA__ || {};
       const hasInitialRows =
-        (initialPayload.sunshine_daily && initialPayload.sunshine_daily.length) ||
+        (initialPayload.pv_daily && initialPayload.pv_daily.length) ||
         (initialPayload.energy_daily && initialPayload.energy_daily.length) ||
         (initialPayload.cost_daily && initialPayload.cost_daily.length) ||
         (initialPayload.battery_daily && initialPayload.battery_daily.length);
@@ -1956,13 +1895,13 @@ def _html(payload: dict, script_nonce: str) -> str:
         setStatus("最新データの再取得に失敗したため、取得済みデータで表示しています。", "#ef8e1d");
       }
 
-      fillParamsTable();
-      fillPvForecastDiagnostics();
+      fillLearningParams();
       await refreshDashboard();
 
       const resizeAll = () => {
         renderConstraintGantt();
         renderDashboardWarnings();
+        renderDailyReview();
         for (const c of Object.values(charts)) c.resize();
         renderHourlyForecast();
         renderWindow();

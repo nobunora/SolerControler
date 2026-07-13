@@ -310,6 +310,8 @@ def _ingest_firestore(
             print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
     pv_charge_end_updated = firestore_ops.recalc_battery_pv_charge_end_soc(client, updated_at=now_iso)
     print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
+    dashboard_daily_updated = firestore_ops.recalc_dashboard_daily_metrics(client, updated_at=now_iso)
+    print(f"[db_pipeline] dashboard daily metrics updated rows={dashboard_daily_updated}")
 
     night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
     firestore_ops.ingest_sunshine_from_night_plan(

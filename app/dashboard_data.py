@@ -4,6 +4,7 @@ import os
 import json
 import math
 import sqlite3
+import time
 from calendar import monthrange
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -14,11 +15,14 @@ from app.utils import to_float
 
 
 _SETTINGS_COMPLETED_STATUSES = {"applied", "skipped-no-change", "skipped-no-charge"}
+_FIRESTORE_CLIENTS: dict[tuple[str | None, str], Any] = {}
+_FIRESTORE_SLICE_CACHE: dict[tuple[str | None, int, bool], tuple[float, "DashboardSlice"]] = {}
+_FIRESTORE_DASHBOARD_CACHE_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
 class DashboardData:
-    sunshine_daily: list[dict[str, Any]]
+    pv_daily: list[dict[str, Any]]
     cost_daily: list[dict[str, Any]]
     cost_monthly: list[dict[str, Any]]
     battery_daily: list[dict[str, Any]]
@@ -29,6 +33,7 @@ class DashboardData:
     latest_schedule: dict[str, Any] = field(default_factory=dict)
     dashboard_warnings: list[dict[str, Any]] = field(default_factory=list)
     pv_forecast_diagnostics: dict[str, Any] = field(default_factory=dict)
+    daily_review: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -126,16 +131,6 @@ def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str
     if not snap.exists:
         return {}
     row = snap.to_dict() or {}
-    try:
-        from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
-
-        plan = load_night_plan_detail_from_firestore_doc(row)
-    except Exception:
-        plan = None
-    if isinstance(plan, dict):
-        diagnostics = _extract_pv_forecast_diagnostics(plan)
-        if diagnostics:
-            return diagnostics
     return _extract_pv_forecast_diagnostics(row)
 
 
@@ -273,29 +268,29 @@ def _build_energy_daily(
     *,
     start_date: str,
     end_date_iso: str,
-    sunshine_daily: list[dict[str, Any]],
+    pv_daily: list[dict[str, Any]],
     monitoring_daily: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    sunshine_by_day = {str(row.get("date")): row for row in sunshine_daily if row.get("date")}
+    pv_by_day = {str(row.get("date")): row for row in pv_daily if row.get("date")}
     actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
     dates = {
         d
-        for d in set(sunshine_by_day) | set(actual_by_day)
+        for d in set(pv_by_day) | set(actual_by_day)
         if start_date <= d <= end_date_iso
     }
     out: list[dict[str, Any]] = []
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
-        sunshine = sunshine_by_day.get(day)
-        forecast_pv = _forecast_pv_kwh(sunshine)
+        pv = pv_by_day.get(day)
+        forecast_pv = _forecast_pv_kwh(pv)
         out.append(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
-                "forecast_pv_morning_kwh": (sunshine or {}).get("forecast_pv_morning_kwh"),
-                "forecast_pv_midday_kwh": (sunshine or {}).get("forecast_pv_midday_kwh"),
-                "forecast_pv_evening_kwh": (sunshine or {}).get("forecast_pv_evening_kwh"),
-                "forecast_pv_calibration_factor": (sunshine or {}).get("forecast_pv_calibration_factor"),
+                "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
+                "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
+                "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),
+                "forecast_pv_calibration_factor": (pv or {}).get("forecast_pv_calibration_factor"),
                 "actual_pv_kwh": actual.get("actual_pv_kwh"),
                 "forecast_load_kwh": _rolling_load_forecast(day, actual_by_day),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
@@ -637,7 +632,7 @@ def _meta_from_data(
     window_days: int,
     global_oldest_date: str | None,
     global_newest_date: str | None,
-    sunshine_daily: list[dict[str, Any]],
+    pv_daily: list[dict[str, Any]],
     cost_daily: list[dict[str, Any]],
     battery_daily: list[dict[str, Any]],
     energy_daily: list[dict[str, Any]] | None = None,
@@ -645,7 +640,7 @@ def _meta_from_data(
     battery_flow_daily: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     all_dates: list[str] = []
-    all_dates.extend([str(x.get("date", "")) for x in sunshine_daily if x.get("date")])
+    all_dates.extend([str(x.get("date", "")) for x in pv_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in cost_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in battery_daily if x.get("date")])
     all_dates.extend([str(x.get("date", "")) for x in energy_daily or [] if x.get("date")])
@@ -721,12 +716,15 @@ def _load_sqlite_slice(
         start_date = start_obj.isoformat()
         end_date_iso = end_obj.isoformat()
 
-        sunshine = []
+        pv_daily = []
         if _sqlite_table_exists(conn, "sunshine_daily"):
-            sunshine = _rows_to_dicts(
+            pv_daily = _rows_to_dicts(
                 conn.execute(
                     """
-                    SELECT *
+                    SELECT date, actual_temp_c,
+                           forecast_pv_total_kwh, forecast_pv_morning_kwh,
+                           forecast_pv_midday_kwh, forecast_pv_evening_kwh,
+                           forecast_pv_calibration_factor
                     FROM sunshine_daily
                     WHERE date >= ? AND date <= ?
                     ORDER BY date
@@ -819,7 +817,7 @@ def _load_sqlite_slice(
         energy_daily = _build_energy_daily(
             start_date=start_date,
             end_date_iso=end_date_iso,
-            sunshine_daily=sunshine,
+            pv_daily=pv_daily,
             monitoring_daily=monitoring_daily,
         )
 
@@ -882,7 +880,7 @@ def _load_sqlite_slice(
             window_days=window_days,
             global_oldest_date=global_oldest,
             global_newest_date=global_newest,
-            sunshine_daily=sunshine,
+            pv_daily=pv_daily,
             cost_daily=cost_daily,
             battery_daily=battery_daily,
             energy_daily=energy_daily,
@@ -891,7 +889,7 @@ def _load_sqlite_slice(
         )
         return DashboardSlice(
             data=DashboardData(
-                sunshine_daily=sunshine,
+                pv_daily=pv_daily,
                 cost_daily=cost_daily,
                 cost_monthly=cost_monthly,
                 battery_daily=battery_daily,
@@ -989,14 +987,17 @@ def _load_postgres_slice(
 
             cur.execute(
                 """
-                SELECT *
+                SELECT date, actual_temp_c,
+                       forecast_pv_total_kwh, forecast_pv_morning_kwh,
+                       forecast_pv_midday_kwh, forecast_pv_evening_kwh,
+                       forecast_pv_calibration_factor
                 FROM sunshine_daily
                 WHERE date >= %s AND date <= %s
                 ORDER BY date
                 """,
                 (start_date, end_date_iso),
             )
-            sunshine = _rows_to_dicts(cur.fetchall())
+            pv_daily = _rows_to_dicts(cur.fetchall())
 
             cur.execute(
                 """
@@ -1074,7 +1075,7 @@ def _load_postgres_slice(
             energy_daily = _build_energy_daily(
                 start_date=start_date,
                 end_date_iso=end_date_iso,
-                sunshine_daily=sunshine,
+                pv_daily=pv_daily,
                 monitoring_daily=monitoring_daily,
             )
 
@@ -1129,7 +1130,7 @@ def _load_postgres_slice(
                 window_days=window_days,
                 global_oldest_date=global_oldest,
                 global_newest_date=global_newest,
-                sunshine_daily=sunshine,
+                pv_daily=pv_daily,
                 cost_daily=cost_daily,
                 battery_daily=battery_daily,
                 energy_daily=energy_daily,
@@ -1138,7 +1139,7 @@ def _load_postgres_slice(
             )
             return DashboardSlice(
                 data=DashboardData(
-                    sunshine_daily=sunshine,
+                    pv_daily=pv_daily,
                     cost_daily=cost_daily,
                     cost_monthly=cost_monthly,
                     battery_daily=battery_daily,
@@ -1206,6 +1207,16 @@ def _firestore_monitoring_daily(
     start_date: str,
     end_date_iso: str,
 ) -> list[dict[str, Any]]:
+    daily_rows = _firestore_rows_between(
+        client,
+        collection_name="dashboard_daily_metrics",
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        fields=["actual_pv_kwh", "actual_load_kwh", "charge_kwh", "discharge_kwh"],
+    )
+    if daily_rows:
+        return daily_rows
+
     end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
     q = (
         client.collection("monitoring_samples")
@@ -1231,24 +1242,107 @@ def _firestore_monitoring_daily(
     return [{"date": day, **values} for day, values in sorted(by_day.items())]
 
 
+def _open_dashboard_firestore_client():
+    from google.cloud import firestore
+
+    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
+    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
+    key = (project_id, database_id)
+    client = _FIRESTORE_CLIENTS.get(key)
+    if client is None:
+        client = firestore.Client(project=project_id, database=database_id) if project_id else firestore.Client(database=database_id)
+        _FIRESTORE_CLIENTS[key] = client
+    return client
+
+
+def _build_firestore_daily_review(
+    client,
+    *,
+    end_date_iso: str,
+    energy_daily: list[dict[str, Any]],
+    battery_daily: list[dict[str, Any]],
+    forecast_hourly: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the latest available plan-versus-actual review from saved data only."""
+
+    energy_by_date = {str(row.get("date")): row for row in energy_daily if row.get("date")}
+    review_date = max(
+        (day for day, row in energy_by_date.items() if to_float(row.get("actual_pv_kwh")) is not None),
+        default=None,
+    )
+    if not review_date:
+        return {}
+    actual = energy_by_date[review_date]
+    battery = next((row for row in battery_daily if str(row.get("date")) == review_date), {})
+    hourly = [row for row in forecast_hourly if str(row.get("date")) == review_date]
+    forecast_load = sum(max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0) for row in hourly)
+    try:
+        plan = client.collection("night_charge_plans").document(review_date).get().to_dict() or {}
+    except Exception:
+        plan = {}
+    result = plan.get("result") if isinstance(plan.get("result"), dict) else {}
+
+    end_next = _date_add_iso(review_date, 1) or review_date
+    sample_rows = []
+    for doc in (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", review_date)
+        .where("ts", "<", end_next)
+        .order_by("ts")
+        .stream()
+    ):
+        sample_rows.append(doc.to_dict() or {})
+    previous = _date_add_iso(review_date, -1)
+    if previous:
+        for doc in (
+            client.collection("monitoring_samples")
+            .where("ts", ">=", f"{previous}T23:00:00")
+            .where("ts", "<", f"{previous}T23:59:59")
+            .order_by("ts")
+            .stream()
+        ):
+            sample_rows.append(doc.to_dict() or {})
+
+    daytime = [row for row in sample_rows if review_date in str(row.get("ts", "")) and "07:00:00" <= str(row.get("ts", ""))[11:] <= "22:59:59"]
+    nighttime = [
+        row for row in sample_rows
+        if (str(row.get("ts", "")).startswith(review_date) and str(row.get("ts", ""))[11:] <= "06:59:59")
+        or (previous and str(row.get("ts", "")).startswith(previous) and str(row.get("ts", ""))[11:] >= "23:00:00")
+    ]
+    today_samples = [row for row in sample_rows if str(row.get("ts", "")).startswith(review_date)]
+    soc_values = [to_float(row.get("soc_percent")) for row in today_samples]
+    soc_values = [value for value in soc_values if value is not None]
+    total = lambda rows, field: sum(max(0.0, to_float(row.get(field)) or 0.0) for row in rows)
+    return {
+        "date": review_date,
+        "data_last_at": max((str(row.get("ts", "")) for row in today_samples), default=None),
+        "target_soc_percent": result.get("target_soc_7_percent", battery.get("setting_soc_target_percent")),
+        "forecast_night_charge_kwh": result.get("required_night_charge_kwh", battery.get("night_charge_kwh")),
+        "forecast_pv_kwh": result.get("final_predicted_pv_kwh", actual.get("forecast_pv_kwh")),
+        "forecast_load_kwh": forecast_load or actual.get("forecast_load_kwh"),
+        "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
+        "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
+        "forecast_source": result.get("final_pv_forecast_source"),
+        "actual_pv_kwh": actual.get("actual_pv_kwh"),
+        "actual_load_kwh": actual.get("actual_load_kwh"),
+        "actual_night_charge_kwh": total(nighttime, "charge_kwh"),
+        "actual_day_buy_kwh": total(daytime, "buy_kwh"),
+        "actual_sell_kwh": total(today_samples, "sell_kwh"),
+        "actual_soc_min_percent": min(soc_values) if soc_values else None,
+        "actual_soc_max_percent": max(soc_values) if soc_values else None,
+    }
+
+
 def _load_firestore_slice(
     *,
     end_date: str | None,
     window_days: int,
     include_static: bool,
 ) -> DashboardSlice:
-    from google.cloud import firestore
-
     empty_schedule = _default_latest_schedule()
-    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
-    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
-    client = firestore.Client(project=project_id, database=database_id) if project_id else firestore.Client(database=database_id)
+    client = _open_dashboard_firestore_client()
 
-    b1 = _firestore_bounds(client, "sunshine_daily")
-    b2 = _firestore_bounds(client, "cost_daily")
-    b3 = _firestore_bounds(client, "battery_daily_metrics")
-    b4 = _firestore_bounds(client, "forecast_hourly")
-    global_oldest, global_newest = _pick_min_max_dates([b1[0], b1[1], b2[0], b2[1], b3[0], b3[1], b4[0], b4[1]])
+    global_oldest, global_newest = _firestore_bounds(client, "sunshine_daily")
     if not global_newest:
         return DashboardSlice(
             data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
@@ -1279,7 +1373,7 @@ def _load_firestore_slice(
     start_date = start_obj.isoformat()
     end_date_iso = end_obj.isoformat()
 
-    sunshine = _firestore_rows_between(
+    pv_daily = _firestore_rows_between(
         client,
         collection_name="sunshine_daily",
         start_date=start_date,
@@ -1306,15 +1400,22 @@ def _load_firestore_slice(
         collection_name="battery_daily_metrics",
         start_date=start_date,
         end_date_iso=end_date_iso,
-        fields=["setting_soc_target_percent", "night_charge_kwh", "pv_max_charge_kwh", "pv_charge_end_soc_percent", "pv_charge_end_at"],
+        fields=["setting_soc_target_percent", "night_charge_kwh", "pv_charge_end_soc_percent", "pv_charge_end_at"],
     )
-    forecast_hourly = _firestore_rows_between(
-        client,
-        collection_name="forecast_hourly",
-        start_date=start_date,
-        end_date_iso=end_date_iso,
-        fields=["hour", "forecast_pv_kwh", "forecast_load_kwh", "forecast_charge_kwh", "source", "updated_at"],
-    )
+    forecast_hourly = []
+    for doc in client.collection("forecast_hourly").where("date", "==", end_date_iso).stream():
+        row = doc.to_dict() or {}
+        forecast_hourly.append(
+            {
+                "date": row.get("date", doc.id),
+                "hour": row.get("hour"),
+                "forecast_pv_kwh": row.get("forecast_pv_kwh"),
+                "forecast_load_kwh": row.get("forecast_load_kwh"),
+                "forecast_charge_kwh": row.get("forecast_charge_kwh"),
+                "source": row.get("source"),
+                "updated_at": row.get("updated_at"),
+            }
+        )
     forecast_hourly.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
     history_start = (start_obj - timedelta(days=14)).isoformat()
     monitoring_daily = _firestore_monitoring_daily(
@@ -1334,7 +1435,7 @@ def _load_firestore_slice(
     energy_daily = _build_energy_daily(
         start_date=start_date,
         end_date_iso=end_date_iso,
-        sunshine_daily=sunshine,
+        pv_daily=pv_daily,
         monitoring_daily=monitoring_daily,
     )
 
@@ -1395,7 +1496,7 @@ def _load_firestore_slice(
         window_days=window_days,
         global_oldest_date=global_oldest,
         global_newest_date=global_newest,
-        sunshine_daily=sunshine,
+        pv_daily=pv_daily,
         cost_daily=cost_daily,
         battery_daily=battery_daily,
         energy_daily=energy_daily,
@@ -1404,7 +1505,7 @@ def _load_firestore_slice(
     )
     return DashboardSlice(
         data=DashboardData(
-            sunshine_daily=sunshine,
+            pv_daily=pv_daily,
             cost_daily=cost_daily,
             cost_monthly=cost_monthly,
             battery_daily=battery_daily,
@@ -1421,6 +1522,17 @@ def _load_firestore_slice(
             ),
             pv_forecast_diagnostics=(
                 _read_latest_pv_forecast_diagnostics_from_firestore(client) if include_static else {}
+            ),
+            daily_review=(
+                _build_firestore_daily_review(
+                    client,
+                    end_date_iso=end_date_iso,
+                    energy_daily=energy_daily,
+                    battery_daily=battery_daily,
+                    forecast_hourly=forecast_hourly,
+                )
+                if include_static
+                else {}
             ),
         ),
         meta=meta,
@@ -1439,7 +1551,14 @@ def load_dashboard_slice(
     if backend == "postgres":
         return _load_postgres_slice(end_date=end_date, window_days=days, include_static=include_static)
     if backend == "firestore":
-        return _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
+        key = (end_date, days, include_static)
+        cached = _FIRESTORE_SLICE_CACHE.get(key)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < _FIRESTORE_DASHBOARD_CACHE_SECONDS:
+            return cached[1]
+        sliced = _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
+        _FIRESTORE_SLICE_CACHE[key] = (now, sliced)
+        return sliced
     return _load_sqlite_slice(db_path, end_date=end_date, window_days=days, include_static=include_static)
 
 

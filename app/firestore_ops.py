@@ -506,7 +506,6 @@ def upsert_battery_daily_metrics(
     date = str(metrics["date"])
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
-    pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
     plan_should_apply = metrics["plan_should_apply"]
@@ -515,7 +514,6 @@ def upsert_battery_daily_metrics(
             "date": date,
             "setting_soc_target_percent": target_soc,
             "night_charge_kwh": night_charge_kwh,
-            "pv_max_charge_kwh": pv_max_charge_kwh,
             "pv_charge_end_soc_percent": pv_charge_end_soc,
             "pv_charge_end_at": pv_charge_end_at,
             "settings_run_id": metrics["settings_run_id"],
@@ -585,6 +583,54 @@ def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
     if count > 0:
         batch.commit()
     return updated
+
+
+def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
+    """Materialize daily monitoring totals for fast dashboard reads."""
+
+    by_day: dict[str, dict[str, float | str | None]] = {}
+    for doc in client.collection("monitoring_samples").stream():
+        row = doc.to_dict() or {}
+        ts = str(row.get("ts", doc.id)).strip()
+        if len(ts) < 10:
+            continue
+        day = ts[:10]
+        acc = by_day.setdefault(
+            day,
+            {
+                "actual_pv_kwh": 0.0,
+                "actual_load_kwh": 0.0,
+                "buy_kwh": 0.0,
+                "sell_kwh": 0.0,
+                "charge_kwh": 0.0,
+                "discharge_kwh": 0.0,
+                "soc_min_percent": None,
+                "soc_max_percent": None,
+                "latest_sample_at": ts,
+            },
+        )
+        for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
+            target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
+            acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
+        soc = to_float(row.get("soc_percent"))
+        if soc is not None:
+            acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
+            acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
+        if ts > str(acc["latest_sample_at"] or ""):
+            acc["latest_sample_at"] = ts
+
+    batch = client.batch()
+    count = 0
+    for day, metrics in by_day.items():
+        batch.set(client.collection("dashboard_daily_metrics").document(day), {"date": day, **metrics, "updated_at": updated_at}, merge=True)
+        count += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count:
+        batch.commit()
+    return len(by_day)
 
 
 def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:

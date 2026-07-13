@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "sync_validation_state failed"
 }
 
-python -m compileall app main.py kpnet_main.py energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py dashboard_mock_png.py
+python -m compileall app main.py kpnet_main.py energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py
 if ($LASTEXITCODE -ne 0) {
     throw "compileall failed"
 }

@@ -346,7 +346,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             date TEXT PRIMARY KEY,
             setting_soc_target_percent REAL,
             night_charge_kwh REAL,
-            pv_max_charge_kwh REAL,
             pv_charge_end_soc_percent REAL,
             pv_charge_end_at TEXT,
             end_of_day_soc_percent REAL,
@@ -514,17 +513,10 @@ def _extract_battery_daily_from_summary(
     if night_charge_kwh is None:
         night_charge_kwh = to_float(np_result.get("required_night_charge_kwh"))
 
-    pv_max_charge_kwh = to_float(np_result.get("predicted_midday_surplus_kwh")) if prefer_night_plan else None
-    if pv_max_charge_kwh is None:
-        pv_max_charge_kwh = to_float(np_summary.get("predicted_midday_surplus_kwh"))
-    if pv_max_charge_kwh is None:
-        pv_max_charge_kwh = to_float(np_result.get("predicted_midday_surplus_kwh"))
-
     return {
         "date": date,
         "target_soc": target_soc,
         "night_charge_kwh": night_charge_kwh,
-        "pv_max_charge_kwh": pv_max_charge_kwh,
         # Actual PV-charge-end SOC must come from monitoring CSV samples.
         "pv_charge_end_soc": None,
         "pv_charge_end_at": None,
@@ -1101,7 +1093,6 @@ def upsert_battery_daily_metrics(
     date = str(metrics["date"])
     target_soc = metrics["target_soc"]
     night_charge_kwh = metrics["night_charge_kwh"]
-    pv_max_charge_kwh = metrics["pv_max_charge_kwh"]
     pv_charge_end_soc = metrics["pv_charge_end_soc"]
     pv_charge_end_at = metrics["pv_charge_end_at"]
     settings_run_id = metrics["settings_run_id"]
@@ -1113,15 +1104,14 @@ def upsert_battery_daily_metrics(
     conn.execute(
         """
         INSERT INTO battery_daily_metrics (
-            date, setting_soc_target_percent, night_charge_kwh, pv_max_charge_kwh,
+            date, setting_soc_target_percent, night_charge_kwh,
             pv_charge_end_soc_percent, pv_charge_end_at,
             settings_run_id, source_doc_id, source_status, source_profile,
             plan_quality_status, plan_should_apply, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(date) DO UPDATE SET
             setting_soc_target_percent=excluded.setting_soc_target_percent,
             night_charge_kwh=excluded.night_charge_kwh,
-            pv_max_charge_kwh=excluded.pv_max_charge_kwh,
             pv_charge_end_soc_percent=excluded.pv_charge_end_soc_percent,
             pv_charge_end_at=excluded.pv_charge_end_at,
             settings_run_id=excluded.settings_run_id,
@@ -1136,7 +1126,6 @@ def upsert_battery_daily_metrics(
             date,
             target_soc,
             night_charge_kwh,
-            pv_max_charge_kwh,
             pv_charge_end_soc,
             pv_charge_end_at,
             settings_run_id,
