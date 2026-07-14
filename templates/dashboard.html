@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>おうち発電ダッシュボード</title>
+  <script nonce="__NONCE__" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>おうち発電ダッシュボード</h1>
+      <p>期間ボタンで、日次・月次・蓄電池グラフの表示範囲をまとめて切り替えます。</p>
+      <p id="statusMsg" class="desc"></p>
+    </section>
+
+    <section id="dashboardWarnings" class="warning-panel" aria-live="polite"></section>
+
+    <section class="grid">
+      <article class="card full">
+        <h2>1. 予実レビュー（最新実績日）</h2>
+        <p id="dailyReviewNote" class="desc">前日までの計画値とKP-NET実績を比較します。</p>
+        <div id="dailyReviewGrid" class="diag-grid" aria-label="予実レビュー"></div>
+        <div id="dailyReviewFindings" class="diag-path" aria-label="予実レビューの主な乖離"></div>
+      </article>
+
+      <article class="card full">
+        <h2>2. 時間別予測（最新計画）</h2>
+        <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・消費電力量を表示します。消費は実績がある時間帯を実績、未到達時間帯を予測で表示します。</p>
+        <div class="chart-box"><canvas id="hourlyForecastChart"></canvas></div>
+      </article>
+
+      <article class="card full">
+        <h2>表示期間</h2>
+        <p class="desc">集計月は「前月15日〜当月14日」を当月分として扱います。締め日は `DASHBOARD_AGGREGATION_CLOSE_DAY` で変更できます。</p>
+        <div class="period-panel" aria-label="表示期間切り替え">
+          <button id="periodMonthBtn" class="period-button" type="button">1ヶ月(日)</button>
+          <button id="periodYearBtn" class="period-button" type="button">年(週)</button>
+          <button id="periodAllBtn" class="period-button" type="button">全て(日)</button>
+          <button id="periodPrevBtn" class="period-button" type="button">前</button>
+          <button id="periodNextBtn" class="period-button" type="button">後</button>
+          <span id="periodLabel" class="period-label"></span>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>3.1 発電量（予測と実績）</h2>
+        <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
+        <div class="chart-box"><canvas id="pvChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2>3.2 消費量（予測と実績）</h2>
+        <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
+        <div class="chart-box"><canvas id="loadChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2 id="dailyKwhTitle">4. 自家消費kWh（日）</h2>
+        <p id="dailyKwhDesc" class="desc">青の棒: 日次自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。</p>
+        <div class="chart-box"><canvas id="dailyKwhChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2 id="dailyYenTitle">5. 節約額（日）</h2>
+        <p id="dailyYenDesc" class="desc">橙の棒: 日次節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。</p>
+        <div class="chart-box"><canvas id="dailyYenChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2>6. 自家消費と節約額（月）</h2>
+        <p class="desc">月単位の合計。左軸(kWh)、右軸(円)。</p>
+        <div class="chart-box"><canvas id="monthlyCostChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2 id="batteryTitle">7. 蓄電池計画値と実績（日次）</h2>
+        <p id="batteryDesc" class="desc">左軸は夜間充電量(kWh/日)、右軸はSOC(%)です。瞬時充電電力(kW)ではありません。</p>
+        <div class="chart-box"><canvas id="batteryChart"></canvas></div>
+      </article>
+
+      <article class="card">
+        <h2>8. 蓄電池容量推定（実績）</h2>
+        <p class="desc">表示期間の実測充放電量と実績気温から、月別の推定容量内訳を表示します。未来予測ではなく、制御には使わない可視化用の推定です。</p>
+        <div class="battery-life-card">
+          <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
+            <div class="battery-life-kpi"><span class="battery-life-label">累計充電</span><span id="lifeTotalCharge" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">累計放電</span><span id="lifeTotalDischarge" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">等価サイクル</span><span id="lifeEquivalentCycles" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">推定容量</span><span id="lifeEstimatedCapacity" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">80%到達予測</span><span id="lifeEightyPercentYear" class="battery-life-value">-</span></div>
+            <div class="battery-life-kpi"><span class="battery-life-label">月平均Eqサイクル</span><span id="lifeMonthlyCycles" class="battery-life-value">-</span></div>
+          </div>
+          <div class="chart-box battery-life-chart"><canvas id="batteryLifeChart"></canvas></div>
+        </div>
+      </article>
+
+      <article class="card full">
+        <h2>9. 制約管理ガントチャート（最新設定）</h2>
+        <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。時間別の日中予測は上の折れ線グラフに分離しています。</p>
+        <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
+      </article>
+
+      <article class="card full">
+        <h2>10. 蓄電池方程式とパラメータ</h2>
+        <div class="equation">
+          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>NL</b>=夜間負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
+          (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
+          (2) 朝不足: <b>DF = max(0, RM - PV<sub>07-10</sub>)</b><br>
+          (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
+          (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
+          (5) 夜間充電量: <b>NC = max(0, ((RC × Cp/100) - max(0, RS × Cp/100 - NL)) / Ef)</b><br>
+          条件A: 23-07は放電禁止、07-23は放電許可。 条件B: 03ジョブが07:00カットオフで強制充電開始を逆算。 条件C: 充電開始は00:00未満にしない。<br>
+          条件管理: <b>config/operation_conditions.json</b>（fixed=固定条件、variable=変動条件、priority=優先順位）<br>
+          最優先固定条件: <b>0時跨ぎ禁止</b> / <b>開始=終了禁止</b><br>
+        </div>
+        <table id="learningParamsTable">
+          <thead>
+            <tr><th>分類</th><th>パラメータ</th><th>現在値</th><th>サンプル数</th><th>意味</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </article>
+    </section>
+  </div>
+
+  <script nonce="__NONCE__" src="/static/dashboard.js"></script>
+</body>
+</html>

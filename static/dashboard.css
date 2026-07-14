@@ -1,0 +1,236 @@
+    :root {
+      --bg-1: #eef7ff;
+      --bg-2: #fefcf7;
+      --panel: #ffffff;
+      --ink: #16314f;
+      --sub: #5a6f85;
+      --line: #d8e6f2;
+      --blue: #147efb;
+      --green: #14b86f;
+      --orange: #ef8e1d;
+      --red: #e6504f;
+    }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "BIZ UDPGothic", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+      -webkit-text-size-adjust: 100%;
+      background:
+        radial-gradient(circle at 12% -20%, #dcefff 0%, transparent 40%),
+        radial-gradient(circle at 95% 0%, #fff4d6 0%, transparent 45%),
+        linear-gradient(180deg, var(--bg-1), var(--bg-2));
+    }
+    .wrap { max-width: min(1360px, 100vw); margin: 0 auto; padding: clamp(8px, 2.5vw, 14px); box-sizing: border-box; }
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(130deg, #f6fbff, #fffdf7);
+      padding: 16px 18px;
+      margin-bottom: 14px;
+      box-sizing: border-box;
+    }
+    .hero h1 { margin: 0; font-size: 22px; letter-spacing: 0.02em; }
+    .hero p { margin: 6px 0 0; color: var(--sub); font-size: 13px; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      padding: 12px;
+      box-shadow: 0 6px 16px rgba(13, 49, 88, 0.07);
+      box-sizing: border-box;
+      min-width: 0;
+    }
+    .full { grid-column: 1 / -1; }
+    .card h2 { margin: 0 0 6px; font-size: 16px; }
+    .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; }
+    .chart-box { position: relative; width: 100%; min-width: 0; height: 300px; }
+    .battery-life-card { display: grid; gap: 8px; }
+    .battery-life-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .battery-life-kpi {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 5px;
+      min-height: 32px;
+      padding: 7px 8px;
+      border: 1px solid #e3edf6;
+      border-radius: 11px;
+      background: linear-gradient(180deg, #f8fbff, #ffffff);
+      box-sizing: border-box;
+    }
+    .battery-life-label {
+      color: #7a8da1;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .battery-life-value {
+      color: #16314f;
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .battery-life-value small {
+      color: #5a6f85;
+      font-size: 10px;
+      font-weight: 800;
+      margin-left: 3px;
+    }
+    .battery-life-chart { height: 210px; }
+    .gantt-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #f8fbff; }
+    .gantt-board { min-width: 980px; padding: 10px; }
+    .gantt-axis {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      align-items: center;
+      margin-bottom: 6px;
+      color: #4f667f;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .gantt-hours {
+      position: relative;
+      height: 18px;
+      border-bottom: 1px solid #dae8f5;
+      background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 24 - 1px), #dce8f3 calc(100% / 24 - 1px), #dce8f3 calc(100% / 24));
+    }
+    .gantt-hours span {
+      position: absolute;
+      transform: translateX(-50%);
+      top: 0;
+      font-size: 10px;
+      color: #5a6f85;
+      white-space: nowrap;
+    }
+    .gantt-row {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      align-items: center;
+      min-height: 48px;
+      border-bottom: 1px dashed #d9e5f1;
+      gap: 8px;
+      padding: 6px 0;
+    }
+    .gantt-row:last-child { border-bottom: 0; }
+    .gantt-label { font-size: 13px; font-weight: 700; color: #20415f; padding-left: 2px; }
+    .gantt-track {
+      position: relative;
+      height: 38px;
+      border: 1px solid #d4e3f1;
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+      background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / 24 - 1px), #edf3f8 calc(100% / 24 - 1px), #edf3f8 calc(100% / 24));
+    }
+    .gantt-bar {
+      position: absolute;
+      top: 6px;
+      height: 26px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      border: 1px solid rgba(0,0,0,0.08);
+      padding: 0 6px;
+      box-sizing: border-box;
+    }
+    .bar-plan-night { background: #9ed8f4; color: #0d3d66; }
+    .bar-plan-day { background: #ffe08a; color: #704d00; }
+    .bar-forecast { background: #cdeccf; color: #1e5c2f; }
+    .bar-fixed-stop { background: #ffe2e2; color: #8f2b2b; }
+    .bar-fixed-free { background: #dff3e8; color: #1f6b45; }
+    .gantt-notes { margin-top: 8px; color: #5a6f85; font-size: 12px; line-height: 1.5; }
+    .gantt-notes code { background: #eef4fb; padding: 1px 5px; border-radius: 5px; }
+    .gantt-status-icon {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      margin-right: 6px;
+      border: 1px solid transparent;
+    }
+    .gantt-status-icon.ok { background: #e6f6ec; color: #17613a; border-color: #bce4cb; }
+    .gantt-status-icon.warn { background: #fff4df; color: #825100; border-color: #f2d297; }
+    .warning-panel {
+      display: none;
+      border: 1px solid #f0d6a8;
+      border-radius: 14px;
+      background: #fff9ec;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      box-sizing: border-box;
+    }
+    .warning-panel.active { display: block; }
+    .warning-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .warning-item {
+      border-left: 5px solid #ef8e1d;
+      background: rgba(255,255,255,0.72);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+    .warning-item.danger { border-left-color: var(--red); }
+    .warning-item.info { border-left-color: var(--blue); }
+    .warning-title { font-weight: 800; margin-right: 8px; }
+    .warning-message { color: var(--sub); font-size: 12px; line-height: 1.5; }
+    .period-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .period-button {
+      appearance: none;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #f8fbff;
+      color: var(--ink);
+      padding: 8px 12px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    }
+    .period-button:hover:not(:disabled) { transform: translateY(-1px); border-color: #9cc8ed; }
+    .period-button.active { background: #16314f; border-color: #16314f; color: #fff; }
+    .period-button:disabled { cursor: not-allowed; color: #a1afbd; background: #f1f5f9; }
+    .period-label { color: var(--sub); font-size: 13px; font-weight: 700; margin-left: 4px; }
+    canvas { display: block; width: 100% !important; height: 100% !important; }
+    .equation {
+      background: #f6fbff;
+      border: 1px solid #dce9f4;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+      color: #35506a;
+      line-height: 1.6;
+      font-size: 13px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+    th, td { padding: 7px 5px; border-bottom: 1px solid #eaf0f6; text-align: left; overflow-wrap: anywhere; word-break: break-word; }
+    th { background: #f8fbff; }
+    .diag-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 10px 0 14px; }
+    .diag-kpi { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fbfdff; }
+    .diag-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+    .diag-value { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+    .diag-path { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+    .diag-chip { border: 1px solid #d8e6f2; border-radius: 999px; padding: 4px 8px; background: #f8fbff; font-size: 12px; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .full { grid-column: auto; }
+      .chart-box { height: 240px; }
+      .battery-life-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .diag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .battery-life-chart { height: 220px; }
+      .hero h1 { font-size: 19px; }
+    }
