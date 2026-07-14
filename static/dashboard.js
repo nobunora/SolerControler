@@ -3,6 +3,7 @@
     const WINDOW_DAYS = 31;
     const CHUNK_DAYS = 120;
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
+    const { allocateNightGridCharge } = window.DashboardCalculations;
 
     function n(v, d = 0) {
       const x = Number(v);
@@ -1015,34 +1016,8 @@
     function estimateHourlyNightGridCharge(rows, date) {
       const batteryRow = date ? store.battery.get(date) : null;
       const totalKwh = Math.max(0, Number(batteryRow && batteryRow.night_charge_kwh != null ? batteryRow.night_charge_kwh : 0) || 0);
-      if (totalKwh <= 0) return rows.map(() => 0);
       const sch = store.latestSchedule || {};
-      const minuteOf = (value) => {
-        const match = /^(\\d{1,2}):(\\d{2})$/.exec(String(value || "").trim());
-        if (!match) return null;
-        const hour = Number(match[1]);
-        const minute = Number(match[2]);
-        return hour >= 0 && hour < 24 && minute >= 0 && minute < 60 ? hour * 60 + minute : null;
-      };
-      let start = minuteOf(sch.charge_start_time);
-      let end = minuteOf(sch.charge_end_time);
-      if (start == null || end == null) {
-        start = 4 * 60;
-        end = 7 * 60;
-      }
-      if (start === end) return rows.map(() => 0);
-      if (end < start) end += 24 * 60;
-      const overlaps = rows.map((row) => {
-        const hour = Number(row.hour);
-        if (!Number.isFinite(hour)) return 0;
-        const hourStart = hour * 60;
-        const direct = Math.max(0, Math.min(hourStart + 60, end) - Math.max(hourStart, start));
-        const nextDay = Math.max(0, Math.min(hourStart + 24 * 60 + 60, end) - Math.max(hourStart + 24 * 60, start));
-        return direct + nextDay;
-      });
-      const totalOverlap = overlaps.reduce((total, minutes) => total + minutes, 0);
-      if (totalOverlap <= 0) return rows.map(() => 0);
-      return overlaps.map((minutes) => totalKwh * minutes / totalOverlap);
+      return allocateNightGridCharge(rows, totalKwh, sch.charge_start_time, sch.charge_end_time);
     }
 
     function estimateHourlyForecastSoc(rows, date) {

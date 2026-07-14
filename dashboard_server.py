@@ -99,6 +99,7 @@ def _html(payload: dict, script_nonce: str) -> str:
 def _static_asset(path: str) -> tuple[str, bytes] | None:
     assets = {
         "/static/dashboard.css": ("text/css; charset=utf-8", "dashboard.css"),
+        "/static/dashboard_calculations.js": ("text/javascript; charset=utf-8", "dashboard_calculations.js"),
         "/static/dashboard.js": ("text/javascript; charset=utf-8", "dashboard.js"),
     }
     asset = assets.get(path)
