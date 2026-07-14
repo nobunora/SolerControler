@@ -15,6 +15,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from app.soc_decision_feedback import build_soc_decision_feedback
+from app.constants import validate_soc_percent
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -507,8 +508,13 @@ def _latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, dateti
                     continue
                 try:
                     dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    soc = float(soc_text)
+                    soc = validate_soc_percent(float(soc_text), raw=soc_text)
                 except (TypeError, ValueError):
+                    print(
+                        f"[cloud_job_runner] invalid CSV SOC skipped: value={soc_text!r} "
+                        f"date={date_text} time={time_text}",
+                        flush=True,
+                    )
                     continue
                 if latest_dt is None or dt > latest_dt:
                     latest_dt = dt

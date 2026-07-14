@@ -20,7 +20,7 @@ import matplotlib
 import requests
 from bs4 import BeautifulSoup
 
-from app.constants import SOCBounds
+from app.constants import SOCBounds, validate_soc_percent
 from app.utils import env, env_bool, load_dotenv_if_present, parse_csv_float, to_float
 
 LOGGER = logging.getLogger(__name__)
@@ -368,14 +368,6 @@ def _pick_battery_operating_mode_code(
     )
 
 
-def _validate_external_soc_percent(value: float, *, raw: str) -> float:
-    if not math.isfinite(value):
-        raise ValueError(f"SOC is not finite: raw={raw!r} value={value}")
-    if value < 0.0 or value > 100.0:
-        raise ValueError(f"SOC out of range: raw={raw!r} value={value}")
-    return value
-
-
 def _extract_simple_visualization_soc_percent(html: str) -> float | None:
     soup = BeautifulSoup(html, "html.parser")
     for table in soup.select("table.data_table_bt"):
@@ -401,7 +393,7 @@ def _extract_simple_visualization_soc_percent(html: str) -> float | None:
             raw_value = cell.get_text(" ", strip=True)
             match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*%?\s*", raw_value)
             if match:
-                return _validate_external_soc_percent(float(match.group(1)), raw=raw_value)
+                return validate_soc_percent(float(match.group(1)), raw=raw_value)
     return None
 
 

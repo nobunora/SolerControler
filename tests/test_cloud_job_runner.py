@@ -20,6 +20,7 @@ from cloud_job_runner import (
     _read_plan_meta,
     _read_soc_with_fallback,
     _latest_realtime_soc_percent,
+    _latest_csv_soc_reading,
     _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
     _run_adjust_03,
@@ -292,6 +293,43 @@ def test_read_soc_with_fallback_uses_realtime(monkeypatch) -> None:
 
     assert reading.value_percent == 42.0
     assert reading.source == "realtime"
+
+
+@pytest.mark.parametrize("value", ["0", "38", "100"])
+def test_latest_csv_soc_reading_accepts_valid_values(tmp_path, value: str) -> None:
+    csv_path = tmp_path / "soc.csv"
+    csv_path.write_text(
+        f"年月日,時刻,蓄電残量(SOC)[%]\n2026/07/14,03:00,{value}\n",
+        encoding="utf-8-sig",
+    )
+
+    reading, observed_at = _latest_csv_soc_reading([csv_path])
+
+    assert reading == float(value)
+    assert observed_at == datetime(2026, 7, 14, 3, 0)
+
+
+@pytest.mark.parametrize("value", ["-1", "101", "780", "NaN", "Infinity", "-Infinity"])
+def test_latest_csv_soc_reading_rejects_invalid_values(tmp_path, value: str) -> None:
+    csv_path = tmp_path / "soc.csv"
+    csv_path.write_text(
+        f"年月日,時刻,蓄電残量(SOC)[%]\n2026/07/14,03:00,{value}\n",
+        encoding="utf-8-sig",
+    )
+
+    assert _latest_csv_soc_reading([csv_path]) == (None, None)
+
+
+def test_latest_csv_soc_reading_skips_newer_invalid_row(tmp_path) -> None:
+    csv_path = tmp_path / "soc.csv"
+    csv_path.write_text(
+        "年月日,時刻,蓄電残量(SOC)[%]\n"
+        "2026/07/14,02:55,38\n"
+        "2026/07/14,03:00,780\n",
+        encoding="utf-8-sig",
+    )
+
+    assert _latest_csv_soc_reading([csv_path]) == (38.0, datetime(2026, 7, 14, 2, 55))
 
 
 def test_realtime_soc_returns_value_when_logout_fails(monkeypatch) -> None:

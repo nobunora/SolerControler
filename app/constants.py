@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+import math
+
+
+def validate_soc_percent(value: float, *, raw: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"SOC is not finite: raw={raw!r} value={parsed}")
+    if parsed < 0.0 or parsed > 100.0:
+        raise ValueError(f"SOC out of range: raw={raw!r} value={parsed}")
+    return parsed
+
 
 class SOCBounds:
     MIN_PERCENT = 0.0
