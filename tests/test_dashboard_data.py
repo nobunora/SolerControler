@@ -261,6 +261,108 @@ def test_latest_schedule_does_not_complete_from_different_plan_date() -> None:
     assert schedule["settings_completed_status"] is None
 
 
+def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {
+                "run_id": "new-run",
+                "slot": "03",
+                "profile": "night-green",
+                "status": "applied",
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "07:00", "schedule_source": "03-monitor"}
+                ),
+                "source_doc_id": "new-doc",
+                "recorded_at": "2026-06-03T03:10:00Z",
+            },
+            {
+                "run_id": "old-run",
+                "slot": "03",
+                "profile": "night-green",
+                "status": "applied",
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "06:00", "schedule_source": "03-monitor"}
+                ),
+                "source_doc_id": "old-doc",
+                "recorded_at": "2026-06-03T03:00:00Z",
+            },
+        ],
+        battery_row=None,
+        plan_date="2026-06-03",
+    )
+
+    assert schedule["charge_end_time"] == "07:00"
+    assert schedule["recorded_at"] == "2026-06-03T03:10:00Z"
+    assert schedule["settings_completed_run_id"] == "new-run"
+
+
+def test_latest_schedule_does_not_mix_completion_from_different_run() -> None:
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {
+                "run_id": "new-run",
+                "status": "confirm-failed",
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "07:00", "schedule_source": "03-monitor"}
+                ),
+                "recorded_at": "2026-06-03T03:10:00Z",
+            },
+            {
+                "run_id": "old-run",
+                "status": "applied",
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "06:00", "schedule_source": "03-monitor"}
+                ),
+                "recorded_at": "2026-06-03T03:00:00Z",
+            },
+        ],
+        battery_row=None,
+        plan_date="2026-06-03",
+    )
+
+    assert schedule["charge_end_time"] == "07:00"
+    assert schedule["settings_completed"] is False
+
+
+def test_latest_schedule_prioritizes_monitor_then_no_charge() -> None:
+    base_row = {"run_id": "run", "status": "applied", "recorded_at": "2026-06-03T03:00:00Z"}
+    schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {**base_row, "detail_json": json.dumps({"plan_date": "2026-06-03", "charge_end_time": "05:00"})},
+            {
+                **base_row,
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "06:00", "schedule_source": "03-no-charge"}
+                ),
+            },
+            {
+                **base_row,
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "07:00", "schedule_source": "03-monitor"}
+                ),
+            },
+        ],
+        battery_row=None,
+        plan_date="2026-06-03",
+    )
+    no_monitor_schedule = _build_latest_schedule_from_events(
+        event_rows=[
+            {**base_row, "detail_json": json.dumps({"plan_date": "2026-06-03", "charge_end_time": "05:00"})},
+            {
+                **base_row,
+                "detail_json": json.dumps(
+                    {"plan_date": "2026-06-03", "charge_end_time": "06:00", "schedule_source": "03-no-charge"}
+                ),
+            },
+        ],
+        battery_row=None,
+        plan_date="2026-06-03",
+    )
+
+    assert schedule["charge_end_time"] == "07:00"
+    assert no_monitor_schedule["charge_end_time"] == "06:00"
+
+
 def test_latest_schedule_uses_battery_metric_provenance_for_completion() -> None:
     schedule = _build_latest_schedule_from_events(
         event_rows=[],

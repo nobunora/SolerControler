@@ -383,11 +383,9 @@ def _build_latest_schedule_from_events(
     plan_date: str | None,
 ) -> dict[str, Any]:
     schedule = _default_latest_schedule(plan_date=plan_date)
-    chosen_row: dict[str, Any] | None = None
+    candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
     completed_row: dict[str, Any] | None = None
-    schedule_source_locked = False
     for row in event_rows:
-        status = str(row.get("status", "") or "")
         detail = _json_object_or_empty(row.get("detail_json"))
         if not detail:
             continue
@@ -396,16 +394,19 @@ def _build_latest_schedule_from_events(
             continue
         if plan_date and detail_plan_date and detail_plan_date != plan_date:
             continue
-        if (
-            completed_row is None
-            and status in _SETTINGS_COMPLETED_STATUSES
-            and (not plan_date or detail_plan_date == plan_date)
-        ):
-            completed_row = row
-        is_monitor_schedule = str(detail.get("schedule_source") or "") == "03-monitor"
-        if schedule_source_locked and not is_monitor_schedule:
-            continue
-        changed = False
+        candidates.append((row, detail))
+
+    def _schedule_priority(candidate: tuple[dict[str, Any], dict[str, Any]]) -> int:
+        source = str(candidate[1].get("schedule_source") or "")
+        if source == "03-monitor":
+            return 0
+        if source == "03-no-charge":
+            return 1
+        return 2
+
+    schedule_row = min(candidates, key=_schedule_priority, default=None)
+    if schedule_row is not None:
+        chosen_row, chosen_detail = schedule_row
         for key in (
             "charge_start_time",
             "charge_end_time",
@@ -427,20 +428,25 @@ def _build_latest_schedule_from_events(
             "charge_rate_sample_count",
             "required_charge_percent_at_schedule",
         ):
-            value = detail.get(key)
+            value = chosen_detail.get(key)
             if value is None or value == "":
                 continue
             schedule[key] = value
-            changed = True
-        if changed and (chosen_row is None or is_monitor_schedule):
-            chosen_row = row
-            schedule_source_locked = is_monitor_schedule
-
-    if chosen_row is not None:
         schedule["status"] = str(chosen_row.get("status", "from-settings-events"))
         schedule["recorded_at"] = str(chosen_row.get("recorded_at", ""))
         schedule["slot"] = str(chosen_row.get("slot", ""))
         schedule["profile"] = str(chosen_row.get("profile", ""))
+        chosen_run_id = str(chosen_row.get("run_id") or "")
+        if chosen_run_id:
+            completed_row = next(
+                (
+                    row
+                    for row, _detail in candidates
+                    if str(row.get("run_id") or "") == chosen_run_id
+                    and str(row.get("status") or "") in _SETTINGS_COMPLETED_STATUSES
+                ),
+                None,
+            )
 
     if completed_row is not None:
         schedule["settings_completed"] = True
@@ -452,7 +458,7 @@ def _build_latest_schedule_from_events(
 
     if battery_row:
         battery_date = str(battery_row.get("date") or "")
-        battery_matches_plan = not plan_date or not battery_date or battery_date == plan_date
+        battery_matches_plan = not plan_date or battery_date == plan_date
         target_soc = to_float(battery_row.get("setting_soc_target_percent")) if battery_matches_plan else None
         if target_soc is not None:
             schedule["soc_charge_mode"] = str(int(round(target_soc)))
@@ -475,7 +481,7 @@ def _build_latest_schedule_from_events(
     charge_end = _parse_hhmm_minutes(str(schedule.get("charge_end_time") or ""))
     power_kw = to_float(schedule.get("estimated_charge_power_kw")) or 1.8
     battery_date = str(battery_row.get("date") if battery_row else "")
-    battery_matches_plan = bool(battery_row) and (not plan_date or not battery_date or battery_date == plan_date)
+    battery_matches_plan = bool(battery_row) and (not plan_date or battery_date == plan_date)
     night_kwh = to_float(battery_row.get("night_charge_kwh") if battery_matches_plan else None) or 0.0
 
     if charge_start is None and charge_end is not None and night_kwh > 0 and power_kw > 0:
