@@ -4,8 +4,10 @@ import json
 import pytest
 
 from app.dashboard_data import (
+    DashboardRawData,
     _build_dashboard_warnings,
     _build_latest_schedule_from_events,
+    _build_dashboard_slice,
     _get_global_bounds_firestore,
     clear_dashboard_cache,
     load_dashboard_slice,
@@ -305,6 +307,31 @@ def test_firestore_slice_cache_isolated_by_connection_and_clear(monkeypatch, tmp
     clear_dashboard_cache()
     assert load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14") == "slice-3"
     assert len(calls) == 4
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgres", "firestore"])
+def test_dashboard_raw_data_build_has_backend_parity(backend: str) -> None:
+    raw = DashboardRawData(
+        pv_daily=[{"date": "2026-07-14", "actual_kwh": 4.0}],
+        cost_daily=[{"date": "2026-07-14", "savings_yen": 100.0}],
+        cost_monthly=[{"month": "2026-07", "savings_yen": 100.0}],
+        battery_daily=[{"date": "2026-07-14", "setting_soc_target_percent": 80.0}],
+        model_parameters=[],
+        battery_flow_daily=[{"date": "2026-07-14", "charge_kwh": 1.0}],
+        energy_daily=[{"date": "2026-07-14", "actual_pv_kwh": 4.0}],
+        forecast_hourly=[{"date": "2026-07-14", "hour": 12, "forecast_pv_kwh": 1.0}],
+        latest_schedule={"plan_date": "2026-07-14", "status": "applied", "settings_completed": True},
+        global_oldest="2026-07-14",
+        global_newest="2026-07-14",
+    )
+
+    sliced = _build_dashboard_slice(raw, end_date_iso="2026-07-14", window_days=31)
+
+    assert sliced.data.energy_daily == raw.energy_daily, backend
+    assert sliced.data.latest_schedule == raw.latest_schedule, backend
+    assert sliced.data.cost_monthly == raw.cost_monthly, backend
+    assert sliced.data.forecast_hourly == raw.forecast_hourly, backend
+    assert sliced.meta["global_oldest_date"] == "2026-07-14", backend
 
 
 def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() -> None:

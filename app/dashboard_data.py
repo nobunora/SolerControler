@@ -39,6 +39,21 @@ class DashboardData:
 
 
 @dataclass(frozen=True)
+class DashboardRawData:
+    pv_daily: list[dict[str, Any]]
+    cost_daily: list[dict[str, Any]]
+    cost_monthly: list[dict[str, Any]]
+    battery_daily: list[dict[str, Any]]
+    model_parameters: list[dict[str, Any]]
+    battery_flow_daily: list[dict[str, Any]]
+    energy_daily: list[dict[str, Any]]
+    forecast_hourly: list[dict[str, Any]]
+    latest_schedule: dict[str, Any]
+    global_oldest: str | None
+    global_newest: str | None
+
+
+@dataclass(frozen=True)
 class DashboardSlice:
     data: DashboardData
     meta: dict[str, Any]
@@ -670,6 +685,49 @@ def _meta_from_data(
     }
 
 
+def _build_dashboard_slice(
+    raw: DashboardRawData,
+    *,
+    end_date_iso: str,
+    window_days: int,
+    pv_forecast_diagnostics: dict[str, Any] | None = None,
+    daily_review: dict[str, Any] | None = None,
+) -> DashboardSlice:
+    meta = _meta_from_data(
+        window_days=window_days,
+        global_oldest_date=raw.global_oldest,
+        global_newest_date=raw.global_newest,
+        pv_daily=raw.pv_daily,
+        cost_daily=raw.cost_daily,
+        battery_daily=raw.battery_daily,
+        energy_daily=raw.energy_daily,
+        forecast_hourly=raw.forecast_hourly,
+        battery_flow_daily=raw.battery_flow_daily,
+    )
+    return DashboardSlice(
+        data=DashboardData(
+            pv_daily=raw.pv_daily,
+            cost_daily=raw.cost_daily,
+            cost_monthly=raw.cost_monthly,
+            battery_daily=raw.battery_daily,
+            model_parameters=raw.model_parameters,
+            battery_flow_daily=raw.battery_flow_daily,
+            energy_daily=raw.energy_daily,
+            forecast_hourly=raw.forecast_hourly,
+            latest_schedule=raw.latest_schedule,
+            dashboard_warnings=_build_dashboard_warnings(
+                latest_schedule=raw.latest_schedule,
+                battery_daily=raw.battery_daily,
+                energy_daily=raw.energy_daily,
+                end_date_iso=end_date_iso,
+            ),
+            pv_forecast_diagnostics=pv_forecast_diagnostics or {},
+            daily_review=daily_review or {},
+        ),
+        meta=meta,
+    )
+
+
 def _load_sqlite_slice(
     db_path: Path,
     *,
@@ -884,37 +942,24 @@ def _load_sqlite_slice(
                 plan_date=end_date_iso,
             )
 
-        meta = _meta_from_data(
-            window_days=window_days,
-            global_oldest_date=global_oldest,
-            global_newest_date=global_newest,
+        raw = DashboardRawData(
             pv_daily=pv_daily,
             cost_daily=cost_daily,
+            cost_monthly=cost_monthly,
             battery_daily=battery_daily,
+            model_parameters=params,
+            battery_flow_daily=battery_flow_daily,
             energy_daily=energy_daily,
             forecast_hourly=forecast_hourly,
-            battery_flow_daily=battery_flow_daily,
+            latest_schedule=latest_schedule,
+            global_oldest=global_oldest,
+            global_newest=global_newest,
         )
-        return DashboardSlice(
-            data=DashboardData(
-                pv_daily=pv_daily,
-                cost_daily=cost_daily,
-                cost_monthly=cost_monthly,
-                battery_daily=battery_daily,
-                model_parameters=params,
-                battery_flow_daily=battery_flow_daily,
-                energy_daily=energy_daily,
-                forecast_hourly=forecast_hourly,
-                latest_schedule=latest_schedule,
-                dashboard_warnings=_build_dashboard_warnings(
-                    latest_schedule=latest_schedule,
-                    battery_daily=battery_daily,
-                    energy_daily=energy_daily,
-                    end_date_iso=end_date_iso,
-                ),
-                pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
-            ),
-            meta=meta,
+        return _build_dashboard_slice(
+            raw,
+            end_date_iso=end_date_iso,
+            window_days=window_days,
+            pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
         )
     finally:
         conn.close()
@@ -1134,37 +1179,24 @@ def _load_postgres_slice(
                     plan_date=end_date_iso,
                 )
 
-            meta = _meta_from_data(
-                window_days=window_days,
-                global_oldest_date=global_oldest,
-                global_newest_date=global_newest,
+            raw = DashboardRawData(
                 pv_daily=pv_daily,
                 cost_daily=cost_daily,
+                cost_monthly=cost_monthly,
                 battery_daily=battery_daily,
+                model_parameters=params,
+                battery_flow_daily=battery_flow_daily,
                 energy_daily=energy_daily,
                 forecast_hourly=forecast_hourly,
-                battery_flow_daily=battery_flow_daily,
+                latest_schedule=latest_schedule,
+                global_oldest=global_oldest,
+                global_newest=global_newest,
             )
-            return DashboardSlice(
-                data=DashboardData(
-                    pv_daily=pv_daily,
-                    cost_daily=cost_daily,
-                    cost_monthly=cost_monthly,
-                    battery_daily=battery_daily,
-                    model_parameters=params,
-                    battery_flow_daily=battery_flow_daily,
-                    energy_daily=energy_daily,
-                    forecast_hourly=forecast_hourly,
-                    latest_schedule=latest_schedule,
-                    dashboard_warnings=_build_dashboard_warnings(
-                        latest_schedule=latest_schedule,
-                        battery_daily=battery_daily,
-                        energy_daily=energy_daily,
-                        end_date_iso=end_date_iso,
-                    ),
-                    pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
-                ),
-                meta=meta,
+            return _build_dashboard_slice(
+                raw,
+                end_date_iso=end_date_iso,
+                window_days=window_days,
+                pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
             )
     finally:
         conn.close()
@@ -1562,50 +1594,37 @@ def _load_firestore_slice(
             plan_date=end_date_iso,
         )
 
-    meta = _meta_from_data(
-        window_days=window_days,
-        global_oldest_date=global_oldest,
-        global_newest_date=global_newest,
+    raw = DashboardRawData(
         pv_daily=pv_daily,
         cost_daily=cost_daily,
+        cost_monthly=cost_monthly,
         battery_daily=battery_daily,
+        model_parameters=params,
+        battery_flow_daily=battery_flow_daily,
         energy_daily=energy_daily,
         forecast_hourly=forecast_hourly,
-        battery_flow_daily=battery_flow_daily,
+        latest_schedule=latest_schedule,
+        global_oldest=global_oldest,
+        global_newest=global_newest,
     )
-    return DashboardSlice(
-        data=DashboardData(
-            pv_daily=pv_daily,
-            cost_daily=cost_daily,
-            cost_monthly=cost_monthly,
-            battery_daily=battery_daily,
-            model_parameters=params,
-            battery_flow_daily=battery_flow_daily,
-            energy_daily=energy_daily,
-            forecast_hourly=forecast_hourly,
-            latest_schedule=latest_schedule,
-            dashboard_warnings=_build_dashboard_warnings(
-                latest_schedule=latest_schedule,
-                battery_daily=battery_daily,
-                energy_daily=energy_daily,
-                end_date_iso=end_date_iso,
-            ),
-            pv_forecast_diagnostics=(
-                _read_latest_pv_forecast_diagnostics_from_firestore(client) if include_static else {}
-            ),
-            daily_review=(
-                _build_firestore_daily_review(
-                    client,
-                    end_date_iso=end_date_iso,
-                    energy_daily=energy_daily,
-                    battery_daily=battery_daily,
-                    forecast_hourly=review_forecast_hourly,
-                )
-                if include_static
-                else {}
-            ),
+    return _build_dashboard_slice(
+        raw,
+        end_date_iso=end_date_iso,
+        window_days=window_days,
+        pv_forecast_diagnostics=(
+            _read_latest_pv_forecast_diagnostics_from_firestore(client) if include_static else {}
         ),
-        meta=meta,
+        daily_review=(
+            _build_firestore_daily_review(
+                client,
+                end_date_iso=end_date_iso,
+                energy_daily=energy_daily,
+                battery_daily=battery_daily,
+                forecast_hourly=review_forecast_hourly,
+            )
+            if include_static
+            else {}
+        ),
     )
 
 
