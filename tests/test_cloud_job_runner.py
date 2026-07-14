@@ -470,12 +470,13 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
     reasons: list[str] = []
     readings = iter(
         [
-            SocReading(20.0, "realtime", None, datetime.now()),
+            SocReading(None, "unavailable", "offline", None),
             SocReading(None, "unavailable", "offline", None),
             SocReading(None, "unavailable", "offline", None),
         ]
     )
     monkeypatch.setenv("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", "2")
+    monkeypatch.setenv("ADJUST03_ALLOW_FORCED_START_WITHOUT_SOC", "true")
     monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
         lambda _: {
@@ -505,6 +506,40 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
 
     assert calls == [("forced", True), ("standby", False)]
     assert reasons == ["soc_unavailable_fail_safe"]
+
+
+def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    calls: list[tuple[str, bool]] = []
+    persisted: list[tuple[str, SocReading | None]] = []
+    reading = SocReading(None, "unavailable", "realtime offline; CSV SOC unavailable", None)
+    monkeypatch.delenv("ADJUST03_ALLOW_FORCED_START_WITHOUT_SOC", raising=False)
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {
+            "date": "2026-07-14",
+            "required_night_charge_kwh": 1.0,
+            "target_soc_7_percent": 80.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("cloud_job_runner._read_soc_with_fallback", lambda _: reading)
+    monkeypatch.setattr(
+        "cloud_job_runner._run_settings_profile",
+        lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
+    )
+    monkeypatch.setattr("cloud_job_runner._run_db_pipeline_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_monitor_stop_reason",
+        lambda _plan, reason, *, soc_reading=None: persisted.append((reason, soc_reading)) or True,
+    )
+
+    _monitor_partial_forced_and_stop(plan_path)
+
+    assert calls == [("standby", False)]
+    assert persisted == [("initial_soc_unavailable", reading)]
 
 
 def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:

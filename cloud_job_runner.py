@@ -295,6 +295,8 @@ def _persist_03_monitor_schedule_to_firestore(
     default_power_kw: float,
     charge_rate_info: dict[str, float | int | str | None] | None = None,
     soc_source: str = "unknown",
+    soc_error: str | None = None,
+    monitor_start_reason: str = "soc_available",
 ) -> bool:
     """Store the 03 controller decision so the dashboard never guesses it."""
     client = _open_firestore_for_plan()
@@ -323,6 +325,8 @@ def _persist_03_monitor_schedule_to_firestore(
         "estimated_charge_power_kw": default_power_kw,
         "latest_soc_percent_at_schedule": latest_soc,
         "soc_source": soc_source,
+        "soc_error": soc_error,
+        "monitor_start_reason": monitor_start_reason,
         "required_night_charge_kwh_at_schedule": required_kwh,
         "estimated_charge_minutes": estimated_charge_minutes,
         "schedule_source": "03-monitor",
@@ -426,15 +430,23 @@ def _persist_03_no_charge_decision_to_firestore(
         return False
 
 
-def _persist_03_monitor_stop_reason(plan_meta: dict[str, float | str | None], reason: str) -> bool:
+def _persist_03_monitor_stop_reason(
+    plan_meta: dict[str, float | str | None],
+    reason: str,
+    *,
+    soc_reading: SocReading | None = None,
+) -> bool:
     client = _open_firestore_for_plan()
     plan_date = str(plan_meta.get("date") or "").strip()
     if client is None or not plan_date:
         return False
     now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
     try:
+        payload: dict[str, Any] = {"monitor_stop_reason": reason, "monitor_stopped_at": now_utc}
+        if soc_reading is not None:
+            payload.update({"soc_source": soc_reading.source, "soc_error": soc_reading.error})
         client.collection("settings_events").document(f"{plan_date}-03-monitor-schedule").set(
-            {"monitor_stop_reason": reason, "monitor_stopped_at": now_utc},
+            payload,
             merge=True,
         )
         return True
@@ -978,6 +990,24 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         f"error={soc_reading.error or 'none'}",
         flush=True,
     )
+    allow_forced_without_soc = os.getenv(
+        "ADJUST03_ALLOW_FORCED_START_WITHOUT_SOC", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if latest_soc is None and not allow_forced_without_soc:
+        print("[cloud_job_runner] 03-monitor initial SOC unavailable; keep standby.", flush=True)
+        try:
+            _run_03_settings_profile_with_db(
+                profile="standby",
+                dynamic_forced_profile=False,
+                label="03-initial-soc-unavailable-standby",
+            )
+        finally:
+            _persist_03_monitor_stop_reason(
+                plan_meta,
+                "initial_soc_unavailable",
+                soc_reading=soc_reading,
+            )
+        return
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     if latest_soc is not None:
         required_charge_percent = max(0.0, target_soc - latest_soc)
@@ -1040,6 +1070,8 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         target_soc=target_soc,
         latest_soc=latest_soc,
         soc_source=soc_reading.source,
+        soc_error=soc_reading.error,
+        monitor_start_reason=("explicit_without_soc" if latest_soc is None else "soc_available"),
         required_kwh=required_kwh,
         estimated_charge_minutes=estimated_charge_minutes,
         default_power_kw=default_power_kw,
