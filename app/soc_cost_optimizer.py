@@ -448,6 +448,8 @@ def _candidate_summary(*, candidate: SocCandidate, best: SocCandidate) -> SocCan
         reason = "higher_sell_loss"
     elif candidate.expected_peak_unmet_kwh > best.expected_peak_unmet_kwh + 0.05:
         reason = "higher_peak_unmet_risk"
+    elif candidate.decision_prior_cost_yen > best.decision_prior_cost_yen + 1.0:
+        reason = "higher_historical_regret"
     elif (
         candidate.expected_monthly_tier_landing_penalty_yen
         > best.expected_monthly_tier_landing_penalty_yen + 1.0

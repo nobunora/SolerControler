@@ -21,6 +21,7 @@ from energy_model_main import (
     _build_hourly_load_forecast,
     _build_forecast_correction,
     _daytime_net_surplus_headroom_guard,
+    _decision_cost_breakdown,
     _historical_daytime_soc_gain_guard,
     _hourly_weather_summary,
     _monthly_day_buy_kwh_before_target,
@@ -48,6 +49,23 @@ def _coeff() -> EnergyModelCoefficients:
         battery_temp_coeff_per_deg=-0.01,
         battery_cycle_capacity_fade_per_cycle=0.001,
     )
+
+
+def test_decision_cost_breakdown_contains_complete_objective() -> None:
+    payload = {
+        "night_charge_cost_yen": 10.0,
+        "expected_day_buy_cost_yen": 20.0,
+        "expected_sell_opportunity_cost_yen": 3.0,
+        "expected_peak_unmet_cost_yen": 4.0,
+        "expected_monthly_tier_landing_penalty_yen": 5.0,
+        "decision_prior_cost_yen": 6.0,
+        "total_expected_cost_yen": 48.0,
+    }
+
+    breakdown = _decision_cost_breakdown(payload)
+
+    component_total = sum(value for key, value in breakdown.items() if key != "total_expected_yen")
+    assert component_total == pytest.approx(breakdown["total_expected_yen"])
 
 
 def test_forecast_pv_energy_applies_temperature_coeff() -> None:

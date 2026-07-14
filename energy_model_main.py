@@ -489,6 +489,10 @@ def _candidate_reason_summary(optimization_payload: dict[str, object] | None) ->
                 "expected_day_buy_kwh": item.get("expected_day_buy_kwh"),
                 "expected_sell_kwh": item.get("expected_sell_kwh"),
                 "expected_peak_unmet_kwh": item.get("expected_peak_unmet_kwh"),
+                "monthly_tier_landing_penalty_yen": item.get(
+                    "expected_monthly_tier_landing_penalty_yen"
+                ),
+                "decision_prior_cost_yen": item.get("decision_prior_cost_yen"),
             }
         )
         if len(out) >= 3:
@@ -504,6 +508,10 @@ def _decision_cost_breakdown(optimization_payload: dict[str, object] | None) -> 
         "expected_day_buy_yen": optimization_payload.get("expected_day_buy_cost_yen"),
         "expected_sell_loss_yen": optimization_payload.get("expected_sell_opportunity_cost_yen"),
         "expected_peak_unmet_yen": optimization_payload.get("expected_peak_unmet_cost_yen"),
+        "monthly_tier_landing_penalty_yen": optimization_payload.get(
+            "expected_monthly_tier_landing_penalty_yen"
+        ),
+        "decision_prior_yen": optimization_payload.get("decision_prior_cost_yen"),
         "total_expected_yen": optimization_payload.get("total_expected_cost_yen"),
     }
 
@@ -2236,7 +2244,7 @@ def main() -> int:
     rejected_candidates = _candidate_reason_summary(optimization_payload)
     cost_breakdown = _decision_cost_breakdown(optimization_payload)
     objective_name = (
-        "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
+        "minimize_night_charge_plus_day_buy_plus_sell_loss_plus_peak_unmet_plus_monthly_tier_plus_decision_prior_cost"
         if cost_optimization_payload is not None else "legacy_peak_soc_objective"
     )
 
