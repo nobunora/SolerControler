@@ -1326,6 +1326,7 @@ def _build_firestore_daily_review(
     except Exception:
         plan = {}
     result = plan.get("result") if isinstance(plan.get("result"), dict) else {}
+    plan_forecast = plan.get("forecast") if isinstance(plan.get("forecast"), dict) else {}
 
     end_next = _date_add_iso(review_date, 1) or review_date
     sample_rows = []
@@ -1360,11 +1361,15 @@ def _build_firestore_daily_review(
     total = lambda rows, field: sum(max(0.0, to_float(row.get(field)) or 0.0) for row in rows)
     return {
         "date": review_date,
+        "review_date": review_date,
+        "forecast_date": review_date if hourly else None,
+        "plan_date": plan_forecast.get("date") or (review_date if plan else None),
         "data_last_at": max((str(row.get("ts", "")) for row in today_samples), default=None),
         "target_soc_percent": result.get("target_soc_7_percent", battery.get("setting_soc_target_percent")),
         "forecast_night_charge_kwh": result.get("required_night_charge_kwh", battery.get("night_charge_kwh")),
         "forecast_pv_kwh": result.get("final_predicted_pv_kwh", actual.get("forecast_pv_kwh")),
-        "forecast_load_kwh": forecast_load or actual.get("forecast_load_kwh"),
+        "forecast_load_kwh": forecast_load if hourly else actual.get("forecast_load_kwh"),
+        "forecast_load_source": "forecast_hourly" if hourly else "energy_daily_fallback",
         "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
         "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
         "forecast_source": result.get("final_pv_forecast_source"),
@@ -1376,6 +1381,25 @@ def _build_firestore_daily_review(
         "actual_soc_min_percent": min(soc_values) if soc_values else None,
         "actual_soc_max_percent": max(soc_values) if soc_values else None,
     }
+
+
+def _firestore_forecast_hourly_for_date(client, target_date: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for doc in client.collection("forecast_hourly").where("date", "==", target_date).stream():
+        row = doc.to_dict() or {}
+        rows.append(
+            {
+                "date": row.get("date", doc.id),
+                "hour": row.get("hour"),
+                "forecast_pv_kwh": row.get("forecast_pv_kwh"),
+                "forecast_load_kwh": row.get("forecast_load_kwh"),
+                "forecast_charge_kwh": row.get("forecast_charge_kwh"),
+                "source": row.get("source"),
+                "updated_at": row.get("updated_at"),
+            }
+        )
+    rows.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
+    return rows
 
 
 def _load_firestore_slice(
@@ -1447,21 +1471,7 @@ def _load_firestore_slice(
         end_date_iso=end_date_iso,
         fields=["setting_soc_target_percent", "night_charge_kwh", "pv_charge_end_soc_percent", "pv_charge_end_at"],
     )
-    forecast_hourly = []
-    for doc in client.collection("forecast_hourly").where("date", "==", end_date_iso).stream():
-        row = doc.to_dict() or {}
-        forecast_hourly.append(
-            {
-                "date": row.get("date", doc.id),
-                "hour": row.get("hour"),
-                "forecast_pv_kwh": row.get("forecast_pv_kwh"),
-                "forecast_load_kwh": row.get("forecast_load_kwh"),
-                "forecast_charge_kwh": row.get("forecast_charge_kwh"),
-                "source": row.get("source"),
-                "updated_at": row.get("updated_at"),
-            }
-        )
-    forecast_hourly.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
+    forecast_hourly = _firestore_forecast_hourly_for_date(client, end_date_iso)
     history_start = (start_obj - timedelta(days=14)).isoformat()
     monitoring_daily = _firestore_monitoring_daily(
         client,
@@ -1482,6 +1492,21 @@ def _load_firestore_slice(
         end_date_iso=end_date_iso,
         pv_daily=pv_daily,
         monitoring_daily=monitoring_daily,
+    )
+    review_date = max(
+        (
+            str(row.get("date"))
+            for row in energy_daily
+            if row.get("date") and to_float(row.get("actual_pv_kwh")) is not None
+        ),
+        default=None,
+    )
+    review_forecast_hourly = (
+        forecast_hourly
+        if review_date == end_date_iso
+        else _firestore_forecast_hourly_for_date(client, review_date)
+        if review_date
+        else []
     )
 
     cost_monthly: list[dict[str, Any]] = []
@@ -1574,7 +1599,7 @@ def _load_firestore_slice(
                     end_date_iso=end_date_iso,
                     energy_daily=energy_daily,
                     battery_daily=battery_daily,
-                    forecast_hourly=forecast_hourly,
+                    forecast_hourly=review_forecast_hourly,
                 )
                 if include_static
                 else {}
