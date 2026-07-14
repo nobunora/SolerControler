@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from cloud_job_runner import (
     ForcedChargeCompletionEstimator,
     _adjust03_target_date,
@@ -16,6 +18,7 @@ from cloud_job_runner import (
     _persist_03_no_charge_decision_to_firestore,
     _read_plan_meta,
     _read_soc_with_fallback,
+    _latest_realtime_soc_percent,
     _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
     _run_adjust_03,
@@ -288,6 +291,52 @@ def test_read_soc_with_fallback_uses_realtime(monkeypatch) -> None:
 
     assert reading.value_percent == 42.0
     assert reading.source == "realtime"
+
+
+def test_realtime_soc_returns_value_when_logout_fails(monkeypatch) -> None:
+    monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
+    monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
+    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.login", lambda self: None)
+    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.read_realtime_soc_percent", lambda self: 47.0)
+    monkeypatch.setattr(
+        "app.kpnet_workflow.KpNetClient.logout",
+        lambda self: (_ for _ in ()).throw(RuntimeError("logout failed")),
+    )
+
+    assert _latest_realtime_soc_percent() == 47.0
+
+
+def test_realtime_soc_preserves_read_failure_when_logout_also_fails(monkeypatch) -> None:
+    monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
+    monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
+    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.login", lambda self: None)
+    monkeypatch.setattr(
+        "app.kpnet_workflow.KpNetClient.read_realtime_soc_percent",
+        lambda self: (_ for _ in ()).throw(ValueError("read failed")),
+    )
+    monkeypatch.setattr(
+        "app.kpnet_workflow.KpNetClient.logout",
+        lambda self: (_ for _ in ()).throw(RuntimeError("logout failed")),
+    )
+
+    with pytest.raises(ValueError, match="read failed"):
+        _latest_realtime_soc_percent()
+
+
+def test_realtime_soc_does_not_logout_after_login_failure(monkeypatch) -> None:
+    logout_calls: list[bool] = []
+    monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
+    monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
+    monkeypatch.setattr(
+        "app.kpnet_workflow.KpNetClient.login",
+        lambda self: (_ for _ in ()).throw(RuntimeError("login failed")),
+    )
+    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.logout", lambda self: logout_calls.append(True))
+
+    with pytest.raises(RuntimeError, match="login failed"):
+        _latest_realtime_soc_percent()
+
+    assert logout_calls == []
 
 
 def test_read_soc_with_fallback_uses_fresh_csv(monkeypatch) -> None:

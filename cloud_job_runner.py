@@ -511,7 +511,10 @@ def _latest_realtime_soc_percent() -> float | None:
     try:
         return client.read_realtime_soc_percent()
     finally:
-        client.logout()
+        try:
+            client.logout()
+        except Exception as exc:
+            print(f"[cloud_job_runner] KP-NET logout failed: {exc}", flush=True)
 
 
 def _read_soc_with_fallback(csv_paths: list[Path]) -> SocReading:
