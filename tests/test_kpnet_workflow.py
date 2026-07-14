@@ -146,6 +146,35 @@ def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
     assert _default_csv_target_months(datetime(2026, 1, 1, 4, 0)) == ["2025-12", "2026-01"]
 
 
+@pytest.mark.parametrize(
+    "icon",
+    ["full", "three-quarters", "half", "quarter", "empty"],
+)
+def test_extract_simple_visualization_soc_supports_battery_icons(icon: str) -> None:
+    html = f"""
+    <table class="data_table_bt">
+      <tr><th rowspan="2"><i class="fa fa-battery-{icon}"></i></th><th>運転状態</th><th>蓄電残量</th></tr>
+      <tr><td class="rb_cell">3</td><td class="rb_cell">25 <span>%</span></td></tr>
+    </table>
+    """
+
+    assert _extract_simple_visualization_soc_percent(html) == 25.0
+
+
+def test_extract_simple_visualization_soc_uses_matching_header_and_battery_table() -> None:
+    html = """
+    <table class="data_table_bt">
+      <tr><th>発電量</th></tr><tr><td class="rb_cell">99 <span>%</span></td></tr>
+    </table>
+    <table class="data_table_bt">
+      <tr><th rowspan="2"><i class="fa fa-battery-quarter"></i></th><th>蓄電残量</th><th>運転状態</th></tr>
+      <tr><td class="rb_cell">24 <span>%</span></td><td class="rb_cell">1</td></tr>
+    </table>
+    """
+
+    assert _extract_simple_visualization_soc_percent(html) == 24.0
+
+
 def test_pick_battery_operating_mode_code_supports_standby() -> None:
     assert (
         _pick_battery_operating_mode_code(

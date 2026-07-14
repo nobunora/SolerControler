@@ -371,21 +371,29 @@ def _pick_battery_operating_mode_code(
 def _extract_simple_visualization_soc_percent(html: str) -> float | None:
     soup = BeautifulSoup(html, "html.parser")
     for table in soup.select("table.data_table_bt"):
-        if table.select_one(".fa-battery-three-quarters, .fa-battery-full, .fa-battery-half, .fa-battery-empty"):
-            cell = table.select_one("td.rb_cell")
-            if cell:
-                value = parse_csv_float(cell.get_text(" ", strip=True), default=None)
-                if value is not None:
-                    return SOCBounds.clamp(float(value))
-
-    match = re.search(
-        r"fa-battery[^<]*</i>.*?<td[^>]*class=[\"'][^\"']*rb_cell[^\"']*[\"'][^>]*>\s*([0-9]+(?:\.[0-9]+)?)\s*<span>\s*%",
-        html,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if not match:
-        return None
-    return SOCBounds.clamp(float(match.group(1)))
+        if not table.select_one(
+            ".fa-battery-full, .fa-battery-three-quarters, .fa-battery-half, "
+            ".fa-battery-quarter, .fa-battery-empty"
+        ):
+            continue
+        value_headers = [th for th in table.select("th") if not th.select_one('[class*="fa-battery-"]')]
+        soc_column = next(
+            (index for index, header in enumerate(value_headers) if "蓄電残量" in header.get_text(" ", strip=True)),
+            None,
+        )
+        if soc_column is None:
+            continue
+        for row in table.select("tr"):
+            cells = row.select("td")
+            if soc_column >= len(cells):
+                continue
+            cell = cells[soc_column]
+            if "rb_cell" not in (cell.get("class") or []):
+                continue
+            value = parse_csv_float(cell.get_text(" ", strip=True), default=None)
+            if value is not None:
+                return SOCBounds.clamp(float(value))
+    return None
 
 
 def _load_night_charge_plan(plan_path: Path) -> NightChargePlan:
