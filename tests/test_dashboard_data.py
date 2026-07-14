@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from itertools import permutations
 
 import pytest
 
@@ -394,6 +395,59 @@ def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() ->
     assert schedule["charge_end_time"] == "07:00"
     assert schedule["recorded_at"] == "2026-06-03T03:10:00Z"
     assert schedule["settings_completed_run_id"] == "new-run"
+
+
+def test_latest_schedule_selection_is_independent_of_event_order() -> None:
+    rows = [
+        {
+            "event_id": "monitor-old",
+            "run_id": "monitor-run",
+            "status": "forced-started",
+            "detail_json": json.dumps(
+                {"plan_date": "2026-07-14", "charge_end_time": "06:00", "schedule_source": "03-monitor"}
+            ),
+            "recorded_at": "2026-07-14T03:00:00Z",
+        },
+        {
+            "event_id": "monitor-new",
+            "run_id": "monitor-run",
+            "status": "forced-started",
+            "detail_json": json.dumps(
+                {"plan_date": "2026-07-14", "charge_end_time": "07:00", "schedule_source": "03-monitor"}
+            ),
+            "recorded_at": "2026-07-14T03:10:00Z",
+        },
+        {
+            "event_id": "normal-newer",
+            "run_id": "normal-run",
+            "status": "applied",
+            "detail_json": json.dumps({"plan_date": "2026-07-14", "charge_end_time": "08:00"}),
+            "recorded_at": "2026-07-14T03:20:00Z",
+        },
+        {
+            "event_id": "completion-old",
+            "run_id": "monitor-run",
+            "status": "skipped-no-change",
+            "detail_json": json.dumps({"plan_date": "2026-07-14"}),
+            "recorded_at": "2026-07-14T03:11:00Z",
+        },
+        {
+            "event_id": "completion-new",
+            "run_id": "monitor-run",
+            "status": "applied",
+            "detail_json": json.dumps({"plan_date": "2026-07-14"}),
+            "recorded_at": "2026-07-14T03:12:00Z",
+        },
+    ]
+
+    results = [
+        _build_latest_schedule_from_events(event_rows=list(order), battery_row=None, plan_date="2026-07-14")
+        for order in permutations(rows)
+    ]
+
+    assert {result["charge_end_time"] for result in results} == {"07:00"}
+    assert {result["recorded_at"] for result in results} == {"2026-07-14T03:10:00Z"}
+    assert {result["settings_completed_status"] for result in results} == {"applied"}
 
 
 def test_latest_schedule_does_not_mix_completion_from_different_run() -> None:

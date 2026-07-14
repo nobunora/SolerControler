@@ -421,7 +421,34 @@ def _build_latest_schedule_from_events(
             return 1
         return 2
 
-    schedule_row = min(candidates, key=_schedule_priority, default=None)
+    def _event_recency_key(row: dict[str, Any]) -> tuple[int, float, str]:
+        recorded_at = row.get("recorded_at")
+        try:
+            parsed = (
+                recorded_at
+                if isinstance(recorded_at, datetime)
+                else datetime.fromisoformat(str(recorded_at or "").replace("Z", "+00:00"))
+            )
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            timestamp = parsed.timestamp()
+            valid = 1
+        except (TypeError, ValueError, OverflowError):
+            timestamp = float("-inf")
+            valid = 0
+        stable_id = str(row.get("event_id") or row.get("source_doc_id") or row.get("run_id") or "")
+        return valid, timestamp, stable_id
+
+    best_priority = min((_schedule_priority(candidate) for candidate in candidates), default=None)
+    schedule_row = (
+        max(
+            (candidate for candidate in candidates if _schedule_priority(candidate) == best_priority),
+            key=lambda candidate: _event_recency_key(candidate[0]),
+            default=None,
+        )
+        if best_priority is not None
+        else None
+    )
     if schedule_row is not None:
         chosen_row, chosen_detail = schedule_row
         for key in (
@@ -455,14 +482,15 @@ def _build_latest_schedule_from_events(
         schedule["profile"] = str(chosen_row.get("profile", ""))
         chosen_run_id = str(chosen_row.get("run_id") or "")
         if chosen_run_id:
-            completed_row = next(
+            completed_row = max(
                 (
                     row
                     for row, _detail in candidates
                     if str(row.get("run_id") or "") == chosen_run_id
                     and str(row.get("status") or "") in _SETTINGS_COMPLETED_STATUSES
                 ),
-                None,
+                key=_event_recency_key,
+                default=None,
             )
 
     if completed_row is not None:
