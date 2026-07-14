@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from cloud_job_runner import (
     _persist_03_monitor_schedule_to_firestore,
     _persist_03_no_charge_decision_to_firestore,
     _read_plan_meta,
+    _read_soc_with_fallback,
     _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
     _run_adjust_03,
@@ -274,9 +275,54 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
             },
             "target_soc": 2.0,
             "latest_soc": 10.0,
+            "soc_source": "realtime",
             "required_kwh": 0.0,
         }
     ]
+
+
+def test_read_soc_with_fallback_uses_realtime(monkeypatch) -> None:
+    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: 42.0)
+
+    reading = _read_soc_with_fallback([])
+
+    assert reading.value_percent == 42.0
+    assert reading.source == "realtime"
+
+
+def test_read_soc_with_fallback_uses_fresh_csv(monkeypatch) -> None:
+    now = datetime.now()
+    monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
+    monkeypatch.setattr(
+        "cloud_job_runner._latest_realtime_soc_percent",
+        lambda: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_csv_soc_reading", lambda _paths: (38.0, now))
+
+    reading = _read_soc_with_fallback([])
+
+    assert reading.value_percent == 38.0
+    assert reading.source == "csv"
+    assert "offline" in str(reading.error)
+
+
+def test_read_soc_with_fallback_rejects_stale_csv(monkeypatch) -> None:
+    monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("ADJUST03_CSV_SOC_MAX_AGE_MINUTES", "60")
+    monkeypatch.setattr(
+        "cloud_job_runner._latest_realtime_soc_percent",
+        lambda: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._latest_csv_soc_reading",
+        lambda _paths: (38.0, datetime.now() - timedelta(hours=2)),
+    )
+
+    reading = _read_soc_with_fallback([])
+
+    assert reading.value_percent is None
+    assert reading.source == "unavailable"
+    assert "stale" in str(reading.error)
 
 
 def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cutoff(

@@ -8,6 +8,7 @@ import statistics
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -17,6 +18,14 @@ from app.soc_decision_feedback import build_soc_decision_feedback
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
+
+
+@dataclass(frozen=True)
+class SocReading:
+    value_percent: float | None
+    source: str
+    error: str | None
+    observed_at: datetime | None
 
 
 def _mask_env_updates(env_updates: dict[str, str] | None) -> dict[str, str]:
@@ -284,6 +293,7 @@ def _persist_03_monitor_schedule_to_firestore(
     estimated_charge_minutes: int,
     default_power_kw: float,
     charge_rate_info: dict[str, float | int | str | None] | None = None,
+    soc_source: str = "unknown",
 ) -> bool:
     """Store the 03 controller decision so the dashboard never guesses it."""
     client = _open_firestore_for_plan()
@@ -311,6 +321,7 @@ def _persist_03_monitor_schedule_to_firestore(
         "battery_operating_mode": "forced",
         "estimated_charge_power_kw": default_power_kw,
         "latest_soc_percent_at_schedule": latest_soc,
+        "soc_source": soc_source,
         "required_night_charge_kwh_at_schedule": required_kwh,
         "estimated_charge_minutes": estimated_charge_minutes,
         "schedule_source": "03-monitor",
@@ -363,6 +374,7 @@ def _persist_03_no_charge_decision_to_firestore(
     target_soc: float,
     latest_soc: float | None,
     required_kwh: float,
+    soc_source: str = "unknown",
 ) -> bool:
     client = _open_firestore_for_plan()
     if client is None:
@@ -380,6 +392,7 @@ def _persist_03_no_charge_decision_to_firestore(
         "mode": "standby",
         "battery_operating_mode": "standby",
         "latest_soc_percent_at_schedule": latest_soc,
+        "soc_source": soc_source,
         "required_night_charge_kwh_at_schedule": required_kwh,
         "schedule_source": "03-no-charge",
     }
@@ -461,7 +474,7 @@ def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
     return []
 
 
-def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
+def _latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:
     latest_dt: datetime | None = None
     latest_soc: float | None = None
     for csv_path in csv_paths:
@@ -483,7 +496,11 @@ def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
                 if latest_dt is None or dt > latest_dt:
                     latest_dt = dt
                     latest_soc = soc
-    return latest_soc
+    return latest_soc, latest_dt
+
+
+def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
+    return _latest_csv_soc_reading(csv_paths)[0]
 
 
 def _latest_realtime_soc_percent() -> float | None:
@@ -495,6 +512,35 @@ def _latest_realtime_soc_percent() -> float | None:
         return client.read_realtime_soc_percent()
     finally:
         client.logout()
+
+
+def _read_soc_with_fallback(csv_paths: list[Path]) -> SocReading:
+    attempts = _env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3, min_value=1)
+    delay_seconds = _env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 2.0, min_value=0.0)
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            value = _latest_realtime_soc_percent()
+            if value is not None:
+                return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
+            errors.append("realtime returned no SOC")
+        except Exception as exc:
+            errors.append(str(exc))
+        if attempt < attempts and delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    csv_value, csv_observed_at = _latest_csv_soc_reading(csv_paths)
+    if csv_value is not None and csv_observed_at is not None:
+        timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
+        observed_local = csv_observed_at.replace(tzinfo=ZoneInfo(timezone_name))
+        max_age_minutes = _env_int("ADJUST03_CSV_SOC_MAX_AGE_MINUTES", 120, min_value=0)
+        age = datetime.now(ZoneInfo(timezone_name)) - observed_local
+        if timedelta(0) <= age <= timedelta(minutes=max_age_minutes):
+            return SocReading(csv_value, "csv", "; ".join(errors) or None, observed_local)
+        errors.append(f"CSV SOC is stale: observed_at={csv_observed_at.isoformat()}")
+    else:
+        errors.append("CSV SOC unavailable")
+    return SocReading(None, "unavailable", "; ".join(errors), csv_observed_at)
 
 
 def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
@@ -899,7 +945,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-    latest_soc = _latest_realtime_soc_percent()
+    soc_reading = _read_soc_with_fallback(csv_paths)
+    latest_soc = soc_reading.value_percent
+    print(
+        f"[cloud_job_runner] 03-monitor SOC source={soc_reading.source} "
+        f"error={soc_reading.error or 'none'}",
+        flush=True,
+    )
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     if latest_soc is not None:
         required_charge_percent = max(0.0, target_soc - latest_soc)
@@ -911,6 +963,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             plan_meta=plan_meta,
             target_soc=target_soc,
             latest_soc=latest_soc,
+            soc_source=soc_reading.source,
             required_kwh=required_kwh,
         )
         print(
@@ -959,6 +1012,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         charge_end_time=cutoff_hhmm,
         target_soc=target_soc,
         latest_soc=latest_soc,
+        soc_source=soc_reading.source,
         required_kwh=required_kwh,
         estimated_charge_minutes=estimated_charge_minutes,
         default_power_kw=default_power_kw,
@@ -998,11 +1052,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         confirm_before_minutes=confirm_before_minutes,
     )
     while time.time() - started_at < monitor_seconds:
-        try:
-            latest_soc = _latest_realtime_soc_percent()
-        except Exception as exc:
-            latest_soc = None
-            print(f"[cloud_job_runner] 03-monitor realtime SOC unavailable: {exc}", flush=True)
+        soc_reading = _read_soc_with_fallback(csv_paths)
+        latest_soc = soc_reading.value_percent
+        if soc_reading.error:
+            print(
+                f"[cloud_job_runner] 03-monitor SOC source={soc_reading.source} error={soc_reading.error}",
+                flush=True,
+            )
         if latest_soc is not None:
             print(
                 f"[cloud_job_runner] 03-monitor latest_soc={latest_soc:.2f}% "
