@@ -6,6 +6,7 @@ import pytest
 from app.dashboard_data import (
     _build_dashboard_warnings,
     _build_latest_schedule_from_events,
+    _get_global_bounds_firestore,
     load_dashboard_slice,
 )
 from app.operations_db import ensure_schema, open_db
@@ -259,6 +260,25 @@ def test_latest_schedule_does_not_complete_from_different_plan_date() -> None:
     assert schedule["status"] == "confirm-failed"
     assert schedule["settings_completed"] is False
     assert schedule["settings_completed_status"] is None
+
+
+def test_firestore_global_bounds_combine_sources_and_ignore_failures(monkeypatch) -> None:
+    bounds = {
+        ("sunshine_daily", "date"): (None, None),
+        ("cost_daily", "date"): ("2026-01-01", "2026-05-01"),
+        ("battery_daily_metrics", "date"): ("2026-02-01", "2026-07-14"),
+        ("forecast_hourly", "date"): ("2026-03-01", "2026-07-15"),
+        ("monitoring_samples", "ts"): ("2025-12-01", "2026-07-13"),
+    }
+
+    def fake_bounds(_client, collection_name, field_name="date"):
+        if collection_name == "forecast_hourly":
+            raise RuntimeError("index unavailable")
+        return bounds[(collection_name, field_name)]
+
+    monkeypatch.setattr("app.dashboard_data._firestore_bounds", fake_bounds)
+
+    assert _get_global_bounds_firestore(object()) == ("2025-12-01", "2026-07-14")
 
 
 def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() -> None:

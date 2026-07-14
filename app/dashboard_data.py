@@ -1168,20 +1168,48 @@ def _load_postgres_slice(
         conn.close()
 
 
-def _firestore_bounds(client, collection_name: str) -> tuple[str | None, str | None]:
+def _firestore_date_value(raw: Any) -> str | None:
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    text = str(raw or "").strip()
+    return text[:10] if _to_date_or_none(text[:10]) else None
+
+
+def _firestore_bounds(
+    client,
+    collection_name: str,
+    field_name: str = "date",
+) -> tuple[str | None, str | None]:
     col = client.collection(collection_name)
-    min_doc = next(col.order_by("date").limit(1).stream(), None)
-    max_docs = col.order_by("date").limit_to_last(1).get()
+    min_doc = next(col.order_by(field_name).limit(1).stream(), None)
+    max_docs = col.order_by(field_name).limit_to_last(1).get()
     max_doc = max_docs[0] if max_docs else None
     min_date = None
     max_date = None
     if min_doc is not None:
         d = min_doc.to_dict() or {}
-        min_date = str(d.get("date", "")).strip() or None
+        min_date = _firestore_date_value(d.get(field_name))
     if max_doc is not None:
         d = max_doc.to_dict() or {}
-        max_date = str(d.get("date", "")).strip() or None
+        max_date = _firestore_date_value(d.get(field_name))
     return min_date, max_date
+
+
+def _get_global_bounds_firestore(client) -> tuple[str | None, str | None]:
+    candidates: list[str | None] = []
+    sources = [
+        ("sunshine_daily", "date"),
+        ("cost_daily", "date"),
+        ("battery_daily_metrics", "date"),
+        ("forecast_hourly", "date"),
+        ("monitoring_samples", "ts"),
+    ]
+    for collection_name, field_name in sources:
+        try:
+            candidates.extend(_firestore_bounds(client, collection_name, field_name))
+        except Exception:
+            continue
+    return _pick_min_max_dates(candidates)
 
 
 def _firestore_rows_between(
@@ -1348,7 +1376,7 @@ def _load_firestore_slice(
     empty_schedule = _default_latest_schedule()
     client = _open_dashboard_firestore_client()
 
-    global_oldest, global_newest = _firestore_bounds(client, "sunshine_daily")
+    global_oldest, global_newest = _get_global_bounds_firestore(client)
     if not global_newest:
         return DashboardSlice(
             data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
