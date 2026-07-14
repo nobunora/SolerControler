@@ -309,8 +309,7 @@ def test_firestore_slice_cache_isolated_by_connection_and_clear(monkeypatch, tmp
     assert len(calls) == 4
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres", "firestore"])
-def test_dashboard_raw_data_build_has_backend_parity(backend: str) -> None:
+def test_build_dashboard_slice_preserves_raw_fields() -> None:
     raw = DashboardRawData(
         pv_daily=[{"date": "2026-07-14", "actual_kwh": 4.0}],
         cost_daily=[{"date": "2026-07-14", "savings_yen": 100.0}],
@@ -327,11 +326,39 @@ def test_dashboard_raw_data_build_has_backend_parity(backend: str) -> None:
 
     sliced = _build_dashboard_slice(raw, end_date_iso="2026-07-14", window_days=31)
 
-    assert sliced.data.energy_daily == raw.energy_daily, backend
-    assert sliced.data.latest_schedule == raw.latest_schedule, backend
-    assert sliced.data.cost_monthly == raw.cost_monthly, backend
-    assert sliced.data.forecast_hourly == raw.forecast_hourly, backend
-    assert sliced.meta["global_oldest_date"] == "2026-07-14", backend
+    assert sliced.data.energy_daily == raw.energy_daily
+    assert sliced.data.latest_schedule == raw.latest_schedule
+    assert sliced.data.cost_monthly == raw.cost_monthly
+    assert sliced.data.forecast_hourly == raw.forecast_hourly
+    assert sliced.meta["global_oldest_date"] == "2026-07-14"
+
+
+@pytest.mark.parametrize(
+    ("backend", "expected"),
+    [("sqlite", "sqlite"), ("postgres", "postgres"), ("firestore", "firestore")],
+)
+def test_load_dashboard_slice_dispatches_to_backend_adapter(monkeypatch, tmp_path, backend, expected) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setenv("DATA_BACKEND", backend)
+    monkeypatch.setattr(
+        "app.dashboard_data._load_sqlite_slice",
+        lambda *args, **kwargs: calls.append("sqlite") or "sqlite-slice",
+    )
+    monkeypatch.setattr(
+        "app.dashboard_data._load_postgres_slice",
+        lambda *args, **kwargs: calls.append("postgres") or "postgres-slice",
+    )
+    monkeypatch.setattr(
+        "app.dashboard_data._load_firestore_slice",
+        lambda *args, **kwargs: calls.append("firestore") or "firestore-slice",
+    )
+    clear_dashboard_cache()
+
+    result = load_dashboard_slice(tmp_path / "dashboard.db", end_date="2026-07-14")
+
+    assert result == f"{expected}-slice"
+    assert calls == [expected]
 
 
 def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() -> None:
