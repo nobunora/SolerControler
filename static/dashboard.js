@@ -1,5 +1,3 @@
-    window.__DASHBOARD_DATA__ = __DASHBOARD_DATA_PLACEHOLDER__;
-
     const WINDOW_DAYS = 31;
     const CHUNK_DAYS = 120;
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
