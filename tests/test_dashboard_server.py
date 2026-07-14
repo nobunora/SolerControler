@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dashboard_server import _html, _static_asset
 
 
@@ -27,3 +29,16 @@ def test_dashboard_static_assets_are_available() -> None:
     assert b"function estimateHourlyNightGridCharge" in javascript[1]
     assert b"main();" in javascript[1]
     assert _static_asset("/static/missing.js") is None
+
+
+def test_dashboard_dockerfile_copies_runtime_assets() -> None:
+    root = Path(__file__).parents[1]
+    dockerfile = (root / "Dockerfile.dashboard").read_text(encoding="utf-8")
+
+    for source, destination in (
+        ("templates", "./templates"),
+        ("static", "./static"),
+        ("dashboard_server.py", "./"),
+    ):
+        assert f"COPY {source} {destination}" in dockerfile
+        assert (root / source).exists()

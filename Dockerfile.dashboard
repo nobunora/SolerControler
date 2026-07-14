@@ -9,6 +9,8 @@ COPY requirements-dashboard.txt .
 RUN pip install --no-cache-dir -r requirements-dashboard.txt
 
 COPY app ./app
+COPY templates ./templates
+COPY static ./static
 COPY dashboard_server.py ./
 RUN mkdir -p /app/data
 
