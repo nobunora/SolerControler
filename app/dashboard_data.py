@@ -16,7 +16,9 @@ from app.utils import to_float
 
 _SETTINGS_COMPLETED_STATUSES = {"applied", "skipped-no-change", "skipped-no-charge"}
 _FIRESTORE_CLIENTS: dict[tuple[str | None, str], Any] = {}
-_FIRESTORE_SLICE_CACHE: dict[tuple[str | None, int, bool], tuple[float, "DashboardSlice"]] = {}
+_FIRESTORE_SLICE_CACHE: dict[
+    tuple[str | None, str, str | None, int, bool], tuple[float, "DashboardSlice"]
+] = {}
 _FIRESTORE_DASHBOARD_CACHE_SECONDS = 120.0
 
 
@@ -1276,11 +1278,20 @@ def _firestore_monitoring_daily(
     return [{"date": day, **values} for day, values in sorted(by_day.items())]
 
 
+def _dashboard_firestore_config() -> tuple[str | None, str]:
+    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
+    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
+    return project_id, database_id
+
+
+def clear_dashboard_cache() -> None:
+    _FIRESTORE_SLICE_CACHE.clear()
+
+
 def _open_dashboard_firestore_client():
     from google.cloud import firestore
 
-    project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
-    database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
+    project_id, database_id = _dashboard_firestore_config()
     key = (project_id, database_id)
     client = _FIRESTORE_CLIENTS.get(key)
     if client is None:
@@ -1585,13 +1596,14 @@ def load_dashboard_slice(
     if backend == "postgres":
         return _load_postgres_slice(end_date=end_date, window_days=days, include_static=include_static)
     if backend == "firestore":
-        key = (end_date, days, include_static)
+        project_id, database_id = _dashboard_firestore_config()
+        key = (project_id, database_id, end_date, days, include_static)
         cached = _FIRESTORE_SLICE_CACHE.get(key)
         now = time.monotonic()
         if cached is not None and now - cached[0] < _FIRESTORE_DASHBOARD_CACHE_SECONDS:
             return cached[1]
         sliced = _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
-        _FIRESTORE_SLICE_CACHE[key] = (now, sliced)
+        _FIRESTORE_SLICE_CACHE[key] = (time.monotonic(), sliced)
         return sliced
     return _load_sqlite_slice(db_path, end_date=end_date, window_days=days, include_static=include_static)
 

@@ -7,6 +7,7 @@ from app.dashboard_data import (
     _build_dashboard_warnings,
     _build_latest_schedule_from_events,
     _get_global_bounds_firestore,
+    clear_dashboard_cache,
     load_dashboard_slice,
 )
 from app.operations_db import ensure_schema, open_db
@@ -279,6 +280,31 @@ def test_firestore_global_bounds_combine_sources_and_ignore_failures(monkeypatch
     monkeypatch.setattr("app.dashboard_data._firestore_bounds", fake_bounds)
 
     assert _get_global_bounds_firestore(object()) == ("2025-12-01", "2026-07-14")
+
+
+def test_firestore_slice_cache_isolated_by_connection_and_clear(monkeypatch, tmp_path) -> None:
+    calls: list[str] = []
+
+    def fake_load(**_kwargs):
+        value = f"slice-{len(calls)}"
+        calls.append(value)
+        return value
+
+    monkeypatch.setenv("DATA_BACKEND", "firestore")
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", "project-a")
+    monkeypatch.setenv("FIRESTORE_DATABASE_ID", "database-a")
+    monkeypatch.setattr("app.dashboard_data._load_firestore_slice", fake_load)
+    clear_dashboard_cache()
+
+    first = load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14")
+    assert load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14") is first
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", "project-b")
+    assert load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14") != first
+    monkeypatch.setenv("FIRESTORE_DATABASE_ID", "database-b")
+    assert load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14") == "slice-2"
+    clear_dashboard_cache()
+    assert load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14") == "slice-3"
+    assert len(calls) == 4
 
 
 def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() -> None:
