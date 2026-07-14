@@ -175,6 +175,37 @@ def test_extract_simple_visualization_soc_uses_matching_header_and_battery_table
     assert _extract_simple_visualization_soc_percent(html) == 24.0
 
 
+@pytest.mark.parametrize("value", ["0", "100", "78.5"])
+def test_extract_simple_visualization_soc_accepts_valid_bounds(value: str) -> None:
+    html = f"""
+    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
+    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
+    """
+
+    assert _extract_simple_visualization_soc_percent(html) == float(value)
+
+
+@pytest.mark.parametrize("value", ["-0.1", "100.1", "780"])
+def test_extract_simple_visualization_soc_rejects_out_of_range(value: str) -> None:
+    html = f"""
+    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
+    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
+    """
+
+    with pytest.raises(ValueError, match="SOC out of range"):
+        _extract_simple_visualization_soc_percent(html)
+
+
+@pytest.mark.parametrize("value", ["--", "20 80", "nan", "inf"])
+def test_extract_simple_visualization_soc_rejects_unparseable_values(value: str) -> None:
+    html = f"""
+    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
+    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
+    """
+
+    assert _extract_simple_visualization_soc_percent(html) is None
+
+
 def test_pick_battery_operating_mode_code_supports_standby() -> None:
     assert (
         _pick_battery_operating_mode_code(

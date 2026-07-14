@@ -368,6 +368,14 @@ def _pick_battery_operating_mode_code(
     )
 
 
+def _validate_external_soc_percent(value: float, *, raw: str) -> float:
+    if not math.isfinite(value):
+        raise ValueError(f"SOC is not finite: raw={raw!r} value={value}")
+    if value < 0.0 or value > 100.0:
+        raise ValueError(f"SOC out of range: raw={raw!r} value={value}")
+    return value
+
+
 def _extract_simple_visualization_soc_percent(html: str) -> float | None:
     soup = BeautifulSoup(html, "html.parser")
     for table in soup.select("table.data_table_bt"):
@@ -390,9 +398,10 @@ def _extract_simple_visualization_soc_percent(html: str) -> float | None:
             cell = cells[soc_column]
             if "rb_cell" not in (cell.get("class") or []):
                 continue
-            value = parse_csv_float(cell.get_text(" ", strip=True), default=None)
-            if value is not None:
-                return SOCBounds.clamp(float(value))
+            raw_value = cell.get_text(" ", strip=True)
+            match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*%?\s*", raw_value)
+            if match:
+                return _validate_external_soc_percent(float(match.group(1)), raw=raw_value)
     return None
 
 
