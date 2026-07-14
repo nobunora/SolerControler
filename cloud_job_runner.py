@@ -425,6 +425,23 @@ def _persist_03_no_charge_decision_to_firestore(
         return False
 
 
+def _persist_03_monitor_stop_reason(plan_meta: dict[str, float | str | None], reason: str) -> bool:
+    client = _open_firestore_for_plan()
+    plan_date = str(plan_meta.get("date") or "").strip()
+    if client is None or not plan_date:
+        return False
+    now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
+    try:
+        client.collection("settings_events").document(f"{plan_date}-03-monitor-schedule").set(
+            {"monitor_stop_reason": reason, "monitor_stopped_at": now_utc},
+            merge=True,
+        )
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] 03-monitor stop reason persistence failed: {exc}", flush=True)
+        return False
+
+
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     soc_now_raw = plan_meta.get("soc_now_percent", None)
@@ -996,6 +1013,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             dynamic_forced_profile=False,
             label="03-cutoff-standby",
         )
+        _persist_03_monitor_stop_reason(plan_meta, "cutoff_reached")
         return
 
     charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=0)
@@ -1040,6 +1058,8 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
     started_at = time.time()
     previous_soc = latest_soc
+    consecutive_soc_failures = 0
+    max_soc_failures = _env_int("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", 3, min_value=1)
     stagnant_polls = 0
     reapply_enabled = os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower() in {
         "1",
@@ -1063,6 +1083,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
         if latest_soc is not None:
+            consecutive_soc_failures = 0
             print(
                 f"[cloud_job_runner] 03-monitor latest_soc={latest_soc:.2f}% "
                 f"target={target_soc:.2f}% margin={soc_margin:.2f}%",
@@ -1075,6 +1096,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                     dynamic_forced_profile=False,
                     label="03-target-standby",
                 )
+                _persist_03_monitor_stop_reason(plan_meta, "target_reached")
                 return
             if (
                 reapply_enabled
@@ -1099,7 +1121,19 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                     stagnant_polls = 0
             previous_soc = latest_soc
         else:
+            consecutive_soc_failures += 1
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
+            if consecutive_soc_failures >= max_soc_failures:
+                print("[cloud_job_runner] 03-monitor SOC unavailable; fail-safe standby.", flush=True)
+                try:
+                    _run_03_settings_profile_with_db(
+                        profile="standby",
+                        dynamic_forced_profile=False,
+                        label="03-soc-unavailable-standby",
+                    )
+                finally:
+                    _persist_03_monitor_stop_reason(plan_meta, "soc_unavailable_fail_safe")
+                return
 
         remaining = monitor_seconds - int(time.time() - started_at)
         if remaining <= 0:
@@ -1120,7 +1154,10 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         time.sleep(next_check_seconds)
 
     print("[cloud_job_runner] 03-monitor timer reached. switch to standby profile.", flush=True)
-    _run_03_settings_profile_with_db(profile="standby", dynamic_forced_profile=False, label="03-timer-standby")
+    try:
+        _run_03_settings_profile_with_db(profile="standby", dynamic_forced_profile=False, label="03-timer-standby")
+    finally:
+        _persist_03_monitor_stop_reason(plan_meta, "monitor_timeout")
 
 
 def _run_night_23() -> None:
