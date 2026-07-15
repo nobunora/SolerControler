@@ -12,7 +12,7 @@ from app.utils import parse_csv_float
 try:
     from sklearn.ensemble import HistGradientBoostingRegressor
 except Exception:  # pragma: no cover - sklearn unavailable in some environments
-    HistGradientBoostingRegressor = None  # type: ignore[assignment]
+    HistGradientBoostingRegressor = None  # type: ignore[misc, assignment]
 
 
 BASE_FEATURE_NAMES = [
@@ -148,7 +148,7 @@ class ConsumptionForecaster:
             and weather is not None
         )
 
-        if can_use_model:
+        if can_use_model and weather is not None:
             morning_feature_map = self._build_feature_map(
                 normalized_target_date,
                 weather,

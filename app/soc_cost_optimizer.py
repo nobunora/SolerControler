@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any
 
 from app.constants import SOCBounds
 
@@ -260,14 +261,16 @@ DEFAULT_SIGMA_BUCKETS: tuple[SigmaBucket, ...] = (
 )
 
 
-def to_plain_dict(obj) -> dict:
+def to_plain_dict(obj: Any) -> dict[str, Any]:
     """Dataclass-to-dict helper kept here so payload creation stays readable."""
 
+    if not is_dataclass(obj) or isinstance(obj, type):
+        raise TypeError("to_plain_dict requires a dataclass instance")
     return asdict(obj)
 
 
 def _bounded_soc(value: float) -> float:
-    return SOCBounds.clamp(value)
+    return float(SOCBounds.clamp(value))
 
 
 def _pv_multiplier_for_bucket(

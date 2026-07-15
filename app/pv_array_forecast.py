@@ -310,7 +310,7 @@ def _fetch_archive_weather_daily_by_day(
     start_date: str,
     end_date: str,
     http_get: HttpGet,
-) -> dict[str, str]:
+) -> dict[str, dict[str, float | str | None]]:
     resp = http_get(
         "https://archive-api.open-meteo.com/v1/archive",
         params={
@@ -441,9 +441,9 @@ def calibrate_performance_ratio(
                 lambda: {"actual": 0.0, "modeled": 0.0, "days": 0.0}
             )
             for day in common_days:
-                weather_row = weather_by_day.get(day, {})
+                weather_row: dict[str, float | str | None] = weather_by_day.get(day, {})
                 weather_class = _normalize_weather_class(
-                    weather_row.get("weather_class") if isinstance(weather_row, dict) else None
+                    str(weather_row.get("weather_class")) if weather_row.get("weather_class") is not None else None
                 )
                 slot = by_class[weather_class]
                 slot["actual"] += actual_by_day.get(day, 0.0)
@@ -486,16 +486,18 @@ def calibrate_performance_ratio(
                         or not isinstance(weather_row, dict)
                     ):
                         continue
-                    weather_class = _normalize_weather_class(weather_row.get("weather_class"))
+                    weather_class = _normalize_weather_class(
+                        str(weather_row.get("weather_class")) if weather_row.get("weather_class") is not None else None
+                    )
                     if weather_class not in {"cloudy", "rain"}:
                         continue
                     sunshine_hours = to_float(weather_row.get("sunshine_hours"))
                     precipitation_sum_mm = to_float(weather_row.get("precipitation_sum_mm"))
                     if sunshine_hours is None or precipitation_sum_mm is None:
                         continue
-                    y = actual_by_day.get(day, 0.0) / modeled_kwh
-                    y = max(min_factor, min(max_factor, y))
-                    regression_rows.append((sunshine_hours, precipitation_sum_mm, y))
+                    y_ratio = actual_by_day.get(day, 0.0) / modeled_kwh
+                    y_ratio = max(min_factor, min(max_factor, y_ratio))
+                    regression_rows.append((sunshine_hours, precipitation_sum_mm, y_ratio))
 
                 regression_min_days = max(3, int(os.getenv("PV_ARRAY_WEATHER_REGRESSION_MIN_DAYS", "7")))
                 regression_blend = parse_csv_float(os.getenv("PV_ARRAY_WEATHER_REGRESSION_BLEND", "0.1"), default=0.1)
@@ -650,14 +652,12 @@ def _forecast_solar_series_to_rows(
         cumulative = result.get("watt_hours")
         if isinstance(cumulative, dict) and cumulative:
             mode = "watt_hours"
-            sorted_items = [
-                (dt, value)
-                for dt, value in (
-                    (_parse_forecast_solar_time(raw_time), to_float(value))
-                    for raw_time, value in cumulative.items()
-                )
-                if dt is not None and value is not None
-            ]
+            sorted_items: list[tuple[datetime, float]] = []
+            for raw_time, raw_value in cumulative.items():
+                parsed_dt = _parse_forecast_solar_time(raw_time)
+                parsed_value = to_float(raw_value)
+                if parsed_dt is not None and parsed_value is not None:
+                    sorted_items.append((parsed_dt, parsed_value))
             sorted_items.sort(key=lambda item: item[0])
             series = {}
             prev_value: float | None = None
@@ -671,11 +671,11 @@ def _forecast_solar_series_to_rows(
     rows: list[dict[str, Any]] = []
     effective_factor = array.performance_ratio * array.shading_factor * calibration_factor
     for raw_time, value in series.items():
-        dt = _parse_forecast_solar_time(raw_time)
+        forecast_dt = _parse_forecast_solar_time(raw_time)
         wh = to_float(value)
-        if dt is None or wh is None:
+        if forecast_dt is None or wh is None:
             continue
-        if dt.date().isoformat() != target_date:
+        if forecast_dt.date().isoformat() != target_date:
             continue
         if mode == "watts":
             kwh = wh / 1000.0
@@ -683,7 +683,7 @@ def _forecast_solar_series_to_rows(
             kwh = wh / 1000.0
         rows.append(
             {
-                "time": dt,
+                "time": forecast_dt,
                 "kwh": max(0.0, kwh * effective_factor),
                 "forecast_solar_raw_wh": wh,
                 "forecast_solar_series": mode,

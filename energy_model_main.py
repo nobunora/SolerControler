@@ -5,9 +5,10 @@ import json
 import os
 import statistics
 import time
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo
 
 import requests
@@ -22,6 +23,7 @@ from app.energy_model import (
     to_dict,
 )
 from app.occupancy_schedule import (
+    OccupancyAdjustment,
     apply_occupancy_schedule,
     filter_training_load_rows,
     load_occupancy_events_from_env,
@@ -90,8 +92,8 @@ def _csv_paths_from_env_or_latest(artifacts_dir: Path) -> list[Path]:
     return _latest_kpnet_csv_paths(artifacts_dir)
 
 
-def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, float | datetime]]:
-    rows: list[dict[str, float | datetime]] = []
+def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for path in csv_paths:
         with path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
@@ -118,11 +120,11 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, float | datetime]]:
                         "soc": soc,
                     }
                 )
-    rows.sort(key=lambda x: x["dt"])  # type: ignore[index]
+    rows.sort(key=lambda x: x["dt"] if isinstance(x.get("dt"), datetime) else datetime.min)
     return rows
 
 
-def _historical_profile(rows: list[dict[str, float | datetime]]) -> dict[str, float]:
+def _historical_profile(rows: list[dict[str, Any]]) -> dict[str, float]:
     by_day: dict[str, dict[str, float]] = {}
     for r in rows:
         dt = r["dt"]
@@ -159,20 +161,35 @@ def _historical_profile(rows: list[dict[str, float | datetime]]) -> dict[str, fl
     }
 
 
-def _to_optional_float(value) -> float | None:
+def _to_optional_float(value: object) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        return float(cast(Any, value))
     except (TypeError, ValueError):
         return None
 
 
-def _to_optional_int(value) -> int | None:
+def _to_optional_int(value: object) -> int | None:
     as_float = _to_optional_float(value)
     if as_float is None:
         return None
     return int(as_float)
+
+
+def _coerce_hourly_float_dict(value: object) -> dict[int, float]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[int, float] = {}
+    for raw_hour, raw_value in value.items():
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            continue
+        numeric = _to_optional_float(raw_value)
+        if 0 <= hour <= 23 and numeric is not None:
+            out[hour] = max(0.0, numeric)
+    return out
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -516,10 +533,10 @@ def _decision_cost_breakdown(optimization_payload: dict[str, object] | None) -> 
     }
 
 
-def _list_value(values, index: int):
+def _list_value(values: object, index: int) -> object | None:
     if not isinstance(values, list) or index >= len(values):
         return None
-    return values[index]
+    return cast(object, values[index])
 
 
 def _weather_class(weather_code: int | None) -> str:
@@ -543,11 +560,11 @@ def _weather_class(weather_code: int | None) -> str:
 def _hourly_weather_summary(hourly_weather: list[dict[str, object]]) -> dict[str, object]:
     daytime = [
         row for row in hourly_weather
-        if isinstance(row, dict) and 7 <= int(row.get("hour") or -1) < 18
+        if isinstance(row, dict) and 7 <= (_to_optional_int(row.get("hour")) or -1) < 18
     ]
     solar = [
         row for row in hourly_weather
-        if isinstance(row, dict) and 9 <= int(row.get("hour") or -1) < 16
+        if isinstance(row, dict) and 9 <= (_to_optional_int(row.get("hour")) or -1) < 16
     ]
     rain_probability_threshold = _env_float("HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD", 70.0)
     rain_mm_threshold = _env_float("HOURLY_WEATHER_RAIN_MM_THRESHOLD", 0.1)
@@ -643,7 +660,7 @@ def _fetch_open_meteo_previous_day1_forecast(
     model = os.getenv("OPEN_METEO_PREVIOUS_RUNS_MODEL", "jma_seamless").strip() or "jma_seamless"
     suffix = "_previous_day1"
     url = "https://previous-runs-api.open-meteo.com/v1/forecast"
-    params = {
+    params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "timezone": timezone,
@@ -691,7 +708,7 @@ def _fetch_open_meteo_previous_day1_forecast(
 
 def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: str | None = None) -> dict[str, object]:
     url = "https://api.open-meteo.com/v1/forecast"
-    params = {
+    params: dict[str, str | float | int] = {
         "latitude": lat,
         "longitude": lon,
         "hourly": "weather_code,precipitation,precipitation_probability,cloud_cover,shortwave_radiation",
@@ -844,47 +861,89 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
         }
 
 
-def _archive_weather_rows(
-    rows: list[dict[str, float | datetime]],
-    *,
-    lat: float,
-    lon: float,
-    timezone: str,
-) -> list[dict[str, object]]:
-    dates = sorted(
-        {
-            r["dt"].date()
-            for r in rows
-            if isinstance(r.get("dt"), datetime)
-        }
-    )
-    if not dates:
-        return []
-    url = "https://archive-api.open-meteo.com/v1/archive"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "start_date": dates[0].isoformat(),
-        "end_date": dates[-1].isoformat(),
-        "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum",
-        "timezone": timezone,
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=30)
-        resp.raise_for_status()
-        daily = resp.json().get("daily", {})
-    except Exception:
-        return []
+@dataclass
+class WeatherHistoryFetchResult:
+    rows: list[dict[str, object]]
+    requested_dates: list[str]
+    received_dates: list[str]
+    missing_dates: list[str]
+    errors: list[dict[str, object]]
+    cache_hit_dates: list[str]
+    requested_periods: list[dict[str, object]]
 
-    out: list[dict[str, object]] = []
+
+def _weather_archive_cache_path() -> Path:
+    return Path(os.getenv("WEATHER_ARCHIVE_CACHE_PATH", "artifacts/weather_archive_cache.json"))
+
+
+def _load_weather_archive_cache(path: Path) -> tuple[dict[str, dict[str, object]], list[dict[str, object]]]:
+    if not path.exists():
+        return {}, []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload.get("rows", {}) if isinstance(payload, dict) else {}
+        if not isinstance(rows, dict):
+            raise ValueError("cache rows must be an object")
+        return {
+            str(day): dict(row)
+            for day, row in rows.items()
+            if isinstance(row, dict)
+        }, []
+    except Exception as exc:
+        return {}, [{
+            "stage": "cache_read",
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        }]
+
+
+def _save_weather_archive_cache(path: Path, rows_by_date: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"version": 1, "rows": rows_by_date}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return []
+    except Exception as exc:
+        return [{
+            "stage": "cache_write",
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+        }]
+
+
+def _consecutive_date_chunks(days: list[date], *, chunk_days: int) -> list[list[date]]:
+    chunks: list[list[date]] = []
+    for day in days:
+        if not chunks or len(chunks[-1]) >= chunk_days or day != chunks[-1][-1] + timedelta(days=1):
+            chunks.append([day])
+        else:
+            chunks[-1].append(day)
+    return chunks
+
+
+def _weather_rows_from_daily(daily: object) -> list[dict[str, object]]:
+    if not isinstance(daily, dict):
+        raise ValueError("daily weather payload must be an object")
     times = daily.get("time", [])
-    for idx, raw_day in enumerate(times if isinstance(times, list) else []):
+    if not isinstance(times, list):
+        raise ValueError("daily.time must be a list")
+    out: list[dict[str, object]] = []
+    for idx, raw_day in enumerate(times):
+        try:
+            date.fromisoformat(str(raw_day))
+        except ValueError:
+            continue
         weather_code = _to_optional_int(_list_value(daily.get("weather_code"), idx))
         sunshine_s = _to_optional_float(_list_value(daily.get("sunshine_duration"), idx))
+        mean_temperature = _to_optional_float(_list_value(daily.get("temperature_2m_mean"), idx))
+        if mean_temperature is None:
+            continue
         out.append(
             {
-                "date": raw_day,
-                "temp": _to_optional_float(_list_value(daily.get("temperature_2m_mean"), idx)) or 0.0,
+                "date": str(raw_day),
+                "temp": mean_temperature,
                 "weather_code": weather_code if weather_code is not None else "unknown",
                 "sunshine_hours": (sunshine_s / 3600.0) if sunshine_s is not None else 0.0,
                 "precipitation": _to_optional_float(_list_value(daily.get("precipitation_sum"), idx)) or 0.0,
@@ -895,6 +954,101 @@ def _archive_weather_rows(
             }
         )
     return out
+
+
+def _archive_weather_history(
+    rows: list[dict[str, Any]],
+    *,
+    lat: float,
+    lon: float,
+    timezone: str,
+) -> WeatherHistoryFetchResult:
+    dates = sorted(
+        {
+            r["dt"].date()
+            for r in rows
+            if isinstance(r.get("dt"), datetime)
+        }
+    )
+    if not dates:
+        return WeatherHistoryFetchResult([], [], [], [], [], [], [])
+    requested_days = [dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)]
+    requested_dates = [day.isoformat() for day in requested_days]
+    cache_path = _weather_archive_cache_path()
+    cached_rows, errors = _load_weather_archive_cache(cache_path)
+    rows_by_date = {
+        day: cached_rows[day]
+        for day in requested_dates
+        if day in cached_rows
+    }
+    cache_hit_dates = sorted(rows_by_date)
+    missing_days = [day for day in requested_days if day.isoformat() not in rows_by_date]
+    chunk_days = max(1, int(_env_float("WEATHER_ARCHIVE_CHUNK_DAYS", 14.0)))
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    requested_periods: list[dict[str, object]] = []
+    timeout_seconds = max(1.0, _env_float("WEATHER_ARCHIVE_TIMEOUT_SECONDS", 30.0))
+    for chunk in _consecutive_date_chunks(missing_days, chunk_days=chunk_days):
+        params: dict[str, str | float] = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": chunk[0].isoformat(),
+            "end_date": chunk[-1].isoformat(),
+            "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum",
+            "timezone": timezone,
+        }
+        period: dict[str, object] = {
+            "start_date": params["start_date"],
+            "end_date": params["end_date"],
+            "requested_day_count": len(chunk),
+        }
+        resp: object | None = None
+        try:
+            resp = requests.get(url, params=params, timeout=timeout_seconds)
+            period["http_status"] = getattr(resp, "status_code", None)
+            resp.raise_for_status()
+            payload = resp.json()
+            fetched_rows = _weather_rows_from_daily(payload.get("daily") if isinstance(payload, dict) else None)
+            allowed_dates = {day.isoformat() for day in chunk}
+            for weather_row in fetched_rows:
+                weather_date = str(weather_row["date"])
+                if weather_date in allowed_dates:
+                    rows_by_date[weather_date] = weather_row
+            period["received_day_count"] = sum(1 for day in allowed_dates if day in rows_by_date)
+        except Exception as exc:
+            period["received_day_count"] = 0
+            errors.append({
+                "stage": "http_fetch",
+                "start_date": str(params["start_date"]),
+                "end_date": str(params["end_date"]),
+                "http_status": getattr(resp, "status_code", None),
+                "exception_type": type(exc).__name__,
+                "message": str(exc),
+            })
+        requested_periods.append(period)
+
+    received_dates = sorted(day for day in requested_dates if day in rows_by_date)
+    missing_dates = sorted(set(requested_dates) - set(received_dates))
+    if received_dates and set(received_dates) != set(cache_hit_dates):
+        errors.extend(_save_weather_archive_cache(cache_path, {**cached_rows, **rows_by_date}))
+    return WeatherHistoryFetchResult(
+        rows=[rows_by_date[day] for day in received_dates],
+        requested_dates=requested_dates,
+        received_dates=received_dates,
+        missing_dates=missing_dates,
+        errors=errors,
+        cache_hit_dates=cache_hit_dates,
+        requested_periods=requested_periods,
+    )
+
+
+def _archive_weather_rows(
+    rows: list[dict[str, Any]],
+    *,
+    lat: float,
+    lon: float,
+    timezone: str,
+) -> list[dict[str, object]]:
+    return _archive_weather_history(rows, lat=lat, lon=lon, timezone=timezone).rows
 
 
 def _forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
@@ -913,7 +1067,7 @@ def _forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _load_rows_for_consumption_forecast(rows: list[dict[str, float | datetime]]) -> list[dict[str, object]]:
+def _load_rows_for_consumption_forecast(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for row in rows:
         dt = row.get("dt")
@@ -934,15 +1088,15 @@ def _consumption_forecast_to_dict(forecast: ConsumptionForecast) -> dict[str, ob
     }
 
 
-def _occupancy_adjustment_to_dict(adjustment) -> dict[str, object] | None:
+def _occupancy_adjustment_to_dict(adjustment: OccupancyAdjustment | None) -> dict[str, object] | None:
     if adjustment is None:
         return None
-    return adjustment.to_dict()
+    return dict(adjustment.to_dict())
 
 
 def _build_pv_forecast_or_disabled(
     *,
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     target_date: str,
     lat: float,
     lon: float,
@@ -957,7 +1111,7 @@ def _build_pv_forecast_or_disabled(
     if not arrays:
         return {"enabled": False, "source": "no_pv_array_config"}
     try:
-        return build_pv_array_forecast(
+        result = build_pv_array_forecast(
             arrays=arrays,
             rows=rows,
             target_date=target_date,
@@ -968,6 +1122,7 @@ def _build_pv_forecast_or_disabled(
             target_sun_hours=target_sun_hours,
             target_precipitation_sum_mm=target_precipitation_sum_mm,
         )
+        return dict(result) if result is not None else {"enabled": False, "source": "pv_array_forecast_empty"}
     except Exception as exc:
         return {"enabled": False, "source": "pv_array_forecast_failed", "error": str(exc)}
 
@@ -1010,27 +1165,34 @@ def _hourly_pv_kwh_from_forecast(
 
 
 def _historical_hourly_profile(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     key: str,
     start_hour: int,
     end_hour_exclusive: int,
 ) -> dict[int, float]:
-    sums: dict[int, float] = {}
-    counts: dict[int, int] = {}
+    values_by_day_hour: dict[tuple[date, int], dict[int, float]] = {}
     for row in rows:
         dt = row.get("dt")
         if not isinstance(dt, datetime):
             continue
         if dt.hour < start_hour or dt.hour >= end_hour_exclusive:
             continue
+        if dt.minute not in {0, 30}:
+            continue
         val = max(0.0, float(row.get(key, 0.0) or 0.0))
-        sums[dt.hour] = sums.get(dt.hour, 0.0) + val
-        counts[dt.hour] = counts.get(dt.hour, 0) + 1
+        values_by_day_hour.setdefault((dt.date(), dt.hour), {})[dt.minute] = val
+
+    complete_values_by_hour: dict[int, list[float]] = {}
+    for (_, hour), interval_values in values_by_day_hour.items():
+        if set(interval_values) != {0, 30}:
+            continue
+        complete_values_by_hour.setdefault(hour, []).append(sum(interval_values.values()))
+
     out: dict[int, float] = {}
     for hour in range(start_hour, end_hour_exclusive):
-        c = counts.get(hour, 0)
-        out[hour] = (sums.get(hour, 0.0) / c) if c > 0 else 0.0
+        values = complete_values_by_hour.get(hour, [])
+        out[hour] = statistics.mean(values) if values else 0.0
     return out
 
 
@@ -1044,7 +1206,7 @@ def _normalize_profile(profile: dict[int, float], *, hours: list[int]) -> dict[i
 
 
 def _build_hourly_load_forecast(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     daytime_load_kwh: float,
     morning_load_kwh: float,
@@ -1079,7 +1241,7 @@ def _build_hourly_load_forecast(
 
 
 def _build_hourly_pv_forecast(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     pv_forecast: dict[str, object] | None,
     target_date: str,
@@ -1310,7 +1472,7 @@ def _percentile(values: list[float], percentile: float) -> float | None:
 
 
 def _historical_daytime_soc_gain_guard(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     reserve_soc_percent: float,
     target_date: str,
@@ -1333,7 +1495,7 @@ def _historical_daytime_soc_gain_guard(
     min_pv_kwh = max(0.0, _env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_PV_KWH", 0.1))
     min_samples = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_SAMPLES", 30.0)))
 
-    by_day: dict[str, list[dict[str, float | datetime]]] = {}
+    by_day: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         dt = row.get("dt")
         if not isinstance(dt, datetime):
@@ -1354,7 +1516,10 @@ def _historical_daytime_soc_gain_guard(
         if day >= target_date:
             excluded["future_or_target_day"] += 1
             continue
-        day_rows = sorted(day_rows, key=lambda x: x["dt"])  # type: ignore[index]
+        day_rows = sorted(
+            day_rows,
+            key=lambda x: x["dt"] if isinstance(x.get("dt"), datetime) else datetime.min,
+        )
         if len(day_rows) < min_samples:
             excluded["incomplete"] += 1
             continue
@@ -1370,26 +1535,32 @@ def _historical_daytime_soc_gain_guard(
 
         morning_rows = [
             r for r in day_rows
-            if isinstance(r.get("dt"), datetime) and 6 <= r["dt"].hour <= 8  # type: ignore[index]
+            if isinstance(r.get("dt"), datetime) and 6 <= r["dt"].hour <= 8
         ]
         if not morning_rows:
             excluded["missing_morning_soc"] += 1
             continue
         morning = min(
             morning_rows,
-            key=lambda r: abs((r["dt"].hour * 60 + r["dt"].minute) - 420),  # type: ignore[index]
+            key=lambda r: abs(
+                ((r["dt"].hour * 60 + r["dt"].minute) - 420)
+                if isinstance(r.get("dt"), datetime)
+                else 10_000
+            ),
         )
         morning_soc = _to_optional_float(morning.get("soc"))
         if morning_soc is None or morning_soc != morning_soc:
             excluded["missing_morning_soc"] += 1
             continue
 
-        day_soc_values = [
-            _to_optional_float(r.get("soc"))
-            for r in day_rows
-            if isinstance(r.get("dt"), datetime) and 5 <= r["dt"].hour <= 18  # type: ignore[index]
-        ]
-        day_soc_values = [v for v in day_soc_values if v is not None and v == v]
+        day_soc_values: list[float] = []
+        for row in day_rows:
+            row_dt = row.get("dt")
+            if not isinstance(row_dt, datetime) or not 5 <= row_dt.hour <= 18:
+                continue
+            soc_value = _to_optional_float(row.get("soc"))
+            if soc_value is not None and soc_value == soc_value:
+                day_soc_values.append(soc_value)
         if not day_soc_values:
             excluded["incomplete"] += 1
             continue
@@ -1419,7 +1590,7 @@ def _historical_daytime_soc_gain_guard(
         selected = candidates
         source_window = "all_available_until_180_days"
 
-    gains = [float(x["daytime_soc_gain_percent"]) for x in selected]
+    gains = [_to_optional_float(x.get("daytime_soc_gain_percent")) or 0.0 for x in selected]
     percentile_gain = _percentile(gains, percentile)
     applied = bool(enabled and percentile_gain is not None and len(gains) >= min_days)
     guard_gain = max(floor_percent, percentile_gain or 0.0) if applied else 0.0
@@ -1449,7 +1620,10 @@ def _historical_daytime_soc_gain_guard(
             "min_samples_per_day": min_samples,
         },
         "excluded_counts": excluded,
-        "lowest_days": sorted(selected, key=lambda x: float(x["daytime_soc_gain_percent"]))[:8],
+        "lowest_days": sorted(
+            selected,
+            key=lambda x: _to_optional_float(x.get("daytime_soc_gain_percent")) or 0.0,
+        )[:8],
     }
 
 
@@ -1540,7 +1714,7 @@ def _estimate_midday_surplus_from_pv_forecast(
     midday_load_fraction = max(0.0, min(1.0, midday_load_fraction))
     estimated_midday_load = non_morning_load * midday_load_fraction
     net_surplus = max(0.0, midday_pv - estimated_midday_load)
-    return net_surplus
+    return float(net_surplus)
 
 
 def _parse_hhmm(value: str, *, default: str) -> dt_time:
@@ -1587,7 +1761,7 @@ def _billing_period_for_target(target_day: date) -> tuple[date, date, int]:
 
 
 def _monthly_day_buy_kwh_before_target(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     target_date: str,
 ) -> dict[str, object]:
@@ -1628,7 +1802,7 @@ def _monthly_day_buy_kwh_before_target(
 
 
 def _expected_rest_of_month_day_buy_kwh(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     target_date: str,
 ) -> dict[str, object]:
@@ -1678,7 +1852,7 @@ def _expected_rest_of_month_day_buy_kwh(
 
 
 def _estimate_remaining_overnight_load_kwh(
-    rows: list[dict[str, float | datetime]],
+    rows: list[dict[str, Any]],
     *,
     target_date: str,
 ) -> dict[str, object]:
@@ -1711,46 +1885,65 @@ def _estimate_remaining_overnight_load_kwh(
     min_days = int(_env_float("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", 3.0))
     percentile = _env_float_clamped("OVERNIGHT_DISCHARGE_GUARD_PERCENTILE", 75.0, min_value=0.0, max_value=100.0)
     floor_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_FLOOR_KWH", 0.0))
-    cap_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", 12.0))
+    cap_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", 0.0))
 
     by_day: dict[str, float] = {}
-    by_hour: dict[int, list[float]] = {}
+    by_day_hour: dict[tuple[str, int], dict[int, float]] = {}
     lower_bound = target - timedelta(days=max(1, lookback_days))
     latest_minute = _clock_minutes(latest_dt.time())
+    planning_on_target_morning = latest_dt.date() == target and latest_minute < cutoff_minute
     for row in rows:
         row_dt = row.get("dt")
         if not isinstance(row_dt, datetime):
             continue
         row_minute = _clock_minutes(row_dt.time())
         if row_minute < cutoff_minute:
-            pass
-        elif row_minute >= 23 * 60:
-            pass
-        else:
-            continue
-        candidate_target: date | None = None
-        if row_minute > latest_minute:
-            candidate_target = row_dt.date() + timedelta(days=1)
-        elif row_minute < cutoff_minute:
             candidate_target = row_dt.date()
-        if candidate_target is None or not (lower_bound <= candidate_target < target):
+            if planning_on_target_morning and row_minute <= latest_minute:
+                continue
+        else:
+            candidate_target = row_dt.date() + timedelta(days=1)
+            if planning_on_target_morning or row_minute <= latest_minute:
+                continue
+        if not (lower_bound <= candidate_target < target):
             continue
         load = max(0.0, float(row.get("load", 0.0) or 0.0))
         key = candidate_target.isoformat()
         by_day[key] = by_day.get(key, 0.0) + load
-        by_hour.setdefault(row_dt.hour, []).append(load)
+        if row_dt.minute in {0, 30}:
+            by_day_hour.setdefault((key, row_dt.hour), {})[row_dt.minute] = load
+
+    complete_hourly_values: dict[int, list[float]] = {}
+    incomplete_hour_count = 0
+    missing_interval_count = 0
+    for (_, hour), interval_values in by_day_hour.items():
+        if set(interval_values) == {0, 30}:
+            complete_hourly_values.setdefault(hour, []).append(sum(interval_values.values()))
+        else:
+            incomplete_hour_count += 1
+            missing_interval_count += 2 - len(interval_values)
+    hourly_aggregation = {
+        "complete_hour_count": sum(len(values) for values in complete_hourly_values.values()),
+        "incomplete_hour_count": incomplete_hour_count,
+        "missing_interval_count": missing_interval_count,
+    }
 
     samples = [value for value in by_day.values() if value > 0.0]
     if len(samples) < min_days:
+        insufficient_estimate = min(cap_kwh, floor_kwh) if cap_kwh > 0.0 else floor_kwh
         return {
             "enabled": True,
-            "expected_kwh": floor_kwh,
+            "expected_kwh": insufficient_estimate,
             "reason": "insufficient_history",
             "sample_count": len(samples),
             "latest_sample_at": latest_dt.isoformat(),
             "cutoff_hhmm": cutoff.strftime("%H:%M"),
             "source": "monitoring_load_kwh",
             "hourly_load_forecast_kwh": {},
+            "hourly_aggregation": hourly_aggregation,
+            "uncapped_expected_kwh": round(floor_kwh, 4),
+            "cap_kwh": cap_kwh,
+            "cap_applied": insufficient_estimate < floor_kwh,
         }
 
     samples.sort()
@@ -1758,10 +1951,16 @@ def _estimate_remaining_overnight_load_kwh(
         estimate = samples[0]
     else:
         estimate = float(statistics.quantiles(samples, n=100, method="inclusive")[max(0, int(percentile) - 1)])
-    estimate = min(cap_kwh, max(floor_kwh, estimate))
+    uncapped_estimate = max(floor_kwh, estimate)
+    if cap_kwh > 0.0:
+        estimate = min(cap_kwh, uncapped_estimate)
+        cap_applied = estimate < uncapped_estimate
+    else:
+        estimate = uncapped_estimate
+        cap_applied = False
     hourly_load = {
-        hour: sum(values) / len(values)
-        for hour, values in sorted(by_hour.items())
+        hour: statistics.mean(values)
+        for hour, values in sorted(complete_hourly_values.items())
         if values
     }
     return {
@@ -1775,6 +1974,10 @@ def _estimate_remaining_overnight_load_kwh(
         "sample_days": sorted(by_day)[-min(10, len(by_day)):],
         "source": "monitoring_load_kwh",
         "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in hourly_load.items()},
+        "hourly_aggregation": hourly_aggregation,
+        "uncapped_expected_kwh": round(uncapped_estimate, 4),
+        "cap_kwh": cap_kwh,
+        "cap_applied": cap_applied,
     }
 
 
@@ -1792,20 +1995,49 @@ def main() -> int:
 
     forecast = _forecast_from_env_or_api(lat=lat, lon=lon, timezone=timezone)
     tomorrow_date = str(forecast["date"])
-    sun_h = float(forecast["sun_hours"])
-    temp_c = float(forecast["temp_c"])
+    sun_h = _to_optional_float(forecast.get("sun_hours")) or 0.0
+    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
 
     occupancy_events = load_occupancy_events_from_env()
     load_rows_for_forecast = _load_rows_for_consumption_forecast(rows)
     training_load_rows = filter_training_load_rows(load_rows_for_forecast, occupancy_events)
+    weather_history = _archive_weather_history(rows, lat=lat, lon=lon, timezone=timezone)
     base_consumption_forecast = forecast_daily_consumption(
         training_load_rows,
-        _archive_weather_rows(rows, lat=lat, lon=lon, timezone=timezone),
+        weather_history.rows,
         tomorrow_date,
         weather_row=_forecast_weather_row(forecast),
         min_training_days=int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")),
         fallback_window=int(os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")),
     )
+    consumption_history_dates = {
+        value.date().isoformat()
+        for row in training_load_rows
+        if isinstance((value := row.get("dt")), datetime)
+    }
+    joined_training_dates = consumption_history_dates & set(weather_history.received_dates)
+    weather_history_diagnostics = {
+        **asdict(weather_history),
+        "rows": None,
+        "requested_start_date": weather_history.requested_dates[0] if weather_history.requested_dates else None,
+        "requested_end_date": weather_history.requested_dates[-1] if weather_history.requested_dates else None,
+        "requested_day_count": len(weather_history.requested_dates),
+        "received_day_count": len(weather_history.received_dates),
+        "consumption_history_day_count": len(consumption_history_dates),
+        "joined_training_day_count": len(joined_training_dates),
+        "join_coverage_ratio": round(
+            len(joined_training_dates) / len(consumption_history_dates), 6
+        ) if consumption_history_dates else 0.0,
+        "fallback_reason": (
+            None
+            if base_consumption_forecast.source == "hist_gradient_boosting"
+            else "weather_history_unavailable"
+            if not weather_history.received_dates
+            else "insufficient_joined_training_history"
+            if len(joined_training_dates) < int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45"))
+            else "consumption_model_fallback"
+        ),
+    }
     consumption_forecast, occupancy_adjustment = apply_occupancy_schedule(
         base_consumption_forecast,
         occupancy_events,
@@ -1882,7 +2114,7 @@ def main() -> int:
         expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
     )
     result = compute_night_charge_target(coeff, inp)
-    result_payload = to_dict(result)
+    result_payload: dict[str, Any] = to_dict(result)
 
     raw_hourly_load_forecast = _build_hourly_load_forecast(
         rows,
@@ -1928,9 +2160,10 @@ def main() -> int:
         timezone=timezone,
         forecast=forecast,
         skip_pv_correction=physical_pv_selected,
+        allow_load_safety_floor=occupancy_adjustment is None,
     )
-    hourly_load_forecast = forecast_correction["hourly_load_kwh"]  # type: ignore[assignment]
-    hourly_pv_forecast = forecast_correction["hourly_pv_kwh"]  # type: ignore[assignment]
+    hourly_load_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_load_kwh"))
+    hourly_pv_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_pv_kwh"))
     for hour, value in overnight_load_by_hour.items():
         hourly_load_forecast.setdefault(hour, value)
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
@@ -2184,14 +2417,18 @@ def main() -> int:
             result_payload["soc_expected_peak_unmet_cost_yen"] = cost_optimization.expected_peak_unmet_cost_yen
             optimization_payload = cost_optimization_payload
 
-    if optimization_payload is None and legacy_optimization_payload is not None:
+    if (
+        optimization_payload is None
+        and legacy_optimization_payload is not None
+        and daytime_optimization is not None
+    ):
         result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
         result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
         result_payload["target_soc_7_percent"] = daytime_optimization.target_soc_7_percent
         result_payload["required_night_charge_kwh"] = daytime_optimization.required_night_charge_kwh
         optimization_payload = legacy_optimization_payload
 
-    coefficients = to_dict(coeff)
+    coefficients: dict[str, Any] = to_dict(coeff)
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
         calibration = pv_array_forecast.get("calibration", {})
         arrays = pv_array_forecast.get("arrays", [])
@@ -2256,6 +2493,7 @@ def main() -> int:
         "historical_profile": hist,
         "consumption_forecast": _consumption_forecast_to_dict(consumption_forecast),
         "base_consumption_forecast": _consumption_forecast_to_dict(base_consumption_forecast),
+        "weather_history": weather_history_diagnostics,
         "occupancy_adjustment": _occupancy_adjustment_to_dict(occupancy_adjustment),
         "coefficients": coefficients,
         "inputs": to_dict(inp),

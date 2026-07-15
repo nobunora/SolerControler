@@ -107,8 +107,15 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, float | str | dateti
                     "soc": soc,
                 }
             )
-    rows.sort(key=lambda x: x["dt"])  # type: ignore[index]
+    rows.sort(key=lambda x: x["dt"] if isinstance(x["dt"], datetime) else datetime.min)
     return rows
+
+
+def _row_float(row: dict[str, float | str | datetime], key: str) -> float:
+    value = row[key]
+    if isinstance(value, datetime):
+        raise TypeError(f"{key} must be numeric")
+    return float(value)
 
 
 def fit_coefficients_from_csv(csv_paths: Iterable[Path]) -> EnergyModelCoefficients:
@@ -116,9 +123,9 @@ def fit_coefficients_from_csv(csv_paths: Iterable[Path]) -> EnergyModelCoefficie
     if len(rows) < 3:
         raise ValueError("CSV件数が不足しているため係数推定できません")
 
-    sum_pv = sum(float(r["pv"]) for r in rows)
-    sum_sell = sum(float(r["sell"]) for r in rows)
-    sum_chg = sum(float(r["chg"]) for r in rows)
+    sum_pv = sum(_row_float(r, "pv") for r in rows)
+    sum_sell = sum(_row_float(r, "sell") for r in rows)
+    sum_chg = sum(_row_float(r, "chg") for r in rows)
 
     pv_self = max(0.0, sum_pv - sum_sell)
     pv_direct = max(0.0, pv_self - sum_chg)
@@ -126,11 +133,11 @@ def fit_coefficients_from_csv(csv_paths: Iterable[Path]) -> EnergyModelCoefficie
     x: list[list[float]] = []
     y: list[float] = []
     for i in range(1, len(rows)):
-        s0 = float(rows[i - 1]["soc"])
-        s1 = float(rows[i]["soc"])
+        s0 = _row_float(rows[i - 1], "soc")
+        s1 = _row_float(rows[i], "soc")
         if np.isnan(s0) or np.isnan(s1):
             continue
-        x.append([float(rows[i]["chg"]), float(rows[i]["dchg"]), 1.0])
+        x.append([_row_float(rows[i], "chg"), _row_float(rows[i], "dchg"), 1.0])
         y.append(s1 - s0)
 
     if len(x) < 3:

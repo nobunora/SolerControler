@@ -139,7 +139,7 @@ def events_from_values(values: list[list[Any]], *, source: str = "") -> list[Occ
     return events
 
 
-def _google_sheets_service():
+def _google_sheets_service() -> Any:
     import google.auth
     from googleapiclient.discovery import build
 

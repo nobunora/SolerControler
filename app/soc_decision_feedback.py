@@ -542,7 +542,7 @@ def load_soc_decision_prior_from_firestore(
         docs: list[dict[str, Any]] = []
         collection = client.collection("soc_decision_feedback")
         for offset in range(1, lookback_days + 1):
-            snap = collection.document((target_day - timedelta(days=offset)).isoformat()).get()
+            snap: Any = collection.document((target_day - timedelta(days=offset)).isoformat()).get()
             if snap.exists:
                 docs.append(snap.to_dict() or {})
     except Exception as exc:

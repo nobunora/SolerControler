@@ -73,7 +73,8 @@ def _solar_position(*, day: date, hour: int, lat: float, lon: float, timezone: s
         - 0.002697 * math.cos(3.0 * gamma)
         + 0.00148 * math.sin(3.0 * gamma)
     )
-    offset_min = dt.utcoffset().total_seconds() / 60.0 if dt.utcoffset() else 0.0
+    utc_offset = dt.utcoffset()
+    offset_min = utc_offset.total_seconds() / 60.0 if utc_offset is not None else 0.0
     time_offset = eqtime + 4.0 * lon - offset_min
     true_solar_minutes = (hour * 60.0 + 30.0 + time_offset) % 1440.0
     hour_angle = math.radians(true_solar_minutes / 4.0 - 180.0)
@@ -420,7 +421,7 @@ def build_physical_pv_candidate(
             timezone=timezone,
             roof_pitch_deg=roof_pitch_deg,
         )
-        base_scale = float(radiation_scale_fit.get("scale") or 1.0)
+        base_scale = to_float(radiation_scale_fit.get("scale")) or 1.0
         radiation_scale_source = "history_median"
 
     scales = _historical_scales(
@@ -436,7 +437,8 @@ def build_physical_pv_candidate(
     min_days = _env_int("PHYSICAL_PV_GLOBAL_MIN_DAYS", 5)
     daypart_min = _env_int("PHYSICAL_PV_DAYPART_MIN_SAMPLES", 20)
     bin_min = _env_int("PHYSICAL_PV_BIN_MIN_SAMPLES", 30)
-    global_count = int(scales["global"]["count"])  # type: ignore[index]
+    global_stats = scales.get("global")
+    global_count = int(to_float(global_stats.get("count")) or 0.0) if isinstance(global_stats, dict) else 0
     decision_path = ["shortwave_available", "physical_candidate_built"]
     selected_method = "physical_unscaled"
     if global_count >= min_days:
@@ -453,7 +455,9 @@ def build_physical_pv_candidate(
             "candidates": {"existing": {"total_kwh": round(existing_total, 4)}, "physical_unscaled": {"total_kwh": round(shape_total * base_scale, 4)}},
         })
 
-    global_scale = float(scales["global"]["scale"])  # type: ignore[index]
+    global_scale = to_float(global_stats.get("scale")) if isinstance(global_stats, dict) else None
+    if global_scale is None:
+        global_scale = base_scale
     hourly: dict[int, float] = {}
     bin_used = 0
     bin_blended = 0
@@ -461,14 +465,16 @@ def build_physical_pv_candidate(
     for hour in HOURS:
         scale = global_scale
         part = _daypart(hour)
-        part_stats = scales["dayparts"].get(part, {}) if isinstance(scales.get("dayparts"), dict) else {}
+        daypart_stats = scales.get("dayparts")
+        part_stats = daypart_stats.get(part, {}) if isinstance(daypart_stats, dict) else {}
         if float(part_stats.get("count", 0.0)) >= daypart_min:
             scale = float(part_stats.get("scale", scale))
             daypart_used += 1
             selected_method = "physical_daypart"
         f = features[hour]
         key = f"alt:{_bin(f['altitude_deg'], ALTITUDE_BINS)}|sw:{_bin(f['shortwave_ratio'], SHORTWAVE_RATIO_BINS)}"
-        bin_stats = scales["bins"].get(key, {}) if isinstance(scales.get("bins"), dict) else {}
+        bin_scales = scales.get("bins")
+        bin_stats = bin_scales.get(key, {}) if isinstance(bin_scales, dict) else {}
         bin_count = float(bin_stats.get("count", 0.0))
         if bin_count > 0.0:
             bin_scale = float(bin_stats.get("scale", scale))
