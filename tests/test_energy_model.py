@@ -402,7 +402,6 @@ def test_physical_pv_selection_marks_headroom_cap_not_enforced() -> None:
         morning_headroom_guard={"applied": False},
         daytime_net_surplus_headroom_guard={"applied": False},
         historical_soc_gain_guard=annotated,
-        overnight_discharge_guard={"enabled": True},
         respect_morning_headroom_guard=True,
     )
 
@@ -410,6 +409,7 @@ def test_physical_pv_selection_marks_headroom_cap_not_enforced() -> None:
     assert annotated["enforced_as_target_cap"] is False
     assert annotated["enforcement_skip_reason"] == "physical_pv_selected"
     assert "historical_daytime_soc_gain_guard" not in active
+    assert all("overnight" not in name for name in active)
 
 
 def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:

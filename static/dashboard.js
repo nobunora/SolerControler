@@ -2,6 +2,8 @@
     const CHUNK_DAYS = 120;
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
     const { allocateNightGridCharge } = window.DashboardCalculations;
+    const dashboardDates = window.DashboardDates;
+    const dashboardApi = window.DashboardApi;
 
     function n(v, d = 0) {
       const x = Number(v);
@@ -87,18 +89,7 @@
     }
 
     function isoDateAdd(dateStr, deltaDays) {
-      const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(dateStr || ""));
-      if (!m) return dateStr;
-      const y = Number(m[1]);
-      const mo = Number(m[2]);
-      const da = Number(m[3]);
-      const base = new Date(Date.UTC(y, mo - 1, da));
-      if (Number.isNaN(base.getTime())) return dateStr;
-      base.setUTCDate(base.getUTCDate() + deltaDays);
-      const yy = base.getUTCFullYear();
-      const mm = String(base.getUTCMonth() + 1).padStart(2, "0");
-      const dd = String(base.getUTCDate()).padStart(2, "0");
-      return `${yy}-${mm}-${dd}`;
+      return dashboardDates.isoDateAdd(dateStr, deltaDays);
     }
 
     function buildDateRange(startDate, endDate) {
@@ -180,47 +171,12 @@
     }
 
     function todayIsoJst() {
-      const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Tokyo",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).formatToParts(new Date());
-      let y = "1970";
-      let m = "01";
-      let d = "01";
-      for (const p of parts) {
-        if (p.type === "year") y = p.value;
-        if (p.type === "month") m = p.value.padStart(2, "0");
-        if (p.type === "day") d = p.value.padStart(2, "0");
-      }
-      return `${y}-${m}-${d}`;
+      return dashboardDates.todayIsoJst();
     }
 
-    const store = {
-      meta: null,
-      pvDaily: new Map(),
-      hourly: new Map(),
-      energy: new Map(),
-      cost: new Map(),
-      battery: new Map(),
-      batteryFlow: new Map(),
-      monthly: [],
-      params: [],
-      latestSchedule: null,
-      dashboardWarnings: [],
-      pvForecastDiagnostics: {},
-      dailyReview: {},
-      dates: [],
-      loadingOlder: false,
-    };
+    const store = window.DashboardStore.createStore();
 
-    const periodState = {
-      mode: "all",
-      month: null,
-      year: null,
-      initialized: false,
-    };
+    const periodState = window.DashboardStore.createPeriodState();
 
     const charts = {};
     const paramAlias = {
@@ -288,16 +244,11 @@
     }
 
     async function fetchSlice(options = {}) {
-      const query = qs({
+      return await dashboardApi.fetchSlice({
         window_days: options.window_days ?? WINDOW_DAYS,
         end_date: options.end_date ?? "",
-        include_static: options.include_static ? "1" : "0",
+        include_static: !!options.include_static,
       });
-      const res = await fetch(`/api/dashboard?${query}`, { credentials: "include" });
-      if (!res.ok) {
-        throw new Error(`api_error_${res.status}`);
-      }
-      return await res.json();
     }
 
     function absorbSlice(payload, includeStatic) {

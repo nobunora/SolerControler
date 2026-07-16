@@ -67,10 +67,14 @@ def _detail_inline_enabled(*, forecast_date: str, now: datetime | None = None) -
 
 
 def _summary_for_firestore(plan: dict[str, Any]) -> dict[str, Any]:
-    pv_array = plan.get("pv_array_forecast") if isinstance(plan.get("pv_array_forecast"), dict) else {}
-    soc_opt = plan.get("daytime_soc_optimization") if isinstance(plan.get("daytime_soc_optimization"), dict) else {}
-    forecast = plan.get("forecast") if isinstance(plan.get("forecast"), dict) else {}
-    result = plan.get("result") if isinstance(plan.get("result"), dict) else {}
+    pv_array_value = plan.get("pv_array_forecast")
+    soc_opt_value = plan.get("daytime_soc_optimization")
+    forecast_value = plan.get("forecast")
+    result_value = plan.get("result")
+    pv_array: dict[str, Any] = pv_array_value if isinstance(pv_array_value, dict) else {}
+    soc_opt: dict[str, Any] = soc_opt_value if isinstance(soc_opt_value, dict) else {}
+    forecast: dict[str, Any] = forecast_value if isinstance(forecast_value, dict) else {}
+    result: dict[str, Any] = result_value if isinstance(result_value, dict) else {}
     return {
         "forecast": {
             key: forecast.get(key)
@@ -185,7 +189,7 @@ def upload_night_plan_to_gcs(
     if not uri:
         return {}
     if storage_client is None:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
 
         storage_client = storage.Client()
     bucket_name, blob_name = _parse_gs_uri(uri)
@@ -207,7 +211,7 @@ def load_night_plan_detail_from_gcs(doc: dict[str, Any], *, storage_client: Any 
     if not uri:
         return None
     if storage_client is None:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore[attr-defined]
 
         storage_client = storage.Client()
     bucket_name, blob_name = _parse_gs_uri(uri)

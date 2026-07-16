@@ -11,14 +11,16 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable, Iterable, Mapping, TypeVar, cast
 from zoneinfo import ZoneInfo
 
+from app.forced_charge import ChargeObservation, ChargePolicy, ChargeState, decide_transition
 from app.soc_decision_feedback import build_soc_decision_feedback
 from app.constants import validate_soc_percent
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = N
 
 def _to_float_or_none(value: object) -> float | None:
     try:
-        result = float(value)
+        result = float(cast(Any, value))
     except (TypeError, ValueError):
         return None
     if not math.isfinite(result):
@@ -119,7 +121,7 @@ def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
 
 
 def _required_plan_float(
-    source: dict,
+    source: dict[str, Any],
     *,
     key: str,
     plan_path: Path,
@@ -138,16 +140,12 @@ def _required_plan_float(
     return value
 
 
-def _read_plan_json(plan_path: Path) -> dict:
-    return json.loads(plan_path.read_text(encoding="utf-8"))
-
-
-def _plan_date_from_json(plan: dict) -> str:
+def _plan_date_from_json(plan: dict[str, Any]) -> str:
     forecast = plan.get("forecast", {}) if isinstance(plan.get("forecast"), dict) else {}
     return str(forecast.get("date", "")).strip()
 
 
-def _open_firestore_for_plan():
+def _open_firestore_for_plan() -> Any | None:
     backend = os.getenv("DATA_BACKEND", "").strip().lower()
     project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip()
     if backend != "firestore" and not project_id:
@@ -293,7 +291,7 @@ def _persist_03_monitor_schedule_to_firestore(
     required_kwh: float,
     estimated_charge_minutes: int,
     default_power_kw: float,
-    charge_rate_info: dict[str, float | int | str | None] | None = None,
+    charge_rate_info: Mapping[str, float | int | str | None] | None = None,
     soc_source: str = "unknown",
     soc_error: str | None = None,
     monitor_start_reason: str = "soc_available",
@@ -534,10 +532,6 @@ def _latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, dateti
     return latest_soc, latest_dt
 
 
-def _latest_soc_percent(csv_paths: list[Path]) -> float | None:
-    return _latest_csv_soc_reading(csv_paths)[0]
-
-
 def _latest_realtime_soc_percent() -> float | None:
     from app.kpnet_workflow import KpNetClient, KpNetConfig
 
@@ -761,21 +755,6 @@ def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
     return max(0, int((cutoff - now).total_seconds()))
 
 
-def _sleep_with_progress(total_seconds: int, *, label: str, chunk_seconds: int = 300) -> None:
-    remaining = max(0, int(total_seconds))
-    if remaining <= 0:
-        return
-    chunk = max(30, int(chunk_seconds))
-    while remaining > 0:
-        current = min(chunk, remaining)
-        print(
-            f"[cloud_job_runner] {label} sleep={current}s remaining_after={max(0, remaining - current)}s",
-            flush=True,
-        )
-        time.sleep(current)
-        remaining -= current
-
-
 def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None:
     _run(
         [sys.executable, "kpnet_main.py"],
@@ -805,14 +784,14 @@ def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
 
 
 def _run_operation_with_retry(
-    operation,
+    operation: Callable[[], _T],
     *,
     label: str,
     attempts_env: str = "KP_COMMAND_RETRY_ATTEMPTS",
     delay_env: str = "KP_COMMAND_RETRY_DELAY_SECONDS",
     default_attempts: int = 3,
     default_delay_seconds: float = 20.0,
-):
+) -> _T:
     attempts = _env_int(attempts_env, default_attempts, min_value=1)
     delay_seconds = _env_float(delay_env, default_delay_seconds, min_value=0.0)
     last_exc: Exception | None = None
@@ -1009,6 +988,22 @@ def _run_03_settings_profile_with_db(
     )
 
 
+def _attempt_03_fail_safe_standby(
+    plan_meta: dict[str, float | str | None],
+    *,
+    label: str,
+    reason: str,
+) -> None:
+    try:
+        _run_03_settings_profile_with_db(
+            profile="standby",
+            dynamic_forced_profile=False,
+            label=label,
+        )
+    finally:
+        _persist_03_monitor_stop_reason(plan_meta, reason)
+
+
 def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
@@ -1074,7 +1069,10 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         csv_paths=csv_paths,
     )
     poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
-    soc_margin = max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0"))
+    soc_margin = min(
+        target_soc,
+        max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0")),
+    )
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
     cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
@@ -1114,7 +1112,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         charge_rate_info=charge_rate_info,
     )
 
-    _run_03_settings_profile_with_db(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
+    try:
+        _run_03_settings_profile_with_db(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
+    except Exception:
+        _attempt_03_fail_safe_standby(
+            plan_meta,
+            label="03-forced-start-failed-standby",
+            reason="forced_start_failed_fail_safe",
+        )
+        raise
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
@@ -1134,6 +1140,14 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     previous_soc = latest_soc
     consecutive_soc_failures = 0
     max_soc_failures = _env_int("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", 3, min_value=1)
+    monitor_started_at = datetime.now(ZoneInfo(timezone_name))
+    monitor_policy = ChargePolicy(
+        target_soc_percent=target_soc,
+        cutoff=monitor_started_at + timedelta(seconds=monitor_seconds),
+        max_runtime_seconds=float(monitor_seconds),
+        max_sensor_failures=max_soc_failures,
+        hysteresis_percent=soc_margin,
+    )
     stagnant_polls = 0
     reapply_enabled = os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower() in {
         "1",
@@ -1149,7 +1163,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         confirm_before_minutes=confirm_before_minutes,
     )
     while time.time() - started_at < monitor_seconds:
-        soc_reading = _read_soc_with_fallback(csv_paths)
+        try:
+            soc_reading = _read_soc_with_fallback(csv_paths)
+        except Exception:
+            _attempt_03_fail_safe_standby(
+                plan_meta,
+                label="03-monitor-exception-standby",
+                reason="monitor_exception_fail_safe",
+            )
+            raise
         latest_soc = soc_reading.value_percent
         if soc_reading.error:
             print(
@@ -1163,15 +1185,6 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 f"target={target_soc:.2f}% margin={soc_margin:.2f}%",
                 flush=True,
             )
-            if latest_soc >= (target_soc - soc_margin):
-                print("[cloud_job_runner] 03-monitor target reached. switch to standby profile.", flush=True)
-                _run_03_settings_profile_with_db(
-                    profile="standby",
-                    dynamic_forced_profile=False,
-                    label="03-target-standby",
-                )
-                _persist_03_monitor_stop_reason(plan_meta, "target_reached")
-                return
             if (
                 reapply_enabled
                 and previous_soc is not None
@@ -1187,27 +1200,56 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                         f"latest={latest_soc:.2f}% previous={previous_soc:.2f}%",
                         flush=True,
                     )
-                    _run_03_settings_profile_with_db(
-                        profile="forced",
-                        dynamic_forced_profile=True,
-                        label="03-forced-reapply",
-                    )
+                    try:
+                        _run_03_settings_profile_with_db(
+                            profile="forced",
+                            dynamic_forced_profile=True,
+                            label="03-forced-reapply",
+                        )
+                    except Exception:
+                        _attempt_03_fail_safe_standby(
+                            plan_meta,
+                            label="03-forced-reapply-failed-standby",
+                            reason="forced_reapply_failed_fail_safe",
+                        )
+                        raise
                     stagnant_polls = 0
             previous_soc = latest_soc
         else:
             consecutive_soc_failures += 1
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
-            if consecutive_soc_failures >= max_soc_failures:
-                print("[cloud_job_runner] 03-monitor SOC unavailable; fail-safe standby.", flush=True)
-                try:
-                    _run_03_settings_profile_with_db(
-                        profile="standby",
-                        dynamic_forced_profile=False,
-                        label="03-soc-unavailable-standby",
-                    )
-                finally:
-                    _persist_03_monitor_stop_reason(plan_meta, "soc_unavailable_fail_safe")
-                return
+
+        observed_at = datetime.now(ZoneInfo(timezone_name))
+        transition = decide_transition(
+            ChargeState.MONITORING,
+            ChargeObservation(
+                now=observed_at,
+                soc_percent=latest_soc,
+                consecutive_sensor_failures=consecutive_soc_failures,
+                elapsed_seconds=max(0.0, (observed_at - monitor_started_at).total_seconds()),
+            ),
+            monitor_policy,
+        )
+        if transition.terminal_after_stop is ChargeState.COMPLETED_TARGET:
+            print("[cloud_job_runner] 03-monitor target reached. switch to standby profile.", flush=True)
+            _run_03_settings_profile_with_db(
+                profile="standby",
+                dynamic_forced_profile=False,
+                label="03-target-standby",
+            )
+            _persist_03_monitor_stop_reason(plan_meta, transition.reason)
+            return
+        if transition.terminal_after_stop is ChargeState.FAILED_SENSOR:
+            print("[cloud_job_runner] 03-monitor SOC unavailable; fail-safe standby.", flush=True)
+            try:
+                _run_03_settings_profile_with_db(
+                    profile="standby",
+                    dynamic_forced_profile=False,
+                    label="03-soc-unavailable-standby",
+                )
+            finally:
+                _persist_03_monitor_stop_reason(plan_meta, "soc_unavailable_fail_safe")
+            return
 
         remaining = monitor_seconds - int(time.time() - started_at)
         if remaining <= 0:
@@ -1263,112 +1305,6 @@ def _run_optional_04_exports_and_backups() -> None:
         )
     else:
         print("[cloud_job_runner] drive-backup skipped: DRIVE_BACKUP_FOLDER_ID is empty", flush=True)
-
-
-def _read_plan_snapshot(plan_path: Path) -> tuple[str, float, float]:
-    obj = json.loads(plan_path.read_text(encoding="utf-8"))
-    forecast = obj.get("forecast", {})
-    date = str(forecast.get("date", "")).strip()
-    sun_h = float(forecast.get("sun_hours", 0.0) or 0.0)
-    temp_c = float(forecast.get("temp_c", 0.0) or 0.0)
-    return date, sun_h, temp_c
-
-
-def _read_plan_signature(plan_path: Path) -> dict[str, float | str]:
-    obj = json.loads(plan_path.read_text(encoding="utf-8"))
-    forecast = obj.get("forecast", {}) if isinstance(obj.get("forecast"), dict) else {}
-    result = obj.get("result", {}) if isinstance(obj.get("result"), dict) else {}
-    pv_forecast = obj.get("pv_array_forecast", {}) if isinstance(obj.get("pv_array_forecast"), dict) else {}
-    pv_totals = pv_forecast.get("totals", {}) if isinstance(pv_forecast.get("totals"), dict) else {}
-    return {
-        "date": str(forecast.get("date", "")).strip(),
-        "sun_hours": float(forecast.get("sun_hours", 0.0) or 0.0),
-        "temp_c": float(forecast.get("temp_c", 0.0) or 0.0),
-        "target_soc_7_percent": float(result.get("target_soc_7_percent", 0.0) or 0.0),
-        "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0) or 0.0),
-        "predicted_midday_surplus_kwh": float(result.get("predicted_midday_surplus_kwh", 0.0) or 0.0),
-        "forecast_pv_total_kwh": float(pv_totals.get("total_kwh", 0.0) or 0.0),
-    }
-
-
-def _forecast_changed(
-    base: tuple[str, float, float],
-    current: tuple[str, float, float],
-    *,
-    sun_epsilon_h: float,
-    temp_epsilon_c: float,
-) -> bool:
-    if base[0] != current[0]:
-        return True
-    if abs(base[1] - current[1]) >= sun_epsilon_h:
-        return True
-    if abs(base[2] - current[2]) >= temp_epsilon_c:
-        return True
-    return False
-
-
-def _plan_signature_changed(
-    base: dict[str, float | str],
-    current: dict[str, float | str],
-    *,
-    sun_epsilon_h: float,
-    temp_epsilon_c: float,
-    soc_epsilon_percent: float,
-    kwh_epsilon: float,
-) -> bool:
-    if str(base.get("date", "")) != str(current.get("date", "")):
-        return True
-    if abs(float(base.get("sun_hours", 0.0)) - float(current.get("sun_hours", 0.0))) >= sun_epsilon_h:
-        return True
-    if abs(float(base.get("temp_c", 0.0)) - float(current.get("temp_c", 0.0))) >= temp_epsilon_c:
-        return True
-    if abs(float(base.get("target_soc_7_percent", 0.0)) - float(current.get("target_soc_7_percent", 0.0))) >= soc_epsilon_percent:
-        return True
-    for key in ("required_night_charge_kwh", "predicted_midday_surplus_kwh", "forecast_pv_total_kwh"):
-        if abs(float(base.get(key, 0.0)) - float(current.get(key, 0.0))) >= kwh_epsilon:
-            return True
-    return False
-
-
-def _refresh_plan_for_same_date_if_changed(plan_path: Path) -> bool:
-    if not plan_path.exists():
-        return False
-    base = _read_plan_signature(plan_path)
-    target_date = str(base.get("date", "")).strip()
-    if not target_date:
-        return False
-
-    _run_with_retry(
-        [sys.executable, "energy_model_main.py"],
-        {"FORECAST_DATE_OVERRIDE": target_date},
-        label="03-refresh-night-plan",
-        attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
-        delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
-        default_attempts=2,
-        default_delay_seconds=30.0,
-    )
-    current = _read_plan_signature(plan_path)
-    _persist_night_plan_to_firestore(plan_path, source="adjust03-refresh")
-    changed = _plan_signature_changed(
-        base,
-        current,
-        sun_epsilon_h=max(0.0, float(os.getenv("ADJUST03_SUN_EPSILON_H", "0.05").strip() or "0.05")),
-        temp_epsilon_c=max(0.0, float(os.getenv("ADJUST03_TEMP_EPSILON_C", "0.2").strip() or "0.2")),
-        soc_epsilon_percent=max(0.0, float(os.getenv("ADJUST03_SOC_EPSILON_PERCENT", "1.0").strip() or "1.0")),
-        kwh_epsilon=max(0.0, float(os.getenv("ADJUST03_KWH_EPSILON", "0.2").strip() or "0.2")),
-    )
-    print(f"[cloud_job_runner] 03-refresh target_date={target_date} changed={changed}", flush=True)
-    if changed:
-        _run(
-            [sys.executable, "db_pipeline_main.py"],
-            {
-                "CLOUD_JOB_SLOT": "03",
-                "DATA_DB_WRITE_ONLY_23": "false",
-                "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
-                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-            },
-        )
-    return changed
 
 
 def _run_adjust_03() -> None:

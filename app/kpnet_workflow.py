@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from email.message import Message
+from email.utils import collapse_rfc2231_value
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -21,6 +22,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from app.constants import SOCBounds, validate_soc_percent
+from app.kpnet import build_settings_intent
 from app.utils import env, env_bool, load_dotenv_if_present, parse_csv_float, to_float
 
 LOGGER = logging.getLogger(__name__)
@@ -1187,6 +1189,8 @@ class KpNetClient:
         filename = msg.get_param("filename", header="Content-Disposition")
         if not filename:
             filename = f"measure_{month.replace('-', '')}.csv"
+        elif isinstance(filename, tuple):
+            filename = collapse_rfc2231_value(filename)
         path = out_dir / _clean_filename(filename)
         path.write_bytes(resp.content)
         LOGGER.info("CSV downloaded month=%s path=%s", month, path)
@@ -1219,7 +1223,7 @@ class KpNetClient:
         while time.time() - start < max_wait_sec:
             resp = self._post(path, data=payload, headers=headers)
             data = resp.json()
-            if data.get("status") == 1:
+            if isinstance(data, dict) and data.get("status") == 1:
                 return data
             time.sleep(0.6)
         raise TimeoutError(f"Polling timeout: {path}")
@@ -1237,7 +1241,8 @@ class KpNetClient:
             {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
             headers=headers,
         )
-        return result.get("data", {})
+        data = result.get("data", {})
+        return data if isinstance(data, dict) else {}
 
     def candidate_map(self, candidate_type: str, value_list_path: str) -> dict[str, str]:
         headers = self._ajax_headers("remotesetting/pcssetting")
@@ -1485,14 +1490,14 @@ def _plot_csvs(csv_paths: list[Path], output_path: Path) -> dict[str, Any]:
     ys_soc = [p[2] for p in all_points]
 
     fig, ax1 = plt.subplots(figsize=(14, 6))
-    ax1.plot(xs, ys_gen, color="#1f77b4", linewidth=1.2, label="PV kWh/30min")
+    ax1.plot(xs, ys_gen, color="#1f77b4", linewidth=1.2, label="PV kWh/30min")  # type: ignore[arg-type]
     ax1.set_xlabel("Datetime")
     ax1.set_ylabel("Generation kWh/30min", color="#1f77b4")
     ax1.tick_params(axis="y", labelcolor="#1f77b4")
     ax1.grid(alpha=0.3)
 
     ax2 = ax1.twinx()
-    ax2.plot(xs, ys_soc, color="#ff7f0e", linewidth=1.0, label="Battery SOC %")
+    ax2.plot(xs, ys_soc, color="#ff7f0e", linewidth=1.0, label="Battery SOC %")  # type: ignore[arg-type]
     ax2.set_ylabel("SOC %", color="#ff7f0e")
     ax2.tick_params(axis="y", labelcolor="#ff7f0e")
     ax2.set_ylim(0, 100)
@@ -1671,7 +1676,16 @@ def _run_settings_phase(
             overrides=profile,
             value_maps=maps,
         )
-        if not changed_fields:
+        intent = build_settings_intent(
+            profile_name=profile.name,
+            current_values=current,
+            desired_values=payload,
+            changed_fields=changed_fields,
+            dry_run=cfg.dry_run,
+        )
+        payload = dict(intent.desired_values)
+        changed_fields = [change.field for change in intent.expected_changes]
+        if not intent.has_changes:
             summary["setting_results"].append(
                 {
                     "profile": profile.name,
@@ -1698,7 +1712,7 @@ def _run_settings_phase(
             )
             raise RuntimeError(f"KP-NET setting confirmation failed for profile={profile.name}: {err or title}")
 
-        if cfg.dry_run:
+        if intent.dry_run:
             summary["setting_results"].append(
                 {
                     "profile": profile.name,

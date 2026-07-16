@@ -10,9 +10,11 @@ from app.dashboard_data import (
     _build_latest_schedule_from_events,
     _build_dashboard_slice,
     _get_global_bounds_firestore,
+    _load_firestore_slice,
     clear_dashboard_cache,
     load_dashboard_slice,
 )
+from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
 
 
@@ -50,6 +52,30 @@ def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:
     assert row["actual_pv_kwh"] == pytest.approx(5.0)
     assert row["forecast_load_kwh"] == pytest.approx(2.0)
     assert row["actual_load_kwh"] == pytest.approx(4.0)
+
+
+def test_dashboard_battery_contract_does_not_leak_legacy_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute("ALTER TABLE battery_daily_metrics ADD COLUMN pv_max_charge_kwh REAL")
+        conn.execute(
+            """
+            INSERT INTO battery_daily_metrics(date, setting_soc_target_percent, pv_max_charge_kwh, updated_at)
+            VALUES ('2026-05-02', 80, 4.2, '2026-05-02T00:00:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    row = load_dashboard_slice(
+        db_path, end_date="2026-05-02", window_days=1, include_static=False
+    ).data.battery_daily[0]
+
+    assert row["setting_soc_target_percent"] == pytest.approx(80)
+    assert "pv_max_charge_kwh" not in row
 
 
 def test_dashboard_uses_pv_array_forecast_when_present(tmp_path: Path) -> None:
@@ -283,6 +309,49 @@ def test_firestore_global_bounds_combine_sources_and_ignore_failures(monkeypatch
     monkeypatch.setattr("app.dashboard_data._firestore_bounds", fake_bounds)
 
     assert _get_global_bounds_firestore(object()) == ("2025-12-01", "2026-07-14")
+
+
+def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samples() -> None:
+    forecast = [
+        {"date": "2026-07-13", "hour": 23, "forecast_load_kwh": 1.0},
+        {"date": "2026-07-14", "hour": 0, "forecast_load_kwh": 1.1},
+        {"date": "2026-07-14", "hour": 1, "forecast_load_kwh": 1.2},
+    ]
+    monitoring = [
+        {"ts": "2026-07-13T23:00:00", "load_kwh": 0.4},
+        {"ts": "2026-07-13T23:30:00", "load_kwh": 0.6},
+        {"ts": "2026-07-14T00:00:00", "load_kwh": 0.7},
+        {"ts": "bad", "load_kwh": 99},
+        {"ts": "2026-07-14T01:00:00", "load_kwh": float("nan")},
+    ]
+
+    merged = merge_forecast_hourly_actuals(forecast, monitoring)
+
+    assert merged[0]["actual_load_kwh"] == pytest.approx(1.0)
+    assert merged[0]["latest_sample_at"] == "2026-07-13T23:30:00"
+    assert merged[1]["actual_load_kwh"] == pytest.approx(0.7)
+    assert merged[2]["actual_load_kwh"] is None
+
+
+def test_firestore_slice_requests_hourly_forecast_for_entire_window(monkeypatch) -> None:
+    requested: list[tuple[str, str]] = []
+    monkeypatch.setattr("app.dashboard_data._open_dashboard_firestore_client", lambda: object())
+    monkeypatch.setattr(
+        "app.dashboard_data._get_global_bounds_firestore",
+        lambda _client: ("2026-01-01", "2026-07-14"),
+    )
+    monkeypatch.setattr("app.dashboard_data._firestore_rows_between", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.dashboard_data._firestore_monitoring_daily", lambda *args, **kwargs: [])
+
+    def fake_hourly(_client, *, start_date, end_date_iso):
+        requested.append((start_date, end_date_iso))
+        return []
+
+    monkeypatch.setattr("app.dashboard_data._firestore_forecast_hourly_between", fake_hourly)
+
+    _load_firestore_slice(end_date="2026-07-14", window_days=31, include_static=False)
+
+    assert requested == [("2026-06-14", "2026-07-14")]
 
 
 def test_firestore_slice_cache_isolated_by_connection_and_clear(monkeypatch, tmp_path) -> None:

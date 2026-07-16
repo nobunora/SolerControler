@@ -13,7 +13,6 @@ from cloud_job_runner import (
     _estimate_forced_charge_minutes,
     _estimate_forced_charge_rate_percent_per_hour,
     _estimate_required_charge_kwh,
-    _forecast_changed,
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _persist_03_monitor_schedule_to_firestore,
@@ -22,7 +21,6 @@ from cloud_job_runner import (
     _read_soc_with_fallback,
     _latest_realtime_soc_percent,
     _latest_csv_soc_reading,
-    _refresh_plan_for_same_date_if_changed,
     _required_charge_percent_from_plan,
     _run_adjust_03,
     _run_night_23,
@@ -44,17 +42,6 @@ def test_mask_env_updates_hides_secrets() -> None:
 
 def test_mask_env_updates_none() -> None:
     assert _mask_env_updates(None) == {}
-
-
-def test_forecast_changed_threshold() -> None:
-    base = ("2026-05-04", 5.00, 18.0)
-    same = ("2026-05-04", 5.03, 18.1)
-    changed = ("2026-05-04", 5.12, 18.1)
-    changed_date = ("2026-05-05", 5.00, 18.0)
-
-    assert not _forecast_changed(base, same, sun_epsilon_h=0.05, temp_epsilon_c=0.2)
-    assert _forecast_changed(base, changed, sun_epsilon_h=0.05, temp_epsilon_c=0.2)
-    assert _forecast_changed(base, changed_date, sun_epsilon_h=0.05, temp_epsilon_c=0.2)
 
 
 def test_required_charge_percent_from_plan_uses_soc_delta() -> None:
@@ -532,6 +519,129 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
     assert reasons == ["soc_unavailable_fail_safe"]
 
 
+def test_monitor_exception_after_forced_start_attempts_fail_safe_standby(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    profiles: list[str] = []
+    stop_reasons: list[str] = []
+    readings = iter([SocReading(20.0, "realtime", None, None), RuntimeError("sensor transport failed")])
+
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {
+            "required_night_charge_kwh": 1.0,
+            "target_soc_7_percent": 80.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+
+    def read_soc(_paths):
+        value = next(readings)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr("cloud_job_runner._read_soc_with_fallback", read_soc)
+    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr(
+        "cloud_job_runner._run_03_settings_profile_with_db",
+        lambda *, profile, dynamic_forced_profile, label: profiles.append(profile),
+    )
+    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_monitor_stop_reason",
+        lambda _meta, reason, **kwargs: stop_reasons.append(reason) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="sensor transport failed"):
+        _monitor_partial_forced_and_stop(plan_path)
+
+    assert profiles == ["forced", "standby"]
+    assert stop_reasons[-1] == "monitor_exception_fail_safe"
+
+
+def test_forced_start_failure_attempts_fail_safe_standby(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    profiles: list[str] = []
+
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {
+            "required_night_charge_kwh": 1.0,
+            "target_soc_7_percent": 80.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr(
+        "cloud_job_runner._read_soc_with_fallback",
+        lambda _paths: SocReading(20.0, "realtime", None, None),
+    )
+    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+
+    def apply_profile(*, profile, dynamic_forced_profile, label):
+        profiles.append(profile)
+        if profile == "forced":
+            raise RuntimeError("write confirmation failed")
+
+    monkeypatch.setattr("cloud_job_runner._run_03_settings_profile_with_db", apply_profile)
+    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_stop_reason", lambda *args, **kwargs: True)
+
+    with pytest.raises(RuntimeError, match="write confirmation failed"):
+        _monitor_partial_forced_and_stop(plan_path)
+
+    assert profiles == ["forced", "standby"]
+
+
+def test_forced_reapply_failure_attempts_fail_safe_standby(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    profiles: list[str] = []
+    stop_reasons: list[str] = []
+
+    monkeypatch.setenv("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", "1")
+    monkeypatch.setattr(
+        "cloud_job_runner._read_plan_meta",
+        lambda _: {
+            "required_night_charge_kwh": 1.0,
+            "target_soc_7_percent": 80.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr(
+        "cloud_job_runner._read_soc_with_fallback",
+        lambda _paths: SocReading(20.0, "realtime", None, None),
+    )
+    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_monitor_stop_reason",
+        lambda _meta, reason, **kwargs: stop_reasons.append(reason) or True,
+    )
+
+    forced_calls = 0
+
+    def apply_profile(*, profile, dynamic_forced_profile, label):
+        nonlocal forced_calls
+        profiles.append(profile)
+        if profile == "forced":
+            forced_calls += 1
+            if forced_calls == 2:
+                raise RuntimeError("reapply confirmation failed")
+
+    monkeypatch.setattr("cloud_job_runner._run_03_settings_profile_with_db", apply_profile)
+
+    with pytest.raises(RuntimeError, match="reapply confirmation failed"):
+        _monitor_partial_forced_and_stop(plan_path)
+
+    assert profiles == ["forced", "forced", "standby"]
+    assert stop_reasons[-1] == "forced_reapply_failed_fail_safe"
+
+
 def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_path) -> None:
     plan_path = tmp_path / "night_charge_plan.json"
     plan_path.write_text("{}", encoding="utf-8")
@@ -629,54 +739,6 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
     assert feedback_targets == ["2026-05-27"]
     assert persisted == ["adjust03-regenerated"]
     assert monitored == [plan_path]
-
-
-def test_refresh_plan_changed_disables_settings_ingestion(monkeypatch, tmp_path) -> None:
-    plan_path = tmp_path / "night_charge_plan.json"
-    plan_path.write_text(
-        """
-        {
-          "forecast": {"date": "2026-05-27", "sun_hours": 5.0, "temp_c": 20.0},
-          "result": {
-            "target_soc_7_percent": 40.0,
-            "required_night_charge_kwh": 0.0,
-            "predicted_midday_surplus_kwh": 1.0
-          }
-        }
-        """.strip(),
-        encoding="utf-8",
-    )
-    db_calls: list[dict[str, str]] = []
-
-    def fake_run_with_retry(*args, **kwargs) -> None:
-        plan_path.write_text(
-            """
-            {
-              "forecast": {"date": "2026-05-27", "sun_hours": 6.0, "temp_c": 20.0},
-              "result": {
-                "target_soc_7_percent": 40.0,
-                "required_night_charge_kwh": 0.0,
-                "predicted_midday_surplus_kwh": 1.0
-              }
-            }
-            """.strip(),
-            encoding="utf-8",
-        )
-
-    monkeypatch.setattr("cloud_job_runner._run_with_retry", fake_run_with_retry)
-    monkeypatch.setattr("cloud_job_runner._persist_night_plan_to_firestore", lambda _path, *, source: True)
-    monkeypatch.setattr("cloud_job_runner._run", lambda _command, env_updates=None: db_calls.append(dict(env_updates or {})))
-
-    assert _refresh_plan_for_same_date_if_changed(plan_path) is True
-
-    assert db_calls == [
-        {
-            "CLOUD_JOB_SLOT": "03",
-            "DATA_DB_WRITE_ONLY_23": "false",
-            "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
-            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-        }
-    ]
 
 
 def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> None:

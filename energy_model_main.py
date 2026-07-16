@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
+from app.energy_plan import PlanDocumentV1
 from app.energy_model import (
     DaytimeSocOptimizationResult,
     NightChargeInputs,
@@ -442,12 +443,9 @@ def _active_constraint_names(
     morning_headroom_guard: dict[str, object],
     daytime_net_surplus_headroom_guard: dict[str, object],
     historical_soc_gain_guard: dict[str, object],
-    overnight_discharge_guard: dict[str, object],
     respect_morning_headroom_guard: bool,
 ) -> list[str]:
     active = ["reserve_soc"]
-    if overnight_discharge_guard.get("enabled"):
-        active.append("overnight_discharge_guard")
     morning_enforced = morning_headroom_guard.get("enforced_as_target_cap", morning_headroom_guard.get("applied"))
     daytime_enforced = daytime_net_surplus_headroom_guard.get(
         "enforced_as_target_cap",
@@ -1951,11 +1949,6 @@ def main() -> int:
         }
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
-    overnight_discharge_guard = {
-        "enabled": False,
-        "expected_kwh": 0.0,
-        "reason": "removed_unified_24h_load_forecast",
-    }
     expected_overnight_discharge_kwh = 0.0
     monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
         rows,
@@ -2220,7 +2213,6 @@ def main() -> int:
                 "forecast_correction": forecast_correction.get("rationale", {}),
                 "pv_physical_forecast": physical_pv_diagnostics,
                 "hourly_weather_pv_shape": hourly_weather_pv_shape,
-                "overnight_discharge_guard": overnight_discharge_guard,
                 "soc_decision_feedback_prior": soc_decision_prior,
                 "monthly_day_buy_before_target": monthly_day_buy_before_target,
                 "expected_rest_of_month_day_buy": expected_rest_of_month_day_buy,
@@ -2337,7 +2329,6 @@ def main() -> int:
         morning_headroom_guard=morning_headroom_guard_for_payload,
         daytime_net_surplus_headroom_guard=daytime_net_surplus_headroom_guard_for_payload,
         historical_soc_gain_guard=historical_soc_gain_guard_for_payload,
-        overnight_discharge_guard=overnight_discharge_guard,
         respect_morning_headroom_guard=(
             bool(optimization_payload.get("respect_morning_headroom_guard"))
             if isinstance(optimization_payload, dict)
@@ -2351,21 +2342,21 @@ def main() -> int:
         if cost_optimization_payload is not None else "legacy_peak_soc_objective"
     )
 
-    payload = {
-        "csv_paths": [str(p) for p in csv_paths],
-        "plan_quality": plan_quality,
-        "forecast": forecast,
-        "pv_array_forecast": pv_array_forecast,
-        "historical_profile": hist,
-        "consumption_forecast": _consumption_forecast_to_dict(consumption_forecast),
-        "base_consumption_forecast": _consumption_forecast_to_dict(base_consumption_forecast),
-        "weather_history": weather_history_diagnostics,
-        "occupancy_adjustment": _occupancy_adjustment_to_dict(occupancy_adjustment),
-        "coefficients": coefficients,
-        "inputs": to_dict(inp),
-        "result": result_payload,
-        "daytime_soc_optimization": optimization_payload,
-        "decision_rationale": {
+    document = PlanDocumentV1(
+        csv_paths=[str(p) for p in csv_paths],
+        plan_quality=plan_quality,
+        forecast=forecast,
+        pv_array_forecast=pv_array_forecast,
+        historical_profile=hist,
+        consumption_forecast=_consumption_forecast_to_dict(consumption_forecast),
+        base_consumption_forecast=_consumption_forecast_to_dict(base_consumption_forecast),
+        weather_history=weather_history_diagnostics,
+        occupancy_adjustment=_occupancy_adjustment_to_dict(occupancy_adjustment),
+        coefficients=coefficients,
+        inputs=to_dict(inp),
+        result=result_payload,
+        daytime_soc_optimization=optimization_payload,
+        decision_rationale={
             "plan_quality": plan_quality,
             "objective": objective_name,
             "selected_reason": (
@@ -2390,13 +2381,13 @@ def main() -> int:
                 "source": result_payload["final_pv_forecast_source"],
                 "legacy_result_predicted_pv_kwh": result_payload.get("predicted_pv_kwh"),
             },
-            "overnight_discharge_guard": overnight_discharge_guard,
             "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
             "raw_target_soc_7_percent": result_payload.get("target_soc_7_percent_base"),
             "final_target_soc_7_percent": result_payload.get("target_soc_7_percent"),
             "final_required_night_charge_kwh": result_payload.get("required_night_charge_kwh"),
         },
-    }
+    )
+    payload = document.to_payload()
     out = artifacts_dir / "night_charge_plan.json"
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(out)

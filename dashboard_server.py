@@ -100,6 +100,9 @@ def _static_asset(path: str) -> tuple[str, bytes] | None:
     assets = {
         "/static/dashboard.css": ("text/css; charset=utf-8", "dashboard.css"),
         "/static/dashboard_calculations.js": ("text/javascript; charset=utf-8", "dashboard_calculations.js"),
+        "/static/dashboard_dates.js": ("text/javascript; charset=utf-8", "dashboard_dates.js"),
+        "/static/dashboard_api.js": ("text/javascript; charset=utf-8", "dashboard_api.js"),
+        "/static/dashboard_store.js": ("text/javascript; charset=utf-8", "dashboard_store.js"),
         "/static/dashboard.js": ("text/javascript; charset=utf-8", "dashboard.js"),
     }
     asset = assets.get(path)

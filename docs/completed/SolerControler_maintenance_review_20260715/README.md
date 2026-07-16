@@ -1,5 +1,19 @@
 # SolerControler 保守性改善・段階別実装設計書
 
+## 実施結果（2026-07-16）
+
+本設計書に基づく今回の保守性改善は完了した。既存の公開契約を維持しながら、次を実施した。
+
+- DB backendで重複していた業務計算を `app/operations/domain.py` に集約し、各adapterを互換facadeへ変更した。
+- dashboardのtyped model/serviceとdate/API/storeモジュールを導入し、bootstrap順序とCSP互換を自動テストで固定した。
+- SQLiteとFirestoreの31日sliceを同一契約へ正規化し、完了日の実データparity検査をintegration pre-releaseへ追加した。
+- 強制充電判断を状態機械へ分離し、非finite値、SOC境界、timeout、開始・監視失敗時のstandby fail-safeをテストした。
+- energy plan documentとKP-NET settings intentをtyped domainへ分離し、欠損・重複・dry-run境界をテストした。
+- JavaScriptテスト、段階的strict mypy、security checkをローカルpre-releaseへ統合した。
+- 旧03時plan比較helperなど、実運用経路に未接続だったコードを削除した。
+
+最終検証は FirestoreからSQLiteへ最新データを同期した後に実施し、Python **261 passed**、JavaScript 3系統、strict mypy 17 source files、security check、SQLite/Firestoreの前日31日parityが全て成功した。PostgreSQL実サービスとKP-NET実機への書込みはローカル環境で安全に実行できない外部運用検証であり、今回の実装完了判定には含めていない。再デプロイも直前の指示に従い実施していない。
+
 > 対象リポジトリ: `C:\VSC\SolerControler`  
 > レビュー基準HEAD: `88c11ea` (`Embed dashboard bootstrap payload in HTML`)  
 > 作成日: 2026-07-15  

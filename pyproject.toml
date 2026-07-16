@@ -19,6 +19,11 @@ module = [
     "app.tariff",
     "app.monitoring_csv",
     "app.night_plan",
+    "app.forced_charge.*",
+    "app.kpnet.*",
+    "app.dashboard.*",
+    "app.energy_plan.*",
+    "app.operations.*",
     "app.settings.*",
 ]
 strict = true
