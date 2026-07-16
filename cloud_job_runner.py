@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -620,7 +620,7 @@ def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict
     if max_rate < min_rate:
         max_rate = min_rate
 
-    samples: list[float] = []
+    samples_by_day: dict[date, list[float]] = {}
     previous: tuple[datetime, float, float] | None = None
     for point in _iter_charge_soc_points(csv_paths):
         if previous is None:
@@ -631,12 +631,44 @@ def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict
         hours = (dt - prev_dt).total_seconds() / 3600.0
         delta_soc = soc - prev_soc
         if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
-            samples.append(delta_soc / hours)
+            samples_by_day.setdefault(dt.date(), []).append(delta_soc / hours)
         previous = point
 
-    if samples:
-        raw_rate = statistics.median(samples)
-        source = "csv-forced-charge-soc-rate"
+    daily_rates = [
+        (day, statistics.median(values))
+        for day, values in sorted(samples_by_day.items())
+        if values
+    ]
+    if daily_rates:
+        latest_day = daily_rates[-1][0]
+        cutoff = latest_day - timedelta(days=13)
+        recent = [(day, rate) for day, rate in daily_rates if day >= cutoff]
+        ewma_alpha = 0.45
+        ewma_rate = recent[0][1]
+        for _, daily_rate in recent[1:]:
+            ewma_rate = ewma_alpha * daily_rate + (1.0 - ewma_alpha) * ewma_rate
+
+        origin = recent[0][0]
+        x_values = [(day - origin).days for day, _ in recent]
+        y_values = [rate for _, rate in recent]
+        slopes = [
+            (y_values[j] - y_values[i]) / (x_values[j] - x_values[i])
+            for i in range(len(recent))
+            for j in range(i + 1, len(recent))
+            if x_values[j] != x_values[i]
+        ]
+        degradation_slope = min(0.0, statistics.median(slopes)) if slopes else 0.0
+        intercept = statistics.median(
+            rate - degradation_slope * x
+            for x, (_, rate) in zip(x_values, recent)
+        )
+        projected_x = (latest_day + timedelta(days=1) - origin).days
+        trend_rate = intercept + degradation_slope * projected_x
+        ordered_rates = sorted(y_values)
+        lower_index = max(0, round((len(ordered_rates) - 1) * 0.15))
+        trend_rate = max(ordered_rates[lower_index], min(statistics.median(y_values), trend_rate))
+        raw_rate = 0.60 * trend_rate + 0.40 * ewma_rate
+        source = "csv-14d-degradation-trend-ewma-soc-rate"
     else:
         raw_rate = fallback
         source = "fallback-forced-charge-soc-rate"
@@ -644,7 +676,11 @@ def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict
     return {
         "percent_per_hour": rate,
         "raw_percent_per_hour": raw_rate,
-        "sample_count": len(samples),
+        "sample_count": len(daily_rates),
+        "interval_sample_count": sum(len(values) for values in samples_by_day.values()),
+        "lookback_days": 14,
+        "degradation_trend_weight": 0.60,
+        "ewma_weight": 0.40,
         "sample_min_charge_kwh": min_charge_kwh,
         "source": source,
     }

@@ -11,6 +11,7 @@ from cloud_job_runner import (
     SocReading,
     _adjust03_target_date,
     _estimate_forced_charge_minutes,
+    _estimate_forced_charge_rate_percent_per_hour,
     _estimate_required_charge_kwh,
     _forecast_changed,
     _mask_env_updates,
@@ -150,9 +151,32 @@ def test_estimate_forced_charge_minutes_uses_empirical_soc_rate(tmp_path: Path, 
     )
 
     assert minutes == 115
-    assert info["source"] == "csv-forced-charge-soc-rate"
-    assert info["sample_count"] == 2
+    assert info["source"] == "csv-14d-degradation-trend-ewma-soc-rate"
+    assert info["sample_count"] == 1
+    assert info["interval_sample_count"] == 2
     assert info["percent_per_hour"] == 42.0
+
+
+def test_forced_charge_rate_tracks_recent_14_day_degradation(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2")
+    csv_path = tmp_path / "kp.csv"
+    lines = ["年月日,時刻,蓄電残量(SOC)[%],充電電力量[kWh]"]
+    for offset, daily_gain in enumerate([20, 19, 18, 17, 16, 15]):
+        day = 10 + offset
+        lines.extend(
+            [
+                f"2026/07/{day:02d},02:30,0,0",
+                f"2026/07/{day:02d},03:00,{daily_gain},2.0",
+                f"2026/07/{day:02d},03:30,{daily_gain * 2},2.0",
+            ]
+        )
+    csv_path.write_text("\n".join(lines), encoding="utf-8-sig")
+
+    info = _estimate_forced_charge_rate_percent_per_hour([csv_path])
+
+    assert info["source"] == "csv-14d-degradation-trend-ewma-soc-rate"
+    assert info["sample_count"] == 6
+    assert float(info["raw_percent_per_hour"]) < 35.0
 
 
 def test_forced_charge_completion_estimator_checks_before_predicted_completion() -> None:

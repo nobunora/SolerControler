@@ -13,7 +13,7 @@ python --version
 echo "[remote-codex-smoke] import check"
 python - <<'PY'
 from app.soc_cost_optimizer import ForecastScenario, SocCostModel, optimize_soc_by_expected_cost
-from app.forecast_correction import _risk_adjusted_peak_penalty
+from app.forecast_correction import _add_thermal_states
 
 print("imports ok")
 print("scenario", ForecastScenario("smoke", 1.0, 1.0, 1.0))

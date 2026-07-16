@@ -38,7 +38,7 @@ from app.soc_cost_optimizer import (
     optimize_soc_by_expected_cost,
     to_plain_dict,
 )
-from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history, _risk_adjusted_peak_penalty
+from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history
 from app.pv_physical_forecast import build_physical_pv_candidate
 from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
 
@@ -645,6 +645,10 @@ def _hourly_weather_records_from_open_meteo(
                     _list_value(hourly.get(f"shortwave_radiation{suffix}"), idx)
                 ),
                 "temp_c": _to_optional_float(_list_value(hourly.get(f"temperature_2m{suffix}"), idx)),
+                "relative_humidity_percent": _to_optional_float(
+                    _list_value(hourly.get(f"relative_humidity_2m{suffix}"), idx)
+                ),
+                "dew_point_c": _to_optional_float(_list_value(hourly.get(f"dew_point_2m{suffix}"), idx)),
             }
         )
     return out
@@ -670,7 +674,8 @@ def _fetch_open_meteo_previous_day1_forecast(
         "hourly": (
             "weather_code_previous_day1,precipitation_previous_day1,"
             "precipitation_probability_previous_day1,cloud_cover_previous_day1,"
-            "shortwave_radiation_previous_day1,temperature_2m_previous_day1"
+            "shortwave_radiation_previous_day1,temperature_2m_previous_day1,"
+            "relative_humidity_2m_previous_day1,dew_point_2m_previous_day1"
         ),
     }
     resp = requests.get(url, params=params, timeout=20)
@@ -711,7 +716,10 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
     params: dict[str, str | float | int] = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": "weather_code,precipitation,precipitation_probability,cloud_cover,shortwave_radiation",
+        "hourly": (
+            "weather_code,precipitation,precipitation_probability,cloud_cover,shortwave_radiation,"
+            "temperature_2m,relative_humidity_2m,dew_point_2m"
+        ),
         "daily": (
             "sunshine_duration,temperature_2m_mean,weather_code,"
             "precipitation_sum,precipitation_probability_mean,shortwave_radiation_sum"
@@ -1851,137 +1859,6 @@ def _expected_rest_of_month_day_buy_kwh(
     }
 
 
-def _estimate_remaining_overnight_load_kwh(
-    rows: list[dict[str, Any]],
-    *,
-    target_date: str,
-) -> dict[str, object]:
-    if not _env_bool("OVERNIGHT_DISCHARGE_GUARD_ENABLED", True):
-        return {"enabled": False, "expected_kwh": 0.0, "reason": "disabled", "source": "monitoring_load_kwh"}
-    if not rows:
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "no_rows", "source": "monitoring_load_kwh"}
-
-    latest_dt = rows[-1].get("dt")
-    if not isinstance(latest_dt, datetime):
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "missing_latest_dt", "source": "monitoring_load_kwh"}
-    try:
-        target = date.fromisoformat(target_date)
-    except ValueError:
-        return {"enabled": True, "expected_kwh": 0.0, "reason": "invalid_target_date", "source": "monitoring_load_kwh"}
-
-    cutoff = _parse_hhmm(os.getenv("OVERNIGHT_DISCHARGE_GUARD_CUTOFF_HHMM", "07:00"), default="07:00")
-    latest_clock = latest_dt.time()
-    cutoff_minute = _clock_minutes(cutoff)
-    if latest_dt.date() == target and _clock_minutes(latest_clock) >= cutoff_minute:
-        return {
-            "enabled": True,
-            "expected_kwh": 0.0,
-            "reason": "past_cutoff",
-            "latest_sample_at": latest_dt.isoformat(),
-            "source": "monitoring_load_kwh",
-        }
-
-    lookback_days = int(_env_float("OVERNIGHT_DISCHARGE_GUARD_LOOKBACK_DAYS", 21.0))
-    min_days = int(_env_float("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", 3.0))
-    percentile = _env_float_clamped("OVERNIGHT_DISCHARGE_GUARD_PERCENTILE", 75.0, min_value=0.0, max_value=100.0)
-    floor_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_FLOOR_KWH", 0.0))
-    cap_kwh = max(0.0, _env_float("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", 0.0))
-
-    by_day: dict[str, float] = {}
-    by_day_hour: dict[tuple[str, int], dict[int, float]] = {}
-    lower_bound = target - timedelta(days=max(1, lookback_days))
-    latest_minute = _clock_minutes(latest_dt.time())
-    planning_on_target_morning = latest_dt.date() == target and latest_minute < cutoff_minute
-    for row in rows:
-        row_dt = row.get("dt")
-        if not isinstance(row_dt, datetime):
-            continue
-        row_minute = _clock_minutes(row_dt.time())
-        if row_minute < cutoff_minute:
-            candidate_target = row_dt.date()
-            if planning_on_target_morning and row_minute <= latest_minute:
-                continue
-        else:
-            candidate_target = row_dt.date() + timedelta(days=1)
-            if planning_on_target_morning or row_minute <= latest_minute:
-                continue
-        if not (lower_bound <= candidate_target < target):
-            continue
-        load = max(0.0, float(row.get("load", 0.0) or 0.0))
-        key = candidate_target.isoformat()
-        by_day[key] = by_day.get(key, 0.0) + load
-        if row_dt.minute in {0, 30}:
-            by_day_hour.setdefault((key, row_dt.hour), {})[row_dt.minute] = load
-
-    complete_hourly_values: dict[int, list[float]] = {}
-    incomplete_hour_count = 0
-    missing_interval_count = 0
-    for (_, hour), interval_values in by_day_hour.items():
-        if set(interval_values) == {0, 30}:
-            complete_hourly_values.setdefault(hour, []).append(sum(interval_values.values()))
-        else:
-            incomplete_hour_count += 1
-            missing_interval_count += 2 - len(interval_values)
-    hourly_aggregation = {
-        "complete_hour_count": sum(len(values) for values in complete_hourly_values.values()),
-        "incomplete_hour_count": incomplete_hour_count,
-        "missing_interval_count": missing_interval_count,
-    }
-
-    samples = [value for value in by_day.values() if value > 0.0]
-    if len(samples) < min_days:
-        insufficient_estimate = min(cap_kwh, floor_kwh) if cap_kwh > 0.0 else floor_kwh
-        return {
-            "enabled": True,
-            "expected_kwh": insufficient_estimate,
-            "reason": "insufficient_history",
-            "sample_count": len(samples),
-            "latest_sample_at": latest_dt.isoformat(),
-            "cutoff_hhmm": cutoff.strftime("%H:%M"),
-            "source": "monitoring_load_kwh",
-            "hourly_load_forecast_kwh": {},
-            "hourly_aggregation": hourly_aggregation,
-            "uncapped_expected_kwh": round(floor_kwh, 4),
-            "cap_kwh": cap_kwh,
-            "cap_applied": insufficient_estimate < floor_kwh,
-        }
-
-    samples.sort()
-    if len(samples) == 1:
-        estimate = samples[0]
-    else:
-        estimate = float(statistics.quantiles(samples, n=100, method="inclusive")[max(0, int(percentile) - 1)])
-    uncapped_estimate = max(floor_kwh, estimate)
-    if cap_kwh > 0.0:
-        estimate = min(cap_kwh, uncapped_estimate)
-        cap_applied = estimate < uncapped_estimate
-    else:
-        estimate = uncapped_estimate
-        cap_applied = False
-    hourly_load = {
-        hour: statistics.mean(values)
-        for hour, values in sorted(complete_hourly_values.items())
-        if values
-    }
-    return {
-        "enabled": True,
-        "expected_kwh": estimate,
-        "reason": "history_percentile",
-        "sample_count": len(samples),
-        "percentile": percentile,
-        "latest_sample_at": latest_dt.isoformat(),
-        "cutoff_hhmm": cutoff.strftime("%H:%M"),
-        "sample_days": sorted(by_day)[-min(10, len(by_day)):],
-        "source": "monitoring_load_kwh",
-        "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in hourly_load.items()},
-        "hourly_aggregation": hourly_aggregation,
-        "uncapped_expected_kwh": round(uncapped_estimate, 4),
-        "cap_kwh": cap_kwh,
-        "cap_applied": cap_applied,
-    }
-
-
-
 def main() -> int:
     _load_dotenv_if_present()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
@@ -2074,21 +1951,12 @@ def main() -> int:
         }
 
     latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
-    overnight_discharge_guard = _estimate_remaining_overnight_load_kwh(
-        rows,
-        target_date=tomorrow_date,
-    )
-    expected_overnight_discharge_kwh = _to_optional_float(overnight_discharge_guard.get("expected_kwh")) or 0.0
-    overnight_load_by_hour_raw = overnight_discharge_guard.get("hourly_load_forecast_kwh")
-    overnight_load_by_hour: dict[int, float] = {}
-    if isinstance(overnight_load_by_hour_raw, dict):
-        for raw_hour, raw_value in overnight_load_by_hour_raw.items():
-            try:
-                hour = int(raw_hour)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= hour <= 23:
-                overnight_load_by_hour[hour] = max(0.0, _to_optional_float(raw_value) or 0.0)
+    overnight_discharge_guard = {
+        "enabled": False,
+        "expected_kwh": 0.0,
+        "reason": "removed_unified_24h_load_forecast",
+    }
+    expected_overnight_discharge_kwh = 0.0
     monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
         rows,
         target_date=tomorrow_date,
@@ -2120,7 +1988,7 @@ def main() -> int:
         rows,
         daytime_load_kwh=consumption_forecast.daytime_load_kwh,
         morning_load_kwh=consumption_forecast.morning_load_kwh,
-        overnight_load_by_hour=overnight_load_by_hour,
+        overnight_load_by_hour=None,
     )
     raw_hourly_pv_forecast = _build_hourly_pv_forecast(
         rows,
@@ -2164,8 +2032,6 @@ def main() -> int:
     )
     hourly_load_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_load_kwh"))
     hourly_pv_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_pv_kwh"))
-    for hour, value in overnight_load_by_hour.items():
-        hourly_load_forecast.setdefault(hour, value)
     sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
     morning_headroom_guard = _morning_pv_headroom_guard(
         hourly_load_kwh=hourly_load_forecast,

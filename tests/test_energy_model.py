@@ -16,8 +16,11 @@ from app.energy_model import (
     optimize_target_soc_for_daytime,
 )
 from app.forecast_correction import (
+    _actual_hourly_totals_by_day,
+    _add_thermal_states,
     _evening_temperature_correction,
-    _recent_and_analog_daytime_floor,
+    _recent_and_analog_hourly_floor,
+    _temperature_features_for_day,
     _temperature_hourly_multipliers,
 )
 from energy_model_main import (
@@ -35,8 +38,6 @@ from energy_model_main import (
     _load_scenarios_for_cost_optimizer,
     _expected_rest_of_month_day_buy_kwh,
     _reshape_hourly_pv_by_weather,
-    _estimate_remaining_overnight_load_kwh,
-    _risk_adjusted_peak_penalty,
     _selected_pv_uncertainty,
 )
 
@@ -510,32 +511,6 @@ def test_historical_daytime_soc_gain_guard_uses_lower_quartile(monkeypatch) -> N
     assert guard["cap_target_soc_percent"] == pytest.approx(82.5)
 
 
-def test_estimate_remaining_overnight_load_uses_recent_matching_slots(monkeypatch) -> None:
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "2")
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_PERCENTILE", "50")
-    rows = [
-        {"dt": datetime.fromisoformat("2026-06-09T23:00:00"), "load": 0.3, "discharge": 0.0, "charge": 9.0, "soc": 40.0},
-        {"dt": datetime.fromisoformat("2026-06-09T23:30:00"), "load": 0.5, "discharge": 0.0, "charge": 9.0, "soc": 40.0},
-        {"dt": datetime.fromisoformat("2026-06-10T00:00:00"), "load": 0.1, "discharge": 0.0, "charge": 9.0, "soc": 35.0},
-        {"dt": datetime.fromisoformat("2026-06-10T00:30:00"), "load": 0.3, "discharge": 0.0, "charge": 9.0, "soc": 35.0},
-        {"dt": datetime.fromisoformat("2026-06-10T23:00:00"), "load": 0.4, "discharge": 0.0, "charge": 9.0, "soc": 42.0},
-        {"dt": datetime.fromisoformat("2026-06-10T23:30:00"), "load": 0.6, "discharge": 0.0, "charge": 9.0, "soc": 42.0},
-        {"dt": datetime.fromisoformat("2026-06-11T00:00:00"), "load": 0.2, "discharge": 0.0, "charge": 9.0, "soc": 36.0},
-        {"dt": datetime.fromisoformat("2026-06-11T00:30:00"), "load": 0.4, "discharge": 0.0, "charge": 9.0, "soc": 36.0},
-        {"dt": datetime.fromisoformat("2026-06-11T22:00:00"), "load": 0.0, "discharge": 0.0, "charge": 0.0, "soc": 30.0},
-    ]
-
-    guard = _estimate_remaining_overnight_load_kwh(rows, target_date="2026-06-12")
-
-    assert guard["reason"] == "history_percentile"
-    assert guard["sample_count"] == 2
-    assert guard["expected_kwh"] == pytest.approx(1.4)
-    assert guard["source"] == "monitoring_load_kwh"
-    assert guard["hourly_load_forecast_kwh"]["23"] == pytest.approx(0.9)
-    assert guard["hourly_load_forecast_kwh"]["0"] == pytest.approx(0.5)
-    assert guard["hourly_aggregation"]["complete_hour_count"] == 4
-
-
 def test_historical_hourly_profile_sums_complete_intervals_and_ignores_incomplete() -> None:
     rows = [
         {"dt": datetime.fromisoformat("2026-06-10T00:00:00"), "load": 1.0},
@@ -552,82 +527,6 @@ def test_historical_hourly_profile_sums_complete_intervals_and_ignores_incomplet
     assert profile[0] == pytest.approx(2.6)
     assert profile[1] == pytest.approx(0.0)
     assert profile[2] == pytest.approx(0.0)
-
-
-@pytest.mark.parametrize(
-    ("cap_kwh", "expected_kwh", "cap_applied"),
-    [("0", 14.8, False), ("10", 10.0, True)],
-)
-def test_estimate_remaining_overnight_load_optional_cap(
-    monkeypatch, cap_kwh: str, expected_kwh: float, cap_applied: bool
-) -> None:
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "1")
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", cap_kwh)
-    rows = [
-        {"dt": datetime.fromisoformat("2026-06-10T23:00:00"), "load": 3.0},
-        {"dt": datetime.fromisoformat("2026-06-10T23:30:00"), "load": 4.0},
-        {"dt": datetime.fromisoformat("2026-06-11T00:00:00"), "load": 3.8},
-        {"dt": datetime.fromisoformat("2026-06-11T00:30:00"), "load": 4.0},
-        {"dt": datetime.fromisoformat("2026-06-11T22:00:00"), "load": 0.0},
-    ]
-
-    guard = _estimate_remaining_overnight_load_kwh(rows, target_date="2026-06-12")
-
-    assert guard["expected_kwh"] == pytest.approx(expected_kwh)
-    assert guard["uncapped_expected_kwh"] == pytest.approx(14.8)
-    assert guard["cap_kwh"] == pytest.approx(float(cap_kwh))
-    assert guard["cap_applied"] is cap_applied
-
-
-def test_estimate_remaining_overnight_load_excludes_elapsed_night_slots(monkeypatch) -> None:
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "1")
-    rows = [
-        {"dt": datetime.fromisoformat("2026-06-10T23:00:00"), "load": 8.0},
-        {"dt": datetime.fromisoformat("2026-06-10T23:30:00"), "load": 8.0},
-        {"dt": datetime.fromisoformat("2026-06-11T03:00:00"), "load": 7.0},
-        {"dt": datetime.fromisoformat("2026-06-11T03:30:00"), "load": 1.0},
-        {"dt": datetime.fromisoformat("2026-06-11T04:00:00"), "load": 1.2},
-        {"dt": datetime.fromisoformat("2026-06-11T04:30:00"), "load": 1.2},
-        {"dt": datetime.fromisoformat("2026-06-12T03:00:00"), "load": 0.5},
-    ]
-
-    guard = _estimate_remaining_overnight_load_kwh(rows, target_date="2026-06-12")
-
-    assert guard["expected_kwh"] == pytest.approx(3.4)
-    assert set(guard["hourly_load_forecast_kwh"]) == {"4"}
-
-
-def test_estimate_remaining_overnight_load_includes_evening_after_latest_sample(monkeypatch) -> None:
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "1")
-    rows = [
-        {"dt": datetime.fromisoformat("2026-06-10T21:30:00"), "load": 1.0},
-        {"dt": datetime.fromisoformat("2026-06-10T22:00:00"), "load": 1.1},
-        {"dt": datetime.fromisoformat("2026-06-10T22:30:00"), "load": 1.2},
-        {"dt": datetime.fromisoformat("2026-06-11T00:00:00"), "load": 1.3},
-        {"dt": datetime.fromisoformat("2026-06-11T00:30:00"), "load": 1.4},
-        {"dt": datetime.fromisoformat("2026-06-11T21:00:00"), "load": 0.5},
-    ]
-
-    guard = _estimate_remaining_overnight_load_kwh(rows, target_date="2026-06-12")
-
-    assert guard["expected_kwh"] == pytest.approx(6.0)
-    assert guard["hourly_load_forecast_kwh"]["22"] == pytest.approx(2.3)
-    assert guard["hourly_aggregation"]["incomplete_hour_count"] == 1
-    assert guard["hourly_aggregation"]["missing_interval_count"] == 1
-
-
-def test_estimate_remaining_overnight_load_preserves_floor_without_cap(monkeypatch) -> None:
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_MIN_DAYS", "3")
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_FLOOR_KWH", "4.5")
-    monkeypatch.setenv("OVERNIGHT_DISCHARGE_GUARD_CAP_KWH", "0")
-    rows = [{"dt": datetime.fromisoformat("2026-06-11T21:00:00"), "load": 0.5}]
-
-    guard = _estimate_remaining_overnight_load_kwh(rows, target_date="2026-06-12")
-
-    assert guard["reason"] == "insufficient_history"
-    assert guard["expected_kwh"] == pytest.approx(4.5)
-    assert guard["uncapped_expected_kwh"] == pytest.approx(4.5)
-    assert guard["cap_applied"] is False
 
 
 def test_build_hourly_load_forecast_fills_overnight_hours_from_history() -> None:
@@ -655,48 +554,11 @@ def test_build_hourly_load_forecast_fills_overnight_hours_from_history() -> None
     assert forecast[23] == pytest.approx(0.7)
 
 
-def test_risk_adjusted_peak_penalty_does_not_duplicate_temperature_uncertainty(monkeypatch) -> None:
-    monkeypatch.setenv("SOC_PEAK_UNMET_BASE_FACTOR", "1")
-    monkeypatch.setenv("SOC_PEAK_UNMET_RISK_FACTOR", "2")
-    monkeypatch.setenv("SOC_PEAK_UNMET_MAX_FACTOR", "2")
-    high_temp = {
-        "cooling_degree_hours_28": 12.0,
-        "temp_ewma_12h_evening": 26.5,
-        "night_min_temp_c": 21.0,
-    }
-    normal_temp = {
-        "cooling_degree_hours_28": 0.0,
-        "temp_ewma_12h_evening": 23.0,
-        "night_min_temp_c": 18.0,
-    }
-
-    assert _risk_adjusted_peak_penalty(
-        target_features=high_temp,
-        pv_ratio_raw=1.2,
-        pv_ratio_applied=1.2,
-    )["applied_factor"] == pytest.approx(1.0)
-    assert _risk_adjusted_peak_penalty(
-        target_features=normal_temp,
-        pv_ratio_raw=1.5,
-        pv_ratio_applied=1.35,
-    )["applied_factor"] == pytest.approx(1.0)
-    both = _risk_adjusted_peak_penalty(
-        target_features=high_temp,
-        pv_ratio_raw=1.5,
-        pv_ratio_applied=1.35,
-    )
-    assert both["applied_factor"] == pytest.approx(1.0)
-    assert both["risk_reasons"] == ["high_temperature", "pv_overconfidence"]
-    assert both["temperature_uncertainty_integrated_in_load_scenarios"] is True
-
-
 def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch) -> None:
     monkeypatch.setenv("PV_RATIO_EWMA_ALPHA", "0.5")
     monkeypatch.setenv("PV_RATIO_EWMA_MIN", "0.9")
     monkeypatch.setenv("PV_RATIO_EWMA_MAX", "1.35")
     monkeypatch.setenv("LOAD_RATIO_EWMA_ALPHA", "0.5")
-    monkeypatch.setenv("SOC_PEAK_UNMET_BASE_FACTOR", "1")
-    monkeypatch.setenv("SOC_PEAK_UNMET_RISK_FACTOR", "2")
 
     forecast_history = {
         "2026-05-28": {7: {"pv": 1.0, "load": 1.0}, 17: {"pv": 0.0, "load": 1.0}},
@@ -707,9 +569,12 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     def fake_history(*, target_date: str):
         return forecast_history, "test_history"
 
-    def fake_temperature(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str, archive: bool):
+    def fake_weather(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str, archive: bool):
         return {
-            day: {hour: 30.0 for hour in range(23)}
+            day: {
+                hour: {"temp_c": 30.0, "relative_humidity_percent": 70.0, "dew_point_c": 24.0}
+                for hour in range(24)
+            }
             for day in ["2026-05-28", "2026-05-29", "2026-05-30", "2026-05-31"]
         }
 
@@ -722,7 +587,7 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
         }
 
     monkeypatch.setattr("app.forecast_correction._load_forecast_hourly_history", fake_history)
-    monkeypatch.setattr("app.forecast_correction._fetch_hourly_temperatures", fake_temperature)
+    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", fake_weather)
     monkeypatch.setattr("app.forecast_correction._evening_temperature_correction", fake_evening_temperature_correction)
 
     rows = []
@@ -750,8 +615,9 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     assert rationale["pv_ratio_ewma_raw"] > rationale["pv_ratio_ewma_applied"]
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(1.35)
     assert rationale["corrected_hourly_load_forecast_kwh"]["7"] == pytest.approx(1.2)
-    assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2)
-    assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(1.0)
+    assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2, rel=0.002)
+    assert rationale["corrected_hourly_load_forecast_kwh"]["17"] > rationale["corrected_hourly_load_forecast_kwh"]["7"]
+    assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(0.0)
     assert len(correction["load_scenarios"]) == 5
 
 
@@ -903,6 +769,39 @@ def test_temperature_hourly_shape_tracks_heat_and_preserves_total() -> None:
     assert corrected_total == pytest.approx(sum(load.values()) * 1.2)
 
 
+def test_thermal_and_humidity_state_carries_into_next_day() -> None:
+    weather = {
+        "2026-07-15": {
+            hour: {"temp_c": 35.0, "relative_humidity_percent": 80.0, "dew_point_c": 28.0}
+            for hour in range(24)
+        },
+        "2026-07-16": {
+            hour: {"temp_c": 25.0, "relative_humidity_percent": 60.0, "dew_point_c": 17.0}
+            for hour in range(24)
+        },
+    }
+
+    _add_thermal_states(weather)
+    features = _temperature_features_for_day("2026-07-16", weather["2026-07-16"])
+
+    assert weather["2026-07-16"][0]["thermal_72h"] > 0.0
+    assert features["thermal_72h_end"] > 0.0
+    assert features["latent_72h_end"] > 0.0
+
+
+def test_actual_hourly_history_uses_same_algorithm_for_night_and_day() -> None:
+    history = _actual_hourly_totals_by_day(
+        [
+            {"dt": datetime.fromisoformat("2026-07-15T02:00:00"), "load": 1.2, "pv": 0.0},
+            {"dt": datetime.fromisoformat("2026-07-15T14:00:00"), "load": 1.5, "pv": 0.8},
+        ],
+        target_date="2026-07-16",
+    )
+
+    assert history["2026-07-15"][2]["load"] == pytest.approx(1.2)
+    assert history["2026-07-15"][14]["load"] == pytest.approx(1.5)
+
+
 def test_recent_and_analog_floor_uses_similar_day_with_safety_factor(monkeypatch) -> None:
     monkeypatch.setenv("LOAD_ANALOG_SAFETY_FACTOR", "1.20")
     monkeypatch.setenv("LOAD_ANALOG_MIN_SIMILARITY", "0.50")
@@ -929,7 +828,7 @@ def test_recent_and_analog_floor_uses_similar_day_with_safety_factor(monkeypatch
         },
     }
 
-    floor = _recent_and_analog_daytime_floor(
+    floor = _recent_and_analog_hourly_floor(
         actual_history=actual_history,
         historical_temperature_features=historical_features,
         target_features={
@@ -940,11 +839,10 @@ def test_recent_and_analog_floor_uses_similar_day_with_safety_factor(monkeypatch
         target_pv_kwh=5.0,
     )
 
-    assert floor["source"] == "analog"
     assert floor["analog_day"] == "2026-07-10"
     assert floor["analog_similarity"] == pytest.approx(1.0)
-    assert floor["analog_floor_kwh"] == pytest.approx(12.0)
-    assert floor["floor_kwh"] == pytest.approx(12.0)
+    assert floor["hourly_details"]["7"]["analog_floor_kwh"] == pytest.approx(12.0)
+    assert floor["hourly_floor_kwh"]["7"] == pytest.approx(12.0)
 
 
 def test_cost_optimizer_uses_adaptive_load_scenarios() -> None:
@@ -971,11 +869,17 @@ def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypa
     def fake_history(*, target_date: str):
         return {"2026-05-30": {7: {"pv": 1.0, "load": 1.0}}}, "test_history"
 
-    def fake_temperature(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str, archive: bool):
-        return {day: {hour: 20.0 for hour in range(23)} for day in ["2026-05-30", "2026-05-31"]}
+    def fake_weather(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str, archive: bool):
+        return {
+            day: {
+                hour: {"temp_c": 20.0, "relative_humidity_percent": 50.0, "dew_point_c": 10.0}
+                for hour in range(24)
+            }
+            for day in ["2026-05-30", "2026-05-31"]
+        }
 
     monkeypatch.setattr("app.forecast_correction._load_forecast_hourly_history", fake_history)
-    monkeypatch.setattr("app.forecast_correction._fetch_hourly_temperatures", fake_temperature)
+    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", fake_weather)
 
     correction = _build_forecast_correction(
         rows=[{"dt": datetime.fromisoformat("2026-05-30T07:00:00"), "pv": 4.0, "load": 1.0}],

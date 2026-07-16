@@ -24,6 +24,18 @@ def _clip_float(value: float, *, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
 
 
+def _coerce_hourly_values(value: object) -> dict[int, float]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[int, float] = {}
+    for raw_hour, raw_value in value.items():
+        hour = to_int(raw_hour)
+        numeric = to_float(raw_value)
+        if hour is not None and 0 <= hour <= 23 and numeric is not None:
+            out[hour] = max(0.0, numeric)
+    return out
+
+
 def _ewma_ratio_from_daily_pairs(
     pairs: list[tuple[str, float, float]],
     *,
@@ -68,7 +80,7 @@ def _actual_hourly_totals_by_day(
         if not isinstance(dt, datetime):
             continue
         day = dt.date().isoformat()
-        if day >= target_date or dt.hour < 7 or dt.hour >= 23:
+        if day >= target_date:
             continue
         bucket = by_day.setdefault(day, {}).setdefault(dt.hour, {"pv": 0.0, "load": 0.0})
         bucket["pv"] += max(0.0, to_float(row.get("pv")) or 0.0)
@@ -111,7 +123,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
     out: dict[str, dict[int, dict[str, float]]] = {}
     for row in rows:
         hour = to_int(row["hour"])
-        if hour is None or hour < 7 or hour >= 23:
+        if hour is None or hour < 0 or hour > 23:
             continue
         out.setdefault(str(row["date"]), {})[hour] = {
             "pv": max(0.0, float(row["forecast_pv_kwh"] or 0.0)),
@@ -149,7 +161,7 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
         row = doc.to_dict() or {}
         day = str(row.get("date", "")).strip()
         hour = to_int(row.get("hour"))
-        if not day or hour is None or hour < 7 or hour >= 23:
+        if not day or hour is None or hour < 0 or hour > 23:
             continue
         out.setdefault(day, {})[hour] = {
             "pv": max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0),
@@ -184,7 +196,7 @@ def _daily_pairs_for_ratio(
     return pairs
 
 
-def _fetch_hourly_temperatures(
+def _fetch_hourly_weather(
     *,
     lat: float,
     lon: float,
@@ -192,14 +204,14 @@ def _fetch_hourly_temperatures(
     start_date: str,
     end_date: str,
     archive: bool,
-) -> dict[str, dict[int, float]]:
+) -> dict[str, dict[int, dict[str, float]]]:
     url = "https://archive-api.open-meteo.com/v1/archive" if archive else "https://api.open-meteo.com/v1/forecast"
     params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "start_date": start_date,
         "end_date": end_date,
-        "hourly": "temperature_2m",
+        "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m",
         "timezone": timezone,
     }
     try:
@@ -210,19 +222,63 @@ def _fetch_hourly_temperatures(
         return {}
     times = hourly.get("time", [])
     temps = hourly.get("temperature_2m", [])
-    out: dict[str, dict[int, float]] = {}
-    for raw_time, raw_temp in zip(times if isinstance(times, list) else [], temps if isinstance(temps, list) else []):
+    humidity = hourly.get("relative_humidity_2m", [])
+    dew_points = hourly.get("dew_point_2m", [])
+    out: dict[str, dict[int, dict[str, float]]] = {}
+    values = zip(
+        times if isinstance(times, list) else [],
+        temps if isinstance(temps, list) else [],
+        humidity if isinstance(humidity, list) else [],
+        dew_points if isinstance(dew_points, list) else [],
+    )
+    for raw_time, raw_temp, raw_humidity, raw_dew_point in values:
         try:
             dt = datetime.fromisoformat(str(raw_time))
             temp_c = float(raw_temp)
+            humidity_percent = float(raw_humidity)
+            dew_point_c = float(raw_dew_point)
         except Exception:
             continue
-        out.setdefault(dt.date().isoformat(), {})[dt.hour] = temp_c
+        out.setdefault(dt.date().isoformat(), {})[dt.hour] = {
+            "temp_c": temp_c,
+            "relative_humidity_percent": humidity_percent,
+            "dew_point_c": dew_point_c,
+        }
     return out
 
 
-def _temperature_features_for_day(day: str, hourly_temps: dict[int, float]) -> dict[str, float | None]:
-    if not hourly_temps:
+def _moist_air_enthalpy(temp_c: float, relative_humidity_percent: float) -> float:
+    saturation_hpa = 6.112 * math.exp((17.67 * temp_c) / (temp_c + 243.5))
+    vapor_hpa = saturation_hpa * _clip_float(relative_humidity_percent, min_val=0.0, max_val=100.0) / 100.0
+    humidity_ratio = 0.622 * vapor_hpa / max(1.0, 1013.25 - vapor_hpa)
+    return 1.006 * temp_c + humidity_ratio * (2501.0 + 1.86 * temp_c)
+
+
+def _add_thermal_states(weather: dict[str, dict[int, dict[str, float]]]) -> None:
+    states = {"thermal_6h": 0.0, "thermal_24h": 0.0, "thermal_72h": 0.0, "latent_24h": 0.0, "latent_72h": 0.0}
+    half_lives = {"thermal_6h": 6.0, "thermal_24h": 24.0, "thermal_72h": 72.0, "latent_24h": 24.0, "latent_72h": 72.0}
+    for day in sorted(weather):
+        for hour in sorted(weather[day]):
+            row = weather[day][hour]
+            temp_c = float(row.get("temp_c", 24.0))
+            humidity = float(row.get("relative_humidity_percent", 60.0))
+            dew_point = float(row.get("dew_point_c", 16.0))
+            enthalpy = _moist_air_enthalpy(temp_c, humidity)
+            row["enthalpy_kj_kg"] = enthalpy
+            thermal_input = max(0.0, temp_c - 24.0) + 0.12 * max(0.0, enthalpy - 55.0)
+            latent_input = max(0.0, dew_point - 16.0)
+            for name, half_life in half_lives.items():
+                alpha = 1.0 - math.exp(-math.log(2.0) / half_life)
+                value = latent_input if name.startswith("latent") else thermal_input
+                states[name] = alpha * value + (1.0 - alpha) * states[name]
+                row[name] = states[name]
+
+
+def _temperature_features_for_day(
+    day: str,
+    hourly_weather: dict[int, dict[str, float]],
+) -> dict[str, float | None]:
+    if not hourly_weather:
         return {
             "cooling_degree_hours_24": None,
             "cooling_degree_hours_28": None,
@@ -231,22 +287,32 @@ def _temperature_features_for_day(day: str, hourly_temps: dict[int, float]) -> d
             "max_temp_c": None,
             "temp_ewma_12h_evening": None,
             "night_min_temp_c": None,
+            "mean_relative_humidity_percent": None,
+            "mean_dew_point_c": None,
+            "mean_enthalpy_kj_kg": None,
+            "thermal_24h_end": None,
+            "thermal_72h_end": None,
+            "latent_72h_end": None,
         }
-    cdh24 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 24.0) for hour in range(0, 23))
-    cdh28 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 28.0) for hour in range(0, 23))
-    cdh32 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 32.0) for hour in range(0, 23))
-    hot_hours_35 = sum(1 for hour in range(0, 23) if float(hourly_temps.get(hour, 0.0)) >= 35.0)
+    hourly_temps = {hour: float(row.get("temp_c", 24.0)) for hour, row in hourly_weather.items()}
+    cdh24 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 24.0) for hour in range(24))
+    cdh28 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 28.0) for hour in range(24))
+    cdh32 = sum(max(0.0, float(hourly_temps.get(hour, 0.0)) - 32.0) for hour in range(24))
+    hot_hours_35 = sum(1 for hour in range(24) if float(hourly_temps.get(hour, 0.0)) >= 35.0)
     night_values = [float(hourly_temps[hour]) for hour in range(0, 7) if hour in hourly_temps]
     alpha = 1.0 - pow(2.718281828459045, -1.0 / 12.0)
     ewma: float | None = None
     ewma_by_hour: dict[int, float] = {}
-    for hour in range(0, 23):
+    for hour in range(24):
         if hour not in hourly_temps:
             continue
         value = float(hourly_temps[hour])
         ewma = value if ewma is None else alpha * value + (1.0 - alpha) * ewma
         ewma_by_hour[hour] = ewma
     evening_values = [ewma_by_hour[h] for h in range(17, 23) if h in ewma_by_hour]
+    weather_values = list(hourly_weather.values())
+    last_hour = max(hourly_weather)
+    last = hourly_weather[last_hour]
     return {
         "cooling_degree_hours_24": cdh24,
         "cooling_degree_hours_28": cdh28,
@@ -255,6 +321,12 @@ def _temperature_features_for_day(day: str, hourly_temps: dict[int, float]) -> d
         "max_temp_c": max(float(value) for value in hourly_temps.values()),
         "temp_ewma_12h_evening": (sum(evening_values) / len(evening_values)) if evening_values else None,
         "night_min_temp_c": min(night_values) if night_values else None,
+        "mean_relative_humidity_percent": sum(float(row.get("relative_humidity_percent", 60.0)) for row in weather_values) / len(weather_values),
+        "mean_dew_point_c": sum(float(row.get("dew_point_c", 16.0)) for row in weather_values) / len(weather_values),
+        "mean_enthalpy_kj_kg": sum(float(row.get("enthalpy_kj_kg", 50.0)) for row in weather_values) / len(weather_values),
+        "thermal_24h_end": float(last.get("thermal_24h", 0.0)),
+        "thermal_72h_end": float(last.get("thermal_72h", 0.0)),
+        "latent_72h_end": float(last.get("latent_72h", 0.0)),
     }
 
 
@@ -265,6 +337,12 @@ def _temperature_feature_vector(features: dict[str, float | None]) -> list[float
     hot_hours_35 = float(features.get("hot_hours_35") or 0.0)
     ewma_evening = float(features.get("temp_ewma_12h_evening") or 24.0)
     night_min = float(features.get("night_min_temp_c") or 22.0)
+    humidity = float(features.get("mean_relative_humidity_percent") or 60.0)
+    dew_point = float(features.get("mean_dew_point_c") or 16.0)
+    enthalpy = float(features.get("mean_enthalpy_kj_kg") or 50.0)
+    thermal_24h = float(features.get("thermal_24h_end") or 0.0)
+    thermal_72h = float(features.get("thermal_72h_end") or 0.0)
+    latent_72h = float(features.get("latent_72h_end") or 0.0)
     band_24_28 = max(0.0, cdh24 - cdh28)
     band_28_32 = max(0.0, cdh28 - cdh32)
     above_32 = max(0.0, cdh32)
@@ -278,6 +356,12 @@ def _temperature_feature_vector(features: dict[str, float | None]) -> list[float
         hot_hours_35 / 8.0,
         max(0.0, ewma_evening - 30.0) / 6.0,
         max(0.0, night_min - 26.0) / 6.0,
+        max(0.0, humidity - 55.0) / 30.0,
+        max(0.0, dew_point - 16.0) / 10.0,
+        max(0.0, enthalpy - 50.0) / 25.0,
+        thermal_24h / 8.0,
+        thermal_72h / 8.0,
+        latent_72h / 8.0,
     ]
 
 
@@ -550,6 +634,12 @@ def _evening_temperature_correction(
             "hours_above_35",
             "evening_temperature_above_30",
             "night_min_temperature_above_26",
+            "relative_humidity_above_55",
+            "dew_point_above_16",
+            "moist_air_enthalpy_above_50",
+            "thermal_state_24h",
+            "thermal_state_72h",
+            "latent_state_72h",
         ],
         "data_log_multiplier": round(data_log_multiplier, 6),
         "prior_log_multiplier": round(prior_log_multiplier, 6),
@@ -572,6 +662,7 @@ def _temperature_hourly_multipliers(
     *,
     hourly_load_forecast: dict[int, float],
     hourly_temperatures: dict[int, float],
+    hourly_weather: dict[int, dict[str, float]] | None = None,
     correction_hours: set[int],
     total_multiplier: float,
 ) -> dict[int, float]:
@@ -585,10 +676,22 @@ def _temperature_hourly_multipliers(
     bounded_total = max(0.0, total_multiplier)
     if bounded_total <= 1.0 or not hourly_temperatures:
         return {hour: bounded_total for hour in eligible_hours}
-    weights = {
-        hour: 1.0 + max(0.0, float(hourly_temperatures.get(hour, 24.0)) - 24.0)
-        for hour in eligible_hours
-    }
+    weather = hourly_weather or {}
+    weights: dict[int, float] = {}
+    for hour in eligible_hours:
+        row = weather.get(hour, {})
+        temperature = float(hourly_temperatures.get(hour, row.get("temp_c", 24.0)))
+        humidity = float(row.get("relative_humidity_percent", 60.0))
+        enthalpy = float(row.get("enthalpy_kj_kg", _moist_air_enthalpy(temperature, humidity)))
+        thermal_state = max(float(row.get("thermal_24h", 0.0)), float(row.get("thermal_72h", 0.0)))
+        latent_state = float(row.get("latent_72h", 0.0))
+        weights[hour] = (
+            1.0
+            + max(0.0, temperature - 24.0)
+            + 0.12 * max(0.0, enthalpy - 55.0)
+            + 0.35 * thermal_state
+            + 0.20 * latent_state
+        )
     total_load = sum(max(0.0, hourly_load_forecast.get(hour, 0.0)) for hour in eligible_hours)
     if total_load <= 0.0:
         return {hour: bounded_total for hour in eligible_hours}
@@ -604,165 +707,97 @@ def _temperature_hourly_multipliers(
     }
 
 
-def _recent_and_analog_daytime_floor(
+def _recent_and_analog_hourly_floor(
     *,
     actual_history: dict[str, dict[int, dict[str, float]]],
     historical_temperature_features: dict[str, dict[str, float | None]],
     target_features: dict[str, float | None],
     target_pv_kwh: float,
 ) -> dict[str, object]:
-    enabled = env_bool("LOAD_RECENT_ANALOG_FLOOR_ENABLED", default=True)
-    window_days = max(1, int(env_float("LOAD_RECENT_ANALOG_WINDOW_DAYS", default=7.0)))
-    min_days = max(1, int(env_float("LOAD_RECENT_ANALOG_MIN_DAYS", default=3.0)))
-    quantile_probability = env_float_clamped(
-        "LOAD_RECENT_ANALOG_QUANTILE",
-        0.75,
-        min_val=0.0,
-        max_val=1.0,
-    )
-    ewma_alpha = env_float_clamped("LOAD_RECENT_ANALOG_EWMA_ALPHA", 0.60, min_val=0.0, max_val=1.0)
-    analog_safety_factor = max(1.0, env_float("LOAD_ANALOG_SAFETY_FACTOR", default=1.20))
-    similarity_threshold = env_float_clamped(
-        "LOAD_ANALOG_MIN_SIMILARITY",
-        0.50,
-        min_val=0.0,
-        max_val=1.0,
-    )
-    if not enabled:
-        return {"enabled": False, "applied": False, "reason": "disabled", "floor_kwh": 0.0}
+    """Build one 24-hour q75/analog floor without day/night branches."""
 
-    daily_values = [
-        (
-            day,
-            sum(max(0.0, hourly.get(hour, {}).get("load", 0.0)) for hour in range(7, 23)),
-        )
-        for day, hourly in sorted(actual_history.items())
-    ]
-    daily_values = [(day, value) for day, value in daily_values if value > 0.0]
-    if len(daily_values) < min_days:
+    enabled = env_bool("LOAD_RECENT_ANALOG_FLOOR_ENABLED", default=True)
+    window_days = max(1, int(env_float("LOAD_RECENT_ANALOG_WINDOW_DAYS", default=14.0)))
+    min_days = max(1, int(env_float("LOAD_RECENT_ANALOG_MIN_DAYS", default=3.0)))
+    quantile_probability = env_float_clamped("LOAD_RECENT_ANALOG_QUANTILE", 0.75, min_val=0.0, max_val=1.0)
+    analog_safety_factor = max(1.0, env_float("LOAD_ANALOG_SAFETY_FACTOR", default=1.20))
+    similarity_threshold = env_float_clamped("LOAD_ANALOG_MIN_SIMILARITY", 0.50, min_val=0.0, max_val=1.0)
+    days = sorted(day for day, hourly in actual_history.items() if any(values.get("load", 0.0) > 0 for values in hourly.values()))
+    if not enabled:
+        return {"enabled": False, "applied": False, "reason": "disabled", "hourly_floor_kwh": {}}
+    if len(days) < min_days:
         return {
             "enabled": True,
             "applied": False,
             "reason": "insufficient_history",
-            "sample_count": len(daily_values),
+            "sample_count": len(days),
             "min_days": min_days,
-            "floor_kwh": 0.0,
+            "hourly_floor_kwh": {},
         }
 
-    recent = daily_values[-window_days:]
-    recent_loads = [value for _, value in recent]
-    latest_day, latest_actual = recent[-1]
-    q_value = _quantile(recent_loads, quantile_probability)
-    ewma_value = recent_loads[0]
-    for value in recent_loads[1:]:
-        ewma_value = ewma_alpha * value + (1.0 - ewma_alpha) * ewma_value
-    recent_floor = max(latest_actual, q_value, ewma_value)
-
     target_cdh28 = float(target_features.get("cooling_degree_hours_28") or 0.0)
-    target_evening = float(target_features.get("temp_ewma_12h_evening") or 24.0)
-    target_night = float(target_features.get("night_min_temp_c") or 22.0)
-    analog_candidates: list[tuple[float, str, float, float]] = []
-    for day, actual_load in daily_values:
+    target_enthalpy = float(target_features.get("mean_enthalpy_kj_kg") or 50.0)
+    target_thermal72 = float(target_features.get("thermal_72h_end") or 0.0)
+    target_latent72 = float(target_features.get("latent_72h_end") or 0.0)
+    analog_candidates: list[tuple[float, str, float]] = []
+    for day in days:
         features = historical_temperature_features.get(day)
-        hourly = actual_history.get(day)
-        if features is None or hourly is None:
+        if features is None:
             continue
-        historical_pv = sum(max(0.0, hourly.get(hour, {}).get("pv", 0.0)) for hour in range(7, 23))
+        historical_pv = sum(max(0.0, values.get("pv", 0.0)) for values in actual_history[day].values())
         distance = math.sqrt(
             pow((target_cdh28 - float(features.get("cooling_degree_hours_28") or 0.0)) / 10.0, 2.0)
-            + pow((target_evening - float(features.get("temp_ewma_12h_evening") or 24.0)) / 3.0, 2.0)
-            + pow((target_night - float(features.get("night_min_temp_c") or 22.0)) / 3.0, 2.0)
+            + pow((target_enthalpy - float(features.get("mean_enthalpy_kj_kg") or 50.0)) / 8.0, 2.0)
+            + pow((target_thermal72 - float(features.get("thermal_72h_end") or 0.0)) / 4.0, 2.0)
+            + pow((target_latent72 - float(features.get("latent_72h_end") or 0.0)) / 4.0, 2.0)
             + pow((max(0.0, target_pv_kwh) - historical_pv) / 5.0, 2.0)
         )
-        similarity = math.exp(-distance)
-        analog_candidates.append((distance, day, actual_load, similarity))
+        analog_candidates.append((distance, day, math.exp(-distance)))
+    analog_candidates.sort(key=lambda item: item[0])
+    analog_day = analog_candidates[0][1] if analog_candidates else None
+    analog_similarity = analog_candidates[0][2] if analog_candidates else 0.0
+    analog_allowed = analog_day is not None and analog_similarity >= similarity_threshold
 
-    analog_candidates.sort(key=lambda row: row[0])
-    analog_day: str | None = None
-    analog_actual = 0.0
-    analog_similarity = 0.0
-    analog_floor = 0.0
-    if analog_candidates:
-        _, analog_day, analog_actual, analog_similarity = analog_candidates[0]
-        if analog_similarity >= similarity_threshold:
-            analog_floor = analog_actual * analog_safety_factor
-
-    floor_kwh = max(recent_floor, analog_floor)
-    source = "analog" if analog_floor >= recent_floor and analog_floor > 0.0 else "recent_max"
+    recent_days = days[-window_days:]
+    hourly_floors: dict[str, float] = {}
+    hourly_details: dict[str, dict[str, float | str | bool | None]] = {}
+    for hour in range(24):
+        recent_values = [
+            max(0.0, actual_history[day].get(hour, {}).get("load", 0.0))
+            for day in recent_days
+            if hour in actual_history[day]
+        ]
+        recent_values = [value for value in recent_values if value > 0.0]
+        if not recent_values:
+            continue
+        q75 = _quantile(recent_values, quantile_probability)
+        analog_actual = (
+            max(0.0, actual_history.get(str(analog_day), {}).get(hour, {}).get("load", 0.0))
+            if analog_allowed else 0.0
+        )
+        analog_floor = analog_actual * analog_safety_factor if analog_actual > 0.0 else 0.0
+        floor = max(q75, analog_floor)
+        hourly_floors[str(hour)] = round(floor, 4)
+        hourly_details[str(hour)] = {
+            "quantile_kwh": round(q75, 4),
+            "analog_floor_kwh": round(analog_floor, 4),
+            "source": "analog" if analog_floor > q75 else "q75",
+        }
     return {
         "enabled": True,
-        "applied": True,
+        "applied": bool(hourly_floors),
         "reason": "ok",
-        "source": source,
-        "floor_kwh": round(floor_kwh, 4),
-        "recent_floor_kwh": round(recent_floor, 4),
-        "latest_actual_kwh": round(latest_actual, 4),
-        "latest_day": latest_day,
-        "quantile": quantile_probability,
-        "quantile_kwh": round(q_value, 4),
-        "ewma_alpha": ewma_alpha,
-        "ewma_kwh": round(ewma_value, 4),
+        "method": "unified_24h_q75_with_similarity_gated_analog_1p20",
+        "sample_count": len(days),
         "window_days": window_days,
-        "sample_count": len(daily_values),
+        "quantile": quantile_probability,
         "analog_day": analog_day,
-        "analog_actual_kwh": round(analog_actual, 4),
         "analog_similarity": round(analog_similarity, 6),
         "analog_min_similarity": similarity_threshold,
         "analog_safety_factor": analog_safety_factor,
-        "analog_floor_kwh": round(analog_floor, 4),
-        "target_conditions": {
-            "cooling_degree_hours_28": target_cdh28,
-            "temp_ewma_12h_evening": target_evening,
-            "night_min_temp_c": target_night,
-            "pv_kwh": max(0.0, target_pv_kwh),
-        },
-    }
-
-
-def _risk_adjusted_peak_penalty(
-    *,
-    target_features: dict[str, float | None],
-    pv_ratio_raw: float,
-    pv_ratio_applied: float,
-) -> dict[str, object]:
-    enabled = env_bool("SOC_PEAK_UNMET_PENALTY_ENABLED", default=True)
-    base_factor = max(0.0, env_float("SOC_PEAK_UNMET_BASE_FACTOR", default=1.0))
-    risk_factor = max(base_factor, env_float("SOC_PEAK_UNMET_RISK_FACTOR", default=2.0))
-    max_factor = max(base_factor, env_float("SOC_PEAK_UNMET_MAX_FACTOR", default=risk_factor))
-    target_peak_soc = env_float_clamped("SOC_PEAK_UNMET_TARGET_SOC_PERCENT", 95.0, min_val=0.0, max_val=100.0)
-    cdh_threshold = env_float("SOC_HIGH_TEMP_CDH28_THRESHOLD", default=10.0)
-    ewma_threshold = env_float("SOC_HIGH_TEMP_EWMA12_EVENING_THRESHOLD", default=26.0)
-    night_min_threshold = env_float("SOC_HIGH_TEMP_NIGHT_MIN_THRESHOLD", default=20.0)
-    pv_epsilon = max(0.0, env_float("SOC_PV_OVERRATIO_CAP_EPSILON", default=1e-6))
-    cdh28 = to_float(target_features.get("cooling_degree_hours_28")) or 0.0
-    ewma_evening = to_float(target_features.get("temp_ewma_12h_evening")) or 0.0
-    night_min = to_float(target_features.get("night_min_temp_c")) or 0.0
-    high_temperature = cdh28 >= cdh_threshold or ewma_evening >= ewma_threshold or night_min >= night_min_threshold
-    pv_overconfidence = pv_ratio_raw > pv_ratio_applied + pv_epsilon
-    risk_reasons: list[str] = []
-    if high_temperature:
-        risk_reasons.append("high_temperature")
-    if pv_overconfidence:
-        risk_reasons.append("pv_overconfidence")
-    applied_factor = base_factor
-    if not enabled:
-        applied_factor = 0.0
-    return {
-        "enabled": enabled,
-        "target_peak_soc_percent": target_peak_soc,
-        "base_factor": base_factor,
-        "risk_factor": risk_factor,
-        "max_factor": max_factor,
-        "applied_factor": applied_factor,
-        "risk_reasons": risk_reasons,
-        "high_temperature": high_temperature,
-        "pv_overconfidence": pv_overconfidence,
-        "temperature_uncertainty_integrated_in_load_scenarios": True,
-        "thresholds": {
-            "cooling_degree_hours_28": cdh_threshold,
-            "temp_ewma_12h_evening": ewma_threshold,
-            "night_min_temp_c": night_min_threshold,
-        },
+        "analog_allowed": analog_allowed,
+        "hourly_floor_kwh": hourly_floors,
+        "hourly_details": hourly_details,
     }
 
 
@@ -812,8 +847,9 @@ def _build_forecast_correction(
 
     history_dates = sorted(set(forecast_history) & set(actual_history))
     historical_temperature_features: dict[str, dict[str, float | None]] = {}
+    all_weather: dict[str, dict[int, dict[str, float]]] = {}
     if history_dates:
-        historical_temps = _fetch_hourly_temperatures(
+        all_weather = _fetch_hourly_weather(
             lat=lat,
             lon=lon,
             timezone=timezone,
@@ -821,24 +857,47 @@ def _build_forecast_correction(
             end_date=history_dates[-1],
             archive=True,
         )
-        historical_temperature_features = {
-            day: _temperature_features_for_day(day, temps)
-            for day, temps in historical_temps.items()
-        }
-
-    target_temps = _fetch_hourly_temperatures(
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
-        start_date=target_date,
-        end_date=target_date,
-        archive=False,
-    ).get(target_date, {})
-    if not target_temps:
+    target_weather: dict[int, dict[str, float]] = {}
+    raw_hourly_weather = forecast.get("hourly_weather")
+    if isinstance(raw_hourly_weather, list):
+        for item in raw_hourly_weather:
+            if not isinstance(item, dict):
+                continue
+            hour = to_int(item.get("hour"))
+            temp = to_float(item.get("temp_c"))
+            if hour is None or not 0 <= hour <= 23 or temp is None:
+                continue
+            target_weather[hour] = {
+                "temp_c": temp,
+                "relative_humidity_percent": to_float(item.get("relative_humidity_percent")) or 60.0,
+                "dew_point_c": to_float(item.get("dew_point_c")) or 16.0,
+            }
+    if not target_weather:
+        target_weather = _fetch_hourly_weather(
+            lat=lat,
+            lon=lon,
+            timezone=timezone,
+            start_date=target_date,
+            end_date=target_date,
+            archive=False,
+        ).get(target_date, {})
+    if not target_weather:
         fallback_temp = to_float(forecast.get("temp_c"))
         if fallback_temp is not None:
-            target_temps = {hour: fallback_temp for hour in range(0, 23)}
-    target_features = _temperature_features_for_day(target_date, target_temps)
+            target_weather = {
+                hour: {"temp_c": fallback_temp, "relative_humidity_percent": 60.0, "dew_point_c": 16.0}
+                for hour in range(24)
+            }
+    all_weather[target_date] = target_weather
+    _add_thermal_states(all_weather)
+    historical_temperature_features = {
+        day: _temperature_features_for_day(day, hourly)
+        for day, hourly in all_weather.items()
+        if day < target_date
+    }
+    target_weather = all_weather.get(target_date, {})
+    target_temps = {hour: float(item.get("temp_c", 24.0)) for hour, item in target_weather.items()}
+    target_features = _temperature_features_for_day(target_date, target_weather)
     temperature_correction = _evening_temperature_correction(
         forecast_history=forecast_history,
         actual_history=actual_history,
@@ -866,6 +925,7 @@ def _build_forecast_correction(
     temperature_hourly_multipliers = _temperature_hourly_multipliers(
         hourly_load_forecast=hourly_load_forecast,
         hourly_temperatures=target_temps,
+        hourly_weather=target_weather,
         correction_hours=correction_hours,
         total_multiplier=temperature_multiplier,
     )
@@ -882,40 +942,29 @@ def _build_forecast_correction(
         multiplier = load_ratio * temperature_hourly_multipliers.get(hour, 1.0)
         corrected_load[hour] = max(0.0, value) * max(0.0, multiplier)
 
-    load_safety_floor = _recent_and_analog_daytime_floor(
+    load_safety_floor = _recent_and_analog_hourly_floor(
         actual_history=actual_history,
         historical_temperature_features=historical_temperature_features,
         target_features=target_features,
         target_pv_kwh=sum(max(0.0, value) for hour, value in hourly_pv_forecast.items() if 7 <= hour < 23),
     )
-    current_daytime_load = sum(max(0.0, corrected_load.get(hour, 0.0)) for hour in range(7, 23))
-    requested_floor = to_float(load_safety_floor.get("floor_kwh")) or 0.0
-    safety_floor_applied = (
-        allow_load_safety_floor
-        and requested_floor > current_daytime_load + 1e-9
-        and current_daytime_load > 0.0
-    )
-    if safety_floor_applied:
-        scale = requested_floor / current_daytime_load
-        for hour in range(7, 23):
-            if hour in corrected_load:
-                corrected_load[hour] *= scale
-    else:
-        scale = 1.0
+    hourly_floor_raw = load_safety_floor.get("hourly_floor_kwh")
+    hourly_floor = _coerce_hourly_values(hourly_floor_raw)
+    applied_hours: list[int] = []
+    if allow_load_safety_floor:
+        for hour, floor in hourly_floor.items():
+            if floor > corrected_load.get(hour, 0.0) + 1e-9:
+                corrected_load[hour] = floor
+                applied_hours.append(hour)
+    safety_floor_applied = bool(applied_hours)
     load_safety_floor["allowed_by_occupancy"] = allow_load_safety_floor
     load_safety_floor["applied"] = safety_floor_applied
-    load_safety_floor["forecast_before_floor_kwh"] = round(current_daytime_load, 4)
-    load_safety_floor["applied_scale"] = round(scale, 6)
+    load_safety_floor["applied_hours"] = applied_hours
     load_safety_floor["forecast_after_floor_kwh"] = round(
-        sum(max(0.0, corrected_load.get(hour, 0.0)) for hour in range(7, 23)),
+        sum(max(0.0, corrected_load.get(hour, 0.0)) for hour in range(24)),
         4,
     )
-
-    peak_penalty = _risk_adjusted_peak_penalty(
-        target_features=target_features,
-        pv_ratio_raw=pv_ratio_raw,
-        pv_ratio_applied=pv_ratio,
-    )
+    peak_penalty = {"enabled": False, "applied_factor": 0.0, "reason": "removed"}
     return {
         "enabled": True,
         "hourly_load_kwh": corrected_load,
@@ -924,7 +973,7 @@ def _build_forecast_correction(
         "peak_penalty": peak_penalty,
         "rationale": {
             "enabled": True,
-            "method": "pv_ewma_with_nonlinear_temperature_residual_distribution",
+            "method": "unified_24h_temperature_humidity_thermal_history_q75",
             "history_source": history_source,
             "history_days": history_dates[-14:],
             "pv_ratio_ewma_raw": round(pv_ratio_raw, 6),
@@ -943,7 +992,7 @@ def _build_forecast_correction(
             "load_sample_count": load_summary["sample_count"],
             "load_latest_days": load_summary["latest_days"],
             "evening_load_temperature": temperature_correction,
-            "recent_and_analog_daytime_floor": load_safety_floor,
+            "recent_and_analog_hourly_floor": load_safety_floor,
             "load_scenarios": load_scenarios,
             "soc_peak_unmet_penalty": peak_penalty,
             "raw_hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
