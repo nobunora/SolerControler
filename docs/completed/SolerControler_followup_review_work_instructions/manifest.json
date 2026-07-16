@@ -1,0 +1,22 @@
+{
+  "title": "SolerControler 追加レビュー修正作業指示書",
+  "repository": "C:\\VSC\\SolerControler",
+  "baseline_head": "5430f40",
+  "review_head": "7681fe2",
+  "test_result": "199 passed in 8.78s",
+  "diff_check": "clean",
+  "index": "00_INDEX.md",
+  "remaining_issue_count": 6,
+  "supporting_document_count": 2,
+  "files": [
+    "00_INDEX.md",
+    "01_dashboard_container_missing_assets.md",
+    "02_dashboard_time_regex_double_escape.md",
+    "03_csv_soc_validation.md",
+    "04_initial_soc_unavailable_policy.md",
+    "05_backend_parity_test_gap.md",
+    "06_latest_schedule_order_dependency.md",
+    "07_verified_fixes.md",
+    "08_release_validation_checklist.md"
+  ]
+}

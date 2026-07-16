@@ -11,6 +11,9 @@ from typing import Any
 
 import requests
 
+from app.monitoring_csv import iter_monitoring_points
+from app.tariff import tiered_day_cost, tiered_day_increment_cost
+from app.time_windows import DailyWindow, minute_of_day, parse_hhmm
 from app.utils import env, env_float, load_dotenv_if_present, to_float, to_int
 
 
@@ -141,24 +144,16 @@ def _safe_json(data: Any) -> str:
 
 
 def _parse_hhmm_to_minute(*, value: str, name: str) -> int:
-    text = value.strip()
-    try:
-        hour_str, minute_str = text.split(":", 1)
-        hour = int(hour_str)
-        minute = int(minute_str)
-    except Exception as exc:  # pragma: no cover - defensive parse
-        raise ValueError(f"{name} must be HH:MM but got: {value}") from exc
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        raise ValueError(f"{name} must be HH:MM but got: {value}")
-    return hour * 60 + minute
+    return minute_of_day(parse_hhmm(value, name=name))
 
 
 def _is_within_window(minute_of_day: int, *, start_minute: int, end_minute: int) -> bool:
-    if start_minute == end_minute:
-        return True
-    if start_minute < end_minute:
-        return start_minute <= minute_of_day < end_minute
-    return minute_of_day >= start_minute or minute_of_day < end_minute
+    from datetime import time
+
+    return DailyWindow(
+        time(start_minute // 60, start_minute % 60),
+        time(end_minute // 60, end_minute % 60),
+    ).contains(time(minute_of_day // 60, minute_of_day % 60))
 
 
 def _tiered_day_cost(
@@ -170,13 +165,14 @@ def _tiered_day_cost(
     rate_tier2_yen: float,
     rate_tier3_yen: float,
 ) -> float:
-    kwh = max(0.0, float(day_kwh))
-    t1 = max(0.0, float(tier1_upper_kwh))
-    t2 = max(t1, float(tier2_upper_kwh))
-    b1 = min(kwh, t1)
-    b2 = min(max(kwh - t1, 0.0), t2 - t1)
-    b3 = max(kwh - t2, 0.0)
-    return b1 * rate_tier1_yen + b2 * rate_tier2_yen + b3 * rate_tier3_yen
+    return tiered_day_cost(
+        day_kwh,
+        tier1_upper_kwh=tier1_upper_kwh,
+        tier2_upper_kwh=tier2_upper_kwh,
+        rate_tier1_yen=rate_tier1_yen,
+        rate_tier2_yen=rate_tier2_yen,
+        rate_tier3_yen=rate_tier3_yen,
+    )
 
 
 def _tiered_day_increment_cost(
@@ -189,17 +185,9 @@ def _tiered_day_increment_cost(
     rate_tier2_yen: float,
     rate_tier3_yen: float,
 ) -> float:
-    prev = max(0.0, float(previous_kwh))
-    delta = max(0.0, float(delta_kwh))
-    return _tiered_day_cost(
-        prev + delta,
-        tier1_upper_kwh=tier1_upper_kwh,
-        tier2_upper_kwh=tier2_upper_kwh,
-        rate_tier1_yen=rate_tier1_yen,
-        rate_tier2_yen=rate_tier2_yen,
-        rate_tier3_yen=rate_tier3_yen,
-    ) - _tiered_day_cost(
-        prev,
+    return tiered_day_increment_cost(
+        previous_kwh=previous_kwh,
+        delta_kwh=delta_kwh,
         tier1_upper_kwh=tier1_upper_kwh,
         tier2_upper_kwh=tier2_upper_kwh,
         rate_tier1_yen=rate_tier1_yen,
@@ -578,28 +566,8 @@ def find_latest_csv_and_settings_runs(artifacts_dir: Path) -> tuple[Path | None,
 
 
 def _iter_monitoring_rows(csv_path: Path):
-    with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            date_text = (row.get("年月日") or "").strip()
-            time_text = (row.get("時刻") or "").strip()
-            if not date_text or not time_text:
-                continue
-            try:
-                dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-            except ValueError:
-                continue
-            ts = dt.isoformat()
-            yield {
-                "ts": ts,
-                "pv_kwh": to_float(row.get("発電電力量[kWh]")),
-                "load_kwh": to_float(row.get("消費電力量[kWh]")),
-                "sell_kwh": to_float(row.get("売電電力量[kWh]")),
-                "buy_kwh": to_float(row.get("買電電力量[kWh]")),
-                "charge_kwh": to_float(row.get("充電電力量[kWh]")),
-                "discharge_kwh": to_float(row.get("放電電力量[kWh]")),
-                "soc_percent": to_float(row.get("蓄電残量(SOC)[%]")),
-            }
+    for point in iter_monitoring_points(csv_path):
+        yield point.as_storage_row()
 
 
 def ingest_monitoring_csvs(

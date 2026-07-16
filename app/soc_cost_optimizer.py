@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 from app.constants import SOCBounds
+from app.tariff import tiered_day_increment_cost
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ class SocCostModel:
         buy = max(0.0, buy_kwh)
         if (self.tariff_mode or "flat").strip().lower() != "night8_tiered":
             return buy * self.day_buy_rate_yen_per_kwh * self.day_buy_penalty_factor
-        return _tiered_day_increment_cost(
+        return tiered_day_increment_cost(
             previous_kwh=self.monthly_day_buy_kwh_before_target,
             delta_kwh=buy,
             tier1_upper_kwh=self.day_tier1_upper_kwh,
@@ -124,53 +125,6 @@ class SocCostModel:
         else:
             penalty += candidate_kwh * max(0.0, self.tier3_extra_penalty_yen_per_kwh)
         return penalty
-
-
-def _tiered_day_cost(
-    day_kwh: float,
-    *,
-    tier1_upper_kwh: float,
-    tier2_upper_kwh: float,
-    rate_tier1_yen: float,
-    rate_tier2_yen: float,
-    rate_tier3_yen: float,
-) -> float:
-    kwh = max(0.0, float(day_kwh))
-    t1 = max(0.0, float(tier1_upper_kwh))
-    t2 = max(t1, float(tier2_upper_kwh))
-    b1 = min(kwh, t1)
-    b2 = min(max(kwh - t1, 0.0), t2 - t1)
-    b3 = max(kwh - t2, 0.0)
-    return b1 * rate_tier1_yen + b2 * rate_tier2_yen + b3 * rate_tier3_yen
-
-
-def _tiered_day_increment_cost(
-    *,
-    previous_kwh: float,
-    delta_kwh: float,
-    tier1_upper_kwh: float,
-    tier2_upper_kwh: float,
-    rate_tier1_yen: float,
-    rate_tier2_yen: float,
-    rate_tier3_yen: float,
-) -> float:
-    prev = max(0.0, float(previous_kwh))
-    delta = max(0.0, float(delta_kwh))
-    return _tiered_day_cost(
-        prev + delta,
-        tier1_upper_kwh=tier1_upper_kwh,
-        tier2_upper_kwh=tier2_upper_kwh,
-        rate_tier1_yen=rate_tier1_yen,
-        rate_tier2_yen=rate_tier2_yen,
-        rate_tier3_yen=rate_tier3_yen,
-    ) - _tiered_day_cost(
-        prev,
-        tier1_upper_kwh=tier1_upper_kwh,
-        tier2_upper_kwh=tier2_upper_kwh,
-        rate_tier1_yen=rate_tier1_yen,
-        rate_tier2_yen=rate_tier2_yen,
-        rate_tier3_yen=rate_tier3_yen,
-    )
 
 
 @dataclass(frozen=True)

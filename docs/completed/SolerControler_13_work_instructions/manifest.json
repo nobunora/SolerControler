@@ -1,0 +1,23 @@
+{
+  "title": "SolerControler 13件修正作業指示書",
+  "repository": "C:\\VSC\\SolerControler",
+  "review_head": "5430f40",
+  "index": "00_INDEX.md",
+  "instruction_count": 13,
+  "files": [
+    "00_INDEX.md",
+    "01_latest_schedule_event_overwrite.md",
+    "02_initial_realtime_soc_failure.md",
+    "03_logout_failure_overrides_soc.md",
+    "04_monitor_soc_unavailable_fail_open.md",
+    "05_battery_quarter_icon.md",
+    "06_soc_clamp_hides_invalid_data.md",
+    "07_objective_explanation_mismatch.md",
+    "08_firestore_bounds_only_sunshine.md",
+    "09_firestore_cache_key.md",
+    "10_daily_review_date_mismatch.md",
+    "11_night_grid_charge_fixed_window.md",
+    "12_dashboard_html_giant_function.md",
+    "13_backend_loader_duplication.md"
+  ]
+}

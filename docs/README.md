@@ -20,6 +20,10 @@ Do not read all docs. Pick one category, then one file.
 
 - `completed/reports/`: finished reports and milestone notes.
 - `completed/SOC_OPTIMIZER_REFACTOR_TASK_JA.md`: completed SOC optimizer refactor task note.
+- `completed/SolerControler_13_work_instructions/`: completed 13-item correctness and safety fixes.
+- `completed/SolerControler_followup_review_work_instructions/`: completed follow-up review fixes.
+- `completed/2026-07-energy-model-review/`: completed energy-model reliability and correction work.
+- `completed/SolerControler_logic_inconsistencies_validation_2026-07-04.md`: completed safety-validation work.
 
 ## Archive
 

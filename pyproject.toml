@@ -1,5 +1,5 @@
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_ignores = true
 
@@ -15,5 +15,10 @@ ignore_missing_imports = true
 module = [
     "app.utils",
     "app.constants",
+    "app.time_windows",
+    "app.tariff",
+    "app.monitoring_csv",
+    "app.night_plan",
+    "app.settings.*",
 ]
 strict = true
