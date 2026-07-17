@@ -47,6 +47,17 @@ def test_env_example_documents_every_required_production_setting() -> None:
     assert REQUIRED_ENV_KEYS <= _env_example_keys()
 
 
+def test_agent_instructions_require_canonical_production_scripts() -> None:
+    instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "## Production Operations (Mandatory)" in instructions
+    assert "deploy_production_from_env.ps1 -ValidateOnly" in instructions
+    assert "run_kpnet_import_from_env.ps1" in instructions
+    assert "run_drive_backup_cloud_from_env.ps1" in instructions
+    assert "run_cloud_job_from_env.ps1" in instructions
+    assert "python scripts/security_check.py" in instructions
+
+
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:
     config = (ROOT / "cloudbuild.dashboard.yaml").read_text(encoding="utf-8")
 
