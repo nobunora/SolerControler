@@ -22,6 +22,12 @@ from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
 
 
+@pytest.fixture(autouse=True)
+def _use_sqlite_backend_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep SQLite unit tests isolated from the caller's production environment."""
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+
+
 def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:
     db_path = tmp_path / "solar.db"
     conn = open_db(db_path)
