@@ -55,7 +55,16 @@ def test_agent_instructions_require_canonical_production_scripts() -> None:
     assert "run_kpnet_import_from_env.ps1" in instructions
     assert "run_drive_backup_cloud_from_env.ps1" in instructions
     assert "run_cloud_job_from_env.ps1" in instructions
+    assert "run_kpnet_soc_gap_report.ps1 -SkipDownload" in instructions
     assert "python scripts/security_check.py" in instructions
+
+
+def test_manual_actual_import_cannot_overwrite_production_plan() -> None:
+    script = (ROOT / "scripts" / "run_kpnet_import_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "$env:DATA_PIPELINE_INCLUDE_NIGHT_PLAN = 'false'" in script
 
 
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:

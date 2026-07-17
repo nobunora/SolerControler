@@ -30,6 +30,7 @@ try {
         $env:DATA_DB_WRITE_ONLY_23 = 'false'
         $env:DATA_PIPELINE_INCLUDE_CSV = 'true'
         $env:DATA_PIPELINE_INCLUDE_SETTINGS = 'false'
+        $env:DATA_PIPELINE_INCLUDE_NIGHT_PLAN = 'false'
         python db_pipeline_main.py
         if ($LASTEXITCODE -ne 0) { throw 'Firestore ingest failed after KP-NET import.' }
     }

@@ -94,6 +94,7 @@ def _ingest_sqlite(
     settings_run_dir: Path | None,
     now_iso: str,
     now_utc: datetime,
+    include_night_plan: bool = True,
 ) -> None:
     conn = sqlite_ops.open_db(cfg.db_path)
     try:
@@ -134,14 +135,17 @@ def _ingest_sqlite(
         pv_charge_end_updated = sqlite_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
         print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
-        night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
-        sqlite_ops.ingest_sunshine_from_night_plan(
-            conn,
-            night_plan_path=night_plan_path,
-            timezone=cfg.timezone,
-            ingested_at=now_iso,
-        )
-        sqlite_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        if include_night_plan:
+            night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
+            sqlite_ops.ingest_sunshine_from_night_plan(
+                conn,
+                night_plan_path=night_plan_path,
+                timezone=cfg.timezone,
+                ingested_at=now_iso,
+            )
+            sqlite_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        else:
+            print("[db_pipeline] skip night plan and forecast ingestion")
         hit_rate = sqlite_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
         print(f"[db_pipeline] model hit_rate={hit_rate!r}")
         sqlite_ops.recalc_cost_daily(
@@ -180,6 +184,7 @@ def _ingest_postgres(
     settings_run_dir: Path | None,
     now_iso: str,
     now_utc: datetime,
+    include_night_plan: bool = True,
 ) -> None:
     from app import postgres_ops
 
@@ -225,14 +230,17 @@ def _ingest_postgres(
         pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
         print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
-        night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
-        postgres_ops.ingest_sunshine_from_night_plan(
-            conn,
-            night_plan_path=night_plan_path,
-            timezone=cfg.timezone,
-            ingested_at=now_iso,
-        )
-        postgres_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        if include_night_plan:
+            night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
+            postgres_ops.ingest_sunshine_from_night_plan(
+                conn,
+                night_plan_path=night_plan_path,
+                timezone=cfg.timezone,
+                ingested_at=now_iso,
+            )
+            postgres_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
+        else:
+            print("[db_pipeline] skip night plan and forecast ingestion")
         hit_rate = postgres_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
         print(f"[db_pipeline] model hit_rate={hit_rate!r}")
         postgres_ops.recalc_cost_daily(
@@ -271,6 +279,7 @@ def _ingest_firestore(
     csv_run_dir: Path | None,
     settings_run_dir: Path | None,
     now_iso: str,
+    include_night_plan: bool = True,
 ) -> None:
     from app import firestore_ops
 
@@ -313,14 +322,17 @@ def _ingest_firestore(
     dashboard_daily_updated = firestore_ops.recalc_dashboard_daily_metrics(client, updated_at=now_iso)
     print(f"[db_pipeline] dashboard daily metrics updated rows={dashboard_daily_updated}")
 
-    night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
-    firestore_ops.ingest_sunshine_from_night_plan(
-        client,
-        night_plan_path=night_plan_path,
-        timezone=cfg.timezone,
-        ingested_at=now_iso,
-    )
-    firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
+    if include_night_plan:
+        night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
+        firestore_ops.ingest_sunshine_from_night_plan(
+            client,
+            night_plan_path=night_plan_path,
+            timezone=cfg.timezone,
+            ingested_at=now_iso,
+        )
+        firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
+    else:
+        print("[db_pipeline] skip night plan and forecast ingestion")
     hit_rate = firestore_ops.recalc_model_hit_rates(client, updated_at=now_iso)
     print(f"[db_pipeline] model hit_rate={hit_rate!r}")
     firestore_ops.recalc_cost_daily(
@@ -361,6 +373,7 @@ def main() -> int:
 
     include_csv = _env_bool("DATA_PIPELINE_INCLUDE_CSV", True)
     include_settings = _env_bool("DATA_PIPELINE_INCLUDE_SETTINGS", True)
+    include_night_plan = _env_bool("DATA_PIPELINE_INCLUDE_NIGHT_PLAN", True)
     csv_run_dir, settings_run_dir = sqlite_ops.find_latest_csv_and_settings_runs(cfg.artifacts_dir)
     if not include_csv:
         csv_run_dir = None
@@ -374,7 +387,14 @@ def main() -> int:
         print("[db_pipeline] note: DATA_DB_SYNC_ENABLED=true ですが、逐次Cloud Storage同期は無効化されています。")
 
     if cfg.data_backend == "sqlite":
-        _ingest_sqlite(cfg, csv_run_dir=csv_run_dir, settings_run_dir=settings_run_dir, now_iso=now_iso, now_utc=now_utc)
+        _ingest_sqlite(
+            cfg,
+            csv_run_dir=csv_run_dir,
+            settings_run_dir=settings_run_dir,
+            now_iso=now_iso,
+            now_utc=now_utc,
+            include_night_plan=include_night_plan,
+        )
         return 0
     if cfg.data_backend == "postgres":
         _ingest_postgres(
@@ -383,6 +403,7 @@ def main() -> int:
             settings_run_dir=settings_run_dir,
             now_iso=now_iso,
             now_utc=now_utc,
+            include_night_plan=include_night_plan,
         )
         return 0
     if cfg.data_backend == "firestore":
@@ -391,6 +412,7 @@ def main() -> int:
             csv_run_dir=csv_run_dir,
             settings_run_dir=settings_run_dir,
             now_iso=now_iso,
+            include_night_plan=include_night_plan,
         )
         return 0
 

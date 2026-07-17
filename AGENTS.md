@@ -24,6 +24,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Before a production deployment, run `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -ValidateOnly`.
 - Deploy with `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1` only after validation and relevant tests pass.
 - Import KP-NET data with `scripts/run_kpnet_import_from_env.ps1`, run Drive backup with `scripts/run_drive_backup_cloud_from_env.ps1`, and execute a production job with `scripts/run_cloud_job_from_env.ps1`.
+- For a daily actual-versus-forecast review, run `scripts/run_kpnet_import_from_env.ps1` first, then `scripts/run_kpnet_soc_gap_report.ps1 -SkipDownload`. Do not rebuild this workflow with direct credential or cloud commands.
 - Read project IDs, regions, resource IDs, account identifiers, and other deployment settings from the Git-ignored `.env` through `scripts/production_env.ps1`. Keep credentials and sensitive identifiers out of commands, tracked files, reports, and chat output.
 - Run `python scripts/security_check.py` before committing or pushing production-operation changes. Confirm `.env` remains ignored and unstaged.
 - Lower-level scripts and direct cloud commands are for focused diagnosis only. Do not use them for a production mutation unless the canonical wrapper cannot perform the task; record the reason and preserve the same `.env`/secret-handling rules.

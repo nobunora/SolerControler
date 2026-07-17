@@ -279,8 +279,12 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
     if not result:
         result = _nested(plan_doc, "result", {})
     final_pv = result.get("final_predicted_pv_kwh", plan_doc.get("final_predicted_pv_kwh"))
-    target_soc = result.get("target_soc_7_percent", metrics.get("setting_soc_target_percent"))
-    predicted_night_charge = result.get("required_night_charge_kwh", metrics.get("night_charge_kwh"))
+    target_soc = metrics.get("setting_soc_target_percent")
+    if target_soc is None:
+        target_soc = result.get("target_soc_7_percent")
+    predicted_night_charge = metrics.get("night_charge_kwh")
+    if predicted_night_charge is None:
+        predicted_night_charge = result.get("required_night_charge_kwh")
     expected_day_buy = result.get("soc_expected_day_buy_kwh")
     expected_sell = result.get("soc_expected_sell_kwh")
     peak_unmet = result.get("soc_expected_peak_unmet_kwh")
@@ -288,7 +292,7 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
     forecast_source = result.get("final_pv_forecast_source")
     pv_array_total = _nested(plan_doc, "pv_array_forecast_summary.totals.total_kwh")
 
-    pv_gap = float(final_pv or 0.0) - whole.pv_kwh
+    pv_gap = float(final_pv or 0.0) - daytime.pv_kwh
     charge_gap = night.charge_kwh - float(predicted_night_charge or 0.0)
 
     now = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -317,13 +321,16 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         "| 区間 | 行数 | 発電 | 消費 | 買電 | 売電 | 充電 | 放電 | SOC開始 | SOC終了 | SOC最小 | SOC最大 |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         _summary_row("夜間 23:00-06:30", night),
-        _summary_row("日中 07:00-22:30", daytime),
+        _summary_row(
+            f"日中 {daytime.first_hhmm or 'n/a'}-{daytime.last_hhmm or 'n/a'}",
+            daytime,
+        ),
         _summary_row("当日取得分", whole),
         "",
         "## 主要な乖離",
         "",
         f"- 夜間充電量: 予測 {_fmt_kwh(predicted_night_charge)} / 実績 {_fmt_kwh(night.charge_kwh)} / 差分 {_fmt_kwh(charge_gap)}",
-        f"- PV発電量: 予測 {_fmt_kwh(final_pv)} / 実績 {_fmt_kwh(whole.pv_kwh)} / 差分 {_fmt_kwh(-pv_gap)}",
+        f"- 日中PV発電量: 予測 {_fmt_kwh(final_pv)} / 実績 {_fmt_kwh(daytime.pv_kwh)} / 差分 {_fmt_kwh(-pv_gap)}",
         f"- 日中買電量: 予測 {_fmt_kwh(expected_day_buy)} / 実績 {_fmt_kwh(daytime.buy_kwh)}",
         f"- 売電量: 予測 {_fmt_kwh(expected_sell)} / 実績 {_fmt_kwh(whole.sell_kwh)}",
         f"- 日中最大SOC: {_fmt_percent(daytime.soc_max[0] if daytime.soc_max else None)}",
@@ -334,7 +341,14 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         "",
         "## 考察",
         "",
-        _interpretation(target_soc, predicted_night_charge, night, whole, daytime, final_pv, pv_array_total),
+        _interpretation(
+            target_soc,
+            predicted_night_charge,
+            night,
+            daytime,
+            final_pv,
+            pv_array_total,
+        ),
         "",
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +371,6 @@ def _interpretation(
     target_soc: Any,
     predicted_night_charge: Any,
     night: WindowSummary,
-    whole: WindowSummary,
     daytime: WindowSummary,
     final_pv: Any,
     pv_array_total: Any,
@@ -374,7 +387,7 @@ def _interpretation(
         bullets.append(
             "夜間から早朝にSOCがほぼ0%まで低下しており、低SOC目標では早朝負荷に対する余裕が不足します。"
         )
-    if final_pv_value > 0 and whole.pv_kwh < final_pv_value * 0.85:
+    if final_pv_value > 0 and daytime.pv_kwh < final_pv_value * 0.85:
         bullets.append(
             "当日取得分のPV実績が最終PV予測を大きく下回っており、低SOC判断の前提だった日中回復力が不足しています。"
         )
