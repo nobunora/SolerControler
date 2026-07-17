@@ -91,6 +91,16 @@ def test_production_deploy_supports_non_mutating_validation() -> None:
     assert "No deployment was performed" in script
 
 
+def test_production_deploy_splats_named_job_arguments() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "$jobDeployArgs = @{" in script
+    assert "DataBackend = Get-RequiredProductionEnv 'DATA_BACKEND'" in script
+    assert "@jobDeployArgs" in script
+
+
 def test_cloud_validation_checks_every_production_entrypoint() -> None:
     script = (ROOT / "scripts" / "check_production_env.ps1").read_text(
         encoding="utf-8"

@@ -64,23 +64,23 @@ if (-not $SkipPreRelease) {
     if ($LASTEXITCODE -ne 0) { throw 'Pre-release integration checks failed.' }
 }
 
-$jobDeployArgs = @(
-    '-ProjectId', $projectId,
-    '-Region', $region,
-    '-SchedulerRegion', $schedulerRegion,
-    '-Repository', $runnerRepository,
-    '-ImageName', $runnerImage,
-    '-RunServiceAccountName', (Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT_NAME'),
-    '-UsernameSecretName', (Get-RequiredProductionEnv 'KP_MONITOR_USERNAME_SECRET'),
-    '-PasswordSecretName', (Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'),
-    '-DataBackend', (Get-RequiredProductionEnv 'DATA_BACKEND'),
-    '-SheetsSpreadsheetId', $sheetsId,
-    '-SheetsShareEmail', $sheetsShare,
-    '-DriveBackupFolderId', $driveFolder,
-    '-NightPlanArchiveGcsPrefix', $archivePrefix,
-    '-RunSmokeTest'
-)
-if ($SkipJobBuild) { $jobDeployArgs += '-SkipBuild' }
+$jobDeployArgs = @{
+    ProjectId = $projectId
+    Region = $region
+    SchedulerRegion = $schedulerRegion
+    Repository = $runnerRepository
+    ImageName = $runnerImage
+    RunServiceAccountName = Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT_NAME'
+    UsernameSecretName = Get-RequiredProductionEnv 'KP_MONITOR_USERNAME_SECRET'
+    PasswordSecretName = Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
+    DataBackend = Get-RequiredProductionEnv 'DATA_BACKEND'
+    SheetsSpreadsheetId = $sheetsId
+    SheetsShareEmail = $sheetsShare
+    DriveBackupFolderId = $driveFolder
+    NightPlanArchiveGcsPrefix = $archivePrefix
+    RunSmokeTest = $true
+}
+if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }
 & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
 if ($LASTEXITCODE -ne 0) { throw 'Cloud Run Jobs deployment failed.' }
 
