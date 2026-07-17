@@ -6,11 +6,15 @@ import pytest
 
 from app.dashboard_data import (
     DashboardRawData,
+    _billing_usage_summary,
+    _build_energy_daily,
     _build_dashboard_warnings,
     _build_latest_schedule_from_events,
     _build_dashboard_slice,
     _get_global_bounds_firestore,
     _load_firestore_slice,
+    _daily_metric_is_complete,
+    _review_candidate_dates,
     clear_dashboard_cache,
     load_dashboard_slice,
 )
@@ -52,6 +56,94 @@ def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:
     assert row["actual_pv_kwh"] == pytest.approx(5.0)
     assert row["forecast_load_kwh"] == pytest.approx(2.0)
     assert row["actual_load_kwh"] == pytest.approx(4.0)
+
+
+def test_energy_daily_prefers_saved_hourly_load_forecast() -> None:
+    rows = _build_energy_daily(
+        start_date="2026-05-02",
+        end_date_iso="2026-05-02",
+        pv_daily=[{"date": "2026-05-02", "forecast_pv_total_kwh": 5.0}],
+        monitoring_daily=[
+            {"date": "2026-05-01", "actual_load_kwh": 20.0},
+            {"date": "2026-05-02", "actual_load_kwh": 30.0},
+        ],
+        forecast_hourly=[
+            {"date": "2026-05-02", "hour": 7, "forecast_load_kwh": 1.2},
+            {"date": "2026-05-02", "hour": 8, "forecast_load_kwh": 1.8},
+        ],
+    )
+
+    assert rows[0]["forecast_load_kwh"] == pytest.approx(3.0)
+    assert rows[0]["forecast_load_source"] == "forecast_hourly"
+
+
+def test_energy_daily_uses_rolling_average_only_without_hourly_forecast() -> None:
+    rows = _build_energy_daily(
+        start_date="2026-05-02",
+        end_date_iso="2026-05-02",
+        pv_daily=[],
+        monitoring_daily=[
+            {"date": "2026-05-01", "actual_load_kwh": 20.0},
+            {"date": "2026-05-02", "actual_load_kwh": 30.0},
+        ],
+        forecast_hourly=[],
+    )
+
+    assert rows[0]["forecast_load_kwh"] == pytest.approx(20.0)
+    assert rows[0]["forecast_load_source"] == "rolling_14d_fallback"
+
+
+def test_daily_metric_requires_all_48_half_hour_samples() -> None:
+    complete = {
+        "sample_count": 48,
+        "first_sample_at": "2026-05-02T00:00:00",
+        "latest_sample_at": "2026-05-02T23:30:00",
+    }
+
+    assert _daily_metric_is_complete(complete) is True
+    assert _daily_metric_is_complete({**complete, "sample_count": 47}) is False
+    assert _daily_metric_is_complete({**complete, "first_sample_at": "2026-05-02T00:30:00"}) is False
+    assert _daily_metric_is_complete({**complete, "latest_sample_at": "2026-05-02T23:00:00"}) is False
+
+
+def test_review_candidates_exclude_today_and_respect_historical_end_date() -> None:
+    energy = [
+        {"date": "2026-07-15", "actual_load_kwh": 30.0},
+        {"date": "2026-07-16", "actual_load_kwh": 31.0},
+        {"date": "2026-07-17", "actual_load_kwh": 32.0},
+        {"date": "2026-07-18", "actual_load_kwh": 1.0},
+    ]
+
+    assert _review_candidate_dates(
+        energy, end_date_iso="2026-07-18", today_iso="2026-07-18"
+    ) == ["2026-07-17", "2026-07-16", "2026-07-15"]
+    assert _review_candidate_dates(
+        energy, end_date_iso="2026-07-16", today_iso="2026-07-18"
+    ) == ["2026-07-16", "2026-07-15"]
+
+
+def test_billing_usage_summary_projects_cost_and_tier_arrivals(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14")
+    rows = [
+        {"date": "2026-07-15", "day_buy_kwh": 50.0, "night_buy_kwh": 10.0},
+        {"date": "2026-07-16", "day_buy_kwh": 50.0, "night_buy_kwh": 10.0},
+    ]
+
+    result = _billing_usage_summary("2026-07-16", rows)
+
+    assert result["billing_period_start"] == "2026-07-15"
+    assert result["billing_period_end"] == "2026-08-14"
+    assert result["cumulative_day_buy_kwh"] == pytest.approx(100.0)
+    assert result["cumulative_night_buy_kwh"] == pytest.approx(20.0)
+    assert result["tier1_arrival"] == {"date": "2026-07-15", "status": "reached"}
+    assert result["tier2_arrival"] == {"date": "2026-07-16", "status": "reached"}
+    assert result["tier3_arrival"] == {"date": "2026-07-19", "status": "forecast"}
+    assert result["projected_day_cost_yen"] > 0
+    assert result["projected_night_cost_yen"] > 0
+    assert result["projected_energy_cost_yen"] == pytest.approx(
+        result["projected_day_cost_yen"] + result["projected_night_cost_yen"]
+    )
+    assert result["projected_energy_cost_yen"] > 0
 
 
 def test_dashboard_battery_contract_does_not_leak_legacy_columns(tmp_path: Path) -> None:

@@ -53,6 +53,7 @@ def assemble_dashboard_slice(
     warnings: list[dict[str, Any]],
     pv_forecast_diagnostics: dict[str, Any] | None = None,
     daily_review: dict[str, Any] | None = None,
+    daily_reviews: list[dict[str, Any]] | None = None,
 ) -> DashboardSlice:
     """Build the stable API model from normalized backend rows."""
     return DashboardSlice(
@@ -69,6 +70,7 @@ def assemble_dashboard_slice(
             dashboard_warnings=warnings,
             pv_forecast_diagnostics=pv_forecast_diagnostics or {},
             daily_review=daily_review or {},
+            daily_reviews=daily_reviews or [],
         ),
         meta=meta,
     )

@@ -757,6 +757,7 @@ def _recent_and_analog_hourly_floor(
     analog_day = analog_candidates[0][1] if analog_candidates else None
     analog_similarity = analog_candidates[0][2] if analog_candidates else 0.0
     analog_allowed = analog_day is not None and analog_similarity >= similarity_threshold
+    analog_features = historical_temperature_features.get(analog_day, {}) if analog_day else {}
 
     recent_days = days[-window_days:]
     hourly_floors: dict[str, float] = {}
@@ -793,6 +794,7 @@ def _recent_and_analog_hourly_floor(
         "quantile": quantile_probability,
         "analog_day": analog_day,
         "analog_similarity": round(analog_similarity, 6),
+        "analog_features": analog_features,
         "analog_min_similarity": similarity_threshold,
         "analog_safety_factor": analog_safety_factor,
         "analog_allowed": analog_allowed,

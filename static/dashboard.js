@@ -264,7 +264,17 @@
         store.latestSchedule = payload.latest_schedule || store.latestSchedule;
         store.dashboardWarnings = payload.dashboard_warnings || [];
         store.pvForecastDiagnostics = payload.pv_forecast_diagnostics || {};
+        store.dailyReviews.clear();
+        for (const review of payload.daily_reviews || []) {
+          if (review && review.date) store.dailyReviews.set(String(review.date), review);
+        }
         store.dailyReview = payload.daily_review || {};
+        if (store.dailyReview.date && !store.dailyReviews.has(String(store.dailyReview.date))) {
+          store.dailyReviews.set(String(store.dailyReview.date), store.dailyReview);
+        }
+        if (!store.latestReviewDate && store.dailyReview.date) {
+          store.latestReviewDate = String(store.dailyReview.date);
+        }
       }
       store.meta = payload.meta || store.meta;
       rebuildDateIndex();
@@ -412,37 +422,73 @@
     function renderDailyReview() {
       const review = store.dailyReview || {};
       const note = document.getElementById("dailyReviewNote");
+      const dateLabel = document.getElementById("dailyReviewDate");
+      const prevButton = document.getElementById("dailyReviewPrevBtn");
+      const nextButton = document.getElementById("dailyReviewNextBtn");
       const grid = document.getElementById("dailyReviewGrid");
       const findings = document.getElementById("dailyReviewFindings");
       if (!note || !grid || !findings) return;
+      if (dateLabel) dateLabel.textContent = review.date || "データなし";
+      const reviewDates = Array.from(store.dailyReviews.keys()).sort();
+      const reviewIndex = review.date ? reviewDates.indexOf(String(review.date)) : -1;
+      if (prevButton) prevButton.disabled = reviewIndex <= 0;
+      if (nextButton) {
+        nextButton.disabled = reviewIndex < 0 || reviewIndex >= reviewDates.length - 1;
+      }
       if (!review.date) {
-        note.textContent = "予実レビューに必要な実績データがまだありません。";
+        note.textContent = "24時間分が揃った予実レビュー対象日がまだありません。";
         grid.innerHTML = "";
         findings.innerHTML = "";
         return;
       }
       const kwh = (value) => value == null ? "-" : `${n(value).toFixed(2)} kWh`;
       const pct = (value) => value == null ? "-" : `${n(value).toFixed(0)}%`;
-      const items = [
-        ["設定SOC", pct(review.target_soc_percent)],
-        ["夜間充電", `${kwh(review.forecast_night_charge_kwh)} / 実績 ${kwh(review.actual_night_charge_kwh)}`],
-        ["PV発電", `${kwh(review.forecast_pv_kwh)} / 実績 ${kwh(review.actual_pv_kwh)}`],
-        ["家の消費", `${kwh(review.forecast_load_kwh)} / 実績 ${kwh(review.actual_load_kwh)}`],
-        ["日中買電", `${kwh(review.forecast_day_buy_kwh)} / 実績 ${kwh(review.actual_day_buy_kwh)}`],
-        ["売電", `${kwh(review.forecast_sell_kwh)} / 実績 ${kwh(review.actual_sell_kwh)}`],
-        ["SOC範囲", `${pct(review.actual_soc_min_percent)} - ${pct(review.actual_soc_max_percent)}`],
-        ["PV予測モデル", review.forecast_source || "-"],
-      ];
-      grid.innerHTML = items.map(([label, value]) => `<div class="diag-kpi"><span class="diag-label">${escapeHtml(label)}</span><span class="diag-value">${escapeHtml(value)}</span></div>`).join("");
+      const yen = (value) => value == null ? "-" : `${Math.round(n(value)).toLocaleString("ja-JP")} 円`;
+      const signedKwh = (value) => `${n(value) >= 0 ? "+" : ""}${n(value).toFixed(2)} kWh`;
       const pvGap = review.forecast_pv_kwh == null || review.actual_pv_kwh == null ? null : n(review.actual_pv_kwh) - n(review.forecast_pv_kwh);
       const chargeGap = review.forecast_night_charge_kwh == null || review.actual_night_charge_kwh == null ? null : n(review.actual_night_charge_kwh) - n(review.forecast_night_charge_kwh);
-      const chips = [];
-      if (pvGap != null) chips.push(`PV差分 ${pvGap >= 0 ? "+" : ""}${pvGap.toFixed(2)} kWh`);
-      if (chargeGap != null) chips.push(`夜間充電差分 ${chargeGap >= 0 ? "+" : ""}${chargeGap.toFixed(2)} kWh`);
-      if (review.actual_soc_max_percent != null) chips.push(`日中最大SOC ${pct(review.actual_soc_max_percent)}`);
-      findings.innerHTML = chips.map((item) => `<span class="diag-chip">${escapeHtml(item)}</span>`).join("");
-      const range = review.data_last_at ? `${String(review.data_last_at).slice(11, 16)}まで` : "終日";
-      note.textContent = `${review.date} の予測 / 実績。実績は ${range} の保存済みKP-NETデータです。`;
+      const arrival = (item) => {
+        if (!item || !item.date) return "期間内到達なし";
+        return `${item.date}${item.status === "forecast" ? "（予想）" : "（到達）"}`;
+      };
+      const analogTemps = review.analog_max_temp_c == null && review.analog_min_temp_c == null
+        ? "気温 -"
+        : `最高 ${review.analog_max_temp_c == null ? "-" : `${n(review.analog_max_temp_c).toFixed(1)}℃`} / 最低 ${review.analog_min_temp_c == null ? "-" : `${n(review.analog_min_temp_c).toFixed(1)}℃`}`;
+      const analogSub = review.analog_date
+        ? `類似度 ${review.analog_similarity == null ? "-" : `${(n(review.analog_similarity) * 100).toFixed(1)}%`}・${review.analog_weather || "-"}・${analogTemps}`
+        : "類似日データなし";
+      const billingPeriod = review.billing_period_start && review.billing_period_end
+        ? `${review.billing_period_start}〜${review.billing_period_end}`
+        : "";
+      const items = [
+        { label: "設定SOC（予想）", value: pct(review.target_soc_percent) },
+        { label: "朝7時SOC（実績）", value: pct(review.actual_morning_soc_percent) },
+        { label: "夜間充電", value: `${kwh(review.forecast_night_charge_kwh)} / 実績 ${kwh(review.actual_night_charge_kwh)}`, sub: chargeGap == null ? "" : `差分 ${signedKwh(chargeGap)}` },
+        { label: "PV発電", value: `${kwh(review.forecast_pv_kwh)} / 実績 ${kwh(review.actual_pv_kwh)}`, sub: pvGap == null ? "" : `差分 ${signedKwh(pvGap)}` },
+        { label: "家の消費", value: `${kwh(review.forecast_load_kwh)} / 実績 ${kwh(review.actual_load_kwh)}` },
+        { label: "日中買電", value: `${kwh(review.forecast_day_buy_kwh)} / 実績 ${kwh(review.actual_day_buy_kwh)}` },
+        { label: "売電", value: `${kwh(review.forecast_sell_kwh)} / 実績 ${kwh(review.actual_sell_kwh)}` },
+        { label: "SOC範囲", value: `${pct(review.actual_soc_min_percent)} - ${pct(review.actual_soc_max_percent)}` },
+        { label: "夜間電力累計", value: kwh(review.cumulative_night_buy_kwh), sub: billingPeriod },
+        { label: "昼間電力累計", value: kwh(review.cumulative_day_buy_kwh), sub: billingPeriod },
+        { label: "電力量料金予想", value: yen(review.projected_energy_cost_yen), sub: `昼 ${yen(review.projected_day_cost_yen)} / 夜 ${yen(review.projected_night_cost_yen)}` },
+        { label: "段階到達日", value: `第2 ${arrival(review.tier2_arrival)} / 第3 ${arrival(review.tier3_arrival)}` },
+        { label: "最も近い類似日", value: review.analog_date || "-", sub: analogSub, wide: true },
+      ];
+      grid.innerHTML = items.map((item) => `<div class="diag-kpi${item.wide ? " diag-kpi-wide" : ""}"><span class="diag-label">${escapeHtml(item.label)}</span><span class="diag-value">${escapeHtml(item.value)}</span>${item.sub ? `<small class="diag-subvalue">${escapeHtml(item.sub)}</small>` : ""}</div>`).join("");
+      findings.innerHTML = "";
+      note.textContent = `${review.date} の予測 / 実績。00:00〜23:30の48件が揃った保存済みKP-NETデータです。料金予想は基本料金・燃料費調整額・再エネ賦課金を除く電力量料金です。`;
+    }
+
+    function moveDailyReview(deltaDays) {
+      const current = store.dailyReview && store.dailyReview.date ? String(store.dailyReview.date) : "";
+      if (!current) return;
+      const reviewDates = Array.from(store.dailyReviews.keys()).sort();
+      const currentIndex = reviewDates.indexOf(current);
+      const nextIndex = currentIndex + (deltaDays < 0 ? -1 : 1);
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= reviewDates.length) return;
+      store.dailyReview = store.dailyReviews.get(reviewDates[nextIndex]) || store.dailyReview;
+      renderDailyReview();
     }
 
     function latestAvailableDate() {
@@ -1356,9 +1402,15 @@
       });
     }
 
+    function bindDailyReviewControls() {
+      document.getElementById("dailyReviewPrevBtn")?.addEventListener("click", () => moveDailyReview(-1));
+      document.getElementById("dailyReviewNextBtn")?.addEventListener("click", () => moveDailyReview(1));
+    }
+
     async function main() {
       buildCharts();
       bindPeriodControls();
+      bindDailyReviewControls();
 
       const initialPayload = window.__DASHBOARD_DATA__ || {};
       const hasInitialRows =

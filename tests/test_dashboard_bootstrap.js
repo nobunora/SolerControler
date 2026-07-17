@@ -4,14 +4,16 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const elements = new Map();
+let fetchCount = 0;
 function element(id = "") {
   if (elements.has(id)) return elements.get(id);
   const value = {
     id,
     style: {},
     dataset: {},
+    listeners: {},
     classList: { add() {}, remove() {}, toggle() {} },
-    addEventListener() {},
+    addEventListener(type, handler) { this.listeners[type] = handler; },
     appendChild() {},
     replaceChildren() {},
     querySelectorAll() { return []; },
@@ -51,15 +53,24 @@ const context = {
   Chart: ChartStub,
   setTimeout: () => 0,
   clearTimeout() {},
-  fetch: async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({
-      pv_daily: [], forecast_hourly: [], energy_daily: [], cost_daily: [], cost_monthly: [],
-      battery_daily: [], battery_flow_daily: [], model_parameters: [], latest_schedule: {},
-      dashboard_warnings: [], pv_forecast_diagnostics: {}, daily_review: {}, meta: {},
-    }),
-  }),
+  fetch: async () => {
+    fetchCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        pv_daily: [], forecast_hourly: [], energy_daily: [{ date: "2026-07-17", actual_load_kwh: 1 }], cost_daily: [], cost_monthly: [],
+        battery_daily: [], battery_flow_daily: [], model_parameters: [], latest_schedule: {},
+        dashboard_warnings: [], pv_forecast_diagnostics: {},
+        daily_review: { date: "2026-07-17", complete_day: true },
+        daily_reviews: [
+          { date: "2026-07-16", complete_day: true },
+          { date: "2026-07-17", complete_day: true },
+        ],
+        meta: {},
+      }),
+    };
+  },
   document: {
     getElementById: (id) => element(id),
     createElement: (tag) => element(`created-${tag}-${elements.size}`),
@@ -90,4 +101,12 @@ setImmediate(() => {
   assert.ok(context.DashboardApi);
   assert.ok(context.DashboardStore);
   assert.ok(elements.has("statusMsg"));
+  assert.ok(elements.has("dailyReviewPrevBtn"));
+  assert.ok(elements.has("dailyReviewNextBtn"));
+  assert.equal(typeof elements.get("dailyReviewPrevBtn").listeners.click, "function");
+  assert.equal(typeof elements.get("dailyReviewNextBtn").listeners.click, "function");
+  const countBeforeNavigation = fetchCount;
+  elements.get("dailyReviewPrevBtn").listeners.click();
+  assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
+  assert.equal(fetchCount, countBeforeNavigation);
 });

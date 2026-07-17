@@ -18,6 +18,8 @@ def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
     for element_id in (
         "statusMsg",
         "dashboardWarnings",
+        "dailyReviewPrevBtn",
+        "dailyReviewNextBtn",
         "learningParamsTable",
     ):
         assert f'id="{element_id}"' in html
@@ -25,6 +27,7 @@ def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
     assert 'src="/static/dashboard.js"' in html
     assert 'href="/static/dashboard.css"' in html
     assert "__DASHBOARD_DATA_PLACEHOLDER__" not in html
+    assert "1. 予実レビュー（昨日まで）" in html
     assert f"window.__DASHBOARD_DATA__ = {json.dumps(payload, ensure_ascii=False)};" in html
     assert html.index("window.__DASHBOARD_DATA__") < html.index('src="/static/dashboard.js"')
     for dependency in ("dashboard_calculations.js", "dashboard_dates.js", "dashboard_api.js", "dashboard_store.js"):
@@ -41,6 +44,9 @@ def test_dashboard_static_assets_are_available() -> None:
     assert b"main();" in javascript[1]
     assert b"__DASHBOARD_DATA_PLACEHOLDER__" not in javascript[1]
     assert b"window.__DASHBOARD_DATA__ || {}" in javascript[1]
+    assert "PV予測モデル".encode() not in javascript[1]
+    assert "第1 ${arrival".encode() not in javascript[1]
+    assert "日中最大SOC".encode() not in javascript[1]
     for path in ("dashboard_dates.js", "dashboard_api.js", "dashboard_store.js"):
         asset = _static_asset(f"/static/{path}")
         assert asset is not None and asset[0].startswith("text/javascript")

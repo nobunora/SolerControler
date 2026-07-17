@@ -7,7 +7,8 @@
     return {
       meta: null, pvDaily: new Map(), hourly: new Map(), energy: new Map(), cost: new Map(),
       battery: new Map(), batteryFlow: new Map(), monthly: [], params: [], latestSchedule: null,
-      dashboardWarnings: [], pvForecastDiagnostics: {}, dailyReview: {}, dates: [], loadingOlder: false,
+      dashboardWarnings: [], pvForecastDiagnostics: {}, dailyReview: {}, dailyReviews: new Map(), latestReviewDate: null,
+      dates: [], loadingOlder: false,
     };
   }
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
 from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourly_actuals
+from app.tariff import tiered_day_cost
 from app.utils import to_float
 
 
@@ -251,9 +252,16 @@ def _build_energy_daily(
     end_date_iso: str,
     pv_daily: list[dict[str, Any]],
     monitoring_daily: list[dict[str, Any]],
+    forecast_hourly: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     pv_by_day = {str(row.get("date")): row for row in pv_daily if row.get("date")}
     actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
+    hourly_load_by_day: dict[str, float] = {}
+    for row in forecast_hourly or []:
+        day = str(row.get("date") or "")
+        value = to_float(row.get("forecast_load_kwh"))
+        if day and value is not None:
+            hourly_load_by_day[day] = hourly_load_by_day.get(day, 0.0) + max(0.0, value)
     dates = {
         d
         for d in set(pv_by_day) | set(actual_by_day)
@@ -273,7 +281,14 @@ def _build_energy_daily(
                 "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),
                 "forecast_pv_calibration_factor": (pv or {}).get("forecast_pv_calibration_factor"),
                 "actual_pv_kwh": actual.get("actual_pv_kwh"),
-                "forecast_load_kwh": _rolling_load_forecast(day, actual_by_day),
+                "forecast_load_kwh": (
+                    hourly_load_by_day[day]
+                    if day in hourly_load_by_day
+                    else _rolling_load_forecast(day, actual_by_day)
+                ),
+                "forecast_load_source": (
+                    "forecast_hourly" if day in hourly_load_by_day else "rolling_14d_fallback"
+                ),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
             }
         )
@@ -684,6 +699,7 @@ def _build_dashboard_slice(
     window_days: int,
     pv_forecast_diagnostics: dict[str, Any] | None = None,
     daily_review: dict[str, Any] | None = None,
+    daily_reviews: list[dict[str, Any]] | None = None,
 ) -> DashboardSlice:
     meta = _meta_from_data(
         window_days=window_days,
@@ -707,6 +723,7 @@ def _build_dashboard_slice(
         ),
         pv_forecast_diagnostics=pv_forecast_diagnostics,
         daily_review=daily_review,
+        daily_reviews=daily_reviews,
     )
 
 
@@ -871,6 +888,7 @@ def _load_sqlite_slice(
             end_date_iso=end_date_iso,
             pv_daily=pv_daily,
             monitoring_daily=monitoring_daily,
+            forecast_hourly=forecast_hourly,
         )
 
         cost_monthly: list[dict[str, Any]] = []
@@ -1120,6 +1138,7 @@ def _load_postgres_slice(
                 end_date_iso=end_date_iso,
                 pv_daily=pv_daily,
                 monitoring_daily=monitoring_daily,
+                forecast_hourly=forecast_hourly,
             )
 
             cost_monthly: list[dict[str, Any]] = []
@@ -1270,7 +1289,11 @@ def _firestore_monitoring_daily(
         collection_name="dashboard_daily_metrics",
         start_date=start_date,
         end_date_iso=end_date_iso,
-        fields=["actual_pv_kwh", "actual_load_kwh", "charge_kwh", "discharge_kwh"],
+        fields=[
+            "actual_pv_kwh", "actual_load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh",
+            "day_buy_kwh", "night_buy_kwh", "review_night_charge_kwh", "morning_soc_percent",
+            "soc_min_percent", "soc_max_percent", "day_soc_max_percent", "sample_count", "first_sample_at", "latest_sample_at",
+        ],
     )
     if daily_rows:
         return daily_rows
@@ -1322,87 +1345,267 @@ def _open_dashboard_firestore_client():
     return client
 
 
-def _build_firestore_daily_review(
-    client,
+def _daily_metric_is_complete(row: dict[str, Any]) -> bool:
+    return (
+        int(to_float(row.get("sample_count")) or 0) >= 48
+        and str(row.get("first_sample_at") or "")[11:16] <= "00:00"
+        and str(row.get("latest_sample_at") or "")[11:16] >= "23:30"
+    )
+
+
+def _review_candidate_dates(
+    energy_daily: list[dict[str, Any]],
+    *,
+    end_date_iso: str,
+    today_iso: str | None = None,
+) -> list[str]:
+    yesterday = _date_add_iso(today_iso or _today_jst_iso(), -1) or end_date_iso
+    cutoff = min(end_date_iso, yesterday)
+    return sorted(
+        (
+            str(row.get("date"))
+            for row in energy_daily
+            if row.get("date")
+            and str(row.get("date")) <= cutoff
+            and to_float(row.get("actual_load_kwh")) is not None
+        ),
+        reverse=True,
+    )
+
+
+def _nested_dict(source: dict[str, Any], *keys: str) -> dict[str, Any]:
+    value: Any = source
+    for key in keys:
+        if not isinstance(value, dict):
+            return {}
+        value = value.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _plan_forecast_correction(plan: dict[str, Any]) -> dict[str, Any]:
+    correction = _nested_dict(plan, "decision_rationale", "forecast_correction")
+    if correction:
+        return correction
+    return _nested_dict(plan, "daytime_soc_optimization", "forecast_correction")
+
+
+def _weather_label(weather_code: Any) -> str:
+    code = to_float(weather_code)
+    if code is None:
+        return "-"
+    value = int(code)
+    if value == 0:
+        return "快晴"
+    if 1 <= value <= 3:
+        return "晴れ・曇り"
+    if value in {45, 48}:
+        return "霧"
+    if 51 <= value <= 67 or 80 <= value <= 82:
+        return "雨"
+    if 71 <= value <= 77 or 85 <= value <= 86:
+        return "雪"
+    if 95 <= value <= 99:
+        return "雷雨"
+    return f"天気コード{value}"
+
+
+def _weather_class_label(weather_class: Any) -> str | None:
+    labels = {
+        "clear": "快晴",
+        "sunny": "晴れ",
+        "cloudy": "曇り",
+        "fog": "霧",
+        "rain": "雨",
+        "snow": "雪",
+        "thunderstorm": "雷雨",
+    }
+    value = str(weather_class or "").strip().lower()
+    return labels.get(value) if value else None
+
+
+def _plan_analog_summary(plan: dict[str, Any], analog_plan: dict[str, Any] | None) -> dict[str, Any]:
+    floor = _nested_dict(_plan_forecast_correction(plan), "recent_and_analog_hourly_floor")
+    analog_day = str(floor.get("analog_day") or "").strip() or None
+    analog_forecast = _nested_dict(analog_plan or {}, "forecast")
+    analog_hourly_summary = _nested_dict(analog_forecast, "hourly_weather_summary")
+    analog_features = _nested_dict(
+        _plan_forecast_correction(analog_plan or {}),
+        "evening_load_temperature",
+        "target_features",
+    )
+    selected_features = _nested_dict(floor, "analog_features") or analog_features
+    hourly_temperatures = [
+        value
+        for row in analog_forecast.get("hourly_weather", [])
+        if isinstance(row, dict) and (value := to_float(row.get("temp_c"))) is not None
+    ]
+    weather = _weather_class_label(analog_hourly_summary.get("dominant_weather_class_7_17"))
+    if weather is None:
+        weather = _weather_class_label(analog_forecast.get("weather_class"))
+    return {
+        "analog_date": analog_day,
+        "analog_similarity": to_float(floor.get("analog_similarity")),
+        "analog_weather": weather or (_weather_label(analog_forecast.get("weather_code")) if analog_day else None),
+        "analog_max_temp_c": max(hourly_temperatures) if hourly_temperatures else to_float(selected_features.get("max_temp_c")),
+        "analog_min_temp_c": min(hourly_temperatures) if hourly_temperatures else to_float(selected_features.get("night_min_temp_c")),
+    }
+
+
+def _billing_usage_summary(
+    review_date: str,
+    daily_metrics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    close_day = _aggregation_close_day()
+    label = _accounting_month_label(review_date, close_day=close_day)
+    bounds = _accounting_period_bounds(label or "", close_day=close_day)
+    if bounds is None:
+        return {}
+    period_start, period_end = bounds
+    rows = sorted(
+        (
+            row for row in daily_metrics
+            if period_start <= str(row.get("date") or "") <= min(review_date, period_end)
+        ),
+        key=lambda row: str(row.get("date") or ""),
+    )
+    day_kwh = sum(max(0.0, to_float(row.get("day_buy_kwh")) or 0.0) for row in rows)
+    night_kwh = sum(max(0.0, to_float(row.get("night_buy_kwh")) or 0.0) for row in rows)
+    start_obj = date.fromisoformat(period_start)
+    end_obj = date.fromisoformat(period_end)
+    review_obj = min(date.fromisoformat(review_date), end_obj)
+    period_days = (end_obj - start_obj).days + 1
+    elapsed_days = max(1, (review_obj - start_obj).days + 1)
+    complete_period = review_obj >= end_obj
+    projected_day_kwh = day_kwh if complete_period else day_kwh * period_days / elapsed_days
+    projected_night_kwh = night_kwh if complete_period else night_kwh * period_days / elapsed_days
+    tier1 = max(0.0, float(os.getenv("NIGHT8_DAY_TIER1_UPPER_KWH", "90") or "90"))
+    tier2 = max(tier1, float(os.getenv("NIGHT8_DAY_TIER2_UPPER_KWH", "230") or "230"))
+    rate1 = max(0.0, float(os.getenv("NIGHT8_DAY_RATE_TIER1_YEN", "31.80") or "31.80"))
+    rate2 = max(0.0, float(os.getenv("NIGHT8_DAY_RATE_TIER2_YEN", "39.10") or "39.10"))
+    rate3 = max(0.0, float(os.getenv("NIGHT8_DAY_RATE_TIER3_YEN", "43.62") or "43.62"))
+    night_rate = max(0.0, float(os.getenv("NIGHT8_NIGHT_RATE_YEN", "28.85") or "28.85"))
+
+    def arrival(threshold: float, *, first_tier: bool = False) -> dict[str, Any]:
+        if first_tier:
+            return {"date": period_start, "status": "reached"}
+        cumulative = 0.0
+        for row in rows:
+            cumulative += max(0.0, to_float(row.get("day_buy_kwh")) or 0.0)
+            if cumulative >= threshold:
+                return {"date": str(row.get("date")), "status": "reached"}
+        daily_average = day_kwh / elapsed_days
+        if daily_average <= 0 or projected_day_kwh < threshold:
+            return {"date": None, "status": "not_expected"}
+        offset = max(0, math.ceil(threshold / daily_average) - 1)
+        predicted = min(start_obj + timedelta(days=offset), end_obj)
+        return {"date": predicted.isoformat(), "status": "forecast"}
+
+    projected_day_cost = tiered_day_cost(
+        projected_day_kwh,
+        tier1_upper_kwh=tier1,
+        tier2_upper_kwh=tier2,
+        rate_tier1_yen=rate1,
+        rate_tier2_yen=rate2,
+        rate_tier3_yen=rate3,
+    )
+    projected_night_cost = projected_night_kwh * night_rate
+    return {
+        "billing_period_start": period_start,
+        "billing_period_end": period_end,
+        "billing_close_day": close_day,
+        "cumulative_night_buy_kwh": night_kwh,
+        "cumulative_day_buy_kwh": day_kwh,
+        "projected_night_buy_kwh": projected_night_kwh,
+        "projected_day_buy_kwh": projected_day_kwh,
+        "projected_day_cost_yen": projected_day_cost,
+        "projected_night_cost_yen": projected_night_cost,
+        "projected_energy_cost_yen": projected_day_cost + projected_night_cost,
+        "tier1_arrival": arrival(0.0, first_tier=True),
+        "tier2_arrival": arrival(tier1),
+        "tier3_arrival": arrival(tier2),
+    }
+
+
+def _firestore_plans_by_date(client: Any, dates: list[str]) -> dict[str, dict[str, Any]]:
+    unique_dates = sorted({day for day in dates if _to_date_or_none(day) is not None})
+    if not unique_dates:
+        return {}
+    refs = [client.collection("night_charge_plans").document(day) for day in unique_dates]
+    out: dict[str, dict[str, Any]] = {}
+    for snap in client.get_all(refs):
+        if snap.exists:
+            out[str(snap.id)] = snap.to_dict() or {}
+    return out
+
+
+def _build_firestore_daily_reviews(
+    client: Any,
     *,
     end_date_iso: str,
     energy_daily: list[dict[str, Any]],
     battery_daily: list[dict[str, Any]],
     forecast_hourly: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build the latest available plan-versus-actual review from saved data only."""
-
-    energy_by_date = {str(row.get("date")): row for row in energy_daily if row.get("date")}
-    review_date = max(
-        (day for day, row in energy_by_date.items() if to_float(row.get("actual_pv_kwh")) is not None),
-        default=None,
-    )
-    if not review_date:
-        return {}
-    actual = energy_by_date[review_date]
-    battery = next((row for row in battery_daily if str(row.get("date")) == review_date), {})
-    hourly = [row for row in forecast_hourly if str(row.get("date")) == review_date]
-    forecast_load = sum(max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0) for row in hourly)
-    try:
-        plan = client.collection("night_charge_plans").document(review_date).get().to_dict() or {}
-    except Exception:
-        plan = {}
-    result = plan.get("result") if isinstance(plan.get("result"), dict) else {}
-    plan_forecast = plan.get("forecast") if isinstance(plan.get("forecast"), dict) else {}
-
-    end_next = _date_add_iso(review_date, 1) or review_date
-    sample_rows = []
-    for doc in (
-        client.collection("monitoring_samples")
-        .where("ts", ">=", review_date)
-        .where("ts", "<", end_next)
-        .order_by("ts")
-        .stream()
-    ):
-        sample_rows.append(doc.to_dict() or {})
-    previous = _date_add_iso(review_date, -1)
-    if previous:
-        for doc in (
-            client.collection("monitoring_samples")
-            .where("ts", ">=", f"{previous}T23:00:00")
-            .where("ts", "<", f"{previous}T23:59:59")
-            .order_by("ts")
-            .stream()
-        ):
-            sample_rows.append(doc.to_dict() or {})
-
-    daytime = [row for row in sample_rows if review_date in str(row.get("ts", "")) and "07:00:00" <= str(row.get("ts", ""))[11:] <= "22:59:59"]
-    nighttime = [
-        row for row in sample_rows
-        if (str(row.get("ts", "")).startswith(review_date) and str(row.get("ts", ""))[11:] <= "06:59:59")
-        or (previous and str(row.get("ts", "")).startswith(previous) and str(row.get("ts", ""))[11:] >= "23:00:00")
-    ]
-    today_samples = [row for row in sample_rows if str(row.get("ts", "")).startswith(review_date)]
-    soc_values = [to_float(row.get("soc_percent")) for row in today_samples]
-    soc_values = [value for value in soc_values if value is not None]
-    total = lambda rows, field: sum(max(0.0, to_float(row.get(field)) or 0.0) for row in rows)
-    return {
-        "date": review_date,
-        "review_date": review_date,
-        "forecast_date": review_date if hourly else None,
-        "plan_date": plan_forecast.get("date") or (review_date if plan else None),
-        "data_last_at": max((str(row.get("ts", "")) for row in today_samples), default=None),
-        "target_soc_percent": result.get("target_soc_7_percent", battery.get("setting_soc_target_percent")),
-        "forecast_night_charge_kwh": result.get("required_night_charge_kwh", battery.get("night_charge_kwh")),
-        "forecast_pv_kwh": result.get("final_predicted_pv_kwh", actual.get("forecast_pv_kwh")),
-        "forecast_load_kwh": forecast_load if hourly else actual.get("forecast_load_kwh"),
-        "forecast_load_source": "forecast_hourly" if hourly else "energy_daily_fallback",
-        "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
-        "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
-        "forecast_source": result.get("final_pv_forecast_source"),
-        "actual_pv_kwh": actual.get("actual_pv_kwh"),
-        "actual_load_kwh": actual.get("actual_load_kwh"),
-        "actual_night_charge_kwh": total(nighttime, "charge_kwh"),
-        "actual_day_buy_kwh": total(daytime, "buy_kwh"),
-        "actual_sell_kwh": total(today_samples, "sell_kwh"),
-        "actual_soc_min_percent": min(soc_values) if soc_values else None,
-        "actual_soc_max_percent": max(soc_values) if soc_values else None,
+    daily_metrics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    candidates = _review_candidate_dates(energy_daily, end_date_iso=end_date_iso)
+    complete_metrics = {
+        str(row.get("date")): row
+        for row in daily_metrics
+        if row.get("date") and _daily_metric_is_complete(row)
     }
+    candidates = [day for day in candidates if day in complete_metrics]
+    plans = _firestore_plans_by_date(client, candidates)
+    analog_dates: list[str] = []
+    for plan in plans.values():
+        floor = _nested_dict(_plan_forecast_correction(plan), "recent_and_analog_hourly_floor")
+        if floor.get("analog_day"):
+            analog_dates.append(str(floor["analog_day"]))
+    analog_plans = _firestore_plans_by_date(client, analog_dates)
+    energy_by_date = {str(row.get("date")): row for row in energy_daily if row.get("date")}
+    battery_by_date = {str(row.get("date")): row for row in battery_daily if row.get("date")}
+    hourly_by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in forecast_hourly:
+        hourly_by_date.setdefault(str(row.get("date") or ""), []).append(row)
+
+    reviews: list[dict[str, Any]] = []
+    for review_date in sorted(candidates):
+        actual = energy_by_date[review_date]
+        metrics = complete_metrics[review_date]
+        battery = battery_by_date.get(review_date, {})
+        hourly = hourly_by_date.get(review_date, [])
+        plan = plans.get(review_date, {})
+        result = _nested_dict(plan, "result")
+        plan_forecast = _nested_dict(plan, "forecast")
+        analog_day = _plan_analog_summary(plan, None).get("analog_date")
+        forecast_load = sum(max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0) for row in hourly)
+        review = {
+            "date": review_date,
+            "review_date": review_date,
+            "forecast_date": review_date if hourly else None,
+            "plan_date": plan_forecast.get("date") or (review_date if plan else None),
+            "data_last_at": metrics.get("latest_sample_at"),
+            "complete_day": True,
+            "target_soc_percent": battery.get("setting_soc_target_percent") if battery.get("setting_soc_target_percent") is not None else result.get("target_soc_7_percent"),
+            "actual_morning_soc_percent": metrics.get("morning_soc_percent"),
+            "forecast_night_charge_kwh": battery.get("night_charge_kwh") if battery.get("night_charge_kwh") is not None else result.get("required_night_charge_kwh"),
+            "forecast_pv_kwh": result.get("final_predicted_pv_kwh", actual.get("forecast_pv_kwh")),
+            "forecast_load_kwh": forecast_load if hourly else actual.get("forecast_load_kwh"),
+            "forecast_load_source": "forecast_hourly" if hourly else "energy_daily_fallback",
+            "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
+            "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
+            "actual_pv_kwh": actual.get("actual_pv_kwh"),
+            "actual_load_kwh": actual.get("actual_load_kwh"),
+            "actual_night_charge_kwh": metrics.get("review_night_charge_kwh"),
+            "actual_day_buy_kwh": metrics.get("day_buy_kwh"),
+            "actual_sell_kwh": metrics.get("sell_kwh"),
+            "actual_soc_min_percent": metrics.get("soc_min_percent"),
+            "actual_soc_max_percent": metrics.get("soc_max_percent"),
+            "actual_day_soc_max_percent": metrics.get("day_soc_max_percent"),
+            **_plan_analog_summary(plan, analog_plans.get(str(analog_day))),
+            **_billing_usage_summary(review_date, daily_metrics),
+        }
+        reviews.append(review)
+    return reviews
 
 
 def _firestore_forecast_hourly_between(
@@ -1551,23 +1754,21 @@ def _load_firestore_slice(
         end_date_iso=end_date_iso,
         pv_daily=pv_daily,
         monitoring_daily=monitoring_daily,
+        forecast_hourly=forecast_hourly,
     )
-    review_date = max(
-        (
-            str(row.get("date"))
-            for row in energy_daily
-            if row.get("date") and to_float(row.get("actual_pv_kwh")) is not None
-        ),
-        default=None,
-    )
-    review_forecast_hourly = [
-        row for row in forecast_hourly if review_date and str(row.get("date")) == review_date
-    ]
-
+    daily_reviews: list[dict[str, Any]] = []
     cost_monthly: list[dict[str, Any]] = []
     params: list[dict[str, Any]] = []
     latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
     if include_static:
+        daily_reviews = _build_firestore_daily_reviews(
+            client,
+            end_date_iso=end_date_iso,
+            energy_daily=energy_daily,
+            battery_daily=battery_daily,
+            forecast_hourly=forecast_hourly,
+            daily_metrics=monitoring_daily,
+        )
         all_cost_daily: list[dict[str, Any]] = []
         for doc in client.collection("cost_daily").order_by("date").stream():
             row = doc.to_dict() or {}
@@ -1637,17 +1838,8 @@ def _load_firestore_slice(
         pv_forecast_diagnostics=(
             _read_latest_pv_forecast_diagnostics_from_firestore(client) if include_static else {}
         ),
-        daily_review=(
-            _build_firestore_daily_review(
-                client,
-                end_date_iso=end_date_iso,
-                energy_daily=energy_daily,
-                battery_daily=battery_daily,
-                forecast_hourly=review_forecast_hourly,
-            )
-            if include_static
-            else {}
-        ),
+        daily_review=daily_reviews[-1] if daily_reviews else {},
+        daily_reviews=daily_reviews,
     )
 
 

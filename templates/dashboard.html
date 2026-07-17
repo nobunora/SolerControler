@@ -19,8 +19,13 @@
 
     <section class="grid">
       <article class="card full">
-        <h2>1. 予実レビュー（最新実績日）</h2>
-        <p id="dailyReviewNote" class="desc">前日までの計画値とKP-NET実績を比較します。</p>
+        <h2>1. 予実レビュー（昨日まで）</h2>
+        <div class="review-nav" aria-label="予実レビューの日付切り替え">
+          <button id="dailyReviewPrevBtn" class="period-button" type="button">← 前日</button>
+          <span id="dailyReviewDate" class="period-label">読み込み中</span>
+          <button id="dailyReviewNextBtn" class="period-button" type="button">翌日 →</button>
+        </div>
+        <p id="dailyReviewNote" class="desc">24時間分が揃った前日までの計画値とKP-NET実績、15日開始・14日締めの買電累計と電力量料金予想を表示します。</p>
         <div id="dailyReviewGrid" class="diag-grid" aria-label="予実レビュー"></div>
         <div id="dailyReviewFindings" class="diag-path" aria-label="予実レビューの主な乖離"></div>
       </article>

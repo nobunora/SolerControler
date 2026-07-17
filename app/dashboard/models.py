@@ -18,6 +18,7 @@ class DashboardData:
     dashboard_warnings: list[dict[str, Any]] = field(default_factory=list)
     pv_forecast_diagnostics: dict[str, Any] = field(default_factory=dict)
     daily_review: dict[str, Any] = field(default_factory=dict)
+    daily_reviews: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

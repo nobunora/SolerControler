@@ -79,6 +79,7 @@ def _empty_dashboard_payload() -> dict:
         "dashboard_warnings": [],
         "pv_forecast_diagnostics": {},
         "daily_review": {},
+        "daily_reviews": [],
         "meta": {
             "window_days": 31,
             "oldest_loaded_date": None,

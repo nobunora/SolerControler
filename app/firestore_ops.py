@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -589,6 +589,7 @@ def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
     """Materialize daily monitoring totals for fast dashboard reads."""
 
     by_day: dict[str, dict[str, float | str | None]] = {}
+    review_night_charge_by_day: dict[str, float] = defaultdict(float)
     for doc in client.collection("monitoring_samples").stream():
         row = doc.to_dict() or {}
         ts = str(row.get("ts", doc.id)).strip()
@@ -604,24 +605,50 @@ def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
                 "sell_kwh": 0.0,
                 "charge_kwh": 0.0,
                 "discharge_kwh": 0.0,
+                "day_buy_kwh": 0.0,
+                "night_buy_kwh": 0.0,
+                "morning_soc_percent": None,
                 "soc_min_percent": None,
                 "soc_max_percent": None,
+                "day_soc_max_percent": None,
+                "sample_count": 0.0,
+                "first_sample_at": ts,
                 "latest_sample_at": ts,
             },
         )
         for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
             target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
             acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
+        minute = ts[11:16]
+        buy_kwh = max(0.0, float(row.get("buy_kwh") or 0.0))
+        if "07:00" <= minute < "23:00":
+            acc["day_buy_kwh"] = float(acc["day_buy_kwh"] or 0.0) + buy_kwh
+        else:
+            acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
+        charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
+        review_day = day
+        if minute >= "23:00":
+            review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+        if minute < "07:00" or minute >= "23:00":
+            review_night_charge_by_day[review_day] += charge_kwh
         soc = to_float(row.get("soc_percent"))
         if soc is not None:
             acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
             acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
+            if "07:00" <= minute < "23:00":
+                acc["day_soc_max_percent"] = soc if acc["day_soc_max_percent"] is None else max(float(acc["day_soc_max_percent"]), soc)
+            if minute == "07:00":
+                acc["morning_soc_percent"] = soc
+        acc["sample_count"] = float(acc["sample_count"] or 0.0) + 1.0
+        if ts < str(acc["first_sample_at"] or ""):
+            acc["first_sample_at"] = ts
         if ts > str(acc["latest_sample_at"] or ""):
             acc["latest_sample_at"] = ts
 
     batch = client.batch()
     count = 0
     for day, metrics in by_day.items():
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
         batch.set(client.collection("dashboard_daily_metrics").document(day), {"date": day, **metrics, "updated_at": updated_at}, merge=True)
         count += 1
         if count >= 450:
