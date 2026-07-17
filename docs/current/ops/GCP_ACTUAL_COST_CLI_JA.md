@@ -35,8 +35,11 @@ pwsh -File .\scripts\get_gcp_actual_cost.ps1 -AsJson
 pwsh -File .\scripts\get_gcp_actual_cost.ps1 -TopServices 20
 ```
 
-### 明示的にBilling Accountを指定
+### Billing Accountの設定元
 
 ```powershell
-pwsh -File .\scripts\get_gcp_actual_cost.ps1 -BillingAccountId "015F9D-A6B953-764C61"
+GCP_BILLING_ACCOUNT_ID=<billing-account-id>
 ```
+
+実値はGit管理外の `.env` に保存します。通常は引数指定せず、スクリプトが
+`GCP_PROJECT_ID` と `GCP_BILLING_ACCOUNT_ID` を読み込みます。

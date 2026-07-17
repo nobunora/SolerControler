@@ -47,26 +47,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 firesto
 `firestore` バックエンド（推奨）でデプロイ:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
-  -ProjectId <PROJECT_ID> `
-  -Region us-central1 `
-  -SchedulerRegion us-central1 `
-  -Repository solar-runner `
-  -DataBackend firestore
+pwsh -NoProfile -File .\scripts\check_production_env.ps1 -CheckCloud
+pwsh -NoProfile -File .\scripts\deploy_production_from_env.ps1
 ```
 
 これで以下の3つのCloud Schedulerジョブが作成されます。
 
 - `solar-battery-run-23`（23:00 JST）
-- `solar-battery-run-03`（04:30 JST）
+- `solar-battery-run-03`（04:00 JST）
 - `solar-battery-run-07`（07:00 JST）
 
 ## 4. ダッシュボード（任意）
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 builds submit --config cloudbuild.dashboard.yaml --project <PROJECT_ID> .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\gcloud.ps1 run services update solar-dashboard --region us-central1 --project <PROJECT_ID> --image us-central1-docker.pkg.dev/<PROJECT_ID>/solar-dashboard/dashboard:latest
-```
+ダッシュボードも `deploy_production_from_env.ps1` が `.env` のproject・region・image設定からビルドして更新します。
 
 ## 5. 無料枠チェック手順（毎月）
 

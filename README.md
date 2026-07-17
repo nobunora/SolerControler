@@ -275,17 +275,23 @@ python .\scripts\merge_csvs.py --input-root artifacts --include-source-file
 
 ## 5. Cloud Run Jobs デプロイ例
 
-推奨: 自動化スクリプトで 23:00 / 04:00夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。23:00は待機モードへの変更のみ、04:00にデータ取得・当日予測・DB反映・Sheetsエクスポート・Driveデータバックアップを集約します。
+本番更新では、個別値をコマンドラインへ再入力せず、Git管理外の `.env` を設定元にする統合スクリプトを使用します。
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\deploy_gcp_jobs.ps1 `
-  -ProjectId <PROJECT_ID> `
-  -Region us-central1 `
-  -SchedulerRegion us-central1 `
-  -DataBackend firestore `
-  -DriveBackupFolderId <DRIVE_FOLDER_ID> `
-  -RunSmokeTest
+pwsh -NoProfile -File .\scripts\check_production_env.ps1 -CheckCloud
+pwsh -NoProfile -File .\scripts\deploy_production_from_env.ps1
 ```
+
+統合スクリプトはpre-release、Cloud Run Jobs、Scheduler、Dashboard、DRY_RUN smoke、KP-NET CSV読込、Firestore反映、Google Driveデータバックアップを順に実行します。個別工程だけ再実行する場合も値は `.env` から読み込みます。
+
+```powershell
+pwsh -NoProfile -File .\scripts\run_kpnet_import_from_env.ps1
+pwsh -NoProfile -File .\scripts\run_drive_backup_cloud_from_env.ps1
+```
+
+`.env` の必須値が空なら、外部更新やビルドを始める前に停止します。認証情報、フォルダID、Spreadsheet ID、project固有値はリポジトリへコミットしません。
+
+内部では `deploy_gcp_jobs.ps1` が 23:00 / 04:00夜間コントローラ / 07:00 ジョブと Scheduler を一括登録します。通常はこの低レベルスクリプトを直接呼ばず、上記の `deploy_production_from_env.ps1` を使います。
 
 上記は以下を実施します:
 - API有効化

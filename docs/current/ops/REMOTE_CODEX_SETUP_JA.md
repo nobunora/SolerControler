@@ -98,7 +98,7 @@ DASHBOARD_BASIC_PASSWORD
 例外的に入れてよい可能性があるもの:
 
 ```text
-FIRESTORE_PROJECT_ID=codrivernavi-web-20260510
+FIRESTORE_PROJECT_ID=<read-only-project-id>
 FIRESTORE_DATABASE_ID=(default)
 DATA_BACKEND=sqlite
 ```
@@ -144,16 +144,17 @@ python -m pytest
 問題なければ、ローカルで本番デプロイを実行します。
 
 ```powershell
-scripts\deploy_gcp_jobs.ps1 -ProjectId codrivernavi-web-20260510
+pwsh -NoProfile -File scripts\check_production_env.ps1 -CheckCloud
+pwsh -NoProfile -File scripts\deploy_production_from_env.ps1
 ```
 
 必要な場合だけ、本番ジョブを手動実行します。
 
 ```powershell
-gcloud run jobs execute solar-battery-23 --project codrivernavi-web-20260510 --region us-central1
-gcloud run jobs execute solar-battery-03 --project codrivernavi-web-20260510 --region us-central1
-gcloud run jobs execute solar-battery-07 --project codrivernavi-web-20260510 --region us-central1
+pwsh -NoProfile -File scripts\run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 ```
+
+project・regionは `.env` から読み、AIが都度コマンドへ埋め込む運用には戻しません。
 
 ## リモートCodexが詰まったときの判断
 

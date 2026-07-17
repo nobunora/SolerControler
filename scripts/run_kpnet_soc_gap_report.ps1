@@ -1,8 +1,8 @@
 param(
     [string]$Date = "",
-    [string]$ProjectId = "codrivernavi-web-20260510",
-    [string]$UsernameSecret = "kp-monitor-username",
-    [string]$PasswordSecret = "kp-monitor-password",
+    [string]$ProjectId = "",
+    [string]$UsernameSecret = "",
+    [string]$PasswordSecret = "",
     [string]$FirestoreProjectId = "",
     [switch]$SkipDownload
 )
@@ -19,13 +19,25 @@ if ($PSVersionTable.PSEdition -ne "Core") {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
+. (Join-Path $PSScriptRoot 'production_env.ps1')
+Import-ProductionEnv
+
+if ([string]::IsNullOrWhiteSpace($ProjectId)) {
+    $ProjectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
+}
+if ([string]::IsNullOrWhiteSpace($UsernameSecret)) {
+    $UsernameSecret = Get-RequiredProductionEnv 'KP_MONITOR_USERNAME_SECRET'
+}
+if ([string]::IsNullOrWhiteSpace($PasswordSecret)) {
+    $PasswordSecret = Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
+}
 
 if ([string]::IsNullOrWhiteSpace($Date)) {
     $Date = Get-Date -Format "yyyy-MM-dd"
 }
 
 if ([string]::IsNullOrWhiteSpace($FirestoreProjectId)) {
-    $FirestoreProjectId = $ProjectId
+    $FirestoreProjectId = Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID'
 }
 
 if (-not $SkipDownload) {

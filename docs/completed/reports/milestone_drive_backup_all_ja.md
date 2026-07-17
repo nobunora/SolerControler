@@ -39,7 +39,7 @@
 - Commands run:
   - `python -m pytest tests/test_drive_backup.py -q`
   - `python -m py_compile app\drive_backup.py scripts\backup_drive.py`
-  - `python .\scripts\backup_drive.py --mode all --folder-id 1GrKxIHaQC0r8I2WMl3zkXBB5VBtkGrxE --pretty`
+  - `python .\scripts\backup_drive.py --mode all --folder-id $env:DRIVE_BACKUP_FOLDER_ID --pretty`
 - Results:
   - `tests/test_drive_backup.py`: 3 passed
   - `py_compile`: success

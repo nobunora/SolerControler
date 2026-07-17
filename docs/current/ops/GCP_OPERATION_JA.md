@@ -6,10 +6,10 @@
 
 - **Cloud Run Jobs**
   - `solar-battery-23`（毎日 23:00 JST）
-  - `solar-battery-03`（毎日 04:30 JST、夜間充電コントローラ）
+  - `solar-battery-03`（毎日 04:00 JST、夜間充電コントローラ）
   - `solar-battery-07`（毎日 07:00 JST）
 - **Cloud Scheduler**
-  - 23時ジョブ、04:30ジョブ、7時ジョブを定期起動
+  - 23時ジョブ、04:00ジョブ、7時ジョブを定期起動
 - **Artifact Registry**
   - コンテナイメージ管理
 - **Cloud Run Service（Dashboard）**
@@ -17,8 +17,8 @@
 
 ## 処理フロー
 
-1. 23:00 ジョブで翌日予報・CSV取得・夜間充電計画・設定反映
-2. 04:30 ジョブで夜間充電計画を確認し、必要時に強制充電へ切替
+1. 23:00 ジョブで外部取得を行わず、04:00判断まで蓄電池を待機モードへ変更
+2. 04:00 ジョブで予報・CSV取得、当日計画・DB反映・Sheets/Drive退避を行い、必要時に強制充電へ切替
 3. 07:00 ジョブで日中運用設定へ切替（グリーンモード等）
 4. 日次データはDBへ蓄積し、ダッシュボードで可視化
 
@@ -38,8 +38,8 @@
 
 ## リリース/更新
 
-- ダッシュボード更新: `cloudbuild.dashboard.yaml` でビルド後、Cloud Run Service更新
-- バッチ更新: `scripts/deploy_gcp_jobs.ps1` でJobとSchedulerを更新
+- 本番更新: `scripts/deploy_production_from_env.ps1` が `.env` を検証し、Dashboard、Job、Scheduler、smoke、データ取込、Driveバックアップを一括更新
+- 個別値をコマンドへ直接記述せず、事前に `scripts/check_production_env.ps1 -CheckCloud` を実行
   - 更新のたびに `scripts/check_gcp_free_tier_capacity.ps1` を自動実行
   - 更新のたびに `scripts/prune_artifact_registry.ps1` で旧digestを自動削除
   - `-FailOnCapacityOverage` を付けると無料枠超過時にデプロイを停止
@@ -55,8 +55,10 @@
 ### 容量チェック手動実行
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check_gcp_free_tier_capacity.ps1 `
-  -ProjectId project-a36d57fc-79a5-459a-827 `
+. .\scripts\production_env.ps1
+Import-ProductionEnv
+pwsh -NoProfile -File .\scripts\check_gcp_free_tier_capacity.ps1 `
+  -ProjectId $env:GCP_PROJECT_ID `
   -MaxArtifactRegistryMB 500 `
   -FailOnOverage
 ```

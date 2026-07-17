@@ -13,6 +13,8 @@
     [string]$SheetsSchedulerName = "solar-sheets-export-daily",
     [string]$RunServiceAccountName = "solar-battery-job-sa",
     [string]$SchedulerServiceAccountName = "solar-battery-scheduler-sa",
+    [string]$UsernameSecretName = "kp-monitor-username",
+    [string]$PasswordSecretName = "kp-monitor-password",
     [ValidateSet("sqlite", "postgres", "firestore")]
     [string]$DataBackend = "firestore",
     [string]$PgHost = "",
@@ -22,6 +24,7 @@
     [string]$PgPassword = "",
     [string]$PgSslMode = "prefer",
     [switch]$DisableSheetsExport,
+    [switch]$DisableDriveBackup,
     [string]$SheetsSpreadsheetId = "",
     [string]$SheetsSpreadsheetTitle = "SolarController Backup",
     [string]$SheetsShareEmail = "",
@@ -351,8 +354,17 @@ $driveBackupFolderResolved = $DriveBackupFolderId
 if (-not $driveBackupFolderResolved -and $envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID")) {
     $driveBackupFolderResolved = [string]$envMap["DRIVE_BACKUP_FOLDER_ID"]
 }
-$usernameSecret = "kp-monitor-username"
-$passwordSecret = "kp-monitor-password"
+if (-not $DisableDriveBackup.IsPresent -and -not $driveBackupFolderResolved) {
+    throw "Drive backup is enabled, but DRIVE_BACKUP_FOLDER_ID is empty. Set it in .env or use -DisableDriveBackup explicitly."
+}
+if ($sheetsExportEnabled -and -not $sheetsIdResolved) {
+    throw "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. Set it in .env or use -DisableSheetsExport explicitly."
+}
+if ($DisableDriveBackup.IsPresent) {
+    $driveBackupFolderResolved = ""
+}
+$usernameSecret = $UsernameSecretName
+$passwordSecret = $PasswordSecretName
 
 function Test-SecretExists {
     param([string]$SecretName)
@@ -595,15 +607,6 @@ Write-Host "Deploy Cloud Run jobs..."
 Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg
 Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
-
-if ($sheetsExportEnabled -and -not [bool]$sheetsIdResolved) {
-    Write-Warning "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty. 04:00 integrated export will skip."
-}
-if ($DriveBackupFolderId -or ($envMap.ContainsKey("DRIVE_BACKUP_FOLDER_ID") -and [string]$envMap["DRIVE_BACKUP_FOLDER_ID"])) {
-    if (-not [bool]$driveBackupFolderResolved) {
-        Write-Warning "Drive backup folder is configured, but the value is empty after resolution. 04:00 integrated backup will skip."
-    }
-}
 
 Write-Host "Grant run.invoker to scheduler service account..."
 Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null

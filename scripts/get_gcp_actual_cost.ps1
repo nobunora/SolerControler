@@ -7,6 +7,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$productionEnv = Join-Path $PSScriptRoot 'production_env.ps1'
+$envFile = Join-Path (Split-Path $PSScriptRoot -Parent) '.env'
+if ((Test-Path -LiteralPath $productionEnv) -and (Test-Path -LiteralPath $envFile)) {
+    . $productionEnv
+    Import-ProductionEnv -Path $envFile
+    if (-not $ProjectId) {
+        $ProjectId = Get-ProductionEnv 'GCP_PROJECT_ID'
+    }
+    if (-not $BillingAccountId) {
+        $BillingAccountId = Get-ProductionEnv 'GCP_BILLING_ACCOUNT_ID'
+    }
+}
+
 if ($TopServices -lt 1) {
     throw "-TopServices must be 1 or greater."
 }
