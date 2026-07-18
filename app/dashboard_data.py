@@ -1226,6 +1226,16 @@ def _load_postgres_slice(
         conn.close()
 
 
+@dataclass(frozen=True)
+class PostgresDashboardRepository:
+    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
+        return _load_postgres_slice(
+            end_date=request.end_date,
+            window_days=request.window_days,
+            include_static=request.include_static,
+        )
+
+
 def _firestore_date_value(raw: Any) -> str | None:
     if isinstance(raw, datetime):
         return raw.date().isoformat()
@@ -1868,7 +1878,9 @@ def load_dashboard_slice(
     backend = os.getenv("DATA_BACKEND", "sqlite").strip().lower()
     days = min(max(1, int(window_days)), 365)
     if backend == "postgres":
-        return _load_postgres_slice(end_date=end_date, window_days=days, include_static=include_static)
+        return PostgresDashboardRepository().load_dashboard(
+            DashboardLoadRequest(end_date=end_date, window_days=days, include_static=include_static)
+        )
     if backend == "firestore":
         project_id, database_id = _dashboard_firestore_config()
         key = (project_id, database_id, end_date, days, include_static)
