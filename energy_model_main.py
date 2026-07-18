@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
-from app.energy_plan import PlanDocumentV1
+from app.energy_plan import EnergyPlanOutput as EnergyModelOutput, PlanDocumentV1
 from app.energy_model import (
     DaytimeSocOptimizationResult,
     EnergyModelCoefficients,
@@ -205,18 +205,6 @@ class OptimizationDecision:
     result_payload: dict[str, Any]
     optimization_payload: dict[str, object] | None
     cost_optimization_payload: dict[str, object] | None
-
-
-@dataclass(frozen=True)
-class EnergyModelOutput:
-    document: PlanDocumentV1
-    output_path: Path
-
-    def persist(self) -> None:
-        self.output_path.write_text(
-            json.dumps(self.document.to_payload(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
