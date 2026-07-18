@@ -15,6 +15,7 @@ Do not read all docs. Pick one category, then one file.
 - `current/product/`: product behavior, decision rules, forecasts, and public description.
 - `current/ops/`: Google Cloud and remote operation references.
 - `current/prompts/`: reusable prompts that still reference the current behavior.
+- current/refactor/architecture_hardening/: staged, evidence-driven architecture hardening plan and handoff log.
 
 ## Completed Work
 
