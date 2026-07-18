@@ -1104,6 +1104,16 @@ class KpNetClient:
             "Referer": self._url(referer_path),
         }
 
+    @staticmethod
+    def _json_object(response: requests.Response, *, operation: str) -> dict[str, Any]:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"KP-NET {operation} returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"KP-NET {operation} returned a non-object JSON payload")
+        return payload
+
     def _post(self, path: str, data: dict[str, Any] | None = None, **kwargs: Any) -> requests.Response:
         resp = self.session.post(
             self._url(path),
@@ -1222,19 +1232,20 @@ class KpNetClient:
         start = time.time()
         while time.time() - start < max_wait_sec:
             resp = self._post(path, data=payload, headers=headers)
-            data = resp.json()
-            if isinstance(data, dict) and data.get("status") == 1:
+            data = self._json_object(resp, operation=path)
+            if data.get("status") == 1:
                 return data
             time.sleep(0.6)
         raise TimeoutError(f"Polling timeout: {path}")
 
     def read_current_settings(self) -> dict[str, Any]:
         headers = self._ajax_headers("remotesetting/pcssetting")
-        req = self._post(
+        req_response = self._post(
             "remotesetting/pcssetting/read/request",
             data={"_csrf": self.csrf_setting, "pcsCategory": "BatterySetting", "pcsid": self.pcsid},
             headers=headers,
-        ).json()
+        )
+        req = self._json_object(req_response, operation="settings read request")
         comm = req.get("data", {})
         result = self._poll_json(
             "remotesetting/pcssetting/read/response",
@@ -1246,21 +1257,23 @@ class KpNetClient:
 
     def candidate_map(self, candidate_type: str, value_list_path: str) -> dict[str, str]:
         headers = self._ajax_headers("remotesetting/pcssetting")
-        req = self._post(
+        req_response = self._post(
             "remotesetting/pcssetting/read/request/candidate",
             data={"candidateType": candidate_type},
             headers=headers,
-        ).json()
+        )
+        req = self._json_object(req_response, operation="candidate read request")
         comm = req.get("data", {})
         self._poll_json(
             "remotesetting/pcssetting/read/response/candidate",
             {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
             headers=headers,
         )
-        list_resp = self._post(
+        list_response = self._post(
             value_list_path,
             headers=headers,
-        ).json()
+        )
+        list_resp = self._json_object(list_response, operation="candidate value list")
         result: dict[str, str] = {}
         for item in list_resp.get("data", []):
             code = str(item.get("code", ""))
@@ -1325,7 +1338,8 @@ class KpNetClient:
             "Referer": self._url("remotesetting/pcssettingconfirm/batterysetting"),
         }
 
-        req = self._post("remotesetting/pcssetting/write/request", data=form_data, headers=headers).json()
+        req_response = self._post("remotesetting/pcssetting/write/request", data=form_data, headers=headers)
+        req = self._json_object(req_response, operation="settings write request")
         comm = req.get("data", {})
         self._poll_json(
             "remotesetting/pcssetting/write/response",

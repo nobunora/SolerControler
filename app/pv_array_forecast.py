@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -16,6 +17,42 @@ from app.utils import env_bool, env_float_clamped, parse_csv_float, to_float, to
 
 
 HttpGet = Callable[..., Any]
+
+
+def _response_json_object(response: Any, *, provider: str) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"{provider} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{provider} returned a non-object JSON payload")
+    return payload
+
+
+def _http_get_with_retry(
+    http_get: HttpGet,
+    url: str,
+    *,
+    provider: str,
+    **kwargs: Any,
+) -> Any:
+    max_attempts = max(1, int(os.getenv("PV_HTTP_MAX_ATTEMPTS", "2")))
+    retry_delay_seconds = max(0.0, float(os.getenv("PV_HTTP_RETRY_DELAY_SECONDS", "0.5")))
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = http_get(url, **kwargs)
+            response.raise_for_status()
+            return response
+        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            retryable = status_code is None or 500 <= int(status_code) < 600
+            if attempt >= max_attempts or not retryable:
+                raise RuntimeError(
+                    f"{provider} request failed after {attempt} attempt(s)"
+                ) from exc
+            if retry_delay_seconds > 0:
+                time.sleep(retry_delay_seconds)
+    raise AssertionError("unreachable")
 
 
 @dataclass(frozen=True)
@@ -154,8 +191,10 @@ def _fetch_hourly(
     http_get: HttpGet,
     timeout_sec: int = 30,
 ) -> list[dict[str, Any]]:
-    resp = http_get(
+    resp = _http_get_with_retry(
+        http_get,
         endpoint,
+        provider="Open-Meteo",
         params=_open_meteo_params(
             lat=lat,
             lon=lon,
@@ -166,8 +205,9 @@ def _fetch_hourly(
         ),
         timeout=timeout_sec,
     )
-    resp.raise_for_status()
-    hourly = resp.json().get("hourly", {})
+    hourly = _response_json_object(resp, provider="Open-Meteo").get("hourly", {})
+    if not isinstance(hourly, dict):
+        raise RuntimeError("Open-Meteo hourly payload is not an object")
     times = hourly.get("time", [])
     gti_values = hourly.get("global_tilted_irradiance", [])
     temp_values = hourly.get("temperature_2m", [])
@@ -338,8 +378,10 @@ def _fetch_archive_weather_daily_by_day(
     end_date: str,
     http_get: HttpGet,
 ) -> dict[str, dict[str, float | str | None]]:
-    resp = http_get(
+    resp = _http_get_with_retry(
+        http_get,
         "https://archive-api.open-meteo.com/v1/archive",
+        provider="Open-Meteo archive",
         params={
             "latitude": lat,
             "longitude": lon,
@@ -350,8 +392,9 @@ def _fetch_archive_weather_daily_by_day(
         },
         timeout=30,
     )
-    resp.raise_for_status()
-    daily = resp.json().get("daily", {})
+    daily = _response_json_object(resp, provider="Open-Meteo archive").get("daily", {})
+    if not isinstance(daily, dict):
+        raise RuntimeError("Open-Meteo archive daily payload is not an object")
     times = daily.get("time", [])
     weather_codes = daily.get("weather_code", [])
     sunshine_values = daily.get("sunshine_duration", [])
@@ -773,9 +816,13 @@ def forecast_pv_arrays_forecast_solar(
 
     for array in arrays:
         url = _forecast_solar_url(lat=lat, lon=lon, array=array)
-        resp = http_get(url, timeout=timeout_sec)
-        resp.raise_for_status()
-        payload = resp.json()
+        resp = _http_get_with_retry(
+            http_get,
+            url,
+            provider="Forecast.Solar",
+            timeout=timeout_sec,
+        )
+        payload = _response_json_object(resp, provider="Forecast.Solar")
         hourly_rows = _forecast_solar_series_to_rows(
             payload,
             array=array,
