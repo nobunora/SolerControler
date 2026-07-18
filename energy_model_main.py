@@ -23,6 +23,7 @@ from app.energy_plan import (
     PlanDocumentV1,
     WeatherHistoryFetchResult,
     WeatherHistoryPort,
+    build_historical_profile as _historical_profile,
 )
 from app.energy_model import (
     DaytimeSocOptimizationResult,
@@ -328,43 +329,6 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, Any]]:
                 )
     rows.sort(key=lambda x: x["dt"] if isinstance(x.get("dt"), datetime) else datetime.min)
     return rows
-
-
-def _historical_profile(rows: list[dict[str, Any]]) -> dict[str, float]:
-    by_day: dict[str, dict[str, float]] = {}
-    for r in rows:
-        dt = r["dt"]
-        assert isinstance(dt, datetime)
-        day = dt.date().isoformat()
-        d = by_day.setdefault(day, {"day_load": 0.0, "morning_load": 0.0, "day_pv": 0.0, "morning_pv": 0.0})
-        h = dt.hour
-        load = float(r["load"])
-        pv = float(r["pv"])
-        if 7 <= h < 23:
-            d["day_load"] += load
-            d["day_pv"] += pv
-        if 7 <= h < 10:
-            d["morning_load"] += load
-            d["morning_pv"] += pv
-
-    days = list(by_day.values())
-    if not days:
-        raise RuntimeError("日次集計対象データがありません")
-
-    avg_day_load = sum(d["day_load"] for d in days) / len(days)
-    avg_morning_load = sum(d["morning_load"] for d in days) / len(days)
-    sum_day_pv = sum(d["day_pv"] for d in days)
-    sum_morning_pv = sum(d["morning_pv"] for d in days)
-    morning_pv_ratio = (sum_morning_pv / sum_day_pv) if sum_day_pv > 0 else 0.25
-
-    # 日中余剰比率 (max(0, pv-load) はここでは直接ないので実務初期値)
-    midday_surplus_ratio = 0.375
-    return {
-        "avg_day_load_kwh": avg_day_load,
-        "avg_morning_load_kwh": avg_morning_load,
-        "morning_pv_ratio": morning_pv_ratio,
-        "midday_surplus_ratio": midday_surplus_ratio,
-    }
 
 
 def _to_optional_float(value: object) -> float | None:

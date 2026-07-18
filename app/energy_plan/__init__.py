@@ -5,6 +5,7 @@ from app.energy_plan.output import EnergyPlanOutput
 from app.energy_plan.ports import ForecastInputPort, HistoricalInputPort, WeatherHistoryPort
 from app.energy_plan.weather import WeatherHistoryFetchResult
 from app.energy_plan.settings import ForecastSettings, HistoricalInputSettings
+from app.energy_plan.historical import build_historical_profile
 
 __all__ = [
     "PlanDocumentV1",
@@ -15,4 +16,5 @@ __all__ = [
     "WeatherHistoryPort",
     "ForecastSettings",
     "HistoricalInputSettings",
+    "build_historical_profile",
 ]
