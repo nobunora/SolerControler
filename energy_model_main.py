@@ -37,9 +37,10 @@ from app.soc_cost_optimizer import (
     DEFAULT_SIGMA_BUCKETS,
     ForecastScenario,
     PvForecastUncertainty,
+    SocOptimizationRequest,
     SocCostModel,
     SigmaBucket,
-    optimize_soc_by_expected_cost,
+    optimize_soc_request,
     to_plain_dict,
 )
 from app.forecast_correction import (
@@ -2475,7 +2476,7 @@ def _run_soc_optimization(
             )
             or 0.0
         )
-        optimized = optimize_soc_by_expected_cost(
+        optimized = optimize_soc_request(SocOptimizationRequest(
             capacity_kwh=night_charge.result.effective_capacity_kwh,
             soc_now_percent=context.latest_soc_percent,
             reserve_soc_percent=night_charge.inputs.reserve_soc_percent,
@@ -2499,7 +2500,7 @@ def _run_soc_optimization(
             decision_prior_regret_yen_by_soc=prior_regret_curve,
             decision_prior_weight=prior_weight,
             decision_prior_max_penalty_yen=prior_max_penalty,
-        )
+        ))
         if optimized is not None:
             cost_payload = {
                 **to_plain_dict(optimized),

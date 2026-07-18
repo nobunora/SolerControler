@@ -215,6 +215,32 @@ DEFAULT_SIGMA_BUCKETS: tuple[SigmaBucket, ...] = (
 )
 
 
+@dataclass(frozen=True)
+class SocOptimizationRequest:
+    capacity_kwh: float
+    soc_now_percent: float
+    reserve_soc_percent: float
+    hourly_load_kwh: dict[int, float]
+    hourly_pv_kwh: dict[int, float]
+    uncertainty: PvForecastUncertainty
+    cost_model: SocCostModel
+    soc_step_percent: float = 1.0
+    max_target_soc_percent: float = 100.0
+    sigma_buckets: tuple[SigmaBucket, ...] = DEFAULT_SIGMA_BUCKETS
+    min_pv_multiplier: float = 0.0
+    max_pv_multiplier: float = 3.0
+    load_scenarios: tuple[ForecastScenario, ...] | None = None
+    weather_upside_probability: float = 0.0
+    weather_upside_z: float = 3.5
+    peak_soc_target_percent: float | None = None
+    peak_soc_unmet_penalty_yen_per_kwh: float = 0.0
+    peak_soc_unmet_penalty_factor: float = 1.0
+    expected_overnight_discharge_kwh: float = 0.0
+    decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None
+    decision_prior_weight: float = 0.0
+    decision_prior_max_penalty_yen: float = 0.0
+
+
 def to_plain_dict(obj: Any) -> dict[str, Any]:
     """Dataclass-to-dict helper kept here so payload creation stays readable."""
 
@@ -694,4 +720,32 @@ def optimize_soc_by_expected_cost(
         cost_model=cost_model,
         sigma_buckets=sigma_buckets,
         forecast_scenarios=scenarios,
+    )
+
+
+def optimize_soc_request(request: SocOptimizationRequest) -> SocCostOptimizationResult | None:
+    """Compatibility-preserving typed entrypoint for SOC optimization."""
+    return optimize_soc_by_expected_cost(
+        capacity_kwh=request.capacity_kwh,
+        soc_now_percent=request.soc_now_percent,
+        reserve_soc_percent=request.reserve_soc_percent,
+        hourly_load_kwh=request.hourly_load_kwh,
+        hourly_pv_kwh=request.hourly_pv_kwh,
+        uncertainty=request.uncertainty,
+        cost_model=request.cost_model,
+        soc_step_percent=request.soc_step_percent,
+        max_target_soc_percent=request.max_target_soc_percent,
+        sigma_buckets=request.sigma_buckets,
+        min_pv_multiplier=request.min_pv_multiplier,
+        max_pv_multiplier=request.max_pv_multiplier,
+        load_scenarios=request.load_scenarios,
+        weather_upside_probability=request.weather_upside_probability,
+        weather_upside_z=request.weather_upside_z,
+        peak_soc_target_percent=request.peak_soc_target_percent,
+        peak_soc_unmet_penalty_yen_per_kwh=request.peak_soc_unmet_penalty_yen_per_kwh,
+        peak_soc_unmet_penalty_factor=request.peak_soc_unmet_penalty_factor,
+        expected_overnight_discharge_kwh=request.expected_overnight_discharge_kwh,
+        decision_prior_regret_yen_by_soc=request.decision_prior_regret_yen_by_soc,
+        decision_prior_weight=request.decision_prior_weight,
+        decision_prior_max_penalty_yen=request.decision_prior_max_penalty_yen,
     )
