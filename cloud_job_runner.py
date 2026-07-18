@@ -22,6 +22,7 @@ from app.forced_charge import (
     ChargeState,
     decide_transition,
 )
+from app.settings.forced_charge import ForcedChargeSettings
 from app.soc_decision_feedback import build_soc_decision_feedback
 from app.constants import validate_soc_percent
 
@@ -1075,13 +1076,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         latest_soc_percent=latest_soc,
         csv_paths=csv_paths,
     )
-    poll_seconds = max(60, int(os.getenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180").strip() or "180"))
-    soc_margin = min(
-        target_soc,
-        max(0.0, float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0").strip() or "1.0")),
-    )
+    forced_charge_settings = ForcedChargeSettings.from_env()
+    poll_seconds = forced_charge_settings.poll_interval_seconds
+    soc_margin = min(target_soc, forced_charge_settings.stop_soc_margin_percent)
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
-    cutoff_hhmm = os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00"
+    cutoff_hhmm = forced_charge_settings.cutoff.strftime("%H:%M")
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if cutoff_seconds <= 0:
         print("[cloud_job_runner] 03-monitor cutoff already reached; keep standby until 07:00 job.", flush=True)
@@ -1144,28 +1143,23 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         flush=True,
     )
     started_at = time.time()
-    max_soc_failures = _env_int("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", 3, min_value=1)
     monitor_started_at = datetime.now(ZoneInfo(timezone_name))
     monitor_policy = ChargePolicy(
         target_soc_percent=target_soc,
         cutoff=monitor_started_at + timedelta(seconds=monitor_seconds),
         max_runtime_seconds=float(monitor_seconds),
-        max_sensor_failures=max_soc_failures,
+        max_sensor_failures=forced_charge_settings.max_consecutive_soc_failures,
         hysteresis_percent=soc_margin,
     )
     monitor_progress = ChargeMonitorProgress(previous_soc_percent=latest_soc)
     reapply_policy = ChargeReapplyPolicy(
-        enabled=os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower()
-        in {"1", "true", "yes", "on"},
-        after_stagnant_polls=_env_int("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", 2, min_value=1),
-        min_soc_delta_percent=_env_float(
-            "ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", 0.1, min_value=0.0
-        ),
+        enabled=forced_charge_settings.reapply_if_soc_not_increasing,
+        after_stagnant_polls=forced_charge_settings.reapply_after_polls,
+        min_soc_delta_percent=forced_charge_settings.reapply_min_soc_delta_percent,
     )
-    confirm_before_minutes = _env_int("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", 5, min_value=0)
     completion_estimator = ForcedChargeCompletionEstimator(
         rate_percent_per_hour=float(charge_rate_info.get("percent_per_hour") or 1.0),
-        confirm_before_minutes=confirm_before_minutes,
+        confirm_before_minutes=forced_charge_settings.completion_confirm_before_minutes,
     )
     while time.time() - started_at < monitor_seconds:
         try:

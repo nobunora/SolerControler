@@ -25,7 +25,7 @@ class ForcedChargeSettings:
     def from_env(cls) -> "ForcedChargeSettings":
         return cls(
             cutoff=parse_hhmm(
-                os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00"),
+                os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00",
                 name="ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
             ),
             poll_interval_seconds=max(60, env_int("ADJUST03_FORCE_MONITOR_POLL_SECONDS", default=180)),
