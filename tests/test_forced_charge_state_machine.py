@@ -6,8 +6,10 @@ import pytest
 
 from app.forced_charge import (
     ChargeEffect,
+    ChargeMonitorProgress,
     ChargeObservation,
     ChargePolicy,
+    ChargeReapplyPolicy,
     ChargeState,
     decide_transition,
 )
@@ -107,3 +109,50 @@ def test_stopping_rejects_non_terminal_destination() -> None:
             POLICY,
             terminal_after_stop=ChargeState.MONITORING,
         )
+
+
+def test_monitor_progress_reapplies_exactly_at_stagnant_poll_boundary() -> None:
+    policy = ChargeReapplyPolicy(True, after_stagnant_polls=2, min_soc_delta_percent=0.1)
+    progress = ChargeMonitorProgress(previous_soc_percent=40.0)
+
+    progress, should_reapply = progress.observe(
+        40.1, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+    assert should_reapply is False
+    assert progress.stagnant_polls == 1
+
+    progress, should_reapply = progress.observe(
+        40.2, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+    assert should_reapply is True
+    assert progress.stagnant_polls == 0
+
+
+def test_monitor_progress_resets_failures_after_sensor_recovers() -> None:
+    policy = ChargeReapplyPolicy(True, after_stagnant_polls=2, min_soc_delta_percent=0.1)
+    progress = ChargeMonitorProgress(previous_soc_percent=40.0)
+
+    progress, _ = progress.observe(
+        None, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+    progress, _ = progress.observe(
+        None, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+    progress, should_reapply = progress.observe(
+        41.0, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+
+    assert should_reapply is False
+    assert progress.consecutive_sensor_failures == 0
+    assert progress.previous_soc_percent == 41.0
+
+
+def test_monitor_progress_does_not_reapply_at_target_threshold() -> None:
+    policy = ChargeReapplyPolicy(True, after_stagnant_polls=1, min_soc_delta_percent=0.1)
+    progress = ChargeMonitorProgress(previous_soc_percent=79.0, stagnant_polls=1)
+
+    progress, should_reapply = progress.observe(
+        79.0, target_soc_percent=80.0, hysteresis_percent=1.0, reapply_policy=policy
+    )
+
+    assert should_reapply is False

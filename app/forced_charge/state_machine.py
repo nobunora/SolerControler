@@ -96,6 +96,73 @@ class ChargeTransition:
     terminal_after_stop: ChargeState | None = None
 
 
+@dataclass(frozen=True)
+class ChargeReapplyPolicy:
+    enabled: bool
+    after_stagnant_polls: int
+    min_soc_delta_percent: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.after_stagnant_polls, int) or isinstance(self.after_stagnant_polls, bool):
+            raise ValueError("after_stagnant_polls must be an integer")
+        if self.after_stagnant_polls <= 0:
+            raise ValueError("after_stagnant_polls must be positive")
+        if not math.isfinite(self.min_soc_delta_percent) or self.min_soc_delta_percent < 0:
+            raise ValueError("min_soc_delta_percent must be finite and non-negative")
+
+
+@dataclass(frozen=True)
+class ChargeMonitorProgress:
+    previous_soc_percent: float | None
+    consecutive_sensor_failures: int = 0
+    stagnant_polls: int = 0
+
+    def observe(
+        self,
+        soc_percent: float | None,
+        *,
+        target_soc_percent: float,
+        hysteresis_percent: float,
+        reapply_policy: ChargeReapplyPolicy,
+    ) -> tuple["ChargeMonitorProgress", bool]:
+        """Record one sensor result and decide whether forced mode needs reapplying."""
+        if soc_percent is None:
+            return (
+                ChargeMonitorProgress(
+                    previous_soc_percent=self.previous_soc_percent,
+                    consecutive_sensor_failures=self.consecutive_sensor_failures + 1,
+                    stagnant_polls=self.stagnant_polls,
+                ),
+                False,
+            )
+        if not math.isfinite(soc_percent) or not 0.0 <= soc_percent <= 100.0:
+            raise ValueError("soc_percent must be finite and within 0..100")
+
+        stagnant_polls = self.stagnant_polls
+        should_reapply = False
+        if (
+            reapply_policy.enabled
+            and self.previous_soc_percent is not None
+            and soc_percent < target_soc_percent - hysteresis_percent
+        ):
+            if soc_percent <= self.previous_soc_percent + reapply_policy.min_soc_delta_percent:
+                stagnant_polls += 1
+            else:
+                stagnant_polls = 0
+            if stagnant_polls >= reapply_policy.after_stagnant_polls:
+                should_reapply = True
+                stagnant_polls = 0
+
+        return (
+            ChargeMonitorProgress(
+                previous_soc_percent=soc_percent,
+                consecutive_sensor_failures=0,
+                stagnant_polls=stagnant_polls,
+            ),
+            should_reapply,
+        )
+
+
 def _stop(terminal: ChargeState, reason: str) -> ChargeTransition:
     return ChargeTransition(
         next_state=ChargeState.STOPPING,

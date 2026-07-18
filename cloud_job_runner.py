@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar, cast
 from zoneinfo import ZoneInfo
 
-from app.forced_charge import ChargeObservation, ChargePolicy, ChargeState, decide_transition
+from app.forced_charge import (
+    ChargeMonitorProgress,
+    ChargeObservation,
+    ChargePolicy,
+    ChargeReapplyPolicy,
+    ChargeState,
+    decide_transition,
+)
 from app.soc_decision_feedback import build_soc_decision_feedback
 from app.constants import validate_soc_percent
 
@@ -1137,8 +1144,6 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         flush=True,
     )
     started_at = time.time()
-    previous_soc = latest_soc
-    consecutive_soc_failures = 0
     max_soc_failures = _env_int("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", 3, min_value=1)
     monitor_started_at = datetime.now(ZoneInfo(timezone_name))
     monitor_policy = ChargePolicy(
@@ -1148,15 +1153,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         max_sensor_failures=max_soc_failures,
         hysteresis_percent=soc_margin,
     )
-    stagnant_polls = 0
-    reapply_enabled = os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    reapply_after_polls = _env_int("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", 2, min_value=1)
-    reapply_min_delta = _env_float("ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", 0.1, min_value=0.0)
+    monitor_progress = ChargeMonitorProgress(previous_soc_percent=latest_soc)
+    reapply_policy = ChargeReapplyPolicy(
+        enabled=os.getenv("ADJUST03_FORCE_REAPPLY_IF_SOC_NOT_INCREASING", "true").strip().lower()
+        in {"1", "true", "yes", "on"},
+        after_stagnant_polls=_env_int("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", 2, min_value=1),
+        min_soc_delta_percent=_env_float(
+            "ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", 0.1, min_value=0.0
+        ),
+    )
     confirm_before_minutes = _env_int("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", 5, min_value=0)
     completion_estimator = ForcedChargeCompletionEstimator(
         rate_percent_per_hour=float(charge_rate_info.get("percent_per_hour") or 1.0),
@@ -1179,45 +1184,40 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
         if latest_soc is not None:
-            consecutive_soc_failures = 0
             print(
                 f"[cloud_job_runner] 03-monitor latest_soc={latest_soc:.2f}% "
                 f"target={target_soc:.2f}% margin={soc_margin:.2f}%",
                 flush=True,
             )
-            if (
-                reapply_enabled
-                and previous_soc is not None
-                and latest_soc < (target_soc - soc_margin)
-            ):
-                if latest_soc <= previous_soc + reapply_min_delta:
-                    stagnant_polls += 1
-                else:
-                    stagnant_polls = 0
-                if stagnant_polls >= reapply_after_polls:
-                    print(
-                        "[cloud_job_runner] 03-monitor SOC not increasing; reapply forced profile "
-                        f"latest={latest_soc:.2f}% previous={previous_soc:.2f}%",
-                        flush=True,
-                    )
-                    try:
-                        _run_03_settings_profile_with_db(
-                            profile="forced",
-                            dynamic_forced_profile=True,
-                            label="03-forced-reapply",
-                        )
-                    except Exception:
-                        _attempt_03_fail_safe_standby(
-                            plan_meta,
-                            label="03-forced-reapply-failed-standby",
-                            reason="forced_reapply_failed_fail_safe",
-                        )
-                        raise
-                    stagnant_polls = 0
-            previous_soc = latest_soc
         else:
-            consecutive_soc_failures += 1
             print("[cloud_job_runner] 03-monitor latest SOC unavailable.", flush=True)
+
+        previous_soc = monitor_progress.previous_soc_percent
+        monitor_progress, should_reapply = monitor_progress.observe(
+            latest_soc,
+            target_soc_percent=target_soc,
+            hysteresis_percent=soc_margin,
+            reapply_policy=reapply_policy,
+        )
+        if should_reapply:
+            print(
+                "[cloud_job_runner] 03-monitor SOC not increasing; reapply forced profile "
+                f"latest={latest_soc:.2f}% previous={previous_soc:.2f}%",
+                flush=True,
+            )
+            try:
+                _run_03_settings_profile_with_db(
+                    profile="forced",
+                    dynamic_forced_profile=True,
+                    label="03-forced-reapply",
+                )
+            except Exception:
+                _attempt_03_fail_safe_standby(
+                    plan_meta,
+                    label="03-forced-reapply-failed-standby",
+                    reason="forced_reapply_failed_fail_safe",
+                )
+                raise
 
         observed_at = datetime.now(ZoneInfo(timezone_name))
         transition = decide_transition(
@@ -1225,7 +1225,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             ChargeObservation(
                 now=observed_at,
                 soc_percent=latest_soc,
-                consecutive_sensor_failures=consecutive_soc_failures,
+                consecutive_sensor_failures=monitor_progress.consecutive_sensor_failures,
                 elapsed_seconds=max(0.0, (observed_at - monitor_started_at).total_seconds()),
             ),
             monitor_policy,
