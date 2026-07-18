@@ -112,6 +112,31 @@ class ChargeReapplyPolicy:
 
 
 @dataclass(frozen=True)
+class ChargeDemand:
+    required_percent: float
+    required_kwh: float
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.required_percent) or self.required_percent < 0:
+            raise ValueError("required_percent must be finite and non-negative")
+        if not math.isfinite(self.required_kwh) or self.required_kwh < 0:
+            raise ValueError("required_kwh must be finite and non-negative")
+
+
+def requires_forced_charge(
+    demand: ChargeDemand,
+    *,
+    percent_epsilon: float,
+    kwh_epsilon: float,
+) -> bool:
+    if not math.isfinite(percent_epsilon) or percent_epsilon < 0:
+        raise ValueError("percent_epsilon must be finite and non-negative")
+    if not math.isfinite(kwh_epsilon) or kwh_epsilon < 0:
+        raise ValueError("kwh_epsilon must be finite and non-negative")
+    return demand.required_percent > percent_epsilon or demand.required_kwh > kwh_epsilon
+
+
+@dataclass(frozen=True)
 class ChargeMonitorProgress:
     previous_soc_percent: float | None
     consecutive_sensor_failures: int = 0

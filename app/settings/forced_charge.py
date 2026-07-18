@@ -20,6 +20,8 @@ class ForcedChargeSettings:
     reapply_after_polls: int
     reapply_min_soc_delta_percent: float
     completion_confirm_before_minutes: int
+    no_charge_percent_epsilon: float
+    no_charge_kwh_epsilon: float
 
     @classmethod
     def from_env(cls) -> "ForcedChargeSettings":
@@ -52,5 +54,11 @@ class ForcedChargeSettings:
             ),
             completion_confirm_before_minutes=max(
                 0, env_int("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", default=5)
+            ),
+            no_charge_percent_epsilon=max(
+                0.0, env_float("ADJUST03_NO_CHARGE_PERCENT_EPSILON", default=0.5)
+            ),
+            no_charge_kwh_epsilon=max(
+                0.0, env_float("ADJUST03_NO_CHARGE_KWH_EPSILON", default=0.05)
             ),
         )

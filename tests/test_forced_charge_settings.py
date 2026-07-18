@@ -34,6 +34,8 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
         reapply_after_polls=2,
         reapply_min_soc_delta_percent=0.1,
         completion_confirm_before_minutes=5,
+        no_charge_percent_epsilon=0.5,
+        no_charge_kwh_epsilon=0.05,
     )
 
 
@@ -46,6 +48,8 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     monkeypatch.setenv("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", "0")
     monkeypatch.setenv("ADJUST03_FORCE_REAPPLY_MIN_SOC_DELTA_PERCENT", "-1")
     monkeypatch.setenv("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", "-1")
+    monkeypatch.setenv("ADJUST03_NO_CHARGE_PERCENT_EPSILON", "-1")
+    monkeypatch.setenv("ADJUST03_NO_CHARGE_KWH_EPSILON", "-1")
 
     settings = ForcedChargeSettings.from_env()
 
@@ -57,3 +61,5 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     assert settings.reapply_after_polls == 1
     assert settings.reapply_min_soc_delta_percent == 0.0
     assert settings.completion_confirm_before_minutes == 0
+    assert settings.no_charge_percent_epsilon == 0.0
+    assert settings.no_charge_kwh_epsilon == 0.0

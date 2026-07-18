@@ -6,12 +6,14 @@ import pytest
 
 from app.forced_charge import (
     ChargeEffect,
+    ChargeDemand,
     ChargeMonitorProgress,
     ChargeObservation,
     ChargePolicy,
     ChargeReapplyPolicy,
     ChargeState,
     decide_transition,
+    requires_forced_charge,
 )
 
 
@@ -156,3 +158,15 @@ def test_monitor_progress_does_not_reapply_at_target_threshold() -> None:
     )
 
     assert should_reapply is False
+
+
+@pytest.mark.parametrize(
+    ("percent", "kwh", "expected"),
+    [(0.5, 0.05, False), (0.5001, 0.0, True), (0.0, 0.0501, True), (0.0, 0.0, False)],
+)
+def test_charge_demand_uses_existing_epsilon_boundaries(
+    percent: float, kwh: float, expected: bool
+) -> None:
+    assert requires_forced_charge(
+        ChargeDemand(percent, kwh), percent_epsilon=0.5, kwh_epsilon=0.05
+    ) is expected
