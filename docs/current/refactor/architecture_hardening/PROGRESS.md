@@ -31,7 +31,7 @@ For every phase, record:
 | 02 Shared boundaries | completed | c203f83 | Existing shared Operations primitives verified across all adapters; no safe new clone extraction required. |
 | 03 Operations deduplication | completed | 226dc6a | Daily-cost policy has one pure owner; three adapters retain mapping and persistence only. |
 | 04 Forced-charge orchestration | completed | b20048f | Monitor policy is state-owned; clock/device/status effects are injected ports. |
-| 05 Dashboard repository boundary | not started | - | |
+| 05 Dashboard repository boundary | completed | f18b248 | Three typed repository adapters feed the existing canonical shared assembly. |
 | 06 Energy-model decomposition | not started | - | |
 | 07 Integration and closeout | not started | - | |
 
@@ -345,6 +345,40 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: Forced-charge policy can be understood and tested in the focused state/settings modules without reading the full runner.
 - Intentionally deferred work: The explicit generic-initialization versus production no-command compatibility distinction needs a product-approved action contract before unification; dashboard work begins next.
 - What the next phase must not undo: Do not add safety decisions to runner branches, bypass injected ports, or read forced-charge env values inside state logic.
+
+### 2026-07-19 Phase 05 handoff
+
+- Date: 2026-07-19
+- Phase and step: Phase 05, Steps 05.1-05.10
+- Status: completed
+- Commits: `6a96c3c` repository contract/SQLite; `70bc0ce` PostgreSQL; `f18b248` Firestore.
+- Intent: Make backend selection depend on a dashboard use-case repository contract while retaining one canonical interpretation and public shape.
+- Changed files: `app/dashboard/repositories.py`, `app/dashboard/__init__.py`, `app/dashboard_data.py`, and this progress record.
+- Canonical models: Existing immutable `DashboardRawData`, `DashboardData`, and `DashboardSlice` remain the canonical source, public data, and metadata boundaries. No redundant giant snapshot was added.
+- Repository port/adapters: `DashboardRepository.load_dashboard(DashboardLoadRequest)` with `SQLiteDashboardRepository`, `PostgresDashboardRepository`, and `FirestoreDashboardRepository`.
+- Shared assembler entrypoint: `_build_dashboard_slice` derives shared meta/warnings then calls `app.dashboard.service.assemble_dashboard_slice`; all three source loaders already feed it with `DashboardRawData`.
+- Compatibility wrappers retained: `_load_sqlite_slice`, `_load_postgres_slice`, `_load_firestore_slice`, `load_dashboard_slice`, and legacy `load_dashboard_data` names/signatures remain.
+- Public contracts preserved: All `DashboardData` fields/types, schedule semantics/order, empty/default slices, end-date/window bounds, static diagnostics, backend dispatch, and HTTP-facing return objects.
+- Cache/fallback ownership: `load_dashboard_slice` remains the composition/cache boundary. Firestore cache key remains project/database/end-date/days/include-static with unchanged TTL and explicit clear; source-specific empty/error handling remains inside existing loaders.
+- Backend-specific mapping: SQL query/cursor/row handling and Firestore document/date/freshness handling stay in their source adapters; shared assembly has no backend-name branch.
+- Exact parity evidence: `test_build_dashboard_slice_preserves_raw_fields`, backend dispatch parameter table, latest-schedule permutation/run/date tests, Firestore cache identity tests, and `compare_rows` float/field/coverage tests all pass through the migrated paths.
+- Tests run: final `tests/test_dashboard_data.py tests/test_firestore_dashboard_metrics.py tests/test_dashboard_backend_parity.py` -> 34 passed. SQLite/PostgreSQL gates each passed 33 tests.
+- Static checks: `python -m compileall -q app dashboard_server.py` passed; `git diff --check` passed. `python -m mypy app/dashboard app/dashboard_data.py` reports the unchanged Phase 01 baseline of 9 errors in `app/dashboard_data.py`; the 4 focused `app/dashboard` files are clean.
+- Behavior differences: None observed.
+- Remaining dashboard debt: Source loader bodies remain large and co-located in `app/dashboard_data.py`; moving their SQL/document code to separate files would be mechanical ownership relocation without changing the established repository/canonical boundary and is deferred. Raw dictionaries remain at query/document mapper boundaries by design.
+- Next agent must read: `06_ENERGY_MODEL_DECOMPOSITION.md`; this Phase 05 handoff; `EnergyModelConfig`/`EnergyModelContext` definitions; `_load_execution_context`; `_run_soc_optimization`; `_build_energy_model_output`; `main` in `energy_model_main.py` (these symbol ranges count as five).
+- Next target symbols: `EnergyModelConfig.from_env`, `_load_execution_context`, forecast/consumption/night-charge use-case boundaries, `_run_soc_optimization`, `EnergyModelOutput.persist`, and `main`.
+- Do not reread: full `app/dashboard_data.py`, Operations adapters, full runner, or completed dashboard/forced-charge tests unless a regression points there.
+- Blockers: None.
+- System-level reason: Backend choice must not determine dashboard meaning or force presentation code to depend on storage calls.
+- Contribution to final target: Backend reads now satisfy one typed use-case port and feed the existing shared canonical assembly; composition selects adapters and owns cache.
+- Business meaning with clearer ownership: Repositories own source access/mapping; `DashboardRawData` carries canonical meaning; dashboard service owns public assembly; composition owns selection/cache.
+- Local-optimization risks considered: No generic query API, backend branch in assembler, schema normalization, cache rewrite, public field change, or one-backend canonical model was introduced.
+- Behavior evidence: Normal/empty/partial/schedule/fallback/cache/parity tests and 34-test final gate prove output compatibility.
+- Ownership evidence: Public dispatcher no longer invokes source loader functions directly; three concrete adapters implement the same narrow use-case contract; shared transformation remains single-owner.
+- Context reduction achieved: Backend selection can be understood from the request/Protocol/adapters without reading query bodies, and shared output meaning from models/service alone.
+- Intentionally deferred work: Physical file relocation of large source loaders and existing 9 mypy errors are separate cleanup; Phase 06 owns energy-model decomposition.
+- What the next phase must not undo: Do not bypass `DashboardRepository`, assemble public output inside a source adapter, or move cache/source schemas into canonical models.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.
