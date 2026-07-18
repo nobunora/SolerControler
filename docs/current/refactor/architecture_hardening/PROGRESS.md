@@ -32,7 +32,7 @@ For every phase, record:
 | 03 Operations deduplication | completed | 226dc6a | Daily-cost policy has one pure owner; three adapters retain mapping and persistence only. |
 | 04 Forced-charge orchestration | completed | b20048f | Monitor policy is state-owned; clock/device/status effects are injected ports. |
 | 05 Dashboard repository boundary | completed | f18b248 | Three typed repository adapters feed the existing canonical shared assembly. |
-| 06 Energy-model decomposition | not started | - | |
+| 06 Energy-model decomposition | completed | 06020c9 | Focused settings, input ports, history/forecast transforms, optimizer request, workflow, and output writer established. |
 | 07 Integration and closeout | not started | - | |
 
 Allowed status values:
@@ -379,6 +379,49 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: Backend selection can be understood from the request/Protocol/adapters without reading query bodies, and shared output meaning from models/service alone.
 - Intentionally deferred work: Physical file relocation of large source loaders and existing 9 mypy errors are separate cleanup; Phase 06 owns energy-model decomposition.
 - What the next phase must not undo: Do not bypass `DashboardRepository`, assemble public output inside a source adapter, or move cache/source schemas into canonical models.
+
+### 2026-07-19 Phase 06 handoff
+
+- Date: 2026-07-19
+- Phase and step: Phase 06, Steps 06.1-06.12
+- Status: completed
+- Commits: `b619d98` output writer; `346f68d` optimizer request; `7f81c04` planning workflow; `42b40aa` history/forecast ports; `897dfdf` weather result; `90ae215` weather port; `fb36970` focused settings; `0d95044` historical profile; `06020c9` forecast transforms.
+- Intent: Turn the energy-model entrypoint into composition over typed planning boundaries without changing algorithms, fallback order, numerical results, or plan documents.
+- New modules/ownership:
+  - `app.energy_plan.output`: UTF-8 plan persistence.
+  - `app.energy_plan.ports`: historical CSV/profile, forecast, and weather-history use-case ports.
+  - `app.energy_plan.weather`: typed weather-history access result/diagnostics.
+  - `app.energy_plan.settings`: forecast and historical-input environment settings.
+  - `app.energy_plan.historical`: pure daily/morning profile calculation.
+  - `app.energy_plan.forecast`: pure hourly coercion, PV summary, and sunset calculation.
+  - `app.soc_cost_optimizer.SocOptimizationRequest`: cohesive optimizer input while preserving the legacy 22-keyword API.
+- Composition root: `build_energy_plan(config, *, historical_input, forecast_input, weather_history_port)` coordinates context, consumption, night charge, selected PV, constraints, legacy optimization, cost optimization, and output construction without persisting. `main()` parses config, calls it, persists, prints path, and returns 0.
+- Focused settings groups: `ForecastSettings` owns `FORECAST_LATITUDE`, `FORECAST_LONGITUDE`, `TIMEZONE`; `HistoricalInputSettings` owns `ARTIFACTS_DIR`, minimum training days, and fallback window. Legacy `EnergyModelConfig` flat fields remain compatible.
+- External ports: `HistoricalInputPort`, `ForecastInputPort`, and `WeatherHistoryPort`, with default adapters calling existing source/fallback helpers and fakes proving external-free use.
+- Compatibility wrappers/aliases: `EnergyModelOutput` aliases `EnergyPlanOutput`; `_historical_profile`, `_coerce_hourly_float_dict`, `_hourly_pv_totals`, and `_estimate_sunset_hour` import focused implementations; `optimize_soc_by_expected_cost` retains its signature while `optimize_soc_request` serves new callers.
+- Typed planning boundaries: Existing `EnergyModelContext`, consumption/night/PV/constraint/decision bundles remain; no universal client-bearing context was added. `SocOptimizationRequest` groups only one optimizer use case.
+- Numerical parity tests: existing 37 energy model and 13 optimizer tests; direct hourly/history boundary tests; full request forwarding test; workflow identity/order test; fake port context/weather tests.
+- Output-schema tests: `PlanDocumentV1` 14-field order/result keys plus `EnergyPlanOutput` JSON payload, UTF-8, non-ASCII, and path behavior.
+- Required tests run: `test_energy_model.py` 37 passed; `test_energy_model_runtime.py` 6 passed; `test_soc_cost_optimizer.py` 13 passed; document plus focused energy-plan tests 10 passed (66 total).
+- Static checks: `python -m compileall -q app energy_model_main.py` passed; `python -m mypy app/energy_plan app/soc_cost_optimizer.py energy_model_main.py` -> no issues in 10 files; `git diff --check` passed.
+- Behavior differences: None observed. Forecast source priority, historical fallback, candidate/tie order, field names, path, encoding, and failure propagation remain.
+- Symbol ownership map: composition=`main`/`build_energy_plan`; settings=`app.energy_plan.settings` plus legacy config adapter; input access=`app.energy_plan.ports` default adapters; historical profile=`app.energy_plan.historical`; provider retrieval=`app.pv_array_forecast`/`app.pv_physical_forecast`; plan forecast normalization=`app.energy_plan.forecast`; consumption=`app.consumption_forecast`; constraints and request construction=focused stage functions in compatibility entrypoint; optimizer algorithm=`app.soc_cost_optimizer`; schema/writer=`app.energy_plan.models`/`output`.
+- Remaining large functions/justification: `_run_soc_optimization` retains diagnostics/request construction around the now-typed optimizer request; `_build_energy_model_output` retains exact V1 field assembly; provider selection/constraint helpers retain env-sensitive numerical/fallback order. Moving these mechanically would increase cross-module coupling without a new stable meaning; they remain named stage boundaries behind thin composition.
+- Remaining debt: Additional battery/cost settings groups may migrate when their owning algorithms move; raw provider dictionaries remain at compatibility/I/O boundaries; the compatibility module remains large even though routine use cases now have focused owners.
+- Known mypy errors in changed scope: None.
+- Final integration test groups: Phase 01 Groups A-D; forced-charge/KP-NET groups; dashboard/Firestore groups; focused energy-plan tests; full non-external suite split into bounded groups.
+- Next agent must read: `07_FINAL_INTEGRATION_AND_CLOSEOUT.md`; this Phase 06 handoff; Phase status table/test commands in `PROGRESS.md`; changed focused module lists from Phase 03-06. No oversized implementation body is required unless a failing test points to it.
+- Do not reread: full `energy_model_main.py`, full runner/dashboard loaders/Operations adapters, or archived/completed docs.
+- Blockers: None.
+- System-level reason: Weather/files/env/output effects and optimizer parameter fan-out previously forced routine planning changes to require entrypoint-wide context.
+- Contribution to final target: Planning calculations and effects now have explicit dependency direction from thin composition through typed ports/models to focused pure owners and output boundary.
+- Business meaning with clearer ownership: Historical load/PV profile, hourly forecast normalization, optimizer request, weather-history diagnostics, and plan persistence each have one owner.
+- Local-optimization risks considered: No coefficient tuning, fallback reorder, provider rewrite, optimizer redesign, universal context, DI framework, schema change, or mass function relocation was introduced.
+- Behavior evidence: 66 final tests plus direct schema/ports/request/history/forecast tests and clean focused mypy.
+- Ownership evidence: Pure helper bodies left the entrypoint, external access is injectable, output persistence left planning, request construction crosses one typed optimizer boundary, and main no longer owns stage policy.
+- Context reduction achieved: History, forecast normalization, settings, ports, optimizer inputs, and output can each be modified/tested from a focused module rather than reading the full entrypoint.
+- Intentionally deferred work: Provider-specific/env-sensitive large helpers remain compatibility stages until a future feature supplies a stable extraction boundary; Phase 07 performs integration and risk closeout only.
+- What the next phase must not undo: Do not read env/files/network in focused pure modules, bypass typed ports/request/output, or change plan schema/fallback/numerical order during closeout.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.
