@@ -10,6 +10,7 @@ import psycopg
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
 from app.operations.domain import (
     extract_battery_daily_from_summary as _extract_battery_daily_from_summary,
     extract_final_pv_source_from_plan as _extract_final_pv_source_from_plan,
@@ -457,6 +458,46 @@ def recalc_cost_daily(
     night8_day_rate_tier3_yen: float = 43.62,
     night8_night_rate_yen: float = 28.85,
 ) -> None:
+    with conn.cursor() as cur:
+        sample_rows = cur.execute(
+            "SELECT ts, load_kwh, buy_kwh FROM monitoring_samples ORDER BY ts"
+        ).fetchall()
+        results = calculate_daily_costs(
+            [
+                EnergyInterval(str(row["ts"] or ""), row["load_kwh"], row["buy_kwh"])
+                for row in sample_rows
+            ],
+            DailyCostPolicy(
+                tariff_mode=tariff_mode,
+                day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+                day_start_hhmm=night8_day_start_hhmm,
+                day_end_hhmm=night8_day_end_hhmm,
+                day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+                day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+                day_rate_tier1_yen=night8_day_rate_tier1_yen,
+                day_rate_tier2_yen=night8_day_rate_tier2_yen,
+                day_rate_tier3_yen=night8_day_rate_tier3_yen,
+                night_rate_yen=night8_night_rate_yen,
+            ),
+        )
+        for result in results:
+            cur.execute(
+                """
+                INSERT INTO cost_daily (date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT(date) DO UPDATE SET
+                    self_consumption_kwh=excluded.self_consumption_kwh,
+                    savings_yen=excluded.savings_yen,
+                    cumulative_kwh=excluded.cumulative_kwh,
+                    cumulative_yen=excluded.cumulative_yen,
+                    updated_at=excluded.updated_at
+                """,
+                (result.date, result.self_consumption_kwh, result.savings_yen,
+                 result.cumulative_kwh, result.cumulative_yen, updated_at),
+            )
+    conn.commit()
+    return
+
     mode = (tariff_mode or "flat").strip().lower()
     with conn.cursor() as cur:
         if mode == "flat":
