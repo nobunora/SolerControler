@@ -15,7 +15,7 @@ Do not read all docs. Pick one category, then one file.
 - `current/product/`: product behavior, decision rules, forecasts, and public description.
 - `current/ops/`: Google Cloud and remote operation references.
 - `current/prompts/`: reusable prompts that still reference the current behavior.
-- current/refactor/architecture_hardening/: completed implementation awaiting the final archive move; evidence, ownership map, and handoff log are in `PROGRESS.md`.
+- `completed/refactor/architecture_hardening/`: completed architecture-hardening implementation, evidence, ownership map, and handoff log.
 
 ## Completed Work
 

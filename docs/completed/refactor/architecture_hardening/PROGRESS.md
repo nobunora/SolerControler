@@ -33,7 +33,7 @@ For every phase, record:
 | 04 Forced-charge orchestration | completed | b20048f | Monitor policy is state-owned; clock/device/status effects are injected ports. |
 | 05 Dashboard repository boundary | completed | f18b248 | Three typed repository adapters feed the existing canonical shared assembly. |
 | 06 Energy-model decomposition | completed | 06020c9 | Focused settings, input ports, history/forecast transforms, optimizer request, workflow, and output writer established. |
-| 07 Integration and closeout | completed | pending final documentation commit | 335 non-external Python tests and all targeted/JS/static checks passed. |
+| 07 Integration and closeout | completed | 9ed393a | 335 non-external Python tests and all targeted/JS/static checks passed. |
 
 Allowed status values:
 
