@@ -6,11 +6,13 @@ import math
 import sqlite3
 import time
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
+from app.dashboard.repositories import DashboardLoadRequest
 from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourly_actuals
 from app.tariff import tiered_day_cost
 from app.utils import to_float
@@ -969,6 +971,19 @@ def _load_sqlite_slice(
         conn.close()
 
 
+@dataclass(frozen=True)
+class SQLiteDashboardRepository:
+    db_path: Path
+
+    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
+        return _load_sqlite_slice(
+            self.db_path,
+            end_date=request.end_date,
+            window_days=request.window_days,
+            include_static=request.include_static,
+        )
+
+
 def _load_postgres_slice(
     *,
     end_date: str | None,
@@ -1864,7 +1879,9 @@ def load_dashboard_slice(
         sliced = _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
         _FIRESTORE_SLICE_CACHE[key] = (time.monotonic(), sliced)
         return sliced
-    return _load_sqlite_slice(db_path, end_date=end_date, window_days=days, include_static=include_static)
+    return SQLiteDashboardRepository(db_path).load_dashboard(
+        DashboardLoadRequest(end_date=end_date, window_days=days, include_static=include_static)
+    )
 
 
 def load_dashboard_data(db_path: Path) -> DashboardData:
