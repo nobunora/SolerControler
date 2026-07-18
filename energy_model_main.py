@@ -24,6 +24,9 @@ from app.energy_plan import (
     WeatherHistoryFetchResult,
     WeatherHistoryPort,
     build_historical_profile as _historical_profile,
+    coerce_hourly_energy as _coerce_hourly_float_dict,
+    estimate_sunset_hour as _estimate_sunset_hour,
+    summarize_hourly_pv as _hourly_pv_totals,
 )
 from app.energy_model import (
     DaytimeSocOptimizationResult,
@@ -345,21 +348,6 @@ def _to_optional_int(value: object) -> int | None:
     if as_float is None:
         return None
     return int(as_float)
-
-
-def _coerce_hourly_float_dict(value: object) -> dict[int, float]:
-    if not isinstance(value, dict):
-        return {}
-    out: dict[int, float] = {}
-    for raw_hour, raw_value in value.items():
-        try:
-            hour = int(raw_hour)
-        except (TypeError, ValueError):
-            continue
-        numeric = _to_optional_float(raw_value)
-        if 0 <= hour <= 23 and numeric is not None:
-            out[hour] = max(0.0, numeric)
-    return out
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -1422,31 +1410,6 @@ def _build_hourly_pv_forecast(
     return {h: total * pv_profile[h] for h in hours}
 
 
-def _hourly_pv_totals(hourly_pv_kwh: dict[int, float]) -> dict[str, float]:
-    total = 0.0
-    morning = 0.0
-    midday = 0.0
-    evening = 0.0
-    peak = 0.0
-    for hour, value in hourly_pv_kwh.items():
-        pv = max(0.0, float(value or 0.0))
-        total += pv
-        peak = max(peak, pv)
-        if 7 <= hour < 10:
-            morning += pv
-        elif 10 <= hour < 16:
-            midday += pv
-        elif 16 <= hour < 23:
-            evening += pv
-    return {
-        "total_kwh": round(total, 4),
-        "morning_kwh": round(morning, 4),
-        "midday_kwh": round(midday, 4),
-        "evening_kwh": round(evening, 4),
-        "peak_kw": round(peak, 4),
-    }
-
-
 def _reshape_hourly_pv_by_weather(
     hourly_pv_kwh: dict[int, float],
     forecast: dict[str, object],
@@ -1491,13 +1454,6 @@ def _reshape_hourly_pv_by_weather(
         "reshaped_total_kwh": round(sum(out.values()), 4),
         "shortwave_hours": sorted(weights),
     }
-
-
-def _estimate_sunset_hour(hourly_pv_kwh: dict[int, float]) -> int:
-    active_hours = [h for h, v in hourly_pv_kwh.items() if h >= 7 and h < 23 and v > 0.03]
-    if not active_hours:
-        return 18
-    return max(active_hours)
 
 
 def _morning_pv_headroom_guard(

@@ -6,6 +6,7 @@ from app.energy_plan.ports import ForecastInputPort, HistoricalInputPort, Weathe
 from app.energy_plan.weather import WeatherHistoryFetchResult
 from app.energy_plan.settings import ForecastSettings, HistoricalInputSettings
 from app.energy_plan.historical import build_historical_profile
+from app.energy_plan.forecast import coerce_hourly_energy, estimate_sunset_hour, summarize_hourly_pv
 
 __all__ = [
     "PlanDocumentV1",
@@ -17,4 +18,7 @@ __all__ = [
     "ForecastSettings",
     "HistoricalInputSettings",
     "build_historical_profile",
+    "coerce_hourly_energy",
+    "estimate_sunset_hour",
+    "summarize_hourly_pv",
 ]
