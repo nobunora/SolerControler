@@ -28,7 +28,7 @@ For every phase, record:
 | Phase | Status | Commit | Notes |
 |---|---|---|---|
 | 01 Baseline and guardrails | completed | 29d039f | Baseline and high-risk Operations cost contracts recorded. |
-| 02 Shared boundaries | not started | - | |
+| 02 Shared boundaries | completed | c203f83 | Existing shared Operations primitives verified across all adapters; no safe new clone extraction required. |
 | 03 Operations deduplication | not started | - | |
 | 04 Forced-charge orchestration | not started | - | |
 | 05 Dashboard repository boundary | not started | - | |
@@ -240,6 +240,42 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: Later phases can begin from six files/symbol ranges and need not reread the four oversized modules.
 - Intentionally deferred work: Production deduplication, runner thinning, dashboard repository extraction, energy-model decomposition, live service validation, and unrelated mypy cleanup belong to later phases.
 - What the next phase must not undo: Characterization expectations, fail-safe/fallback order, persistence/public field names, unrounded tariff results, or the existing typed boundaries.
+
+### 2026-07-19 Phase 02 handoff
+
+- Date: 2026-07-19
+- Phase and step: Phase 02, Steps 02.1-02.8
+- Status: completed
+- Commit: `c203f83` (test-only ownership verification)
+- Intent: Confirm that foundational Operations primitives already have one cohesive owner and avoid creating unnecessary abstractions before Phase 03.
+- Changed files: `tests/test_operations_domain.py`; this progress record.
+- Preserved contracts: All adapter public functions, environment behavior, time-window inclusivity, tariff precision, persistence formats, and production control flow.
+- Tests run: `python -m pytest -q tests/test_operations_domain.py tests/test_operations_db.py` -> 20 passed.
+- Static checks: `python -m compileall -q app/operations tests/test_operations_domain.py` -> passed; `git diff --check` -> passed with only the configured LF-to-CRLF warning.
+- Behavior differences: None; production code was unchanged.
+- Shared helpers added: None. `extract_hourly_forecast_from_plan`, `is_within_window`, `parse_hhmm_to_minute`, and `tiered_increment_cost` already reside in `app.operations.domain`.
+- Old copies removed: None; no permitted exact helper clone remained outside later-phase business logic.
+- Compatibility wrappers retained: Adapter-private aliases such as `_tiered_day_increment_cost` remain so current module call sites/import behavior do not change.
+- Typed models added: None. Existing small models were sufficient; adding another wrapper would not replace a repeated raw boundary in this phase.
+- Environment reads moved: None; no touched pure helper reads environment values directly.
+- Corrupted message check: `app.main._copy_local_csv` already raises `FileNotFoundError` with the valid text `ローカルCSVが見つかりません`; no repair was necessary and no test parses the message.
+- Removed duplication: No new removal. The ownership test now proves all three database adapters reference the same four shared Operations primitives.
+- Remaining duplication: `recalc_cost_daily` calculation orchestration remains in `app.operations_db`, `app.postgres_ops`, and `app.firestore_ops`; battery daily metrics, model-parameter mapping, and model hit-rate calculations also remain adapter-owned and require Phase 03 parity analysis.
+- Remaining risks: Shared `app.operations.domain` still contains some environment/I/O helpers; moving those was not necessary for the verified primitives and would exceed Phase 02 scope.
+- Next agent must read: `03_OPERATIONS_DOMAIN_DEDUPLICATION.md`; this Phase 02 handoff; `tests/test_operations_db.py` cost characterization table; `tests/test_operations_domain.py` ownership test; `recalc_cost_daily` ranges at `app/operations_db.py:546`, `app/postgres_ops.py:445`, and `app/firestore_ops.py:306` as one comparison set.
+- Next target symbols: `recalc_cost_daily`; `upsert_battery_daily_metrics`; `upsert_model_parameters_from_plan`; `recalc_model_hit_rates`; shared tariff/window primitives in `app.operations.domain`.
+- Existing parity fixtures Phase 03 can reuse: `test_recalc_cost_daily_night8_tiered`, `test_tiered_increment_cost_preserves_boundaries_and_float_precision`, `test_recalc_cost_daily_characterizes_missing_negative_and_day_boundaries`, `test_recalc_cost_daily_empty_input_writes_no_rows`, and `test_all_database_adapters_use_the_shared_plan_domain`.
+- Do not reread: Full adapter files, full `energy_model_main.py`, full `cloud_job_runner.py`, or full `app/dashboard_data.py`; locate only the listed Operations symbols.
+- Blockers: None.
+- System-level reason: Later business-rule consolidation must build on primitives whose semantics and owner are already stable across every adapter.
+- Contribution to final target: The shared time/tariff/forecast primitives are now executable ownership contracts, preventing adapters from silently reintroducing copies.
+- Business meaning with clearer ownership: Stateless Operations time-window parsing, tier calculation, and plan forecast mapping belong to `app.operations.domain`; persistence remains explicitly adapter-owned.
+- Local-optimization risks considered: A new generic helper module, redundant typed wrapper, broad environment migration, and premature `recalc_cost_daily` extraction were rejected.
+- Behavior evidence: 20 nearest tests, compilation, and diff validation passed without production changes.
+- Ownership evidence: Identity assertions cover SQLite, PostgreSQL, and Firestore for four shared primitives, not only two adapters or output similarity.
+- Context reduction achieved: Phase 03 can inspect four named symbol groups and reuse five named fixtures without repeating a clone scan.
+- Intentionally deferred work: Operations business calculations and backend mapping belong to Phase 03; forced charge, dashboard, and energy-model boundaries remain in their assigned later phases.
+- What the next phase must not undo: Do not copy shared primitives back into adapters or move backend persistence decisions into `app.operations.domain`.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.
