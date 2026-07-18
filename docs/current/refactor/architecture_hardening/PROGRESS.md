@@ -33,7 +33,7 @@ For every phase, record:
 | 04 Forced-charge orchestration | completed | b20048f | Monitor policy is state-owned; clock/device/status effects are injected ports. |
 | 05 Dashboard repository boundary | completed | f18b248 | Three typed repository adapters feed the existing canonical shared assembly. |
 | 06 Energy-model decomposition | completed | 06020c9 | Focused settings, input ports, history/forecast transforms, optimizer request, workflow, and output writer established. |
-| 07 Integration and closeout | not started | - | |
+| 07 Integration and closeout | completed | pending final documentation commit | 335 non-external Python tests and all targeted/JS/static checks passed. |
 
 Allowed status values:
 
@@ -353,6 +353,7 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Status: completed
 - Commits: `6a96c3c` repository contract/SQLite; `70bc0ce` PostgreSQL; `f18b248` Firestore.
 - Intent: Make backend selection depend on a dashboard use-case repository contract while retaining one canonical interpretation and public shape.
+- Preserved contracts: Public dashboard function signatures, JSON fields/types, ordering, empty/partial behavior, backend selection, Firestore cache key/lifetime, source fallbacks, schemas, and HTTP response behavior.
 - Changed files: `app/dashboard/repositories.py`, `app/dashboard/__init__.py`, `app/dashboard_data.py`, and this progress record.
 - Canonical models: Existing immutable `DashboardRawData`, `DashboardData`, and `DashboardSlice` remain the canonical source, public data, and metadata boundaries. No redundant giant snapshot was added.
 - Repository port/adapters: `DashboardRepository.load_dashboard(DashboardLoadRequest)` with `SQLiteDashboardRepository`, `PostgresDashboardRepository`, and `FirestoreDashboardRepository`.
@@ -387,6 +388,7 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Status: completed
 - Commits: `b619d98` output writer; `346f68d` optimizer request; `7f81c04` planning workflow; `42b40aa` history/forecast ports; `897dfdf` weather result; `90ae215` weather port; `fb36970` focused settings; `0d95044` historical profile; `06020c9` forecast transforms.
 - Intent: Turn the energy-model entrypoint into composition over typed planning boundaries without changing algorithms, fallback order, numerical results, or plan documents.
+- Preserved contracts: CLI/callable entrypoints, env keys/defaults and conversion errors, input/output paths, provider/fallback order, timezone, units/rounding, SoC constraints, optimizer tie-breaking, diagnostics, V1 document fields, UTF-8 writing, and exception propagation.
 - New modules/ownership:
   - `app.energy_plan.output`: UTF-8 plan persistence.
   - `app.energy_plan.ports`: historical CSV/profile, forecast, and weather-history use-case ports.
@@ -422,6 +424,63 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: History, forecast normalization, settings, ports, optimizer inputs, and output can each be modified/tested from a focused module rather than reading the full entrypoint.
 - Intentionally deferred work: Provider-specific/env-sensitive large helpers remain compatibility stages until a future feature supplies a stable extraction boundary; Phase 07 performs integration and risk closeout only.
 - What the next phase must not undo: Do not read env/files/network in focused pure modules, bypass typed ports/request/output, or change plan schema/fallback/numerical order during closeout.
+
+### 2026-07-19 Phase 07 final closeout
+
+- Date: 2026-07-19
+- Phase and step: Phase 07, Steps 07.1-07.10
+- Status: completed
+- Final commit range: `29d039f` through the final documentation/archive commits; implementation baseline was `0f3ab75`.
+- Changed files: 36 implementation/test/documentation files before closeout; final documentation and archive navigation are committed separately.
+- Preserved contracts: Public functions/CLI, env keys/defaults, SQLite/PostgreSQL/Firestore schemas and field names, JSON/dashboard/plan shapes, timezone/accounting day, kWh/percent/yen units, rounding, missing/zero/fallback semantics, forced-charge safety/order/reasons, cache behavior, and failure propagation.
+- Targeted regression results:
+  - Group A Operations: 22 passed.
+  - Group B forced-charge/runner: 67 passed; KP-NET intent/workflow: 41 passed.
+  - Group C dashboard/Firestore: 32 passed; parity/server: 6 passed.
+  - Group D energy model: 37 passed; runtime: 6 passed; optimizer/document: 14 passed.
+  - Group E domain primitives: 4 passed.
+  - Targeted total: 229 passed.
+- Broader non-external result: `python -m pytest -q -m "not external"` -> 335 passed, 1 external test deselected in 22.44s.
+- Browser-side dashboard tests: three Node assertion files passed with exit code 0.
+- Static checks: required compileall passed; `git diff --check` passed; `python scripts/security_check.py` passed; changed-scope mypy passed with no issues in 19 files.
+- Initial and final mypy: initial 92 errors in 10 files/51 checked; final 92 errors in the same 10 files/60 checked. No error-count regression; nine new source files increased checked scope.
+- Behavior differences: None observed or approved.
+- Duplicated rules removed: 476 lines of backend daily-cost calculation; monitor terminal/demand policy branches; direct dashboard source dispatch; historical/forecast normalization and output-writing bodies from the energy entrypoint.
+- New boundaries introduced: daily-cost typed domain; forced-charge state/settings and clock/device/status ports; dashboard repository request/Protocol/adapters; energy history/forecast/weather/settings/input ports/output; typed SOC optimizer request; explicit planning workflow.
+- Compatibility wrappers retained:
+  - Three public `recalc_cost_daily` adapter functions delegate to `calculate_daily_costs`.
+  - `_monitor_partial_forced_and_stop(plan_path)` supplies default ports; legacy no-charge helper delegates to typed demand policy.
+  - Dashboard `_load_*_slice`, public slice/full-load functions, and repository adapters remain for callers/tests.
+  - Energy helper aliases, `EnergyModelOutput`, legacy optimizer signature, and `main()` delegate to focused owners.
+- Contract changes: None.
+- Ownership review: Operations policy has one pure owner; forced-charge monitor outcomes are state-owned; dashboard presentation/meta/warnings assemble once; repositories retain source differences; energy history/forecast/request/output have focused owners; pure focused modules contain no env/database/network clients.
+- Temporary migration code: No old-vs-new branch, debug bypass, legacy calculation body, `if False`, or transitional feature flag remained in targeted searches.
+- Remaining high risk: None identified that blocks the preserved behavior or ownership goals.
+- Remaining medium risks:
+  - PostgreSQL/Firestore adapter parity uses deterministic fakes rather than production service writes.
+  - Dashboard source loader bodies remain large and co-located in the compatibility module.
+  - Generic state initialization requests standby for target-reached while the production no-charge compatibility path records completion without a redundant command; this explicit difference requires a product action-contract decision before unification.
+- Remaining low risks:
+  - Repository-wide mypy debt remains 92 errors in 10 legacy files.
+  - Additional battery/cost settings groups and provider-specific energy stages may migrate when feature work supplies a stable boundary.
+  - Operations battery/model/hit-rate rule families remain explicitly queued for independent parity programs.
+- Recommended next maintenance task: Add cross-backend fake parity fixtures for `upsert_battery_daily_metrics`, then migrate that single Operations rule family using the Phase 03 pattern.
+- Context map:
+  - Daily cost changes require `app/operations/cost_daily.py` and its focused test.
+  - Forced-charge policy changes require state/settings modules and their tests, not the full runner.
+  - Dashboard meaning changes require models/service/parity tests; source changes use one adapter range.
+  - Energy history/forecast/output/request changes use focused energy-plan/optimizer modules, not the full compatibility entrypoint.
+- Worktree status: clean before final documentation edit; final archive commit must restore a clean status.
+- Blockers: None.
+- System-level reason: Final integration proves preserved behavior and clearer ownership coexist across backend, safety, dashboard, and planning paths.
+- Contribution to final target: Important policy has one owner, external effects are explicit boundaries, compatibility paths delegate, and routine changes require smaller focused context.
+- Business meaning with clearer ownership: Daily cost, forced-charge decisions, dashboard assembly, historical profile, forecast normalization, optimizer request, and plan persistence each have named owners.
+- Local-optimization risks considered: Green tests alone were not treated as proof; ownership searches, contract inspection, static baselines, compatibility review, and residual debt were all recorded.
+- Behavior evidence: 229 targeted passes, 335 broader non-external passes, JS tests, compile/security/diff checks, and unchanged mypy error count.
+- Ownership evidence: Targeted symbol searches show adapters/orchestrators delegate to focused owners and no temporary duplicate bodies remain.
+- Context reduction achieved: Each major use case now has a focused owner/test set documented above; full giant modules are unnecessary for routine domain changes.
+- Intentionally deferred work: Only the prioritized medium/low risks above; none blocks closeout.
+- What future work must not undo: Do not add policy to adapters/runner/composition, bypass canonical/typed boundaries, or remove parity/failure/schema tests without equivalent evidence.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.

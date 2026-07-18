@@ -89,3 +89,26 @@ After all implementation phases are complete:
 - Remaining compatibility code is explicit and justified.
 
 Each phase document contains its own customized explanation of how that phase contributes to this final state and what it must not optimize locally.
+
+## Implementation status
+
+All seven phases were completed on 2026-07-19. `PROGRESS.md` is the authoritative evidence and handoff log.
+
+The resulting ownership model is:
+
+- Daily-cost policy: `app/operations/cost_daily.py`; storage adapters only map and persist.
+- Forced-charge policy: `app/forced_charge/state_machine.py`; the runner executes injected clock/device/status effects.
+- Dashboard meaning: canonical models and shared assembly under `app/dashboard`; repositories own source access and mapping.
+- Energy planning: focused history/forecast/settings/ports/output modules under `app/energy_plan`, typed optimizer requests, and a thin composition workflow.
+
+Run the primary non-external regression suite with:
+
+    python -m pytest -q -m "not external"
+
+Run static validation with:
+
+    python -m compileall -q app energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py
+    python -m mypy app energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py
+    python scripts/security_check.py
+
+The repository-wide mypy baseline remains 92 errors in 10 legacy files. New focused modules are type-check clean. Remaining debt, compatibility wrappers, and risk priorities are recorded in the final closeout section of `PROGRESS.md`.
