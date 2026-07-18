@@ -19,6 +19,7 @@ from app.energy_plan import (
     ForecastInputPort,
     HistoricalInputPort,
     PlanDocumentV1,
+    WeatherHistoryFetchResult,
 )
 from app.energy_model import (
     DaytimeSocOptimizationResult,
@@ -1056,17 +1057,6 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
             "source": "date-only-fallback",
             "daily_forecast_error": str(exc),
         }
-
-
-@dataclass
-class WeatherHistoryFetchResult:
-    rows: list[dict[str, object]]
-    requested_dates: list[str]
-    received_dates: list[str]
-    missing_dates: list[str]
-    errors: list[dict[str, object]]
-    cache_hit_dates: list[str]
-    requested_periods: list[dict[str, object]]
 
 
 def _weather_archive_cache_path() -> Path:

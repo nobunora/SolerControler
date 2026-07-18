@@ -3,5 +3,12 @@
 from app.energy_plan.models import PlanDocumentV1
 from app.energy_plan.output import EnergyPlanOutput
 from app.energy_plan.ports import ForecastInputPort, HistoricalInputPort
+from app.energy_plan.weather import WeatherHistoryFetchResult
 
-__all__ = ["PlanDocumentV1", "EnergyPlanOutput", "ForecastInputPort", "HistoricalInputPort"]
+__all__ = [
+    "PlanDocumentV1",
+    "EnergyPlanOutput",
+    "ForecastInputPort",
+    "HistoricalInputPort",
+    "WeatherHistoryFetchResult",
+]
