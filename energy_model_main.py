@@ -19,6 +19,7 @@ from app.energy_model import (
     DaytimeSocOptimizationResult,
     EnergyModelCoefficients,
     NightChargeInputs,
+    NightChargeResult,
     compute_night_charge_target,
     fit_coefficients_from_csv,
     optimize_target_soc_for_daytime,
@@ -140,6 +141,51 @@ class ConsumptionForecastBundle:
     base_daily: ConsumptionForecast
     training_diagnostics: dict[str, object]
     occupancy_adjustment: OccupancyAdjustment | None
+
+
+@dataclass
+class NightChargePreparation:
+    pv_array_forecast: dict[str, object] | None
+    inputs: NightChargeInputs
+    result: NightChargeResult
+    result_payload: dict[str, Any]
+    monthly_day_buy_before_target: dict[str, object]
+    expected_rest_of_month_day_buy: dict[str, object]
+    expected_overnight_discharge_kwh: float
+
+
+@dataclass
+class PvForecastBundle:
+    array_forecast: dict[str, object] | None
+    hourly_load_kwh: dict[int, float]
+    hourly_pv_kwh: dict[int, float]
+    hourly_weather_shape: dict[str, object]
+    physical_diagnostics: dict[str, object]
+    correction: dict[str, object]
+    selected_method: str
+    source: str
+    uncertainty: PvForecastUncertainty
+    sunset_hour: int
+
+
+@dataclass(frozen=True)
+class SocConstraint:
+    name: str
+    applied: bool
+    cap_target_soc_percent: float | None
+    reason: str
+    evidence: dict[str, object]
+
+
+@dataclass
+class SocConstraintSet:
+    reserve_soc_percent: float
+    max_target_soc_percent: float
+    apply_pv_headroom_caps: bool
+    active_constraints: list[SocConstraint]
+    morning_headroom: dict[str, object]
+    daytime_net_surplus: dict[str, object]
+    historical_soc_gain: dict[str, object]
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -2048,35 +2094,23 @@ def _build_consumption_forecasts(context: EnergyModelContext) -> ConsumptionFore
     )
 
 
-def main() -> int:
-    config = EnergyModelConfig.from_env()
-    context = _load_execution_context(config)
-    consumption_bundle = _build_consumption_forecasts(context)
-    artifacts_dir = config.artifacts_dir
-    csv_paths = context.csv_paths
-    rows = context.rows
-    coeff = context.coefficients
-    hist = context.historical_profile
-    lat = config.latitude
-    lon = config.longitude
-    timezone = config.timezone
+def _prepare_night_charge(
+    context: EnergyModelContext,
+    consumption: ConsumptionForecastBundle,
+) -> NightChargePreparation:
+    config = context.config
     forecast = context.forecast
-    tomorrow_date = context.target_date
-    sun_h = _to_optional_float(forecast.get("sun_hours")) or 0.0
-    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
-    consumption_forecast = consumption_bundle.daily
-    base_consumption_forecast = consumption_bundle.base_daily
-    weather_history_diagnostics = consumption_bundle.training_diagnostics
-    occupancy_adjustment = consumption_bundle.occupancy_adjustment
     pv_array_forecast = _build_pv_forecast_or_disabled(
-        rows=rows,
-        target_date=tomorrow_date,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
+        rows=context.rows,
+        target_date=context.target_date,
+        lat=config.latitude,
+        lon=config.longitude,
+        timezone=config.timezone,
         target_weather_class=str(forecast.get("weather_class") or ""),
         target_sun_hours=_to_optional_float(forecast.get("sun_hours")),
-        target_precipitation_sum_mm=_to_optional_float(forecast.get("precipitation_sum_mm")),
+        target_precipitation_sum_mm=_to_optional_float(
+            forecast.get("precipitation_sum_mm")
+        ),
     )
     pv_totals = _pv_forecast_totals(pv_array_forecast)
     predicted_pv_total_raw = _to_optional_float(pv_totals.get("total_kwh"))
@@ -2088,7 +2122,7 @@ def main() -> int:
         predicted_morning_pv_override = None
     predicted_midday_surplus_override = _estimate_midday_surplus_from_pv_forecast(
         pv_forecast=pv_array_forecast,
-        consumption_forecast=consumption_forecast,
+        consumption_forecast=consumption.daily,
     )
     if predicted_pv_total_raw is not None and predicted_pv_total_raw <= 0:
         predicted_midday_surplus_override = None
@@ -2099,24 +2133,24 @@ def main() -> int:
             "midday_load_fraction": config.pv_midday_load_fraction,
         }
 
-    latest_soc = context.latest_soc_percent
+    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
     expected_overnight_discharge_kwh = 0.0
-    monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
-        rows,
-        target_date=tomorrow_date,
+    monthly_day_buy = _monthly_day_buy_kwh_before_target(
+        context.rows,
+        target_date=context.target_date,
     )
-    expected_rest_of_month_day_buy = _expected_rest_of_month_day_buy_kwh(
-        rows,
-        target_date=tomorrow_date,
+    expected_rest_of_month = _expected_rest_of_month_day_buy_kwh(
+        context.rows,
+        target_date=context.target_date,
     )
-    inp = NightChargeInputs(
-        soc_now_percent=latest_soc,
-        sun_hours_forecast=sun_h,
+    inputs = NightChargeInputs(
+        soc_now_percent=context.latest_soc_percent,
+        sun_hours_forecast=_to_optional_float(forecast.get("sun_hours")) or 0.0,
         temp_forecast_c=temp_c,
-        daytime_load_forecast_kwh=consumption_forecast.daytime_load_kwh,
-        morning_load_forecast_kwh=consumption_forecast.morning_load_kwh,
-        morning_pv_ratio=hist["morning_pv_ratio"],
-        midday_surplus_ratio=hist["midday_surplus_ratio"],
+        daytime_load_forecast_kwh=consumption.daily.daytime_load_kwh,
+        morning_load_forecast_kwh=consumption.daily.morning_load_kwh,
+        morning_pv_ratio=context.historical_profile["morning_pv_ratio"],
+        midday_surplus_ratio=context.historical_profile["midday_surplus_ratio"],
         reserve_soc_percent=config.reserve_soc_percent,
         cycle_count=config.cycle_count,
         battery_temp_c=config.battery_temp_c if config.battery_temp_c is not None else temp_c,
@@ -2125,112 +2159,209 @@ def main() -> int:
         predicted_midday_surplus_kwh_override=predicted_midday_surplus_override,
         expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
     )
-    result = compute_night_charge_target(coeff, inp)
-    result_payload: dict[str, Any] = to_dict(result)
+    result = compute_night_charge_target(context.coefficients, inputs)
+    preparation = NightChargePreparation(
+        pv_array_forecast=pv_array_forecast,
+        inputs=inputs,
+        result=result,
+        result_payload=to_dict(result),
+        monthly_day_buy_before_target=monthly_day_buy,
+        expected_rest_of_month_day_buy=expected_rest_of_month,
+        expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
+    )
+    return preparation
 
-    raw_hourly_load_forecast = _build_hourly_load_forecast(
-        rows,
-        daytime_load_kwh=consumption_forecast.daytime_load_kwh,
-        morning_load_kwh=consumption_forecast.morning_load_kwh,
+
+def _build_selected_pv_forecast(
+    context: EnergyModelContext,
+    consumption: ConsumptionForecastBundle,
+    night_charge: NightChargePreparation,
+) -> PvForecastBundle:
+    config = context.config
+    pv_array_forecast = night_charge.pv_array_forecast
+    raw_hourly_load = _build_hourly_load_forecast(
+        context.rows,
+        daytime_load_kwh=consumption.daily.daytime_load_kwh,
+        morning_load_kwh=consumption.daily.morning_load_kwh,
         overnight_load_by_hour=None,
     )
-    raw_hourly_pv_forecast = _build_hourly_pv_forecast(
-        rows,
-        pv_forecast=pv_array_forecast if isinstance(pv_array_forecast, dict) else None,
-        target_date=tomorrow_date,
-        fallback_total_kwh=result.predicted_pv_kwh,
+    raw_hourly_pv = _build_hourly_pv_forecast(
+        context.rows,
+        pv_forecast=pv_array_forecast,
+        target_date=context.target_date,
+        fallback_total_kwh=night_charge.result.predicted_pv_kwh,
     )
-    raw_hourly_pv_forecast, hourly_weather_pv_shape = _reshape_hourly_pv_by_weather(
-        raw_hourly_pv_forecast,
-        forecast,
+    raw_hourly_pv, hourly_weather_shape = _reshape_hourly_pv_by_weather(
+        raw_hourly_pv,
+        context.forecast,
     )
-    forecast_history_for_physical, physical_history_source = _load_forecast_hourly_history(target_date=tomorrow_date)
-    physical_pv_candidate = build_physical_pv_candidate(
-        rows=rows,
-        forecast_history=forecast_history_for_physical,
-        existing_hourly_pv=raw_hourly_pv_forecast,
-        forecast=forecast,
-        target_date=tomorrow_date,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
+    physical_history, history_source = _load_forecast_hourly_history(
+        target_date=context.target_date
     )
-    physical_pv_diagnostics = {
-        **physical_pv_candidate.diagnostics,
-        "history_source": physical_history_source,
+    physical_candidate = build_physical_pv_candidate(
+        rows=context.rows,
+        forecast_history=physical_history,
+        existing_hourly_pv=raw_hourly_pv,
+        forecast=context.forecast,
+        target_date=context.target_date,
+        lat=config.latitude,
+        lon=config.longitude,
+        timezone=config.timezone,
+    )
+    physical_diagnostics: dict[str, object] = {
+        **physical_candidate.diagnostics,
+        "history_source": history_source,
     }
-    physical_pv_selected = bool(physical_pv_diagnostics.get("enabled"))
-    if physical_pv_selected:
-        raw_hourly_pv_forecast = physical_pv_candidate.hourly_pv_kwh
-    forecast_correction = _build_forecast_correction(
-        rows=rows,
-        hourly_load_forecast=raw_hourly_load_forecast,
-        hourly_pv_forecast=raw_hourly_pv_forecast,
-        target_date=tomorrow_date,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
-        forecast=forecast,
-        skip_pv_correction=physical_pv_selected,
-        allow_load_safety_floor=occupancy_adjustment is None,
+    physical_selected = bool(physical_diagnostics.get("enabled"))
+    if physical_selected:
+        raw_hourly_pv = physical_candidate.hourly_pv_kwh
+    correction = _build_forecast_correction(
+        rows=context.rows,
+        hourly_load_forecast=raw_hourly_load,
+        hourly_pv_forecast=raw_hourly_pv,
+        target_date=context.target_date,
+        lat=config.latitude,
+        lon=config.longitude,
+        timezone=config.timezone,
+        forecast=context.forecast,
+        skip_pv_correction=physical_selected,
+        allow_load_safety_floor=consumption.occupancy_adjustment is None,
     )
-    hourly_load_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_load_kwh"))
-    hourly_pv_forecast = _coerce_hourly_float_dict(forecast_correction.get("hourly_pv_kwh"))
-    sunset_hour = _estimate_sunset_hour(hourly_pv_forecast)
-    morning_headroom_guard = _morning_pv_headroom_guard(
-        hourly_load_kwh=hourly_load_forecast,
-        hourly_pv_kwh=hourly_pv_forecast,
-        effective_capacity_kwh_value=result.effective_capacity_kwh,
-        reserve_soc_percent=inp.reserve_soc_percent,
+    hourly_load = _coerce_hourly_float_dict(correction.get("hourly_load_kwh"))
+    hourly_pv = _coerce_hourly_float_dict(correction.get("hourly_pv_kwh"))
+    return PvForecastBundle(
+        array_forecast=pv_array_forecast,
+        hourly_load_kwh=hourly_load,
+        hourly_pv_kwh=hourly_pv,
+        hourly_weather_shape=hourly_weather_shape,
+        physical_diagnostics=physical_diagnostics,
+        correction=correction,
+        selected_method=str(physical_diagnostics.get("selected_method") or "existing"),
+        source="physical_pv_forecast" if physical_selected else "corrected_pv_forecast",
+        uncertainty=_selected_pv_uncertainty(
+            physical_pv_selected=physical_selected,
+            physical_pv_diagnostics=physical_diagnostics,
+            pv_array_forecast=pv_array_forecast,
+        ),
+        sunset_hour=_estimate_sunset_hour(hourly_pv),
     )
-    daytime_net_surplus_headroom_guard = _daytime_net_surplus_headroom_guard(
-        hourly_load_kwh=hourly_load_forecast,
-        hourly_pv_kwh=hourly_pv_forecast,
-        forecast=forecast,
-        effective_capacity_kwh_value=result.effective_capacity_kwh,
-        reserve_soc_percent=inp.reserve_soc_percent,
+
+
+def _build_soc_constraints(
+    context: EnergyModelContext,
+    pv_forecast: PvForecastBundle,
+    night_charge: NightChargePreparation,
+) -> SocConstraintSet:
+    reserve_soc = night_charge.inputs.reserve_soc_percent
+    capacity = night_charge.result.effective_capacity_kwh
+    raw_guards = [
+        (
+            "morning_pv_headroom_guard",
+            _morning_pv_headroom_guard(
+                hourly_load_kwh=pv_forecast.hourly_load_kwh,
+                hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+                effective_capacity_kwh_value=capacity,
+                reserve_soc_percent=reserve_soc,
+            ),
+        ),
+        (
+            "daytime_net_surplus_headroom_guard",
+            _daytime_net_surplus_headroom_guard(
+                hourly_load_kwh=pv_forecast.hourly_load_kwh,
+                hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+                forecast=context.forecast,
+                effective_capacity_kwh_value=capacity,
+                reserve_soc_percent=reserve_soc,
+            ),
+        ),
+        (
+            "historical_daytime_soc_gain_guard",
+            _historical_daytime_soc_gain_guard(
+                context.rows,
+                reserve_soc_percent=reserve_soc,
+                target_date=context.target_date,
+            ),
+        ),
+    ]
+    apply_caps = not _uses_physical_pv_forecast(pv_forecast.physical_diagnostics)
+    annotated = [
+        _annotate_pv_headroom_guard_policy(
+            guard,
+            apply_caps=apply_caps,
+            selected_method=pv_forecast.selected_method,
+        )
+        for _, guard in raw_guards
+    ]
+    active = [
+        SocConstraint(
+            name=name,
+            applied=bool(guard.get("applied")),
+            cap_target_soc_percent=_to_optional_float(guard.get("cap_target_soc_percent")),
+            reason=str(guard.get("reason") or ""),
+            evidence=dict(guard),
+        )
+        for (name, _), guard in zip(raw_guards, annotated)
+        if guard.get("applied")
+    ]
+    max_target_soc = 100.0
+    if apply_caps:
+        for guard in annotated:
+            if guard.get("applied") or guard is annotated[0]:
+                max_target_soc = min(
+                    max_target_soc,
+                    _to_optional_float(guard.get("cap_target_soc_percent")) or 100.0,
+                )
+    return SocConstraintSet(
+        reserve_soc_percent=reserve_soc,
+        max_target_soc_percent=max_target_soc,
+        apply_pv_headroom_caps=apply_caps,
+        active_constraints=active,
+        morning_headroom=annotated[0],
+        daytime_net_surplus=annotated[1],
+        historical_soc_gain=annotated[2],
     )
-    historical_soc_gain_guard = _historical_daytime_soc_gain_guard(
-        rows,
-        reserve_soc_percent=inp.reserve_soc_percent,
-        target_date=tomorrow_date,
-    )
-    pv_selected_method = str(physical_pv_diagnostics.get("selected_method") or "existing")
-    final_pv_forecast_source = "physical_pv_forecast" if physical_pv_selected else "corrected_pv_forecast"
-    selected_pv_uncertainty = _selected_pv_uncertainty(
-        physical_pv_selected=physical_pv_selected,
-        physical_pv_diagnostics=physical_pv_diagnostics,
-        pv_array_forecast=pv_array_forecast if isinstance(pv_array_forecast, dict) else None,
-    )
-    apply_pv_headroom_caps = not _uses_physical_pv_forecast(physical_pv_diagnostics)
-    morning_headroom_guard_for_payload = _annotate_pv_headroom_guard_policy(
-        morning_headroom_guard,
-        apply_caps=apply_pv_headroom_caps,
-        selected_method=pv_selected_method,
-    )
-    daytime_net_surplus_headroom_guard_for_payload = _annotate_pv_headroom_guard_policy(
-        daytime_net_surplus_headroom_guard,
-        apply_caps=apply_pv_headroom_caps,
-        selected_method=pv_selected_method,
-    )
-    historical_soc_gain_guard_for_payload = _annotate_pv_headroom_guard_policy(
-        historical_soc_gain_guard,
-        apply_caps=apply_pv_headroom_caps,
-        selected_method=pv_selected_method,
-    )
-    legacy_max_target_soc = 100.0
-    if apply_pv_headroom_caps:
-        legacy_max_target_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
-        if daytime_net_surplus_headroom_guard.get("applied"):
-            legacy_max_target_soc = min(
-                legacy_max_target_soc,
-                _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
-            )
-        if historical_soc_gain_guard.get("applied"):
-            legacy_max_target_soc = min(
-                legacy_max_target_soc,
-                _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
-            )
+
+
+def main() -> int:
+    config = EnergyModelConfig.from_env()
+    context = _load_execution_context(config)
+    consumption_bundle = _build_consumption_forecasts(context)
+    night_charge = _prepare_night_charge(context, consumption_bundle)
+    pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
+    constraints = _build_soc_constraints(context, pv_bundle, night_charge)
+    artifacts_dir = config.artifacts_dir
+    csv_paths = context.csv_paths
+    rows = context.rows
+    coeff = context.coefficients
+    hist = context.historical_profile
+    forecast = context.forecast
+    tomorrow_date = context.target_date
+    consumption_forecast = consumption_bundle.daily
+    base_consumption_forecast = consumption_bundle.base_daily
+    weather_history_diagnostics = consumption_bundle.training_diagnostics
+    occupancy_adjustment = consumption_bundle.occupancy_adjustment
+    pv_array_forecast = night_charge.pv_array_forecast
+    latest_soc = context.latest_soc_percent
+    expected_overnight_discharge_kwh = night_charge.expected_overnight_discharge_kwh
+    monthly_day_buy_before_target = night_charge.monthly_day_buy_before_target
+    expected_rest_of_month_day_buy = night_charge.expected_rest_of_month_day_buy
+    inp = night_charge.inputs
+    result = night_charge.result
+    result_payload = night_charge.result_payload
+    hourly_load_forecast = pv_bundle.hourly_load_kwh
+    hourly_pv_forecast = pv_bundle.hourly_pv_kwh
+    sunset_hour = pv_bundle.sunset_hour
+    hourly_weather_pv_shape = pv_bundle.hourly_weather_shape
+    physical_pv_diagnostics = pv_bundle.physical_diagnostics
+    forecast_correction = pv_bundle.correction
+    pv_selected_method = pv_bundle.selected_method
+    final_pv_forecast_source = pv_bundle.source
+    selected_pv_uncertainty = pv_bundle.uncertainty
+    apply_pv_headroom_caps = constraints.apply_pv_headroom_caps
+    morning_headroom_guard_for_payload = constraints.morning_headroom
+    daytime_net_surplus_headroom_guard_for_payload = constraints.daytime_net_surplus
+    historical_soc_gain_guard_for_payload = constraints.historical_soc_gain
+    legacy_max_target_soc = constraints.max_target_soc_percent
     daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
         effective_capacity_kwh_value=result.effective_capacity_kwh,
         soc_now_percent=latest_soc,
@@ -2283,16 +2414,16 @@ def main() -> int:
         respect_guard = config.cost_respect_morning_headroom_cap
         cost_max_soc = 100.0
         if respect_guard and apply_pv_headroom_caps:
-            cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
-        if apply_pv_headroom_caps and daytime_net_surplus_headroom_guard.get("applied"):
+            cost_max_soc = _to_optional_float(morning_headroom_guard_for_payload.get("cap_target_soc_percent")) or 100.0
+        if apply_pv_headroom_caps and daytime_net_surplus_headroom_guard_for_payload.get("applied"):
             cost_max_soc = min(
                 cost_max_soc,
-                _to_optional_float(daytime_net_surplus_headroom_guard.get("cap_target_soc_percent")) or 100.0,
+                _to_optional_float(daytime_net_surplus_headroom_guard_for_payload.get("cap_target_soc_percent")) or 100.0,
             )
-        if apply_pv_headroom_caps and historical_soc_gain_guard.get("applied"):
+        if apply_pv_headroom_caps and historical_soc_gain_guard_for_payload.get("applied"):
             cost_max_soc = min(
                 cost_max_soc,
-                _to_optional_float(historical_soc_gain_guard.get("cap_target_soc_percent")) or 100.0,
+                _to_optional_float(historical_soc_gain_guard_for_payload.get("cap_target_soc_percent")) or 100.0,
             )
         sigma_buckets = _sigma_buckets_for_cost_optimizer()
         load_scenarios = _load_scenarios_for_cost_optimizer(forecast_correction)
