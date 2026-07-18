@@ -21,6 +21,9 @@ from app.forced_charge import (
     ChargeReapplyPolicy,
     ChargeState,
     ChargeTransition,
+    MonitorClock,
+    MonitorDevicePort,
+    MonitorStatusPort,
     decide_transition,
 )
 from app.settings.forced_charge import ForcedChargeSettings
@@ -38,6 +41,48 @@ class SocReading:
     source: str
     error: str | None
     observed_at: datetime | None
+
+
+class _SystemMonitorClock:
+    def monotonic_seconds(self) -> float:
+        return time.time()
+
+    def now(self, timezone: ZoneInfo) -> datetime:
+        return datetime.now(timezone)
+
+    def sleep(self, seconds: int) -> None:
+        time.sleep(seconds)
+
+
+class _RunnerMonitorDevicePort:
+    def read_soc(self, csv_paths: list[Path]) -> SocReading:
+        return _read_soc_with_fallback(csv_paths)
+
+    def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
+        _run_03_settings_profile_with_db(
+            profile=profile,
+            dynamic_forced_profile=dynamic_forced_profile,
+            label=label,
+        )
+
+
+class _RunnerMonitorStatusPort:
+    def persist_stop_reason(
+        self,
+        plan_meta: dict[str, Any],
+        reason: str,
+        *,
+        soc_reading: SocReading | None = None,
+    ) -> bool:
+        if soc_reading is None:
+            return _persist_03_monitor_stop_reason(plan_meta, reason)
+        return _persist_03_monitor_stop_reason(plan_meta, reason, soc_reading=soc_reading)
+
+    def persist_schedule(self, **values: Any) -> bool:
+        return _persist_03_monitor_schedule_to_firestore(**values)
+
+    def persist_no_charge(self, **values: Any) -> bool:
+        return _persist_03_no_charge_decision_to_firestore(**values)
 
 
 def _mask_env_updates(env_updates: dict[str, str] | None) -> dict[str, str]:
@@ -998,25 +1043,34 @@ def _run_03_settings_profile_with_db(
 
 
 def _attempt_03_fail_safe_standby(
-    plan_meta: dict[str, float | str | None],
+    plan_meta: dict[str, Any],
     *,
     label: str,
     reason: str,
+    device_port: MonitorDevicePort | None = None,
+    status_port: MonitorStatusPort | None = None,
 ) -> None:
+    device = device_port or _RunnerMonitorDevicePort()
+    status = status_port or _RunnerMonitorStatusPort()
     try:
-        _run_03_settings_profile_with_db(
+        device.apply_profile(
             profile="standby",
             dynamic_forced_profile=False,
             label=label,
         )
     finally:
-        _persist_03_monitor_stop_reason(plan_meta, reason)
+        status.persist_stop_reason(plan_meta, reason)
 
 
 def _execute_monitor_terminal_transition(
     plan_meta: dict[str, Any],
     transition: ChargeTransition,
+    *,
+    device_port: MonitorDevicePort | None = None,
+    status_port: MonitorStatusPort | None = None,
 ) -> bool:
+    device = device_port or _RunnerMonitorDevicePort()
+    status = status_port or _RunnerMonitorStatusPort()
     terminal = transition.terminal_after_stop
     if terminal is None:
         return False
@@ -1035,17 +1089,26 @@ def _execute_monitor_terminal_transition(
     else:
         raise RuntimeError(f"unsupported monitor terminal state: {terminal.value}")
     try:
-        _run_03_settings_profile_with_db(
+        device.apply_profile(
             profile="standby",
             dynamic_forced_profile=False,
             label=label,
         )
     finally:
-        _persist_03_monitor_stop_reason(plan_meta, persisted_reason)
+        status.persist_stop_reason(plan_meta, persisted_reason)
     return True
 
 
-def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
+def _monitor_partial_forced_and_stop(
+    plan_path: Path,
+    *,
+    clock: MonitorClock | None = None,
+    device_port: MonitorDevicePort | None = None,
+    status_port: MonitorStatusPort | None = None,
+) -> None:
+    monitor_clock = clock or _SystemMonitorClock()
+    device = device_port or _RunnerMonitorDevicePort()
+    status = status_port or _RunnerMonitorStatusPort()
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
         return
@@ -1055,7 +1118,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
-    soc_reading = _read_soc_with_fallback(csv_paths)
+    soc_reading = device.read_soc(csv_paths)
     latest_soc = soc_reading.value_percent
     print(
         f"[cloud_job_runner] 03-monitor SOC source={soc_reading.source} "
@@ -1068,13 +1131,13 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if latest_soc is None and not allow_forced_without_soc:
         print("[cloud_job_runner] 03-monitor initial SOC unavailable; keep standby.", flush=True)
         try:
-            _run_03_settings_profile_with_db(
+            device.apply_profile(
                 profile="standby",
                 dynamic_forced_profile=False,
                 label="03-initial-soc-unavailable-standby",
             )
         finally:
-            _persist_03_monitor_stop_reason(
+            status.persist_stop_reason(
                 plan_meta,
                 "initial_soc_unavailable",
                 soc_reading=soc_reading,
@@ -1087,7 +1150,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         required_charge_percent=required_charge_percent,
         required_charge_kwh=required_kwh,
     ):
-        _persist_03_no_charge_decision_to_firestore(
+        status.persist_no_charge(
             plan_meta=plan_meta,
             target_soc=target_soc,
             latest_soc=latest_soc,
@@ -1117,12 +1180,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if cutoff_seconds <= 0:
         print("[cloud_job_runner] 03-monitor cutoff already reached; keep standby until 07:00 job.", flush=True)
-        _run_03_settings_profile_with_db(
+        device.apply_profile(
             profile="standby",
             dynamic_forced_profile=False,
             label="03-cutoff-standby",
         )
-        _persist_03_monitor_stop_reason(plan_meta, "cutoff_reached")
+        status.persist_stop_reason(plan_meta, "cutoff_reached")
         return
 
     charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=0)
@@ -1136,7 +1199,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         f"poll={poll_seconds}s cutoff={cutoff_hhmm}",
         flush=True,
     )
-    _persist_03_monitor_schedule_to_firestore(
+    status.persist_schedule(
         plan_meta=plan_meta,
         charge_start_time=charge_start_hhmm,
         charge_end_time=cutoff_hhmm,
@@ -1152,19 +1215,21 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     )
 
     try:
-        _run_03_settings_profile_with_db(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
+        device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
     except Exception:
         _attempt_03_fail_safe_standby(
             plan_meta,
             label="03-forced-start-failed-standby",
             reason="forced_start_failed_fail_safe",
+            device_port=device,
+            status_port=status,
         )
         raise
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
         print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to standby.", flush=True)
-        _run_03_settings_profile_with_db(
+        device.apply_profile(
             profile="standby",
             dynamic_forced_profile=False,
             label="03-no-window-standby",
@@ -1175,8 +1240,8 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         f"[cloud_job_runner] 03-monitor forced-started monitor={monitor_seconds}s until cutoff={cutoff_hhmm}",
         flush=True,
     )
-    started_at = time.time()
-    monitor_started_at = datetime.now(ZoneInfo(timezone_name))
+    started_at = monitor_clock.monotonic_seconds()
+    monitor_started_at = monitor_clock.now(ZoneInfo(timezone_name))
     monitor_policy = ChargePolicy(
         target_soc_percent=target_soc,
         cutoff=monitor_started_at + timedelta(seconds=monitor_seconds),
@@ -1195,7 +1260,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         confirm_before_minutes=forced_charge_settings.completion_confirm_before_minutes,
     )
     while True:
-        elapsed_clock_seconds = max(0.0, time.time() - started_at)
+        elapsed_clock_seconds = max(0.0, monitor_clock.monotonic_seconds() - started_at)
         if elapsed_clock_seconds >= monitor_seconds:
             transition = decide_transition(
                 ChargeState.MONITORING,
@@ -1206,15 +1271,19 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 ),
                 monitor_policy,
             )
-            _execute_monitor_terminal_transition(plan_meta, transition)
+            _execute_monitor_terminal_transition(
+                plan_meta, transition, device_port=device, status_port=status
+            )
             return
         try:
-            soc_reading = _read_soc_with_fallback(csv_paths)
+            soc_reading = device.read_soc(csv_paths)
         except Exception:
             _attempt_03_fail_safe_standby(
                 plan_meta,
                 label="03-monitor-exception-standby",
                 reason="monitor_exception_fail_safe",
+                device_port=device,
+                status_port=status,
             )
             raise
         latest_soc = soc_reading.value_percent
@@ -1246,7 +1315,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 flush=True,
             )
             try:
-                _run_03_settings_profile_with_db(
+                device.apply_profile(
                     profile="forced",
                     dynamic_forced_profile=True,
                     label="03-forced-reapply",
@@ -1256,10 +1325,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                     plan_meta,
                     label="03-forced-reapply-failed-standby",
                     reason="forced_reapply_failed_fail_safe",
+                    device_port=device,
+                    status_port=status,
                 )
                 raise
 
-        observed_at = datetime.now(ZoneInfo(timezone_name))
+        observed_at = monitor_clock.now(ZoneInfo(timezone_name))
         transition = decide_transition(
             ChargeState.MONITORING,
             ChargeObservation(
@@ -1270,10 +1341,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             ),
             monitor_policy,
         )
-        if _execute_monitor_terminal_transition(plan_meta, transition):
+        if _execute_monitor_terminal_transition(
+            plan_meta, transition, device_port=device, status_port=status
+        ):
             return
 
-        remaining = monitor_seconds - int(time.time() - started_at)
+        remaining = monitor_seconds - int(monitor_clock.monotonic_seconds() - started_at)
         if remaining <= 0:
             continue
         next_check_seconds = completion_estimator.next_check_seconds(
@@ -1292,14 +1365,16 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
                 ),
                 monitor_policy,
             )
-            _execute_monitor_terminal_transition(plan_meta, timeout_transition)
+            _execute_monitor_terminal_transition(
+                plan_meta, timeout_transition, device_port=device, status_port=status
+            )
             return
         print(
             "[cloud_job_runner] 03-monitor next check "
             f"sleep={next_check_seconds}s remaining_to_cutoff={remaining}s",
             flush=True,
         )
-        time.sleep(next_check_seconds)
+        monitor_clock.sleep(next_check_seconds)
 
 def _run_night_23() -> None:
     # 23:00 is only a mode-control guard. Forecast/data work is centralized in
