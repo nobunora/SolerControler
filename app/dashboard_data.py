@@ -1868,6 +1868,16 @@ def _load_firestore_slice(
     )
 
 
+@dataclass(frozen=True)
+class FirestoreDashboardRepository:
+    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
+        return _load_firestore_slice(
+            end_date=request.end_date,
+            window_days=request.window_days,
+            include_static=request.include_static,
+        )
+
+
 def load_dashboard_slice(
     db_path: Path,
     *,
@@ -1888,7 +1898,9 @@ def load_dashboard_slice(
         now = time.monotonic()
         if cached is not None and now - cached[0] < _FIRESTORE_DASHBOARD_CACHE_SECONDS:
             return cached[1]
-        sliced = _load_firestore_slice(end_date=end_date, window_days=days, include_static=include_static)
+        sliced = FirestoreDashboardRepository().load_dashboard(
+            DashboardLoadRequest(end_date=end_date, window_days=days, include_static=include_static)
+        )
         _FIRESTORE_SLICE_CACHE[key] = (time.monotonic(), sliced)
         return sliced
     return SQLiteDashboardRepository(db_path).load_dashboard(
