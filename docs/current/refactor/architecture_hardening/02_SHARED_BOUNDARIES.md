@@ -221,3 +221,118 @@ Provide:
 - Exact Operations symbols to inspect
 - Existing parity fixtures Phase 03 can reuse
 - Files and ranges Phase 03 must not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Which duplicated element represents the same business meaning rather than merely similar text?
+- Which boundary should own that meaning after extraction?
+- Which call-site differences must remain explicit?
+- What contract must be preserved while introducing the shared boundary?
+- What evidence will prove reduced ownership duplication rather than only reduced line count?
+
+The extraction target is a business or boundary concept, not a duplication metric.
+
+## Why this phase is necessary
+
+Several later phases depend on small, trustworthy shared concepts such as typed values, exact helper clones, configuration boundaries, and stable conversion rules.
+
+If those concepts remain duplicated:
+
+- Later domain extraction may build on inconsistent primitives.
+- Backend implementations may continue to interpret units or fields differently.
+- Orchestrators may retain repeated policy fragments.
+- Type improvements may be applied separately and drift.
+- A larger refactor may accidentally combine unrelated meanings because no narrow shared boundary exists.
+
+This phase creates the smallest reliable building blocks required by the later structural work.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Exact semantic clones have one implementation where sharing is justified.
+- Important repeated values have explicit types, units, or narrow models.
+- Environment and configuration access begins to move behind focused boundaries.
+- Shared code expresses one stable meaning and has no backend-specific policy.
+- Call sites retain meaningful differences explicitly.
+- Later phases can depend on these boundaries without importing giant modules or raw dictionaries.
+
+The target is not a universal utility layer.
+
+The target is a small set of cohesive boundaries that reduce duplicated ownership.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires one clear owner for each business meaning.
+
+This phase contributes by identifying foundational meanings that currently appear in multiple places and assigning each to a narrow owner.
+
+Examples may include:
+
+- Unit conversion
+- Time-window representation
+- Common result or request models
+- Exact helper behavior
+- Focused configuration values
+- Shared validation rules that are truly domain-invariant
+
+These boundaries make later extraction safer because higher-level modules can coordinate around stable concepts instead of copying low-level assumptions.
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Creating a generic helper only because two code blocks look similar
+- Combining functions that have different domain reasons to change
+- Building a large `utils` module
+- Hiding many unrelated parameters in one context object
+- Moving backend-specific mapping into shared domain code
+- Introducing inheritance where a narrow function or data model is sufficient
+- Replacing explicit units with unlabelled numeric wrappers
+- Creating abstractions before tests prove stable shared behavior
+- Expanding scope into the larger orchestration or backend phases
+
+Textual duplication is weaker evidence than semantic ownership.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- Focused tests for every extracted shared behavior
+- Old-versus-new parity where an existing helper is replaced
+- Unit, timezone, nullability, and error behavior where applicable
+- Confirmation that backend-specific differences remain preserved
+
+Ownership evidence must include:
+
+- The exact duplicated owners removed
+- The new single owner and its responsibility
+- Why the shared concept is stable across current call sites
+- Evidence that no unrelated policy moved into the shared boundary
+- Evidence that call sites now require less duplicated interpretation
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Does every new shared abstraction represent one domain or boundary meaning?
+2. Would the abstraction still make sense if only one current call site remained?
+3. Are meaningful backend or workflow differences still visible?
+4. Has duplicated decision ownership decreased?
+5. Did the change avoid creating a broad dependency hub?
+6. Can later phases use the boundary without importing unrelated responsibilities?
+
+If the abstraction exists mainly to reduce line count, reject or narrow it.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Copy extracted shared behavior back into backend or orchestrator modules
+- Expand a focused boundary into a general-purpose utility collection
+- Add backend-specific policy to shared domain primitives
+- Replace typed values with raw dictionaries for convenience
+- Use a shared model as a container for unrelated phase-specific data

@@ -281,3 +281,122 @@ Provide:
 - Forced-charge settings moved
 - Maximum six dashboard files or symbol ranges to inspect
 - Forced-charge files Phase 05 must not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Which forced-charge decisions currently exist in more than one place?
+- Which decisions belong to a pure state model and which actions belong to the imperative shell?
+- Which fail-safe, timeout, stop, retry, telemetry, and operator-visible behaviors must remain unchanged?
+- What local simplification could weaken safety while making the function look cleaner?
+- What evidence will prove that the same inputs produce the same decisions before and after extraction?
+
+The objective is not a shorter monitor function. The objective is one explicit owner for forced-charge decisions.
+
+## Why this phase is necessary
+
+Forced-charge monitoring currently combines state interpretation, safety policy, timeout handling, device actions, logging, telemetry, and loop control.
+
+When these responsibilities remain interleaved:
+
+- The same stop decision can be encoded in several branches.
+- Safety behavior is difficult to test without running imperative code.
+- A small change to logging or device interaction can affect decision flow.
+- Retry and timeout semantics can drift from state-machine expectations.
+- Broad exception handling can obscure whether the system failed safe.
+- Future integrations may copy part of the monitor logic instead of reusing one decision owner.
+
+This is a safety and maintainability risk, not merely a long-function problem.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Forced-charge policy is expressed as pure, deterministic state transitions or decisions.
+- The imperative shell performs reads, writes, waits, logs, and telemetry according to those decisions.
+- Safety stops, completion, timeout, retry, and failure behavior have one explicit owner.
+- Existing operator-visible behavior and external contracts remain stable.
+- The monitor loop is understandable as coordination rather than embedded policy.
+- New device or telemetry adapters can be added without copying forced-charge decisions.
+
+The target is not to eliminate the loop.
+
+The target is to prevent the loop from defining safety policy.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires orchestrators to coordinate work without duplicating business or safety decisions.
+
+This phase contributes by:
+
+- Moving decision logic into a pure and testable owner
+- Keeping device access and timing as boundary concerns
+- Making fail-safe behavior explicit
+- Reducing the repository context required to understand forced-charge outcomes
+- Allowing simulation and exhaustive state testing without hardware
+- Preventing future runners from implementing their own interpretation of stop and retry policy
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Narrowing or removing exception handling without proving equivalent fail-safe behavior
+- Combining distinct stop reasons into one generic outcome
+- Changing timeout or retry order to simplify control flow
+- Treating missing telemetry as success
+- Moving imperative actions into the state model
+- Hiding all runtime data in one untyped context dictionary
+- Replacing explicit states with booleans that lose meaning
+- Removing operator-visible logs or reason codes
+- Splitting the function into helpers while leaving policy duplicated across them
+- Declaring success because the original function has fewer lines
+- Testing only happy-path completion
+
+A structurally cleaner implementation is invalid if it weakens safety semantics.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- Characterization of current completion, stop, timeout, retry, and failure paths
+- Pure-state tests for every meaningful transition
+- Old-versus-new decision parity for representative traces
+- Tests for missing, stale, malformed, and contradictory observations
+- Confirmation of preserved reason codes, logs, telemetry, and operator-visible outcomes
+- Confirmation that device actions occur in the same safe order
+- Failure-injection tests showing that unsafe continuation does not occur
+
+Ownership evidence must include:
+
+- The exact decisions removed from the imperative monitor
+- The new state or decision owner and its responsibility
+- Proof that the imperative shell no longer reinterprets state outcomes
+- Proof that retries and timeouts are not separately encoded in multiple layers
+- Evidence that a new runner can reuse the decision owner without copying policy
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Does one component determine whether forced charging should continue, stop, retry, fail, or complete?
+2. Does the imperative shell execute decisions without silently changing them?
+3. Are all safety-relevant outcomes explicit and testable?
+4. Have timeout, retry, and missing-data semantics remained stable?
+5. Can device access fail without bypassing the fail-safe decision path?
+6. Has the context required to understand the policy decreased?
+7. Would a future runner reuse the same decision owner?
+
+If safety policy still exists in both the state model and the loop, the phase is incomplete.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Add new forced-charge policy branches directly to runner loops
+- Bypass the state or decision owner for a special device path
+- Replace explicit outcomes with ambiguous booleans
+- Hide safety-relevant errors only to keep orchestration running
+- Remove parity or failure-injection tests when changing integrations
+- Couple the decision owner to KP-NET, logging, sleep, environment access, or a specific telemetry backend

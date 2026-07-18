@@ -2,6 +2,27 @@
 
 This file is the single source of truth for phase status, preserved contracts, blockers, and handoffs.
 
+## Program-level alignment record
+
+Every phase and step must be evaluated against `VISION_AND_DECISION_PRINCIPLES.md`.
+
+A status of `completed` requires evidence for both:
+
+- Preserved behavior and contracts
+- Improved ownership, boundaries, or required context
+
+Passing tests alone is not sufficient.
+
+For every phase, record:
+
+- Why the phase is necessary at the system level
+- How it contributes to the final target
+- Which business meaning gains clearer ownership
+- Which local-optimization risks were considered
+- Which behavior evidence supports the change
+- Which ownership evidence supports the change
+- Which work was intentionally deferred
+- What the next phase must not undo
 ## Phase status
 
 | Phase | Status | Commit | Notes |
@@ -156,3 +177,63 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Next target symbols:
 - Do not reread:
 - Blockers:
+## Why this progress file is necessary
+
+The implementation will be distributed across phases, commits, and possibly multiple agents.
+
+Without a shared progress record, later agents may see only the current code and make decisions that:
+
+- Repeat completed analysis
+- Reintroduce removed duplication
+- Break compatibility wrappers that still have a purpose
+- Optimize a local file without understanding the system-level objective
+- Treat a temporary state as the intended final architecture
+- Lose the reason a decision was deferred
+- Mark work complete based only on passing tests
+
+`PROGRESS.md` therefore preserves architectural intent across time and agent boundaries.
+
+Its purpose is not only to list completed tasks. It must explain how each completed task moves the system toward controlled ownership of behavior.
+
+## Progress-file-specific final target
+
+When maintained correctly, this file allows a future agent to determine:
+
+- What the final architecture is intended to achieve
+- Why the current phase exists
+- Which behavior and compatibility contracts are protected
+- Which business meanings already have a clear owner
+- Which temporary compatibility structures remain
+- Which risks were considered
+- Which work was deliberately deferred
+- What must not be reversed in the next phase
+
+The next agent should be able to continue from the handoff without reconstructing the entire repository history.
+
+## Progress-file-specific local-optimization risks
+
+This file must prevent:
+
+- Reporting only changed files and test counts
+- Marking a phase complete without ownership evidence
+- Treating fewer lines or fewer functions as the primary outcome
+- Omitting deferred work because it is outside the current task
+- Recording a backend-specific success as system-wide success
+- Losing the connection between a local change and the final target
+- Allowing the next phase to undo a boundary created by the previous phase
+
+## Expanded handoff template
+
+In addition to the existing handoff fields, every new handoff must include:
+
+- System-level reason:
+- Contribution to final target:
+- Business meaning with clearer ownership:
+- Local-optimization risks considered:
+- Behavior evidence:
+- Ownership evidence:
+- Context reduction achieved:
+- Intentionally deferred work:
+- What the next phase must not undo:
+
+A phase may be marked `completed` only when these fields contain specific evidence rather than general claims.

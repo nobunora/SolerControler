@@ -331,3 +331,128 @@ Provide:
 - Cache and fallback ownership
 - Maximum six energy-model files or symbol ranges to inspect
 - Dashboard files Phase 06 must not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Which dashboard meaning is currently reconstructed differently by each backend path?
+- Which responsibility belongs to repositories, canonical models, shared assembly, and presentation?
+- Which field names, missing-value behavior, ordering, time ranges, and public response contracts must remain unchanged?
+- What local optimization could make one backend path cleaner while increasing cross-backend divergence?
+- What evidence will prove that equivalent source data produces equivalent dashboard meaning?
+
+The objective is not to make all data sources look identical internally. The objective is one shared interpretation after explicit source mapping.
+
+## Why this phase is necessary
+
+Dashboard data assembly currently mixes backend access, source-specific mapping, fallback behavior, normalization, aggregation, and public response construction.
+
+When these responsibilities remain combined:
+
+- SQLite, PostgreSQL, and Firestore paths can produce subtly different outputs.
+- Public field meaning may depend on the selected backend.
+- Missing values, ordering, timestamps, and aggregation windows may drift.
+- Presentation changes can require edits inside persistence code.
+- Repository changes can accidentally alter user-visible behavior.
+- Raw backend records can leak through several layers.
+- Tests may verify one backend without proving shared dashboard semantics.
+
+This creates both product inconsistency and high regression risk.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Each backend repository fetches source data and maps it into explicit canonical models.
+- Shared assembly code owns backend-independent dashboard interpretation.
+- Presentation or serialization code owns public response formatting.
+- Equivalent canonical input produces equivalent dashboard output regardless of backend.
+- Backend-specific field names, queries, and failure mechanics remain inside adapters.
+- Existing public fields, units, ordering, time ranges, and fallback behavior remain compatible.
+- Adding or modifying a backend does not require copying dashboard business assembly.
+
+The target is not one giant repository abstraction.
+
+The target is explicit source adapters feeding one shared dashboard meaning.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires external systems to remain boundary concerns and business meaning to have one owner.
+
+This phase contributes by:
+
+- Separating source retrieval from dashboard interpretation
+- Introducing canonical typed data between repositories and assembly
+- Removing duplicated aggregation and fallback decisions from backend paths
+- Making public response construction independent of persistence technology
+- Reducing the files required to understand dashboard behavior
+- Making cross-backend parity directly testable
+- Preventing raw records and storage schemas from becoming application contracts
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Designing canonical models around one backend's schema
+- Creating one repository interface with many optional methods and backend conditionals
+- Moving presentation field names into repositories
+- Changing missing-value or fallback behavior to simplify normalization
+- Returning raw dictionaries because typed mapping appears verbose
+- Combining query, normalization, aggregation, and serialization in a new service class
+- Rewriting every dashboard endpoint simultaneously
+- Declaring success after only one backend uses the shared assembly
+- Ignoring ordering, timezone, precision, or empty-series differences
+- Hiding source-specific failures behind indistinguishable empty results
+- Treating fewer backend branches as sufficient evidence
+
+A shared pipeline is valid only when source differences remain explicit and dashboard meaning becomes more consistent.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- Characterization of current public dashboard responses
+- Tests for normal, empty, partial, stale, and malformed source data
+- Old-versus-new parity for each migrated backend
+- Cross-backend parity from equivalent canonical inputs
+- Checks for field names, units, ordering, timestamps, aggregation windows, and null behavior
+- Checks for fallback and error behavior
+- Serialization contract tests for user-visible output
+
+Ownership evidence must include:
+
+- The exact assembly or interpretation decisions removed from repositories
+- The canonical models and the meanings they own
+- The shared assembly owner and its narrow responsibility
+- Proof that repositories now perform only source access and mapping
+- Proof that presentation code no longer depends on backend records
+- Evidence that a dashboard rule change no longer requires editing multiple backend paths
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Does one shared component determine backend-independent dashboard meaning?
+2. Are source-specific differences explicit in repository adapters?
+3. Can equivalent inputs be compared across all supported backends?
+4. Have public response contracts remained stable?
+5. Are canonical models cohesive rather than containers for every possible source field?
+6. Has raw backend data stopped leaking into shared assembly and presentation?
+7. Would a future dashboard rule change require editing one owner?
+8. Has the context required to understand one dashboard use case decreased?
+
+If each backend still assembles its own interpretation of the dashboard, the phase is incomplete.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Add dashboard aggregation or fallback policy directly to repositories
+- Expose raw backend records to presentation code
+- Add backend-specific branches to shared assembly without a documented semantic reason
+- Expand canonical models into generic storage-record containers
+- Remove cross-backend parity tests when changing schemas
+- Bypass the shared assembly for a new endpoint or data source
+- Couple presentation contracts to database field names

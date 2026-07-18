@@ -337,3 +337,122 @@ Provide:
 - Operations environment reads moved
 - Maximum six forced-charge files or symbol ranges to inspect
 - Operations files Phase 04 must not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Which operations rule currently has multiple owners?
+- Which part is true business policy and which part is backend mapping or persistence?
+- Which schema, precision, transaction, null, and failure contracts must remain backend-specific?
+- What local optimization could make one backend cleaner while increasing system drift?
+- What parity evidence will prove that all backends now execute the same business meaning?
+
+The objective is not identical backend code. The objective is one owner for shared operations policy.
+
+## Why this phase is necessary
+
+Operations behavior such as daily cost recalculation is implemented across SQLite, PostgreSQL, and Firestore paths.
+
+When each backend owns both persistence mechanics and business decisions:
+
+- Tariff or aggregation rules can drift.
+- Bug fixes may reach only one backend.
+- Rounding, missing-data, date-boundary, and overwrite behavior can diverge.
+- Tests may validate each implementation separately without proving semantic parity.
+- A future feature requires editing several backend modules.
+- Backend migration can silently change business results.
+
+This is a system-level correctness risk, not merely duplicated code.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Shared operations policy has one pure and testable owner.
+- Backend adapters fetch, map, persist, and manage transactions.
+- SQLite, PostgreSQL, and Firestore produce equivalent domain results for equivalent inputs.
+- Real backend differences remain explicit in adapter code.
+- Compatibility entrypoints continue to work while delegating to the shared domain path.
+- A tariff or aggregation rule change can be made once and verified across all backends.
+
+The target is not one universal persistence implementation.
+
+The target is one business calculation with multiple explicit adapters.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires one clear owner for each business meaning.
+
+This phase removes one of the highest-risk forms of duplicated ownership: the same operational calculation being defined independently by storage technology.
+
+It contributes by:
+
+- Moving calculation and decision rules into pure domain code
+- Restricting adapters to data access and translation
+- Establishing parity tests across persistence backends
+- Making backend selection an infrastructure concern
+- Reducing the files required to understand or change an operations rule
+- Creating a repeatable pattern for later backend-boundary work
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Forcing all backends through one generic repository with unreadable conditionals
+- Treating SQL and Firestore behavior as identical when transaction semantics differ
+- Moving database field names into the domain model
+- Changing rounding or overwrite behavior to simplify the shared function
+- Choosing one backend as the implicit source of truth without contract evidence
+- Rewriting all operations functions at once
+- Removing compatibility wrappers before callers are migrated
+- Duplicating small policy fragments inside adapter callbacks
+- Declaring success after one backend delegates to the shared implementation
+- Comparing only final totals while ignoring dates, missing values, or persisted fields
+
+Backend code may remain different. Business meaning must not.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- Characterization of the current rule before extraction
+- Pure-domain tests for normal, boundary, missing-data, and rounding cases
+- Old-versus-new parity for each backend
+- Cross-backend parity for equivalent input data
+- Persistence checks for field names, dates, precision, overwrite behavior, and transaction handling
+- Failure-path checks for partial reads, write failures, and unsupported data
+
+Ownership evidence must include:
+
+- The exact business decisions removed from each backend
+- The new domain owner and its narrow responsibility
+- Proof that adapters contain only mapping, persistence, and backend-specific control
+- Proof that a rule change no longer requires editing multiple backend implementations
+- A list of intentional backend differences and why they remain outside the domain owner
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Is the business result determined in one place?
+2. Are backend differences explicit rather than hidden in generic branches?
+3. Can equivalent inputs be compared across all supported backends?
+4. Have public entrypoints and persisted contracts remained stable?
+5. Would a future tariff or aggregation change require editing only the domain owner and tests?
+6. Has the amount of repository context needed to understand the rule decreased?
+7. Is any duplicated policy still present in callbacks, mappers, or fallback paths?
+
+If one backend still defines its own interpretation of the rule, the phase is incomplete.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Reintroduce operations calculations into repository or backend classes
+- Add backend-specific exceptions to the domain rule without a documented product reason
+- Pass raw database records through unrelated orchestrators
+- Remove parity tests when changing schemas or repositories
+- Turn the domain owner into a persistence-aware service
+- Bypass the shared rule for convenience in a new entrypoint

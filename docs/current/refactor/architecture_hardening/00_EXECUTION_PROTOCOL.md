@@ -2,6 +2,32 @@
 
 This protocol applies to every architecture-hardening phase.
 
+## 0. Vision alignment gate
+
+Before any repository inspection or code change, read `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Write a brief internal or handoff answer to these questions:
+
+1. Why is this step necessary for the system, not only for the assigned file?
+2. Which business meaning or responsibility should have clearer ownership afterward?
+3. Which safety, public, persistence, unit, timezone, or fallback contracts must remain unchanged?
+4. What local optimization is most likely to make the whole architecture worse?
+5. What behavior evidence and ownership evidence will prove the step is valid?
+
+The assigned file, backend, function, or test group is only the execution boundary.
+
+Do not begin implementation when the only justification is:
+
+- Fewer lines
+- Fewer parameters
+- Less duplication by text
+- A cleaner local API
+- A preferred design pattern
+- Easier completion of the assigned task
+
+The justification must connect the local change to the final target of controlled ownership of behavior.
+
+If the step cannot be justified against that target, stop or defer it.
 ## 1. Start checks
 
 Run these two commands:
@@ -167,3 +193,60 @@ After each step, append a record to `PROGRESS.md` containing:
 - Blockers
 
 Limit the next agent's required reading to six files or symbol ranges. For large modules, provide symbol names and search commands instead of requesting a full-file read.
+## Why this protocol is necessary
+
+The architecture-hardening program will be performed by multiple agents working on narrow slices of the repository.
+
+Without one execution protocol, each agent could make a locally reasonable decision using different assumptions about:
+
+- What must be preserved
+- How much context should be read
+- When a shared abstraction is justified
+- What evidence is sufficient
+- When work should stop
+- What the next agent needs to know
+
+That inconsistency would recreate the same architectural problem the program is intended to remove: one business meaning being handled differently in different places.
+
+This protocol therefore acts as the common control surface for the entire program.
+
+Its purpose is not merely procedural consistency. Its purpose is to ensure that every small change remains connected to the final system goal.
+
+## Protocol-specific final target
+
+When this protocol is followed correctly:
+
+- Every phase starts from the same architectural objective.
+- Agents distinguish execution scope from architectural ownership.
+- Behavior preservation and ownership improvement are both demonstrated.
+- Cross-phase issues are handed off rather than solved incidentally.
+- Later agents can continue without rereading the repository.
+- A sequence of small commits converges on one coherent architecture rather than a collection of unrelated local cleanups.
+
+## Protocol-specific local-optimization risks
+
+This protocol must prevent agents from:
+
+- Treating passing tests as sufficient proof of architectural improvement
+- Treating reduced line count as proof of better ownership
+- Creating broad abstractions to satisfy a local task
+- Expanding scope because a neighboring issue is visible
+- Omitting compatibility because it complicates a local refactor
+- Recording only what changed and not why it contributes to the final target
+- Passing unresolved architectural ambiguity to the next phase without evidence
+
+A step that follows the command sequence but fails the vision alignment gate is still incomplete.
+
+## Additional handoff requirements
+
+Every handoff must include these fields in addition to the existing handoff content:
+
+- System-level reason:
+- Contribution to final target:
+- Business meaning with clearer ownership:
+- Local-optimization risks considered:
+- Behavior evidence:
+- Ownership evidence:
+- Context reduction achieved:
+- Intentionally deferred work:
+- What the next phase must not undo:

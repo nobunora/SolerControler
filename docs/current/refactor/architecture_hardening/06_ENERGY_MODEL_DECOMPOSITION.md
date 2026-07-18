@@ -439,3 +439,136 @@ Provide:
 - Known mypy errors in changed scope
 - Final integration test groups
 - Files Phase 07 must not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Which energy-model responsibility currently lacks one clear owner?
+- Is the proposed extraction separating business meaning from weather, files, environment, optimization, or output effects?
+- Which plan fields, units, fallback order, optimization semantics, and persisted outputs must remain unchanged?
+- What local optimization could reduce one file while preserving or hiding the same coupling elsewhere?
+- What evidence will prove reduced decision ownership and reduced context, not only more files?
+
+The objective is not to split `energy_model_main.py`. The objective is to assign each energy-planning responsibility to one cohesive owner.
+
+## Why this phase is necessary
+
+The energy-model entrypoint currently coordinates or contains historical profiling, forecast transformation, configuration access, fallback policy, optimizer input construction, optimization, plan assembly, persistence, and output behavior.
+
+When these responsibilities remain concentrated:
+
+- A change to one use case requires understanding unrelated paths.
+- Pure calculations are difficult to test without environment, files, or external data.
+- Fallback and normalization policy can be duplicated around the optimizer.
+- Units and optional fields can lose meaning inside raw dictionaries.
+- Runtime configuration can silently influence domain decisions.
+- New features are likely to add branches to the same entrypoint.
+- Splitting work among agents becomes unsafe because ownership boundaries are unclear.
+
+The problem is mixed responsibility and hidden coupling, not file length by itself.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Pure historical-profile and forecast-transformation logic has narrow owners.
+- Weather, files, environment, and persistence are accessed through explicit boundaries.
+- Optimizer requests and results use cohesive typed models with explicit units.
+- Fallback policy has one identifiable owner.
+- The composition root coordinates the use case without reproducing calculation policy.
+- Output writing and serialization remain separate from plan decisions.
+- Existing plan fields, fallback order, units, timing assumptions, and public entrypoints remain compatible.
+- Routine changes require reading only the relevant component and its focused tests.
+
+The target is not the largest possible number of small modules.
+
+The target is a clear dependency direction from orchestration toward stable domain decisions and explicit adapters.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires orchestrators to coordinate rather than decide, and external systems to remain boundary concerns.
+
+This phase contributes by:
+
+- Giving historical profiling one pure owner
+- Giving forecast normalization and transformation one pure owner
+- Giving optimizer request construction explicit typed meaning
+- Isolating fallback decisions from I/O mechanics
+- Keeping output formatting and persistence outside domain calculations
+- Reducing direct environment access inside decision code
+- Turning the large entrypoint into a composition root
+- Reducing the repository context required to understand one planning decision
+
+This phase is intentionally late because it depends on the baseline, typed boundaries, and ownership discipline established earlier.
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Moving functions into new files without changing responsibility ownership
+- Creating one giant runtime context object containing unrelated data
+- Replacing raw dictionaries with equally unstructured wrapper models
+- Introducing a service class that still owns weather, optimization, fallback, and persistence
+- Changing units or fallback order to simplify interfaces
+- Hiding environment access behind globally accessible settings
+- Duplicating optimizer-input construction in fallback and normal paths
+- Making the composition root decide business outcomes
+- Splitting every helper before identifying stable use-case boundaries
+- Removing compatibility entrypoints before callers migrate
+- Declaring success because `energy_model_main.py` has fewer lines
+- Expanding into optimizer redesign rather than preserving its current contract
+
+A file decomposition is invalid when the same decision remains distributed across the new modules.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- Characterization of historical-profile calculations
+- Characterization of forecast normalization and time-window behavior
+- Tests for units, missing hours, stale or unavailable weather, and malformed data
+- Old-versus-new parity for optimizer requests and final plan documents
+- Tests for normal optimization, fallback, partial input, and failure paths
+- Checks for plan fields, serialization, persistence, timestamps, and output locations
+- Confirmation that command-line or scheduled entrypoints remain compatible
+
+Ownership evidence must include:
+
+- A responsibility map showing the owner of each planning decision
+- The exact decisions removed from the composition root
+- Proof that adapters do not define fallback or optimization policy
+- Proof that typed models express cohesive concepts and explicit units
+- Proof that fallback and normal paths share the same appropriate decision owners
+- Evidence that a change to one calculation no longer requires reading unrelated I/O code
+- Evidence that direct environment and file access decreased inside domain decisions
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Does each major energy-planning decision have one identifiable owner?
+2. Is the composition root limited to dependency construction and workflow coordination?
+3. Are weather, files, environment, persistence, and serialization explicit boundaries?
+4. Have fallback order, units, plan fields, and public behavior remained stable?
+5. Are typed models cohesive rather than broad bags of runtime state?
+6. Has duplicated request construction or fallback policy been removed?
+7. Can pure calculations be tested without external systems?
+8. Has the context required to modify one use case measurably decreased?
+9. Would a new weather provider or output target avoid changes to core planning rules?
+
+If the large module was only redistributed into mutually coupled files, the phase is incomplete.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Add planning decisions directly to the composition root
+- Reintroduce environment or file access into pure calculation modules
+- Add provider-specific fields to core optimizer or plan models without domain justification
+- Duplicate fallback policy in adapters or output writers
+- Expand a focused model into a universal runtime context
+- Remove parity tests when changing optimization or plan serialization
+- Bypass the typed request and result boundaries for convenience
+- Couple core planning rules to one weather provider, persistence backend, or execution entrypoint

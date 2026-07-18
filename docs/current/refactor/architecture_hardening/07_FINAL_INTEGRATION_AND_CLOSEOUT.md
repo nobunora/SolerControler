@@ -294,3 +294,158 @@ When all phases are complete:
 5. Commit the archive move separately.
 
 Documentation creation alone does not satisfy implementation completion.
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any integration or closeout step, answer:
+
+- Do the completed phases form one coherent ownership model?
+- Did any phase improve its own area by transferring policy or coupling into another area?
+- Which safety, public, persistence, unit, timezone, fallback, and operational contracts must be verified together?
+- What pressure to finish could cause temporary structures or unresolved duplication to be accepted as final?
+- What evidence will prove that the system is easier and safer to change as a whole?
+
+The objective is not to obtain a green final test run. The objective is to verify that preserved behavior and clearer ownership coexist across the complete system.
+
+## Why this phase is necessary
+
+Each earlier phase is intentionally narrow.
+
+A narrow phase can pass its focused tests while the combined system still contains:
+
+- Policy duplicated across phase boundaries
+- New dependency cycles
+- Compatibility wrappers that became accidental permanent owners
+- Canonical models that conflict across domains
+- Entry points that bypass newly established boundaries
+- Different fallback behavior between integrated workflows
+- Increased total complexity despite cleaner individual files
+- Documentation that describes a target no longer reflected in code
+
+Only a final system-level integration review can detect these cross-phase failures.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Important business and safety meanings have one identifiable owner.
+- Adapters, repositories, orchestrators, domain services, models, and composition roots have distinct responsibilities.
+- Public behavior and persistence contracts remain verified.
+- Cross-backend and cross-entrypoint parity is demonstrated where required.
+- Temporary compatibility structures are either removed or explicitly justified.
+- Dependency direction is coherent across the refactored areas.
+- Remaining debt and exclusions are recorded precisely.
+- A future change can follow the documented ownership model without recreating duplication.
+- The architecture-hardening program can be closed with evidence rather than confidence alone.
+
+The target is not architectural perfection.
+
+The target is a stable, explainable system whose remaining limitations are explicit.
+
+## How this phase contributes to the final architecture
+
+The final architecture is a system property. It cannot be proven by adding the results of isolated phases without checking their interaction.
+
+This phase contributes by:
+
+- Verifying that ownership boundaries agree across domains
+- Detecting policy that moved rather than disappeared
+- Confirming that shared models remain cohesive
+- Confirming that orchestrators do not regain decision ownership
+- Confirming that adapters do not define domain policy
+- Checking that compatibility paths delegate rather than fork behavior
+- Measuring whether routine changes require less repository context
+- Ensuring that the documentation, tests, and current code describe the same system
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Treating a green full test suite as sufficient closeout evidence
+- Removing compatibility code only to make the architecture look complete
+- Accepting undocumented exceptions because they affect only one backend
+- Ignoring dependency cycles that do not currently fail tests
+- Combining final cleanup with unrelated feature work
+- Resolving every remaining issue instead of documenting legitimate deferred work
+- Weakening tests to eliminate integration failures
+- Reporting file-count or line-count reduction as the primary result
+- Declaring a phase successful without checking what responsibility moved elsewhere
+- Archiving the plan before the current architecture and handoff evidence agree
+- Hiding residual static-analysis or test limitations behind a broad completion statement
+
+Completion pressure must not override the decision hierarchy in `VISION_AND_DECISION_PRINCIPLES.md`.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- The documented regression groups and their exact results
+- Cross-backend parity where business meaning is shared
+- Cross-entrypoint parity where workflows expose the same use case
+- Safety and failure-path verification
+- Public response, schema, serialization, unit, timezone, and fallback checks
+- A clear list of pre-existing or intentionally accepted failures
+- Confirmation that no validation scope was silently reduced
+
+Ownership evidence must include:
+
+- A final responsibility map for the refactored areas
+- A list of business meanings and their single owners
+- Evidence that adapters and orchestrators no longer duplicate those meanings
+- A list of compatibility wrappers and the reason each remains
+- Evidence that dependency direction matches the intended architecture
+- Evidence that routine use cases require less repository context
+- A list of residual duplicated ownership, if any, with explicit disposition
+
+Context evidence must include:
+
+- Which files must now be read to change each major use case
+- Which former giant modules or backend paths no longer need to be inspected
+- Which handoff records make future work possible without reconstructing history
+- Which remaining high-context areas were intentionally excluded
+
+## Phase alignment decision
+
+Before marking the full program complete, answer:
+
+1. Does every targeted business or safety meaning have one identifiable owner?
+2. Can each external system be recognized as an explicit boundary?
+3. Do orchestrators coordinate without independently redefining outcomes?
+4. Do all supported backends preserve shared meaning while retaining explicit infrastructure differences?
+5. Are public and persistence contracts verified at integrated boundaries?
+6. Did any phase create a new generic hub, broad context object, or hidden dependency cycle?
+7. Are compatibility paths delegating rather than maintaining separate implementations?
+8. Has the context required for routine changes decreased?
+9. Are remaining exceptions and debt recorded without overstating completion?
+10. Does the implementation still match `VISION_AND_DECISION_PRINCIPLES.md`?
+
+If these answers cannot be supported with concrete evidence, the program is not ready for closeout.
+
+## Conditions that block closeout
+
+Do not close or archive the program when:
+
+- A targeted rule still has multiple active owners.
+- One backend or entrypoint bypasses the shared path.
+- Safety behavior lacks failure-path evidence.
+- Public or persisted contracts changed without an explicit decision.
+- A temporary compatibility structure owns new business policy.
+- The final documentation describes boundaries not present in code.
+- The full validation scope is unknown or materially smaller than the baseline.
+- The next maintainer would still need to inspect most of the repository for a routine targeted change.
+
+## What future work must not undo
+
+After closeout, future work must not:
+
+- Add business policy directly to backend adapters or repositories
+- Add safety decisions directly to runner loops
+- Reintroduce raw storage records into shared domain or presentation code
+- Add planning decisions to composition roots
+- Create new entrypoints that bypass established owners
+- Expand focused models into generic context containers
+- Remove parity, characterization, or failure-path tests without replacement evidence
+- Treat the archived plan as obsolete when changing the ownership model
+
+Any intentional reversal must include a new architectural decision explaining why the system-level tradeoff has changed.

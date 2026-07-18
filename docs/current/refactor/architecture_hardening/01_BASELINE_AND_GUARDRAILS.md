@@ -217,3 +217,119 @@ Provide:
 - Small typed boundaries already present
 - Maximum six files or symbol ranges to inspect
 - Explicit list of files that Phase 02 should not reread
+## Vision alignment for this phase
+
+This phase must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before performing any step in this phase, answer:
+
+- Why is the baseline necessary for the whole refactoring program?
+- Which existing behavior and contracts must remain stable?
+- Which later ownership changes depend on this evidence?
+- What local optimization could weaken the baseline?
+- What evidence will distinguish preserved behavior from accidental test adaptation?
+
+The assigned tests, commands, and inspected files are execution boundaries only. They do not define the architectural objective.
+
+## Why this phase is necessary
+
+Later phases will move business rules, split orchestration, introduce typed boundaries, and remove duplicated backend logic.
+
+Without a trustworthy baseline, a later agent cannot distinguish:
+
+- An intentional ownership improvement
+- An accidental behavior change
+- An existing defect
+- A backend-specific contract
+- A fallback path that appears unused but is operationally required
+- A test failure caused by the refactor
+- A test failure that already existed
+
+This phase creates the evidence needed to change structure without guessing about behavior.
+
+It is therefore not preliminary housekeeping. It is the safety foundation for every later phase.
+
+## Phase-specific final target
+
+At the end of this phase:
+
+- Important current behavior is recorded as executable tests or explicit contracts.
+- Safety, persistence, field-name, unit, timezone, fallback, and error-handling expectations are identified.
+- Known failures and static-analysis debt are separated from regressions introduced later.
+- High-risk symbols have focused characterization coverage.
+- Later phases can prove parity without weakening the original contract.
+- The repository has a stable comparison point for both behavior and architecture.
+
+The target is not a perfectly passing full suite.
+
+The target is a reliable and explicit baseline whose limitations are documented.
+
+## How this phase contributes to the final architecture
+
+The final architecture requires one clear owner for each business meaning.
+
+Ownership cannot be moved safely until the current externally visible meaning is known.
+
+This phase supports the final target by:
+
+- Defining what must remain stable while ownership changes
+- Identifying which behavior is truly shared across backends
+- Revealing where current tests encode implementation details rather than contracts
+- Providing parity evidence for extraction into pure domain code
+- Preventing later phases from changing behavior merely to simplify structure
+
+## Phase-specific local-optimization risks
+
+Do not optimize this phase by:
+
+- Changing production behavior to make tests easier to write
+- Replacing characterization tests with idealized expected behavior
+- Marking an untested path as irrelevant without evidence
+- Expanding the full test suite only to increase test counts
+- Weakening assertions so that both old and new implementations pass
+- Treating existing failures as acceptable without recording them
+- Focusing only on the currently assigned backend
+- Encoding private implementation details that would block later ownership improvements
+- Declaring the baseline complete because selected tests pass
+
+A high test count is not the objective. Contract clarity is the objective.
+
+## Required evidence for completion
+
+Behavior evidence must include:
+
+- The exact test groups and commands used
+- Pass, fail, skip, and timeout results
+- Characterization of important fallback and failure behavior
+- Contract notes for persistence, units, timezones, schemas, and public outputs
+- A record of pre-existing failures
+
+Ownership-enabling evidence must include:
+
+- Which duplicated or mixed responsibilities the baseline now makes safe to change
+- Which behavior can be compared across backends
+- Which tests are suitable for old-versus-new parity checks
+- Which uncertainties still prevent ownership changes
+
+## Phase alignment decision
+
+Before marking this phase complete, answer:
+
+1. Can a later agent identify whether a changed result is a regression?
+2. Are important contracts expressed independently of the current internal structure?
+3. Have known baseline failures been separated from future failures?
+4. Does the evidence cover system behavior rather than only one file?
+5. Would any test added in this phase prevent a legitimate later boundary improvement?
+6. Is the baseline sufficient for the next phase without pretending to be exhaustive?
+
+If the answer to any question is unclear, record the gap in `PROGRESS.md` and do not claim full completion.
+
+## What later phases must not undo
+
+Later phases must not:
+
+- Rewrite characterization expectations only because a new design is cleaner
+- Remove fallback or safety behavior without an explicit product decision
+- Convert a documented pre-existing failure into an unrecorded regression
+- Replace contract-focused tests with implementation-coupled tests
+- Claim parity using a smaller behavior surface than this phase established

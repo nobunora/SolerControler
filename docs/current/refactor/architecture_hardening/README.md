@@ -15,9 +15,10 @@ The goal is not a full rewrite. The plan removes the highest structural risks in
 Read only these files at the start of a phase:
 
 1. Repository root `AGENTS.md`
-2. `00_EXECUTION_PROTOCOL.md`
-3. The assigned phase file
-4. The current status and latest handoff in `PROGRESS.md`
+2. `VISION_AND_DECISION_PRINCIPLES.md`
+3. `00_EXECUTION_PROTOCOL.md`
+4. The assigned phase file
+5. The current status and latest handoff in `PROGRESS.md`
 
 Do not read other phase files, `docs/completed`, `docs/archive`, or entire oversized source files unless the assigned phase explicitly requires it.
 
@@ -43,3 +44,48 @@ Do not reorder phases. Start a phase only after the previous phase satisfies its
 - Forced charging contains safety-critical external effects, so transitions must become testable before thinning the runner.
 - Dashboard and energy-model changes have broad impact and should start only after common boundaries are stable.
 - Environment access is not migrated globally. Each phase moves only the settings it directly touches.
+## Program vision and alignment rule
+
+Every document in this directory must be interpreted through `VISION_AND_DECISION_PRINCIPLES.md`.
+
+Before starting any phase or step, the assigned agent must be able to explain:
+
+- Why the change is necessary at the system level
+- Which business meaning should have clearer ownership afterward
+- Which higher-priority contracts must remain unchanged
+- Which form of local optimization could make the whole system worse
+- Which evidence will prove both behavior preservation and architectural improvement
+
+A task assignment is only a work boundary. It is not permission to optimize one file, backend, test, or function in isolation.
+
+When a locally attractive change conflicts with the final target of controlled ownership of behavior, the local change must be rejected or deferred.
+
+## Why this staged plan is necessary
+
+The repository contains several areas where one business meaning is spread across backends, orchestrators, entrypoints, raw dictionaries, and environment access.
+
+The plan is staged because the final target cannot be reached safely through one large rewrite. Each phase creates evidence and boundaries required by the next phase.
+
+The sequence prevents a sub-agent from improving one component while accidentally:
+
+- Changing public behavior
+- Creating backend drift
+- Moving policy into another inappropriate layer
+- Replacing explicit duplication with hidden coupling
+- Introducing a generic abstraction that erases domain meaning
+- Weakening a safety or persistence contract
+
+## Final state this directory is guiding toward
+
+After all implementation phases are complete:
+
+- Important business rules have one clear owner.
+- External systems remain explicit adapters.
+- Orchestrators coordinate work but do not own duplicate policy.
+- Typed models carry stable meaning and units.
+- Backends map and persist rather than decide.
+- Routine changes require less repository-wide context.
+- Tests prove both preserved contracts and improved ownership.
+- Remaining compatibility code is explicit and justified.
+
+Each phase document contains its own customized explanation of how that phase contributes to this final state and what it must not optimize locally.
