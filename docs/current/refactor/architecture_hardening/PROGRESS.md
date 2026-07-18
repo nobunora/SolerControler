@@ -30,7 +30,7 @@ For every phase, record:
 | 01 Baseline and guardrails | completed | 29d039f | Baseline and high-risk Operations cost contracts recorded. |
 | 02 Shared boundaries | completed | c203f83 | Existing shared Operations primitives verified across all adapters; no safe new clone extraction required. |
 | 03 Operations deduplication | completed | 226dc6a | Daily-cost policy has one pure owner; three adapters retain mapping and persistence only. |
-| 04 Forced-charge orchestration | not started | - | |
+| 04 Forced-charge orchestration | completed | b20048f | Monitor policy is state-owned; clock/device/status effects are injected ports. |
 | 05 Dashboard repository boundary | not started | - | |
 | 06 Energy-model decomposition | not started | - | |
 | 07 Integration and closeout | not started | - | |
@@ -310,6 +310,41 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: A maintainer can change daily-cost policy by reading one 170-line focused module and its direct test instead of three large adapters.
 - Intentionally deferred work: The three named Operations rule families require separate characterization/migration programs; forced-charge work begins next without modifying Operations.
 - What the next phase must not undo: Do not bypass `calculate_daily_costs`, add backend tariff branches, or move persistence clients into the domain model.
+
+### 2026-07-19 Phase 04 handoff
+
+- Date: 2026-07-19
+- Phase and step: Phase 04, Steps 04.1-04.8
+- Status: completed
+- Commits: `f94326a` settings boundary; `265fa95` runner settings use; `7576b4e` terminal routing; `ed9803e` injected ports; `d490100` demand decision; `b20048f` runner demand delegation.
+- Intent: Make forced-charge monitoring decisions deterministic and reusable while retaining device, clock, sleep, logging, and persistence in an imperative shell.
+- Changed files: `app/forced_charge/state_machine.py`, `app/forced_charge/ports.py`, `app/forced_charge/__init__.py`, `app/settings/forced_charge.py`, `cloud_job_runner.py`, focused forced-charge tests, and this progress record.
+- Preserved contracts: Start/skip thresholds, target hysteresis, inclusive cutoff/timeout comparisons, retry settings, initial missing-SoC standby, consecutive sensor failure limit, read/start/reapply failure standby attempts, persisted reason strings, profile labels/order, environment keys/defaults/blank behavior, and public one-argument monitor entrypoint.
+- State/observation/decision/command types: `ChargeState`, `ChargeObservation`, `ChargePolicy`, `ChargeMonitorProgress`, `ChargeDemand`, `ChargeTransition`, and `ChargeEffect`.
+- External ports introduced: `MonitorClock`, `MonitorDevicePort`, and `MonitorStatusPort`. Default runner adapters preserve existing global function behavior; tests/simulations may inject alternatives.
+- Compatibility wrappers retained: `_monitor_partial_forced_and_stop(plan_path)` still works without ports; `_should_keep_standby_without_charge` delegates to typed settings and `requires_forced_charge`; existing runner helper names remain.
+- Settings moved: cutoff, poll seconds, retry attempts/delay, stop margin, sensor failure limit, reapply policy, completion estimate lead time, and no-charge percent/kWh epsilons now parse in `ForcedChargeSettings` with existing defaults and bounds.
+- Exact fail-safe tests: initial missing SoC, consecutive sensor failures, monitor read exception, forced-start failure, reapply failure, standby failure persistence, cutoff/runtime compatibility reason, state stop table, and standby-confirm failure.
+- Tests run: final required groups: state/settings 23 passed, cloud runner 42 passed, KP-NET settings intent/workflow 41 passed (106 total). After demand ownership addition, state/settings/runner 69 passed.
+- Static checks: `python -m mypy app/forced_charge app/settings/forced_charge.py` -> no issues in 4 files; `python -m compileall -q app cloud_job_runner.py` passed; `git diff --check` passed.
+- Behavior differences: None observed.
+- Monitor policy ownership: target, cutoff, sensor limit, runtime, continue effects, reapply progress, and no-charge epsilon demand are pure state-boundary decisions. The runner consumes typed transitions and does not directly call clock/SoC/profile/status globals in the monitor range.
+- Remaining broad catches and justification: Read/start/reapply boundaries retain broad `Exception` catches because current safety behavior requires a standby attempt for unexpected device/transport failures before re-raising. Narrowing them without concrete transport exception contracts would weaken fail-safe coverage.
+- Explicit compatibility distinction: `decide_transition(INITIALIZING)` describes a generic state machine that requests standby when target is already reached, while the production no-charge path records a completed event without issuing a redundant device command. This pre-existing external-action distinction remains explicit in the shell; the shared `ChargeDemand` owns whether charging is needed.
+- Remaining risks: Stop-command confirmation is represented in the generic state machine but the existing profile wrapper raises on failed confirmation rather than returning a typed confirmation observation; exception tests prove the preserved fail-safe outcome.
+- Next agent must read: `05_DASHBOARD_REPOSITORY_BOUNDARY.md`; this Phase 04 handoff; `app/dashboard/models.py`; `app/dashboard/service.py`; only `_load_sqlite_slice`, `_load_postgres_slice`, `_load_firestore_slice` ranges in `app/dashboard_data.py`; direct dashboard tests.
+- Next target symbols: three `_load_*_slice` functions, `DashboardRawData`, `assemble_dashboard_slice`, backend row/document mappers, cache/fallback boundary.
+- Do not reread: full `cloud_job_runner.py`, Operations adapters, energy model, or completed forced-charge tests unless a regression points there.
+- Blockers: None.
+- System-level reason: Safety decisions must not drift between an imperative loop and reusable state logic.
+- Contribution to final target: Monitor policy is pure and deterministic; external effects are explicit injectable boundaries; runner coordinates observations, transitions, effects, and sleep.
+- Business meaning with clearer ownership: `app.forced_charge.state_machine` owns continue/stop/fail/demand decisions; `cloud_job_runner` owns KP-NET/clock/persistence execution.
+- Local-optimization risks considered: No shortened retry order, removed broad fail-safe, combined reason code, generic KP-NET client, or real device validation was introduced.
+- Behavior evidence: 106 required-group tests plus exact failure injection and boundary tables; operator-visible persistence reasons and action order remain asserted.
+- Ownership evidence: monitor stop branches and demand epsilon left the runner; direct monitor I/O globals were replaced by three narrow ports.
+- Context reduction achieved: Forced-charge policy can be understood and tested in the focused state/settings modules without reading the full runner.
+- Intentionally deferred work: The explicit generic-initialization versus production no-command compatibility distinction needs a product-approved action contract before unification; dashboard work begins next.
+- What the next phase must not undo: Do not add safety decisions to runner branches, bypass injected ports, or read forced-charge env values inside state logic.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.
