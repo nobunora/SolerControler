@@ -17,6 +17,7 @@ from app.consumption_forecast import ConsumptionForecast, forecast_daily_consump
 from app.energy_plan import PlanDocumentV1
 from app.energy_model import (
     DaytimeSocOptimizationResult,
+    EnergyModelCoefficients,
     NightChargeInputs,
     compute_night_charge_target,
     fit_coefficients_from_csv,
@@ -25,6 +26,7 @@ from app.energy_model import (
 )
 from app.occupancy_schedule import (
     OccupancyAdjustment,
+    OccupancyScheduleEvent,
     apply_occupancy_schedule,
     filter_training_load_rows,
     load_occupancy_events_from_env,
@@ -42,6 +44,102 @@ from app.soc_cost_optimizer import (
 from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history
 from app.pv_physical_forecast import build_physical_pv_candidate
 from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
+
+
+@dataclass(frozen=True)
+class EnergyModelConfig:
+    artifacts_dir: Path
+    latitude: float
+    longitude: float
+    timezone: str
+    consumption_min_training_days: int
+    consumption_fallback_window_days: int
+    reserve_soc_percent: float
+    cycle_count: float
+    battery_temp_c: float | None
+    pv_midday_load_fraction: float
+    daytime_soc_step_percent: float
+    daytime_target_peak_soc_percent: float
+    daytime_buy_tolerance_kwh: float
+    daytime_sell_tolerance_kwh: float
+    cost_optimization_enabled: bool
+    cost_respect_morning_headroom_cap: bool
+    cost_soc_step_percent: float
+    cost_weather_upside_z: float
+    cost_min_pv_multiplier: float
+    cost_max_pv_multiplier: float
+
+    @classmethod
+    def from_env(cls) -> "EnergyModelConfig":
+        _load_dotenv_if_present()
+        battery_temp = (
+            float(os.environ["BATTERY_TEMP_C"])
+            if "BATTERY_TEMP_C" in os.environ
+            else None
+        )
+        daytime_soc_step = float(
+            os.getenv("DAYTIME_SOC_OPT_STEP_PERCENT", "1.0").strip() or "1.0"
+        )
+        return cls(
+            artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "artifacts")),
+            latitude=float(os.getenv("FORECAST_LATITUDE", "35.67452")),
+            longitude=float(os.getenv("FORECAST_LONGITUDE", "139.48216")),
+            timezone=os.getenv("TIMEZONE", "Asia/Tokyo"),
+            consumption_min_training_days=int(
+                os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")
+            ),
+            consumption_fallback_window_days=int(
+                os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")
+            ),
+            reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
+            cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
+            battery_temp_c=battery_temp,
+            pv_midday_load_fraction=(
+                _to_optional_float(os.getenv("PV_MIDDAY_LOAD_FRACTION", "").strip())
+                or (6.0 / 13.0)
+            ),
+            daytime_soc_step_percent=daytime_soc_step,
+            daytime_target_peak_soc_percent=float(
+                os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"
+            ),
+            daytime_buy_tolerance_kwh=float(
+                os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"
+            ),
+            daytime_sell_tolerance_kwh=float(
+                os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"
+            ),
+            cost_optimization_enabled=_env_bool(
+                "DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", True
+            ),
+            cost_respect_morning_headroom_cap=_env_bool(
+                "SOC_COST_RESPECT_MORNING_HEADROOM_CAP", True
+            ),
+            cost_soc_step_percent=_env_float("SOC_COST_OPT_STEP_PERCENT", daytime_soc_step),
+            cost_weather_upside_z=_env_float("SOC_COST_WEATHER_UPSIDE_SCENARIO_Z", 3.5),
+            cost_min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
+            cost_max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
+        )
+
+
+@dataclass(frozen=True)
+class EnergyModelContext:
+    config: EnergyModelConfig
+    csv_paths: list[Path]
+    rows: list[dict[str, Any]]
+    coefficients: EnergyModelCoefficients
+    historical_profile: dict[str, float]
+    forecast: dict[str, object]
+    target_date: str
+    latest_soc_percent: float
+    occupancy_events: list[OccupancyScheduleEvent]
+
+
+@dataclass(frozen=True)
+class ConsumptionForecastBundle:
+    daily: ConsumptionForecast
+    base_daily: ConsumptionForecast
+    training_diagnostics: dict[str, object]
+    occupancy_adjustment: OccupancyAdjustment | None
 
 
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
@@ -1857,66 +1955,119 @@ def _expected_rest_of_month_day_buy_kwh(
     }
 
 
-def main() -> int:
-    _load_dotenv_if_present()
-    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-    csv_paths = _csv_paths_from_env_or_latest(artifacts_dir)
+def _load_execution_context(config: EnergyModelConfig) -> EnergyModelContext:
+    csv_paths = _csv_paths_from_env_or_latest(config.artifacts_dir)
     rows = _read_rows(csv_paths)
-    coeff = fit_coefficients_from_csv(csv_paths)
-    hist = _historical_profile(rows)
-    lat = float(os.getenv("FORECAST_LATITUDE", "35.67452"))
-    lon = float(os.getenv("FORECAST_LONGITUDE", "139.48216"))
-    timezone = os.getenv("TIMEZONE", "Asia/Tokyo")
+    coefficients = fit_coefficients_from_csv(csv_paths)
+    historical_profile = _historical_profile(rows)
+    forecast = _forecast_from_env_or_api(
+        lat=config.latitude,
+        lon=config.longitude,
+        timezone=config.timezone,
+    )
+    target_date = str(forecast["date"])
+    latest_soc = (
+        float(rows[-1]["soc"])
+        if rows and rows[-1]["soc"] == rows[-1]["soc"]
+        else 30.0
+    )
+    return EnergyModelContext(
+        config=config,
+        csv_paths=csv_paths,
+        rows=rows,
+        coefficients=coefficients,
+        historical_profile=historical_profile,
+        forecast=forecast,
+        target_date=target_date,
+        latest_soc_percent=latest_soc,
+        occupancy_events=load_occupancy_events_from_env(),
+    )
 
-    forecast = _forecast_from_env_or_api(lat=lat, lon=lon, timezone=timezone)
-    tomorrow_date = str(forecast["date"])
-    sun_h = _to_optional_float(forecast.get("sun_hours")) or 0.0
-    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
 
-    occupancy_events = load_occupancy_events_from_env()
-    load_rows_for_forecast = _load_rows_for_consumption_forecast(rows)
-    training_load_rows = filter_training_load_rows(load_rows_for_forecast, occupancy_events)
-    weather_history = _archive_weather_history(rows, lat=lat, lon=lon, timezone=timezone)
-    base_consumption_forecast = forecast_daily_consumption(
-        training_load_rows,
+def _build_consumption_forecasts(context: EnergyModelContext) -> ConsumptionForecastBundle:
+    config = context.config
+    load_rows = _load_rows_for_consumption_forecast(context.rows)
+    training_rows = filter_training_load_rows(load_rows, context.occupancy_events)
+    weather_history = _archive_weather_history(
+        context.rows,
+        lat=config.latitude,
+        lon=config.longitude,
+        timezone=config.timezone,
+    )
+    base_forecast = forecast_daily_consumption(
+        training_rows,
         weather_history.rows,
-        tomorrow_date,
-        weather_row=_forecast_weather_row(forecast),
-        min_training_days=int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")),
-        fallback_window=int(os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")),
+        context.target_date,
+        weather_row=_forecast_weather_row(context.forecast),
+        min_training_days=config.consumption_min_training_days,
+        fallback_window=config.consumption_fallback_window_days,
     )
     consumption_history_dates = {
         value.date().isoformat()
-        for row in training_load_rows
+        for row in training_rows
         if isinstance((value := row.get("dt")), datetime)
     }
     joined_training_dates = consumption_history_dates & set(weather_history.received_dates)
-    weather_history_diagnostics = {
+    diagnostics: dict[str, object] = {
         **asdict(weather_history),
         "rows": None,
-        "requested_start_date": weather_history.requested_dates[0] if weather_history.requested_dates else None,
-        "requested_end_date": weather_history.requested_dates[-1] if weather_history.requested_dates else None,
+        "requested_start_date": (
+            weather_history.requested_dates[0] if weather_history.requested_dates else None
+        ),
+        "requested_end_date": (
+            weather_history.requested_dates[-1] if weather_history.requested_dates else None
+        ),
         "requested_day_count": len(weather_history.requested_dates),
         "received_day_count": len(weather_history.received_dates),
         "consumption_history_day_count": len(consumption_history_dates),
         "joined_training_day_count": len(joined_training_dates),
-        "join_coverage_ratio": round(
-            len(joined_training_dates) / len(consumption_history_dates), 6
-        ) if consumption_history_dates else 0.0,
+        "join_coverage_ratio": (
+            round(len(joined_training_dates) / len(consumption_history_dates), 6)
+            if consumption_history_dates
+            else 0.0
+        ),
         "fallback_reason": (
             None
-            if base_consumption_forecast.source == "hist_gradient_boosting"
+            if base_forecast.source == "hist_gradient_boosting"
             else "weather_history_unavailable"
             if not weather_history.received_dates
             else "insufficient_joined_training_history"
-            if len(joined_training_dates) < int(os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45"))
+            if len(joined_training_dates) < config.consumption_min_training_days
             else "consumption_model_fallback"
         ),
     }
-    consumption_forecast, occupancy_adjustment = apply_occupancy_schedule(
-        base_consumption_forecast,
-        occupancy_events,
+    forecast, occupancy_adjustment = apply_occupancy_schedule(
+        base_forecast,
+        context.occupancy_events,
     )
+    return ConsumptionForecastBundle(
+        daily=forecast,
+        base_daily=base_forecast,
+        training_diagnostics=diagnostics,
+        occupancy_adjustment=occupancy_adjustment,
+    )
+
+
+def main() -> int:
+    config = EnergyModelConfig.from_env()
+    context = _load_execution_context(config)
+    consumption_bundle = _build_consumption_forecasts(context)
+    artifacts_dir = config.artifacts_dir
+    csv_paths = context.csv_paths
+    rows = context.rows
+    coeff = context.coefficients
+    hist = context.historical_profile
+    lat = config.latitude
+    lon = config.longitude
+    timezone = config.timezone
+    forecast = context.forecast
+    tomorrow_date = context.target_date
+    sun_h = _to_optional_float(forecast.get("sun_hours")) or 0.0
+    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
+    consumption_forecast = consumption_bundle.daily
+    base_consumption_forecast = consumption_bundle.base_daily
+    weather_history_diagnostics = consumption_bundle.training_diagnostics
+    occupancy_adjustment = consumption_bundle.occupancy_adjustment
     pv_array_forecast = _build_pv_forecast_or_disabled(
         rows=rows,
         target_date=tomorrow_date,
@@ -1945,10 +2096,10 @@ def main() -> int:
         pv_array_forecast["surplus_estimate"] = {
             "midday_surplus_kwh": predicted_midday_surplus_override,
             "method": "net_midday_surplus_without_safety_floor",
-            "midday_load_fraction": _to_optional_float(os.getenv("PV_MIDDAY_LOAD_FRACTION", "").strip()) or (6.0 / 13.0),
+            "midday_load_fraction": config.pv_midday_load_fraction,
         }
 
-    latest_soc = float(rows[-1]["soc"]) if rows and rows[-1]["soc"] == rows[-1]["soc"] else 30.0
+    latest_soc = context.latest_soc_percent
     expected_overnight_discharge_kwh = 0.0
     monthly_day_buy_before_target = _monthly_day_buy_kwh_before_target(
         rows,
@@ -1966,9 +2117,9 @@ def main() -> int:
         morning_load_forecast_kwh=consumption_forecast.morning_load_kwh,
         morning_pv_ratio=hist["morning_pv_ratio"],
         midday_surplus_ratio=hist["midday_surplus_ratio"],
-        reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
-        cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
-        battery_temp_c=float(os.getenv("BATTERY_TEMP_C", str(temp_c))),
+        reserve_soc_percent=config.reserve_soc_percent,
+        cycle_count=config.cycle_count,
+        battery_temp_c=config.battery_temp_c if config.battery_temp_c is not None else temp_c,
         predicted_pv_kwh_override=predicted_pv_override,
         predicted_morning_pv_kwh_override=predicted_morning_pv_override,
         predicted_midday_surplus_kwh_override=predicted_midday_surplus_override,
@@ -2088,10 +2239,10 @@ def main() -> int:
         hourly_load_kwh=hourly_load_forecast,
         hourly_pv_kwh=hourly_pv_forecast,
         sunset_hour=sunset_hour,
-        soc_step_percent=float(os.getenv("DAYTIME_SOC_OPT_STEP_PERCENT", "1.0").strip() or "1.0"),
-        target_peak_soc_percent=float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
-        buy_tolerance_kwh=float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
-        sell_tolerance_kwh=float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
+        soc_step_percent=config.daytime_soc_step_percent,
+        target_peak_soc_percent=config.daytime_target_peak_soc_percent,
+        buy_tolerance_kwh=config.daytime_buy_tolerance_kwh,
+        sell_tolerance_kwh=config.daytime_sell_tolerance_kwh,
         max_target_soc_percent=legacy_max_target_soc,
     )
     optimization_payload: dict[str, object] | None = None
@@ -2100,9 +2251,9 @@ def main() -> int:
         legacy_optimization_payload = {
             **to_dict(daytime_optimization),
             "objective": "avoid_daytime_buy_and_sell_then_peak_soc_near_target",
-            "target_peak_soc_percent": float(os.getenv("DAYTIME_TARGET_PEAK_SOC_PERCENT", "99.0").strip() or "99.0"),
-            "buy_tolerance_kwh": float(os.getenv("DAYTIME_BUY_TOLERANCE_KWH", "0.05").strip() or "0.05"),
-            "sell_tolerance_kwh": float(os.getenv("DAYTIME_SELL_TOLERANCE_KWH", "0.10").strip() or "0.10"),
+            "target_peak_soc_percent": config.daytime_target_peak_soc_percent,
+            "buy_tolerance_kwh": config.daytime_buy_tolerance_kwh,
+            "sell_tolerance_kwh": config.daytime_sell_tolerance_kwh,
             "target_soc_7_percent_after_peak_objective": daytime_optimization.target_soc_7_percent,
             "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
             "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
@@ -2117,7 +2268,7 @@ def main() -> int:
         }
 
     cost_optimization_payload: dict[str, object] | None = None
-    cost_optimization_enabled = _env_bool("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", True)
+    cost_optimization_enabled = config.cost_optimization_enabled
     if cost_optimization_enabled:
         pv_uncertainty = _apply_uncertainty_floor(selected_pv_uncertainty)
         cost_model = _soc_cost_model_from_env(
@@ -2129,7 +2280,7 @@ def main() -> int:
                 _to_optional_float(expected_rest_of_month_day_buy.get("kwh")) or 0.0
             ),
         )
-        respect_guard = _env_bool("SOC_COST_RESPECT_MORNING_HEADROOM_CAP", True)
+        respect_guard = config.cost_respect_morning_headroom_cap
         cost_max_soc = 100.0
         if respect_guard and apply_pv_headroom_caps:
             cost_max_soc = _to_optional_float(morning_headroom_guard.get("cap_target_soc_percent")) or 100.0
@@ -2146,7 +2297,7 @@ def main() -> int:
         sigma_buckets = _sigma_buckets_for_cost_optimizer()
         load_scenarios = _load_scenarios_for_cost_optimizer(forecast_correction)
         weather_upside_probability = _weather_upside_probability_for_cost_optimizer(forecast)
-        weather_upside_z = _env_float("SOC_COST_WEATHER_UPSIDE_SCENARIO_Z", 3.5)
+        weather_upside_z = config.cost_weather_upside_z
         peak_penalty = forecast_correction.get("peak_penalty", {})
         peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
         peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
@@ -2179,11 +2330,11 @@ def main() -> int:
             hourly_pv_kwh=hourly_pv_forecast,
             uncertainty=pv_uncertainty,
             cost_model=cost_model,
-            soc_step_percent=_env_float("SOC_COST_OPT_STEP_PERCENT", _env_float("DAYTIME_SOC_OPT_STEP_PERCENT", 1.0)),
+            soc_step_percent=config.cost_soc_step_percent,
             max_target_soc_percent=cost_max_soc,
             sigma_buckets=sigma_buckets,
-            min_pv_multiplier=_env_float("SOC_COST_MIN_PV_MULTIPLIER", 0.0),
-            max_pv_multiplier=_env_float("SOC_COST_MAX_PV_MULTIPLIER", 3.0),
+            min_pv_multiplier=config.cost_min_pv_multiplier,
+            max_pv_multiplier=config.cost_max_pv_multiplier,
             load_scenarios=load_scenarios,
             weather_upside_probability=weather_upside_probability,
             weather_upside_z=weather_upside_z,
