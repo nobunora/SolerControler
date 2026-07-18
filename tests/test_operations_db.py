@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app import operations_db as ops
+from app.operations.domain import tiered_increment_cost
 from app.operations_db import (
     ensure_schema,
     ingest_settings_summary,
@@ -142,6 +143,94 @@ def test_recalc_cost_daily_night8_tiered(tmp_path: Path) -> None:
         assert float(rows[1][1]) == pytest.approx(80.0)
         assert float(rows[1][2]) == pytest.approx(3364.4, abs=1e-6)
         assert float(rows[1][3]) == pytest.approx(7213.2, abs=1e-6)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("previous_kwh", "delta_kwh", "expected_yen"),
+    [
+        (0.0, 90.0, 90.0),
+        (0.0, 89.999, 89.999),
+        (0.0, 90.001, 90.002),
+        (90.0, 140.0, 280.0),
+        (230.0, 0.001, 0.003),
+    ],
+)
+def test_tiered_increment_cost_preserves_boundaries_and_float_precision(
+    previous_kwh: float,
+    delta_kwh: float,
+    expected_yen: float,
+) -> None:
+    actual = tiered_increment_cost(
+        previous_kwh=previous_kwh,
+        delta_kwh=delta_kwh,
+        tier1_upper_kwh=90.0,
+        tier2_upper_kwh=230.0,
+        rate_tier1_yen=1.0,
+        rate_tier2_yen=2.0,
+        rate_tier3_yen=3.0,
+    )
+
+    assert actual == pytest.approx(expected_yen)
+
+
+def test_recalc_cost_daily_characterizes_missing_negative_and_day_boundaries(tmp_path: Path) -> None:
+    conn = open_db(tmp_path / "solar.db")
+    try:
+        ensure_schema(conn)
+        rows = [
+            ("2026-05-01T06:59:00+09:00", -1.0, -2.0),
+            ("2026-05-01T07:00:00+09:00", 2.0, 1.0),
+            ("2026-05-01T22:59:00+09:00", 0.0, 1.0),
+            ("2026-05-01T23:00:00+09:00", 1.0, 0.0),
+            ("2026-05-02T00:00:00+09:00", None, None),
+            ("not-a-timestamp", 100.0, 0.0),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO monitoring_samples (ts, load_kwh, buy_kwh, source_csv, ingested_at)
+            VALUES (?, ?, ?, 'characterization', '2026-05-03T00:00:00Z')
+            """,
+            rows,
+        )
+        conn.commit()
+
+        recalc_cost_daily(
+            conn,
+            day_rate_yen_per_kwh=31.0,
+            updated_at="2026-05-03T00:00:00Z",
+            tariff_mode="night8_tiered",
+            night8_day_rate_tier1_yen=1.0,
+            night8_day_rate_tier2_yen=2.0,
+            night8_day_rate_tier3_yen=3.0,
+            night8_night_rate_yen=4.0,
+        )
+
+        actual = conn.execute(
+            "SELECT date, self_consumption_kwh, savings_yen FROM cost_daily ORDER BY date"
+        ).fetchall()
+        assert [tuple(row) for row in actual] == [
+            ("2026-05-01", 2.0, 5.0),
+            ("2026-05-02", 0.0, 0.0),
+        ]
+    finally:
+        conn.close()
+
+
+def test_recalc_cost_daily_empty_input_writes_no_rows(tmp_path: Path) -> None:
+    conn = open_db(tmp_path / "solar.db")
+    try:
+        ensure_schema(conn)
+
+        recalc_cost_daily(
+            conn,
+            day_rate_yen_per_kwh=31.0,
+            updated_at="2026-05-03T00:00:00Z",
+            tariff_mode="night8_tiered",
+        )
+
+        assert conn.execute("SELECT COUNT(*) FROM cost_daily").fetchone()[0] == 0
     finally:
         conn.close()
 
