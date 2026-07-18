@@ -8,6 +8,7 @@ import pytest
 
 from cloud_job_runner import (
     ForcedChargeCompletionEstimator,
+    _execute_monitor_terminal_transition,
     SocReading,
     _adjust03_target_date,
     _estimate_forced_charge_minutes,
@@ -25,6 +26,7 @@ from cloud_job_runner import (
     _run_adjust_03,
     _run_night_23,
 )
+from app.forced_charge import ChargeEffect, ChargeState, ChargeTransition
 
 
 def test_mask_env_updates_hides_secrets() -> None:
@@ -472,6 +474,64 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
 
     assert sleeps == [180]
     assert calls == [("forced", True), ("standby", False)]
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [ChargeState.COMPLETED_CUTOFF, ChargeState.FAILED_TIMEOUT],
+)
+def test_monitor_terminal_executor_preserves_timeout_persistence_reason(
+    monkeypatch, terminal: ChargeState
+) -> None:
+    calls: list[str] = []
+    reasons: list[str] = []
+    monkeypatch.setattr(
+        "cloud_job_runner._run_03_settings_profile_with_db",
+        lambda *, profile, dynamic_forced_profile, label: calls.append(label),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_monitor_stop_reason",
+        lambda _meta, reason: reasons.append(reason) or True,
+    )
+
+    handled = _execute_monitor_terminal_transition(
+        {},
+        ChargeTransition(
+            ChargeState.STOPPING,
+            (ChargeEffect.SET_STANDBY,),
+            "cutoff_reached" if terminal is ChargeState.COMPLETED_CUTOFF else "runtime_limit",
+            terminal,
+        ),
+    )
+
+    assert handled is True
+    assert calls == ["03-timer-standby"]
+    assert reasons == ["monitor_timeout"]
+
+
+def test_monitor_terminal_executor_persists_sensor_reason_when_standby_fails(monkeypatch) -> None:
+    reasons: list[str] = []
+    monkeypatch.setattr(
+        "cloud_job_runner._run_03_settings_profile_with_db",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("standby failed")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._persist_03_monitor_stop_reason",
+        lambda _meta, reason: reasons.append(reason) or True,
+    )
+
+    with pytest.raises(RuntimeError, match="standby failed"):
+        _execute_monitor_terminal_transition(
+            {},
+            ChargeTransition(
+                ChargeState.STOPPING,
+                (ChargeEffect.SET_STANDBY,),
+                "sensor_failure_limit",
+                ChargeState.FAILED_SENSOR,
+            ),
+        )
+
+    assert reasons == ["soc_unavailable_fail_safe"]
 
 
 def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_path) -> None:

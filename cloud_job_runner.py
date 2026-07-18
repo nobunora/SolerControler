@@ -20,6 +20,7 @@ from app.forced_charge import (
     ChargePolicy,
     ChargeReapplyPolicy,
     ChargeState,
+    ChargeTransition,
     decide_transition,
 )
 from app.settings.forced_charge import ForcedChargeSettings
@@ -1012,6 +1013,38 @@ def _attempt_03_fail_safe_standby(
         _persist_03_monitor_stop_reason(plan_meta, reason)
 
 
+def _execute_monitor_terminal_transition(
+    plan_meta: dict[str, Any],
+    transition: ChargeTransition,
+) -> bool:
+    terminal = transition.terminal_after_stop
+    if terminal is None:
+        return False
+    if terminal is ChargeState.COMPLETED_TARGET:
+        print("[cloud_job_runner] 03-monitor target reached. switch to standby profile.", flush=True)
+        label = "03-target-standby"
+        persisted_reason = transition.reason
+    elif terminal is ChargeState.FAILED_SENSOR:
+        print("[cloud_job_runner] 03-monitor SOC unavailable; fail-safe standby.", flush=True)
+        label = "03-soc-unavailable-standby"
+        persisted_reason = "soc_unavailable_fail_safe"
+    elif terminal in {ChargeState.COMPLETED_CUTOFF, ChargeState.FAILED_TIMEOUT}:
+        print("[cloud_job_runner] 03-monitor timer reached. switch to standby profile.", flush=True)
+        label = "03-timer-standby"
+        persisted_reason = "monitor_timeout"
+    else:
+        raise RuntimeError(f"unsupported monitor terminal state: {terminal.value}")
+    try:
+        _run_03_settings_profile_with_db(
+            profile="standby",
+            dynamic_forced_profile=False,
+            label=label,
+        )
+    finally:
+        _persist_03_monitor_stop_reason(plan_meta, persisted_reason)
+    return True
+
+
 def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
@@ -1161,7 +1194,20 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
         rate_percent_per_hour=float(charge_rate_info.get("percent_per_hour") or 1.0),
         confirm_before_minutes=forced_charge_settings.completion_confirm_before_minutes,
     )
-    while time.time() - started_at < monitor_seconds:
+    while True:
+        elapsed_clock_seconds = max(0.0, time.time() - started_at)
+        if elapsed_clock_seconds >= monitor_seconds:
+            transition = decide_transition(
+                ChargeState.MONITORING,
+                ChargeObservation(
+                    now=monitor_policy.cutoff,
+                    soc_percent=None,
+                    elapsed_seconds=elapsed_clock_seconds,
+                ),
+                monitor_policy,
+            )
+            _execute_monitor_terminal_transition(plan_meta, transition)
+            return
         try:
             soc_reading = _read_soc_with_fallback(csv_paths)
         except Exception:
@@ -1224,30 +1270,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             ),
             monitor_policy,
         )
-        if transition.terminal_after_stop is ChargeState.COMPLETED_TARGET:
-            print("[cloud_job_runner] 03-monitor target reached. switch to standby profile.", flush=True)
-            _run_03_settings_profile_with_db(
-                profile="standby",
-                dynamic_forced_profile=False,
-                label="03-target-standby",
-            )
-            _persist_03_monitor_stop_reason(plan_meta, transition.reason)
-            return
-        if transition.terminal_after_stop is ChargeState.FAILED_SENSOR:
-            print("[cloud_job_runner] 03-monitor SOC unavailable; fail-safe standby.", flush=True)
-            try:
-                _run_03_settings_profile_with_db(
-                    profile="standby",
-                    dynamic_forced_profile=False,
-                    label="03-soc-unavailable-standby",
-                )
-            finally:
-                _persist_03_monitor_stop_reason(plan_meta, "soc_unavailable_fail_safe")
+        if _execute_monitor_terminal_transition(plan_meta, transition):
             return
 
         remaining = monitor_seconds - int(time.time() - started_at)
         if remaining <= 0:
-            break
+            continue
         next_check_seconds = completion_estimator.next_check_seconds(
             target_soc=target_soc,
             latest_soc=latest_soc,
@@ -1255,20 +1283,23 @@ def _monitor_partial_forced_and_stop(plan_path: Path) -> None:
             cutoff_seconds=remaining,
         )
         if next_check_seconds <= 0:
-            break
+            timeout_transition = decide_transition(
+                ChargeState.MONITORING,
+                ChargeObservation(
+                    now=monitor_policy.cutoff,
+                    soc_percent=None,
+                    elapsed_seconds=float(monitor_seconds),
+                ),
+                monitor_policy,
+            )
+            _execute_monitor_terminal_transition(plan_meta, timeout_transition)
+            return
         print(
             "[cloud_job_runner] 03-monitor next check "
             f"sleep={next_check_seconds}s remaining_to_cutoff={remaining}s",
             flush=True,
         )
         time.sleep(next_check_seconds)
-
-    print("[cloud_job_runner] 03-monitor timer reached. switch to standby profile.", flush=True)
-    try:
-        _run_03_settings_profile_with_db(profile="standby", dynamic_forced_profile=False, label="03-timer-standby")
-    finally:
-        _persist_03_monitor_stop_reason(plan_meta, "monitor_timeout")
-
 
 def _run_night_23() -> None:
     # 23:00 is only a mode-control guard. Forecast/data work is centralized in
