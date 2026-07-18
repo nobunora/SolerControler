@@ -20,6 +20,7 @@ from app.energy_plan import (
     HistoricalInputPort,
     PlanDocumentV1,
     WeatherHistoryFetchResult,
+    WeatherHistoryPort,
 )
 from app.energy_model import (
     DaytimeSocOptimizationResult,
@@ -168,6 +169,18 @@ class _DefaultHistoricalInputPort:
 class _DefaultForecastInputPort:
     def load_forecast(self, *, latitude: float, longitude: float, timezone: str) -> dict[str, object]:
         return _forecast_from_env_or_api(lat=latitude, lon=longitude, timezone=timezone)
+
+
+class _DefaultWeatherHistoryPort:
+    def load_history(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        latitude: float,
+        longitude: float,
+        timezone: str,
+    ) -> WeatherHistoryFetchResult:
+        return _archive_weather_history(rows, lat=latitude, lon=longitude, timezone=timezone)
 
 
 @dataclass(frozen=True)
@@ -2074,14 +2087,19 @@ def _load_execution_context(
     )
 
 
-def _build_consumption_forecasts(context: EnergyModelContext) -> ConsumptionForecastBundle:
+def _build_consumption_forecasts(
+    context: EnergyModelContext,
+    *,
+    weather_history_port: WeatherHistoryPort | None = None,
+) -> ConsumptionForecastBundle:
     config = context.config
+    weather_source = weather_history_port or _DefaultWeatherHistoryPort()
     load_rows = _load_rows_for_consumption_forecast(context.rows)
     training_rows = filter_training_load_rows(load_rows, context.occupancy_events)
-    weather_history = _archive_weather_history(
+    weather_history = weather_source.load_history(
         context.rows,
-        lat=config.latitude,
-        lon=config.longitude,
+        latitude=config.latitude,
+        longitude=config.longitude,
         timezone=config.timezone,
     )
     base_forecast = forecast_daily_consumption(
@@ -2760,10 +2778,27 @@ def _build_energy_model_output(
     )
 
 
-def build_energy_plan(config: EnergyModelConfig) -> EnergyModelOutput:
+def build_energy_plan(
+    config: EnergyModelConfig,
+    *,
+    historical_input: HistoricalInputPort | None = None,
+    forecast_input: ForecastInputPort | None = None,
+    weather_history_port: WeatherHistoryPort | None = None,
+) -> EnergyModelOutput:
     """Coordinate the planning use case without persisting or reporting output."""
-    context = _load_execution_context(config)
-    consumption_bundle = _build_consumption_forecasts(context)
+    if historical_input is None and forecast_input is None:
+        context = _load_execution_context(config)
+    else:
+        context = _load_execution_context(
+            config,
+            historical_input=historical_input,
+            forecast_input=forecast_input,
+        )
+    consumption_bundle = (
+        _build_consumption_forecasts(context)
+        if weather_history_port is None
+        else _build_consumption_forecasts(context, weather_history_port=weather_history_port)
+    )
     night_charge = _prepare_night_charge(context, consumption_bundle)
     pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
     constraints = _build_soc_constraints(context, pv_bundle, night_charge)

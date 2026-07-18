@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from app.energy_model import EnergyModelCoefficients
 from app.occupancy_schedule import OccupancyScheduleEvent
+from app.energy_plan.weather import WeatherHistoryFetchResult
 
 
 class HistoricalInputPort(Protocol):
@@ -21,3 +22,14 @@ class HistoricalInputPort(Protocol):
 
 class ForecastInputPort(Protocol):
     def load_forecast(self, *, latitude: float, longitude: float, timezone: str) -> dict[str, object]: ...
+
+
+class WeatherHistoryPort(Protocol):
+    def load_history(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        latitude: float,
+        longitude: float,
+        timezone: str,
+    ) -> WeatherHistoryFetchResult: ...

@@ -164,9 +164,7 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
         lambda **_: {"date": "2026-07-17", "sun_hours": 8.0, "temp_c": 30.0},
     )
     monkeypatch.setattr("energy_model_main.load_occupancy_events_from_env", lambda: [])
-    monkeypatch.setattr(
-        "energy_model_main._archive_weather_history",
-        lambda *_, **__: WeatherHistoryFetchResult(
+    weather_result = WeatherHistoryFetchResult(
             rows=[{"date": "2026-07-15", "temp": 29.0}],
             requested_dates=["2026-07-15"],
             received_dates=["2026-07-15"],
@@ -174,8 +172,17 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
             errors=[],
             cache_hit_dates=["2026-07-15"],
             requested_periods=[],
-        ),
     )
+    monkeypatch.setattr(
+        "energy_model_main._archive_weather_history",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("injected port must own access")),
+    )
+
+    class WeatherPort:
+        def load_history(self, input_rows, *, latitude, longitude, timezone):
+            assert input_rows is rows
+            assert timezone == "Asia/Tokyo"
+            return weather_result
     expected = ConsumptionForecast(
         target_date=datetime(2026, 7, 17).date(),
         morning_load_kwh=4.0,
@@ -187,7 +194,8 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
     monkeypatch.setattr("energy_model_main.forecast_daily_consumption", lambda *_, **__: expected)
 
     bundle = _build_consumption_forecasts(
-        _load_execution_context(EnergyModelConfig.from_env())
+        _load_execution_context(EnergyModelConfig.from_env()),
+        weather_history_port=WeatherPort(),
     )
 
     assert bundle.daily is expected
