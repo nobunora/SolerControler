@@ -29,7 +29,7 @@ For every phase, record:
 |---|---|---|---|
 | 01 Baseline and guardrails | completed | 29d039f | Baseline and high-risk Operations cost contracts recorded. |
 | 02 Shared boundaries | completed | c203f83 | Existing shared Operations primitives verified across all adapters; no safe new clone extraction required. |
-| 03 Operations deduplication | not started | - | |
+| 03 Operations deduplication | completed | 226dc6a | Daily-cost policy has one pure owner; three adapters retain mapping and persistence only. |
 | 04 Forced-charge orchestration | not started | - | |
 | 05 Dashboard repository boundary | not started | - | |
 | 06 Energy-model decomposition | not started | - | |
@@ -276,6 +276,40 @@ Append new records below. Do not delete or rewrite older handoffs.
 - Context reduction achieved: Phase 03 can inspect four named symbol groups and reuse five named fixtures without repeating a clone scan.
 - Intentionally deferred work: Operations business calculations and backend mapping belong to Phase 03; forced charge, dashboard, and energy-model boundaries remain in their assigned later phases.
 - What the next phase must not undo: Do not copy shared primitives back into adapters or move backend persistence decisions into `app.operations.domain`.
+
+### 2026-07-19 Phase 03 handoff
+
+- Date: 2026-07-19
+- Phase and step: Phase 03, Steps 03.1-03.8
+- Status: completed
+- Commits: `a4f8fc4` pure domain/tests; `213880c` SQLite; `f0635c8` PostgreSQL; `79d876d` Firestore; `226dc6a` duplicate removal.
+- Intent: Give daily-cost business meaning one storage-independent owner while preserving each backend's persistence mechanics.
+- Changed files: `app/operations/cost_daily.py`, the three Operations adapters, `tests/test_operations_cost_daily.py`, `tests/test_postgres_operations.py`, `tests/test_firestore_operations.py`, and this progress record.
+- Preserved contracts: `recalc_cost_daily` signatures/return (`None`), table/collection and six field names, merge/upsert behavior, updated timestamp, transaction/commit boundaries, 450-document Firestore batching, tariff values, day window, monthly tier reset, missing/negative semantics, precision, and unsupported-mode `ValueError`.
+- Tests run: final Phase 03 command covering pure domain, all adapters, dashboard parity, Firestore metrics, and pipeline dispatch -> 34 passed. Earlier adapter gates: SQLite 24 passed, PostgreSQL 27 passed, Firestore 29 passed.
+- Static checks: `python -m compileall -q app` passed; `python -m mypy app/operations/cost_daily.py` passed with no issues; `git diff --check` passed with only configured LF-to-CRLF warnings.
+- Behavior differences: None observed across characterization and planned-persistence fixtures.
+- New typed boundaries: immutable `EnergyInterval`, `DailyCostPolicy`, and `DailyCostResult`; pure `calculate_daily_costs`.
+- Backend mappers added: Each adapter maps `ts`, `load_kwh`, and `buy_kwh` into `EnergyInterval`. SQLite/PostgreSQL retain SQL cursor/upsert/commit; Firestore retains document-ID fallback, merge writes, and batch commits.
+- Compatibility wrappers retained: Public `recalc_cost_daily` functions remain in all three adapter modules and delegate to the pure owner.
+- Removed duplication: 476 lines of unreachable/duplicated flat and night8 calculation were removed from the adapters. A tariff change now requires editing one domain module and its tests.
+- Backend-specific normalization: Firestore continues to fall back from missing `ts` field to document ID. SQL adapters use stored `ts`. These are mapper concerns and do not branch domain policy.
+- Operations environment reads moved: None; existing composition passes tariff parameters into wrappers and the pure model has no environment access.
+- Remaining Operations queue: `upsert_battery_daily_metrics`, `upsert_model_parameters_from_plan`, and `recalc_model_hit_rates` remain adapter-owned. They are explicitly deferred as separate rule families because Phase 03 prohibits starting another family before completing and committing daily cost; they require their own cross-backend persistence fixtures before future consolidation.
+- Remaining risks: PostgreSQL and Firestore verification uses deterministic fake adapters rather than live services; transaction service behavior was preserved structurally but no production writes were performed.
+- Next agent must read: `04_FORCED_CHARGE_ORCHESTRATION.md`; this Phase 03 handoff; `app/forced_charge/state_machine.py`; `cloud_job_runner.py::_monitor_partial_forced_and_stop`; `tests/test_forced_charge_state_machine.py`; relevant monitor/fail-safe range in `tests/test_cloud_job_runner.py`.
+- Next target symbols: `ChargePolicy`, `ChargeMonitorProgress`, `decide_transition`, `_monitor_partial_forced_and_stop`, `_attempt_03_fail_safe_standby`, and forced/standby effect execution.
+- Do not reread: Operations adapter function bodies, full `cloud_job_runner.py`, full dashboard/energy modules, or completed cost tests unless a regression directly points there.
+- Blockers: None.
+- System-level reason: Storage selection must not select a different interpretation of tariff, missing data, or accounting day.
+- Contribution to final target: Daily-cost policy is pure, typed, deterministic, and independent of SQLite/PostgreSQL/Firestore; adapters now map and persist.
+- Business meaning with clearer ownership: `app.operations.cost_daily.calculate_daily_costs` exclusively owns daily self-consumption, flat/tiered savings, and cumulative totals.
+- Local-optimization risks considered: No generic repository, schema rewrite, rounding cleanup, backend branch in domain logic, or migration of unrelated Operations families was introduced.
+- Behavior evidence: Characterization tables plus SQLite rows, PostgreSQL planned tuples, and Firestore planned documents prove values, fields, precision, and commit behavior.
+- Ownership evidence: Three adapter calculation bodies were deleted; identity/shared primitive tests remain; pure model contains no I/O or env access.
+- Context reduction achieved: A maintainer can change daily-cost policy by reading one 170-line focused module and its direct test instead of three large adapters.
+- Intentionally deferred work: The three named Operations rule families require separate characterization/migration programs; forced-charge work begins next without modifying Operations.
+- What the next phase must not undo: Do not bypass `calculate_daily_costs`, add backend tariff branches, or move persistence clients into the domain model.
 ## Why this progress file is necessary
 
 The implementation will be distributed across phases, commits, and possibly multiple agents.
