@@ -9,6 +9,7 @@ from typing import Any
 
 from google.cloud import firestore
 
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
 from app.night_plan_archive import (
     build_night_plan_firestore_document,
     read_plan_file,
@@ -324,6 +325,53 @@ def recalc_cost_daily(
         x = doc.to_dict() or {}
         x["ts"] = x.get("ts", doc.id)
         rows.append(x)
+
+    results = calculate_daily_costs(
+        [
+            EnergyInterval(
+                timestamp=str(row.get("ts", "")),
+                load_kwh=row.get("load_kwh"),
+                buy_kwh=row.get("buy_kwh"),
+            )
+            for row in rows
+        ],
+        DailyCostPolicy(
+            tariff_mode=tariff_mode,
+            day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+            day_start_hhmm=night8_day_start_hhmm,
+            day_end_hhmm=night8_day_end_hhmm,
+            day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+            day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+            day_rate_tier1_yen=night8_day_rate_tier1_yen,
+            day_rate_tier2_yen=night8_day_rate_tier2_yen,
+            day_rate_tier3_yen=night8_day_rate_tier3_yen,
+            night_rate_yen=night8_night_rate_yen,
+        ),
+    )
+    batch = client.batch()
+    batch_count = 0
+    for result in results:
+        doc_ref = client.collection("cost_daily").document(result.date)
+        batch.set(
+            doc_ref,
+            {
+                "date": result.date,
+                "self_consumption_kwh": result.self_consumption_kwh,
+                "savings_yen": result.savings_yen,
+                "cumulative_kwh": result.cumulative_kwh,
+                "cumulative_yen": result.cumulative_yen,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        batch_count += 1
+        if batch_count >= 450:
+            batch.commit()
+            batch = client.batch()
+            batch_count = 0
+    if batch_count > 0:
+        batch.commit()
+    return
 
     if mode == "flat":
         by_day: dict[str, float] = defaultdict(float)
