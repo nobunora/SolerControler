@@ -42,11 +42,15 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
 
 
 def test_all_database_adapters_use_the_shared_plan_domain() -> None:
-    from app import firestore_ops, postgres_ops
+    from app import firestore_ops, operations_db, postgres_ops
     from app.operations import domain
 
-    assert postgres_ops._extract_hourly_forecast_from_plan is domain.extract_hourly_forecast_from_plan
-    assert firestore_ops._extract_hourly_forecast_from_plan is domain.extract_hourly_forecast_from_plan
+    adapters = (operations_db, postgres_ops, firestore_ops)
+    for adapter in adapters:
+        assert adapter._extract_hourly_forecast_from_plan is domain.extract_hourly_forecast_from_plan
+        assert adapter._is_within_window is domain.is_within_window
+        assert adapter._parse_hhmm_to_minute is domain.parse_hhmm_to_minute
+        assert adapter._tiered_day_increment_cost is domain.tiered_increment_cost
 
 
 def test_weather_domain_treats_malformed_provider_payload_as_missing(monkeypatch) -> None:
