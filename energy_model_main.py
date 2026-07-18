@@ -2736,8 +2736,8 @@ def _build_energy_model_output(
     )
 
 
-def main() -> int:
-    config = EnergyModelConfig.from_env()
+def build_energy_plan(config: EnergyModelConfig) -> EnergyModelOutput:
+    """Coordinate the planning use case without persisting or reporting output."""
     context = _load_execution_context(config)
     consumption_bundle = _build_consumption_forecasts(context)
     night_charge = _prepare_night_charge(context, consumption_bundle)
@@ -2764,6 +2764,12 @@ def main() -> int:
         constraints,
         decision,
     )
+    return output
+
+
+def main() -> int:
+    config = EnergyModelConfig.from_env()
+    output = build_energy_plan(config)
     output.persist()
     print(output.output_path)
     return 0
