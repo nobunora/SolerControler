@@ -188,6 +188,12 @@ class SocConstraintSet:
     historical_soc_gain: dict[str, object]
 
 
+@dataclass(frozen=True)
+class LegacyOptimizationDecision:
+    result: DaytimeSocOptimizationResult | None
+    payload: dict[str, object] | None
+
+
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
     if not path.exists():
         return
@@ -2322,6 +2328,57 @@ def _build_soc_constraints(
     )
 
 
+def _run_legacy_soc_optimization(
+    context: EnergyModelContext,
+    pv_forecast: PvForecastBundle,
+    constraints: SocConstraintSet,
+    night_charge: NightChargePreparation,
+) -> LegacyOptimizationDecision:
+    config = context.config
+    result = optimize_target_soc_for_daytime(
+        effective_capacity_kwh_value=night_charge.result.effective_capacity_kwh,
+        soc_now_percent=context.latest_soc_percent,
+        reserve_soc_percent=night_charge.inputs.reserve_soc_percent,
+        battery_round_trip_efficiency=context.coefficients.battery_round_trip_efficiency,
+        hourly_load_kwh=pv_forecast.hourly_load_kwh,
+        hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+        sunset_hour=pv_forecast.sunset_hour,
+        soc_step_percent=config.daytime_soc_step_percent,
+        target_peak_soc_percent=config.daytime_target_peak_soc_percent,
+        buy_tolerance_kwh=config.daytime_buy_tolerance_kwh,
+        sell_tolerance_kwh=config.daytime_sell_tolerance_kwh,
+        max_target_soc_percent=constraints.max_target_soc_percent,
+    )
+    if result is None:
+        return LegacyOptimizationDecision(result=None, payload=None)
+    payload: dict[str, object] = {
+        **to_dict(result),
+        "objective": "avoid_daytime_buy_and_sell_then_peak_soc_near_target",
+        "target_peak_soc_percent": config.daytime_target_peak_soc_percent,
+        "buy_tolerance_kwh": config.daytime_buy_tolerance_kwh,
+        "sell_tolerance_kwh": config.daytime_sell_tolerance_kwh,
+        "target_soc_7_percent_after_peak_objective": result.target_soc_7_percent,
+        "required_night_charge_kwh_after_peak_objective": result.required_night_charge_kwh,
+        "legacy_pv_headroom_cap": {
+            "applied": False,
+            "reason": "replaced_by_peak_soc_objective",
+        },
+        "morning_pv_headroom_guard": constraints.morning_headroom,
+        "daytime_net_surplus_headroom_guard": constraints.daytime_net_surplus,
+        "historical_daytime_soc_gain_guard": constraints.historical_soc_gain,
+        "sunset_hour": pv_forecast.sunset_hour,
+        "hourly_weather_pv_shape": pv_forecast.hourly_weather_shape,
+        "pv_physical_forecast": pv_forecast.physical_diagnostics,
+        "hourly_load_forecast_kwh": {
+            str(k): round(v, 4) for k, v in sorted(pv_forecast.hourly_load_kwh.items())
+        },
+        "hourly_pv_forecast_kwh": {
+            str(k): round(v, 4) for k, v in sorted(pv_forecast.hourly_pv_kwh.items())
+        },
+    }
+    return LegacyOptimizationDecision(result=result, payload=payload)
+
+
 def main() -> int:
     config = EnergyModelConfig.from_env()
     context = _load_execution_context(config)
@@ -2329,6 +2386,12 @@ def main() -> int:
     night_charge = _prepare_night_charge(context, consumption_bundle)
     pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
     constraints = _build_soc_constraints(context, pv_bundle, night_charge)
+    legacy_decision = _run_legacy_soc_optimization(
+        context,
+        pv_bundle,
+        constraints,
+        night_charge,
+    )
     artifacts_dir = config.artifacts_dir
     csv_paths = context.csv_paths
     rows = context.rows
@@ -2361,42 +2424,9 @@ def main() -> int:
     morning_headroom_guard_for_payload = constraints.morning_headroom
     daytime_net_surplus_headroom_guard_for_payload = constraints.daytime_net_surplus
     historical_soc_gain_guard_for_payload = constraints.historical_soc_gain
-    legacy_max_target_soc = constraints.max_target_soc_percent
-    daytime_optimization: DaytimeSocOptimizationResult | None = optimize_target_soc_for_daytime(
-        effective_capacity_kwh_value=result.effective_capacity_kwh,
-        soc_now_percent=latest_soc,
-        reserve_soc_percent=inp.reserve_soc_percent,
-        battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
-        hourly_load_kwh=hourly_load_forecast,
-        hourly_pv_kwh=hourly_pv_forecast,
-        sunset_hour=sunset_hour,
-        soc_step_percent=config.daytime_soc_step_percent,
-        target_peak_soc_percent=config.daytime_target_peak_soc_percent,
-        buy_tolerance_kwh=config.daytime_buy_tolerance_kwh,
-        sell_tolerance_kwh=config.daytime_sell_tolerance_kwh,
-        max_target_soc_percent=legacy_max_target_soc,
-    )
+    daytime_optimization = legacy_decision.result
     optimization_payload: dict[str, object] | None = None
-    legacy_optimization_payload: dict[str, object] | None = None
-    if daytime_optimization is not None:
-        legacy_optimization_payload = {
-            **to_dict(daytime_optimization),
-            "objective": "avoid_daytime_buy_and_sell_then_peak_soc_near_target",
-            "target_peak_soc_percent": config.daytime_target_peak_soc_percent,
-            "buy_tolerance_kwh": config.daytime_buy_tolerance_kwh,
-            "sell_tolerance_kwh": config.daytime_sell_tolerance_kwh,
-            "target_soc_7_percent_after_peak_objective": daytime_optimization.target_soc_7_percent,
-            "required_night_charge_kwh_after_peak_objective": daytime_optimization.required_night_charge_kwh,
-            "legacy_pv_headroom_cap": {"applied": False, "reason": "replaced_by_peak_soc_objective"},
-            "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
-            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
-            "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
-            "sunset_hour": sunset_hour,
-            "hourly_weather_pv_shape": hourly_weather_pv_shape,
-            "pv_physical_forecast": physical_pv_diagnostics,
-            "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
-            "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
-        }
+    legacy_optimization_payload = legacy_decision.payload
 
     cost_optimization_payload: dict[str, object] | None = None
     cost_optimization_enabled = config.cost_optimization_enabled
