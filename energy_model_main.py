@@ -14,7 +14,12 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
-from app.energy_plan import EnergyPlanOutput as EnergyModelOutput, PlanDocumentV1
+from app.energy_plan import (
+    EnergyPlanOutput as EnergyModelOutput,
+    ForecastInputPort,
+    HistoricalInputPort,
+    PlanDocumentV1,
+)
 from app.energy_model import (
     DaytimeSocOptimizationResult,
     EnergyModelCoefficients,
@@ -140,6 +145,28 @@ class EnergyModelContext:
     target_date: str
     latest_soc_percent: float
     occupancy_events: list[OccupancyScheduleEvent]
+
+
+class _DefaultHistoricalInputPort:
+    def locate_csv_paths(self, artifacts_dir: Path) -> list[Path]:
+        return _csv_paths_from_env_or_latest(artifacts_dir)
+
+    def read_rows(self, csv_paths: list[Path]) -> list[dict[str, Any]]:
+        return _read_rows(csv_paths)
+
+    def fit_coefficients(self, csv_paths: list[Path]) -> EnergyModelCoefficients:
+        return fit_coefficients_from_csv(csv_paths)
+
+    def build_historical_profile(self, rows: list[dict[str, Any]]) -> dict[str, float]:
+        return _historical_profile(rows)
+
+    def load_occupancy_events(self) -> list[OccupancyScheduleEvent]:
+        return load_occupancy_events_from_env()
+
+
+class _DefaultForecastInputPort:
+    def load_forecast(self, *, latitude: float, longitude: float, timezone: str) -> dict[str, object]:
+        return _forecast_from_env_or_api(lat=latitude, lon=longitude, timezone=timezone)
 
 
 @dataclass(frozen=True)
@@ -2021,14 +2048,21 @@ def _expected_rest_of_month_day_buy_kwh(
     }
 
 
-def _load_execution_context(config: EnergyModelConfig) -> EnergyModelContext:
-    csv_paths = _csv_paths_from_env_or_latest(config.artifacts_dir)
-    rows = _read_rows(csv_paths)
-    coefficients = fit_coefficients_from_csv(csv_paths)
-    historical_profile = _historical_profile(rows)
-    forecast = _forecast_from_env_or_api(
-        lat=config.latitude,
-        lon=config.longitude,
+def _load_execution_context(
+    config: EnergyModelConfig,
+    *,
+    historical_input: HistoricalInputPort | None = None,
+    forecast_input: ForecastInputPort | None = None,
+) -> EnergyModelContext:
+    history = historical_input or _DefaultHistoricalInputPort()
+    forecast_source = forecast_input or _DefaultForecastInputPort()
+    csv_paths = history.locate_csv_paths(config.artifacts_dir)
+    rows = history.read_rows(csv_paths)
+    coefficients = history.fit_coefficients(csv_paths)
+    historical_profile = history.build_historical_profile(rows)
+    forecast = forecast_source.load_forecast(
+        latitude=config.latitude,
+        longitude=config.longitude,
         timezone=config.timezone,
     )
     target_date = str(forecast["date"])
@@ -2046,7 +2080,7 @@ def _load_execution_context(config: EnergyModelConfig) -> EnergyModelContext:
         forecast=forecast,
         target_date=target_date,
         latest_soc_percent=latest_soc,
-        occupancy_events=load_occupancy_events_from_env(),
+        occupancy_events=history.load_occupancy_events(),
     )
 
 

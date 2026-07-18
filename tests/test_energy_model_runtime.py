@@ -99,6 +99,50 @@ def test_load_execution_context_preserves_loaded_values(
     assert context.latest_soc_percent == pytest.approx(42.0)
 
 
+def test_load_execution_context_accepts_external_input_ports(tmp_path: Path) -> None:
+    csv_path = tmp_path / "history.csv"
+    rows = [{"soc": 55.0}]
+    coefficients = _coefficients()
+    forecast = {"date": "2026-07-20", "sun_hours": 7.0}
+
+    class HistoryPort:
+        def locate_csv_paths(self, artifacts_dir: Path):
+            assert artifacts_dir == EnergyModelConfig.from_env().artifacts_dir
+            return [csv_path]
+
+        def read_rows(self, csv_paths):
+            assert csv_paths == [csv_path]
+            return rows
+
+        def fit_coefficients(self, csv_paths):
+            assert csv_paths == [csv_path]
+            return coefficients
+
+        def build_historical_profile(self, input_rows):
+            assert input_rows is rows
+            return {"morning_pv_ratio": 0.25}
+
+        def load_occupancy_events(self):
+            return []
+
+    class ForecastPort:
+        def load_forecast(self, *, latitude, longitude, timezone):
+            assert timezone == "Asia/Tokyo"
+            return forecast
+
+    context = _load_execution_context(
+        EnergyModelConfig.from_env(),
+        historical_input=HistoryPort(),
+        forecast_input=ForecastPort(),
+    )
+
+    assert context.csv_paths == [csv_path]
+    assert context.rows is rows
+    assert context.coefficients is coefficients
+    assert context.forecast is forecast
+    assert context.latest_soc_percent == 55.0
+
+
 def test_consumption_bundle_preserves_forecast_and_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
