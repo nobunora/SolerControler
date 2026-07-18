@@ -194,6 +194,25 @@ class LegacyOptimizationDecision:
     payload: dict[str, object] | None
 
 
+@dataclass
+class OptimizationDecision:
+    result_payload: dict[str, Any]
+    optimization_payload: dict[str, object] | None
+    cost_optimization_payload: dict[str, object] | None
+
+
+@dataclass(frozen=True)
+class EnergyModelOutput:
+    document: PlanDocumentV1
+    output_path: Path
+
+    def persist(self) -> None:
+        self.output_path.write_text(
+            json.dumps(self.document.to_payload(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
 def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
     if not path.exists():
         return
@@ -2379,162 +2398,143 @@ def _run_legacy_soc_optimization(
     return LegacyOptimizationDecision(result=result, payload=payload)
 
 
-def main() -> int:
-    config = EnergyModelConfig.from_env()
-    context = _load_execution_context(config)
-    consumption_bundle = _build_consumption_forecasts(context)
-    night_charge = _prepare_night_charge(context, consumption_bundle)
-    pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
-    constraints = _build_soc_constraints(context, pv_bundle, night_charge)
-    legacy_decision = _run_legacy_soc_optimization(
-        context,
-        pv_bundle,
-        constraints,
-        night_charge,
-    )
-    artifacts_dir = config.artifacts_dir
-    csv_paths = context.csv_paths
-    rows = context.rows
-    coeff = context.coefficients
-    hist = context.historical_profile
-    forecast = context.forecast
-    tomorrow_date = context.target_date
-    consumption_forecast = consumption_bundle.daily
-    base_consumption_forecast = consumption_bundle.base_daily
-    weather_history_diagnostics = consumption_bundle.training_diagnostics
-    occupancy_adjustment = consumption_bundle.occupancy_adjustment
-    pv_array_forecast = night_charge.pv_array_forecast
-    latest_soc = context.latest_soc_percent
-    expected_overnight_discharge_kwh = night_charge.expected_overnight_discharge_kwh
-    monthly_day_buy_before_target = night_charge.monthly_day_buy_before_target
-    expected_rest_of_month_day_buy = night_charge.expected_rest_of_month_day_buy
-    inp = night_charge.inputs
-    result = night_charge.result
-    result_payload = night_charge.result_payload
-    hourly_load_forecast = pv_bundle.hourly_load_kwh
-    hourly_pv_forecast = pv_bundle.hourly_pv_kwh
-    sunset_hour = pv_bundle.sunset_hour
-    hourly_weather_pv_shape = pv_bundle.hourly_weather_shape
-    physical_pv_diagnostics = pv_bundle.physical_diagnostics
-    forecast_correction = pv_bundle.correction
-    pv_selected_method = pv_bundle.selected_method
-    final_pv_forecast_source = pv_bundle.source
-    selected_pv_uncertainty = pv_bundle.uncertainty
-    apply_pv_headroom_caps = constraints.apply_pv_headroom_caps
-    morning_headroom_guard_for_payload = constraints.morning_headroom
-    daytime_net_surplus_headroom_guard_for_payload = constraints.daytime_net_surplus
-    historical_soc_gain_guard_for_payload = constraints.historical_soc_gain
-    daytime_optimization = legacy_decision.result
+def _run_soc_optimization(
+    context: EnergyModelContext,
+    night_charge: NightChargePreparation,
+    pv_forecast: PvForecastBundle,
+    constraints: SocConstraintSet,
+    legacy: LegacyOptimizationDecision,
+) -> OptimizationDecision:
+    config = context.config
+    result_payload = dict(night_charge.result_payload)
     optimization_payload: dict[str, object] | None = None
-    legacy_optimization_payload = legacy_decision.payload
-
-    cost_optimization_payload: dict[str, object] | None = None
-    cost_optimization_enabled = config.cost_optimization_enabled
-    if cost_optimization_enabled:
-        pv_uncertainty = _apply_uncertainty_floor(selected_pv_uncertainty)
+    cost_payload: dict[str, object] | None = None
+    if config.cost_optimization_enabled:
+        uncertainty = _apply_uncertainty_floor(pv_forecast.uncertainty)
         cost_model = _soc_cost_model_from_env(
-            battery_round_trip_efficiency=coeff.battery_round_trip_efficiency,
+            battery_round_trip_efficiency=context.coefficients.battery_round_trip_efficiency,
             monthly_day_buy_kwh_before_target=(
-                _to_optional_float(monthly_day_buy_before_target.get("kwh")) or 0.0
+                _to_optional_float(night_charge.monthly_day_buy_before_target.get("kwh"))
+                or 0.0
             ),
             expected_rest_of_month_day_buy_kwh=(
-                _to_optional_float(expected_rest_of_month_day_buy.get("kwh")) or 0.0
+                _to_optional_float(night_charge.expected_rest_of_month_day_buy.get("kwh"))
+                or 0.0
             ),
         )
         respect_guard = config.cost_respect_morning_headroom_cap
         cost_max_soc = 100.0
-        if respect_guard and apply_pv_headroom_caps:
-            cost_max_soc = _to_optional_float(morning_headroom_guard_for_payload.get("cap_target_soc_percent")) or 100.0
-        if apply_pv_headroom_caps and daytime_net_surplus_headroom_guard_for_payload.get("applied"):
-            cost_max_soc = min(
-                cost_max_soc,
-                _to_optional_float(daytime_net_surplus_headroom_guard_for_payload.get("cap_target_soc_percent")) or 100.0,
+        if respect_guard and constraints.apply_pv_headroom_caps:
+            cost_max_soc = (
+                _to_optional_float(constraints.morning_headroom.get("cap_target_soc_percent"))
+                or 100.0
             )
-        if apply_pv_headroom_caps and historical_soc_gain_guard_for_payload.get("applied"):
-            cost_max_soc = min(
-                cost_max_soc,
-                _to_optional_float(historical_soc_gain_guard_for_payload.get("cap_target_soc_percent")) or 100.0,
-            )
-        sigma_buckets = _sigma_buckets_for_cost_optimizer()
-        load_scenarios = _load_scenarios_for_cost_optimizer(forecast_correction)
-        weather_upside_probability = _weather_upside_probability_for_cost_optimizer(forecast)
-        weather_upside_z = config.cost_weather_upside_z
-        peak_penalty = forecast_correction.get("peak_penalty", {})
-        peak_target_soc = _to_optional_float(peak_penalty.get("target_peak_soc_percent") if isinstance(peak_penalty, dict) else None)
-        peak_penalty_factor = _to_optional_float(peak_penalty.get("applied_factor") if isinstance(peak_penalty, dict) else None) or 0.0
-        peak_penalty_rate = cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
-        soc_decision_target_features = _soc_decision_target_features(
-            forecast=forecast,
-            hourly_load_forecast=hourly_load_forecast,
-            hourly_pv_forecast=hourly_pv_forecast,
-            final_pv_forecast_source=final_pv_forecast_source,
+        for guard in (constraints.daytime_net_surplus, constraints.historical_soc_gain):
+            if constraints.apply_pv_headroom_caps and guard.get("applied"):
+                cost_max_soc = min(
+                    cost_max_soc,
+                    _to_optional_float(guard.get("cap_target_soc_percent")) or 100.0,
+                )
+        load_scenarios = _load_scenarios_for_cost_optimizer(pv_forecast.correction)
+        weather_upside_probability = _weather_upside_probability_for_cost_optimizer(
+            context.forecast
         )
-        soc_decision_prior = load_soc_decision_prior_from_firestore(
-            target_date=tomorrow_date,
-            target_features=soc_decision_target_features,
-        )
-        prior_regret_curve = (
-            soc_decision_prior.get("regret_yen_by_soc")
-            if isinstance(soc_decision_prior, dict) and soc_decision_prior.get("applied")
+        peak_penalty = pv_forecast.correction.get("peak_penalty", {})
+        peak_target_soc = _to_optional_float(
+            peak_penalty.get("target_peak_soc_percent")
+            if isinstance(peak_penalty, dict)
             else None
         )
-        prior_weight = _to_optional_float(soc_decision_prior.get("weight") if isinstance(soc_decision_prior, dict) else None) or 0.0
-        prior_max_penalty = (
-            _to_optional_float(soc_decision_prior.get("max_penalty_yen") if isinstance(soc_decision_prior, dict) else None)
+        peak_penalty_factor = (
+            _to_optional_float(
+                peak_penalty.get("applied_factor")
+                if isinstance(peak_penalty, dict)
+                else None
+            )
             or 0.0
         )
-        cost_optimization = optimize_soc_by_expected_cost(
-            capacity_kwh=result.effective_capacity_kwh,
-            soc_now_percent=latest_soc,
-            reserve_soc_percent=inp.reserve_soc_percent,
-            hourly_load_kwh=hourly_load_forecast,
-            hourly_pv_kwh=hourly_pv_forecast,
-            uncertainty=pv_uncertainty,
+        prior = load_soc_decision_prior_from_firestore(
+            target_date=context.target_date,
+            target_features=_soc_decision_target_features(
+                forecast=context.forecast,
+                hourly_load_forecast=pv_forecast.hourly_load_kwh,
+                hourly_pv_forecast=pv_forecast.hourly_pv_kwh,
+                final_pv_forecast_source=pv_forecast.source,
+            ),
+        )
+        prior_regret_curve = (
+            prior.get("regret_yen_by_soc")
+            if isinstance(prior, dict) and prior.get("applied")
+            else None
+        )
+        prior_weight = (
+            _to_optional_float(prior.get("weight") if isinstance(prior, dict) else None)
+            or 0.0
+        )
+        prior_max_penalty = (
+            _to_optional_float(
+                prior.get("max_penalty_yen") if isinstance(prior, dict) else None
+            )
+            or 0.0
+        )
+        optimized = optimize_soc_by_expected_cost(
+            capacity_kwh=night_charge.result.effective_capacity_kwh,
+            soc_now_percent=context.latest_soc_percent,
+            reserve_soc_percent=night_charge.inputs.reserve_soc_percent,
+            hourly_load_kwh=pv_forecast.hourly_load_kwh,
+            hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+            uncertainty=uncertainty,
             cost_model=cost_model,
             soc_step_percent=config.cost_soc_step_percent,
             max_target_soc_percent=cost_max_soc,
-            sigma_buckets=sigma_buckets,
+            sigma_buckets=_sigma_buckets_for_cost_optimizer(),
             min_pv_multiplier=config.cost_min_pv_multiplier,
             max_pv_multiplier=config.cost_max_pv_multiplier,
             load_scenarios=load_scenarios,
             weather_upside_probability=weather_upside_probability,
-            weather_upside_z=weather_upside_z,
+            weather_upside_z=config.cost_weather_upside_z,
             peak_soc_target_percent=peak_target_soc,
-            peak_soc_unmet_penalty_yen_per_kwh=peak_penalty_rate,
-            expected_overnight_discharge_kwh=expected_overnight_discharge_kwh,
+            peak_soc_unmet_penalty_yen_per_kwh=(
+                cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
+            ),
+            expected_overnight_discharge_kwh=night_charge.expected_overnight_discharge_kwh,
             decision_prior_regret_yen_by_soc=prior_regret_curve,
             decision_prior_weight=prior_weight,
             decision_prior_max_penalty_yen=prior_max_penalty,
         )
-        if cost_optimization is not None:
-            cost_optimization_payload = {
-                **to_plain_dict(cost_optimization),
-                "objective": (
-                    "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss"
+        if optimized is not None:
+            cost_payload = {
+                **to_plain_dict(optimized),
+                "objective": "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
+                "morning_pv_headroom_guard": constraints.morning_headroom,
+                "daytime_net_surplus_headroom_guard": constraints.daytime_net_surplus,
+                "historical_daytime_soc_gain_guard": constraints.historical_soc_gain,
+                "respect_morning_headroom_guard": bool(
+                    respect_guard and constraints.apply_pv_headroom_caps
                 ),
-                "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
-                "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
-                "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
-                "respect_morning_headroom_guard": bool(respect_guard and apply_pv_headroom_caps),
                 "pv_headroom_cap_policy": {
-                    "apply_caps": apply_pv_headroom_caps,
-                    "reason": "existing_forecast_selected" if apply_pv_headroom_caps else "physical_pv_selected",
-                    "selected_method": pv_selected_method,
+                    "apply_caps": constraints.apply_pv_headroom_caps,
+                    "reason": (
+                        "existing_forecast_selected"
+                        if constraints.apply_pv_headroom_caps
+                        else "physical_pv_selected"
+                    ),
+                    "selected_method": pv_forecast.selected_method,
                 },
                 "max_target_soc_percent_after_guards": cost_max_soc,
-                "forecast_correction": forecast_correction.get("rationale", {}),
-                "pv_physical_forecast": physical_pv_diagnostics,
-                "hourly_weather_pv_shape": hourly_weather_pv_shape,
-                "soc_decision_feedback_prior": soc_decision_prior,
-                "monthly_day_buy_before_target": monthly_day_buy_before_target,
-                "expected_rest_of_month_day_buy": expected_rest_of_month_day_buy,
+                "forecast_correction": pv_forecast.correction.get("rationale", {}),
+                "pv_physical_forecast": pv_forecast.physical_diagnostics,
+                "hourly_weather_pv_shape": pv_forecast.hourly_weather_shape,
+                "soc_decision_feedback_prior": prior,
+                "monthly_day_buy_before_target": night_charge.monthly_day_buy_before_target,
+                "expected_rest_of_month_day_buy": night_charge.expected_rest_of_month_day_buy,
                 "soc_cost_risk": {
-                    "expected_day_buy_kwh": cost_optimization.expected_day_buy_kwh_risk,
-                    "expected_sell_kwh": cost_optimization.expected_sell_kwh_risk,
-                    "worst_case_day_buy_kwh": cost_optimization.worst_case_day_buy_kwh,
-                    "worst_case_sell_kwh": cost_optimization.worst_case_sell_kwh,
-                    "buy_risk": cost_optimization.buy_risk,
-                    "sell_risk": cost_optimization.sell_risk,
+                    "expected_day_buy_kwh": optimized.expected_day_buy_kwh_risk,
+                    "expected_sell_kwh": optimized.expected_sell_kwh_risk,
+                    "worst_case_day_buy_kwh": optimized.worst_case_day_buy_kwh,
+                    "worst_case_sell_kwh": optimized.worst_case_sell_kwh,
+                    "buy_risk": optimized.buy_risk,
+                    "sell_risk": optimized.sell_risk,
                     "peak_unmet_penalty_factor": peak_penalty_factor,
                     "export_value_mode": cost_model.export_value_mode,
                     "sell_revenue_yen_per_kwh": cost_model.sell_revenue_yen_per_kwh,
@@ -2543,13 +2543,11 @@ def main() -> int:
                     "monthly_day_buy_kwh_before_target": cost_model.monthly_day_buy_kwh_before_target,
                     "expected_rest_of_month_day_buy_kwh": cost_model.expected_rest_of_month_day_buy_kwh,
                     "monthly_tier_landing_enabled": cost_model.monthly_tier_landing_enabled,
-                    "monthly_tier_landing_penalty_yen": (
-                        cost_optimization.expected_monthly_tier_landing_penalty_yen
-                    ),
+                    "monthly_tier_landing_penalty_yen": optimized.expected_monthly_tier_landing_penalty_yen,
                     "projected_monthly_day_buy_kwh": round(
                         cost_model.monthly_day_buy_kwh_before_target
                         + cost_model.expected_rest_of_month_day_buy_kwh
-                        + cost_optimization.expected_day_buy_kwh,
+                        + optimized.expected_day_buy_kwh,
                         4,
                     ),
                     "monthly_tier_landing_penalties": {
@@ -2565,43 +2563,72 @@ def main() -> int:
                         "tier2_rate_yen_per_kwh": cost_model.day_tier2_rate_yen_per_kwh,
                         "tier3_rate_yen_per_kwh": cost_model.day_tier3_rate_yen_per_kwh,
                     },
-                    "scenario_count": len(cost_optimization.forecast_scenarios),
+                    "scenario_count": len(optimized.forecast_scenarios),
                     "scenario_method": "pv_sigma_x_load_scenarios_with_weather_upside",
                     "weather_upside_probability": weather_upside_probability,
-                    "weather_upside_z": weather_upside_z,
+                    "weather_upside_z": config.cost_weather_upside_z,
                 },
-                "hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
-                "hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},
-                "legacy_peak_objective": legacy_optimization_payload,
+                "hourly_load_forecast_kwh": {
+                    str(k): round(v, 4)
+                    for k, v in sorted(pv_forecast.hourly_load_kwh.items())
+                },
+                "hourly_pv_forecast_kwh": {
+                    str(k): round(v, 4)
+                    for k, v in sorted(pv_forecast.hourly_pv_kwh.items())
+                },
+                "legacy_peak_objective": legacy.payload,
             }
-            result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
-            result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
-            result_payload["target_soc_7_percent"] = cost_optimization.target_soc_7_percent
-            result_payload["required_night_charge_kwh"] = cost_optimization.required_night_charge_kwh
-            result_payload["target_soc_7_percent_cost_optimized"] = cost_optimization.target_soc_7_percent
-            result_payload["required_night_charge_kwh_cost_optimized"] = cost_optimization.required_night_charge_kwh
-            result_payload["soc_expected_total_cost_yen"] = cost_optimization.total_expected_cost_yen
-            result_payload["soc_expected_day_buy_kwh"] = cost_optimization.expected_day_buy_kwh
-            result_payload["soc_expected_sell_kwh"] = cost_optimization.expected_sell_kwh
-            result_payload["soc_expected_peak_unmet_kwh"] = cost_optimization.expected_peak_unmet_kwh
-            result_payload["soc_expected_peak_unmet_cost_yen"] = cost_optimization.expected_peak_unmet_cost_yen
-            optimization_payload = cost_optimization_payload
+            result_payload["target_soc_7_percent_base"] = result_payload.get(
+                "target_soc_7_percent"
+            )
+            result_payload["required_night_charge_kwh_base"] = result_payload.get(
+                "required_night_charge_kwh"
+            )
+            result_payload.update(
+                {
+                    "target_soc_7_percent": optimized.target_soc_7_percent,
+                    "required_night_charge_kwh": optimized.required_night_charge_kwh,
+                    "target_soc_7_percent_cost_optimized": optimized.target_soc_7_percent,
+                    "required_night_charge_kwh_cost_optimized": optimized.required_night_charge_kwh,
+                    "soc_expected_total_cost_yen": optimized.total_expected_cost_yen,
+                    "soc_expected_day_buy_kwh": optimized.expected_day_buy_kwh,
+                    "soc_expected_sell_kwh": optimized.expected_sell_kwh,
+                    "soc_expected_peak_unmet_kwh": optimized.expected_peak_unmet_kwh,
+                    "soc_expected_peak_unmet_cost_yen": optimized.expected_peak_unmet_cost_yen,
+                }
+            )
+            optimization_payload = cost_payload
 
-    if (
-        optimization_payload is None
-        and legacy_optimization_payload is not None
-        and daytime_optimization is not None
-    ):
-        result_payload["target_soc_7_percent_base"] = result_payload.get("target_soc_7_percent")
-        result_payload["required_night_charge_kwh_base"] = result_payload.get("required_night_charge_kwh")
-        result_payload["target_soc_7_percent"] = daytime_optimization.target_soc_7_percent
-        result_payload["required_night_charge_kwh"] = daytime_optimization.required_night_charge_kwh
-        optimization_payload = legacy_optimization_payload
+    if optimization_payload is None and legacy.payload is not None and legacy.result is not None:
+        result_payload["target_soc_7_percent_base"] = result_payload.get(
+            "target_soc_7_percent"
+        )
+        result_payload["required_night_charge_kwh_base"] = result_payload.get(
+            "required_night_charge_kwh"
+        )
+        result_payload["target_soc_7_percent"] = legacy.result.target_soc_7_percent
+        result_payload["required_night_charge_kwh"] = legacy.result.required_night_charge_kwh
+        optimization_payload = legacy.payload
+    return OptimizationDecision(
+        result_payload=result_payload,
+        optimization_payload=optimization_payload,
+        cost_optimization_payload=cost_payload,
+    )
 
-    coefficients: dict[str, Any] = to_dict(coeff)
-    if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
-        calibration = pv_array_forecast.get("calibration", {})
-        arrays = pv_array_forecast.get("arrays", [])
+
+def _build_energy_model_output(
+    context: EnergyModelContext,
+    consumption: ConsumptionForecastBundle,
+    night_charge: NightChargePreparation,
+    pv_forecast: PvForecastBundle,
+    constraints: SocConstraintSet,
+    decision: OptimizationDecision,
+) -> EnergyModelOutput:
+    coefficients: dict[str, Any] = to_dict(context.coefficients)
+    array_forecast = night_charge.pv_array_forecast
+    if isinstance(array_forecast, dict) and array_forecast.get("enabled"):
+        calibration = array_forecast.get("calibration", {})
+        arrays = array_forecast.get("arrays", [])
         if isinstance(calibration, dict):
             factor = _to_optional_float(calibration.get("effective_factor"))
             if factor is None:
@@ -2609,14 +2636,17 @@ def main() -> int:
             if factor is not None:
                 coefficients["pv_array_calibration_factor"] = factor
         if isinstance(arrays, list):
-            total_capacity = sum(_to_optional_float(a.get("capacity_kw")) or 0.0 for a in arrays if isinstance(a, dict))
-            coefficients["pv_array_total_capacity_kw"] = total_capacity
-    pv_uncertainty_for_payload = selected_pv_uncertainty
-    coefficients["pv_forecast_error_ratio_mean"] = pv_uncertainty_for_payload.mean_multiplier
-    coefficients["pv_forecast_error_ratio_std"] = pv_uncertainty_for_payload.std_multiplier
-    coefficients["pv_forecast_error_ratio_variance"] = pv_uncertainty_for_payload.variance_multiplier
-    coefficients["pv_forecast_error_ratio_sample_count"] = float(pv_uncertainty_for_payload.sample_count)
-    physical_scales = physical_pv_diagnostics.get("scales") if isinstance(physical_pv_diagnostics, dict) else None
+            coefficients["pv_array_total_capacity_kw"] = sum(
+                _to_optional_float(array.get("capacity_kw")) or 0.0
+                for array in arrays
+                if isinstance(array, dict)
+            )
+    uncertainty = pv_forecast.uncertainty
+    coefficients["pv_forecast_error_ratio_mean"] = uncertainty.mean_multiplier
+    coefficients["pv_forecast_error_ratio_std"] = uncertainty.std_multiplier
+    coefficients["pv_forecast_error_ratio_variance"] = uncertainty.variance_multiplier
+    coefficients["pv_forecast_error_ratio_sample_count"] = float(uncertainty.sample_count)
+    physical_scales = pv_forecast.physical_diagnostics.get("scales")
     if isinstance(physical_scales, dict):
         radiation_scale = _to_optional_float(physical_scales.get("radiation_scale"))
         global_bias_scale = _to_optional_float(physical_scales.get("global_bias_scale"))
@@ -2625,84 +2655,118 @@ def main() -> int:
         if global_bias_scale is not None:
             coefficients["physical_pv_global_bias_scale"] = global_bias_scale
 
-    final_pv_totals = _hourly_pv_totals(hourly_pv_forecast)
+    result_payload = decision.result_payload
+    final_pv_totals = _hourly_pv_totals(pv_forecast.hourly_pv_kwh)
     result_payload["final_predicted_pv_kwh"] = final_pv_totals["total_kwh"]
     result_payload["final_predicted_morning_pv_kwh"] = final_pv_totals["morning_kwh"]
     result_payload["final_predicted_midday_pv_kwh"] = final_pv_totals["midday_kwh"]
     result_payload["final_predicted_evening_pv_kwh"] = final_pv_totals["evening_kwh"]
-    result_payload["final_pv_forecast_source"] = final_pv_forecast_source
-
+    result_payload["final_pv_forecast_source"] = pv_forecast.source
+    optimization_payload = decision.optimization_payload
+    cost_payload = decision.cost_optimization_payload
     plan_quality = _build_plan_quality(
-        forecast=forecast,
+        forecast=context.forecast,
         optimization_payload=optimization_payload,
         result_payload=result_payload,
     )
     active_constraints = _active_constraint_names(
-        morning_headroom_guard=morning_headroom_guard_for_payload,
-        daytime_net_surplus_headroom_guard=daytime_net_surplus_headroom_guard_for_payload,
-        historical_soc_gain_guard=historical_soc_gain_guard_for_payload,
+        morning_headroom_guard=constraints.morning_headroom,
+        daytime_net_surplus_headroom_guard=constraints.daytime_net_surplus,
+        historical_soc_gain_guard=constraints.historical_soc_gain,
         respect_morning_headroom_guard=(
             bool(optimization_payload.get("respect_morning_headroom_guard"))
             if isinstance(optimization_payload, dict)
             else True
         ),
     )
-    rejected_candidates = _candidate_reason_summary(optimization_payload)
-    cost_breakdown = _decision_cost_breakdown(optimization_payload)
-    objective_name = (
+    objective = (
         "minimize_night_charge_plus_day_buy_plus_sell_loss_plus_peak_unmet_plus_monthly_tier_plus_decision_prior_cost"
-        if cost_optimization_payload is not None else "legacy_peak_soc_objective"
+        if cost_payload is not None
+        else "legacy_peak_soc_objective"
     )
-
     document = PlanDocumentV1(
-        csv_paths=[str(p) for p in csv_paths],
+        csv_paths=[str(path) for path in context.csv_paths],
         plan_quality=plan_quality,
-        forecast=forecast,
-        pv_array_forecast=pv_array_forecast,
-        historical_profile=hist,
-        consumption_forecast=_consumption_forecast_to_dict(consumption_forecast),
-        base_consumption_forecast=_consumption_forecast_to_dict(base_consumption_forecast),
-        weather_history=weather_history_diagnostics,
-        occupancy_adjustment=_occupancy_adjustment_to_dict(occupancy_adjustment),
+        forecast=context.forecast,
+        pv_array_forecast=array_forecast,
+        historical_profile=context.historical_profile,
+        consumption_forecast=_consumption_forecast_to_dict(consumption.daily),
+        base_consumption_forecast=_consumption_forecast_to_dict(consumption.base_daily),
+        weather_history=consumption.training_diagnostics,
+        occupancy_adjustment=_occupancy_adjustment_to_dict(consumption.occupancy_adjustment),
         coefficients=coefficients,
-        inputs=to_dict(inp),
+        inputs=to_dict(night_charge.inputs),
         result=result_payload,
         daytime_soc_optimization=optimization_payload,
         decision_rationale={
             "plan_quality": plan_quality,
-            "objective": objective_name,
+            "objective": objective,
             "selected_reason": (
                 "lowest_total_cost_with_active_constraints"
-                if cost_optimization_payload is not None else "legacy_peak_soc_objective_fallback"
+                if cost_payload is not None
+                else "legacy_peak_soc_objective_fallback"
             ),
             "active_constraints": active_constraints,
-            "rejected_candidates": rejected_candidates,
-            "cost_breakdown_yen": cost_breakdown,
-            "historical_daytime_soc_gain_guard": historical_soc_gain_guard_for_payload,
-            "morning_pv_headroom_guard": morning_headroom_guard_for_payload,
-            "daytime_net_surplus_headroom_guard": daytime_net_surplus_headroom_guard_for_payload,
-            "hourly_weather_pv_shape": hourly_weather_pv_shape,
-            "pv_physical_forecast": physical_pv_diagnostics,
-            "forecast_correction": forecast_correction.get("rationale", {}),
+            "rejected_candidates": _candidate_reason_summary(optimization_payload),
+            "cost_breakdown_yen": _decision_cost_breakdown(optimization_payload),
+            "historical_daytime_soc_gain_guard": constraints.historical_soc_gain,
+            "morning_pv_headroom_guard": constraints.morning_headroom,
+            "daytime_net_surplus_headroom_guard": constraints.daytime_net_surplus,
+            "hourly_weather_pv_shape": pv_forecast.hourly_weather_shape,
+            "pv_physical_forecast": pv_forecast.physical_diagnostics,
+            "forecast_correction": pv_forecast.correction.get("rationale", {}),
             "soc_decision_feedback_prior": (
-                cost_optimization_payload.get("soc_decision_feedback_prior", {})
-                if isinstance(cost_optimization_payload, dict) else {}
+                cost_payload.get("soc_decision_feedback_prior", {})
+                if isinstance(cost_payload, dict)
+                else {}
             ),
             "final_pv_forecast": {
                 **final_pv_totals,
                 "source": result_payload["final_pv_forecast_source"],
                 "legacy_result_predicted_pv_kwh": result_payload.get("predicted_pv_kwh"),
             },
-            "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(pv_uncertainty_for_payload)),
+            "pv_uncertainty": to_plain_dict(_apply_uncertainty_floor(uncertainty)),
             "raw_target_soc_7_percent": result_payload.get("target_soc_7_percent_base"),
             "final_target_soc_7_percent": result_payload.get("target_soc_7_percent"),
             "final_required_night_charge_kwh": result_payload.get("required_night_charge_kwh"),
         },
     )
-    payload = document.to_payload()
-    out = artifacts_dir / "night_charge_plan.json"
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(out)
+    return EnergyModelOutput(
+        document=document,
+        output_path=context.config.artifacts_dir / "night_charge_plan.json",
+    )
+
+
+def main() -> int:
+    config = EnergyModelConfig.from_env()
+    context = _load_execution_context(config)
+    consumption_bundle = _build_consumption_forecasts(context)
+    night_charge = _prepare_night_charge(context, consumption_bundle)
+    pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
+    constraints = _build_soc_constraints(context, pv_bundle, night_charge)
+    legacy_decision = _run_legacy_soc_optimization(
+        context,
+        pv_bundle,
+        constraints,
+        night_charge,
+    )
+    decision = _run_soc_optimization(
+        context,
+        night_charge,
+        pv_bundle,
+        constraints,
+        legacy_decision,
+    )
+    output = _build_energy_model_output(
+        context,
+        consumption_bundle,
+        night_charge,
+        pv_bundle,
+        constraints,
+        decision,
+    )
+    output.persist()
+    print(output.output_path)
     return 0
 
 
