@@ -16,12 +16,15 @@ from app.energy_model import (
     optimize_target_soc_for_daytime,
 )
 from app.forecast_correction import (
+    ForecastCorrectionInput,
+    ForecastCorrectionPolicy,
     _actual_hourly_totals_by_day,
     _add_thermal_states,
     _evening_temperature_correction,
     _recent_and_analog_hourly_floor,
     _temperature_features_for_day,
     _temperature_hourly_multipliers,
+    build_forecast_correction,
 )
 from energy_model_main import (
     _active_constraint_names,
@@ -40,6 +43,45 @@ from energy_model_main import (
     _reshape_hourly_pv_by_weather,
     _selected_pv_uncertainty,
 )
+
+
+def test_typed_forecast_correction_boundary_preserves_disabled_result(monkeypatch) -> None:
+    monkeypatch.setenv("FORECAST_CORRECTION_ENABLED", "false")
+    correction_input = ForecastCorrectionInput(
+        rows=[],
+        hourly_load_forecast={7: 1.25},
+        hourly_pv_forecast={7: 2.5},
+        target_date="2026-07-18",
+        latitude=35.0,
+        longitude=139.0,
+        timezone="Asia/Tokyo",
+        forecast={"date": "2026-07-18"},
+    )
+
+    result = build_forecast_correction(
+        correction_input,
+        ForecastCorrectionPolicy.from_env(),
+    )
+
+    assert result["hourly_load_kwh"] == {7: 1.25}
+    assert result["hourly_pv_kwh"] == {7: 2.5}
+    assert result["rationale"] == {"enabled": False, "reason": "disabled"}
+
+
+def test_forecast_correction_policy_normalizes_ratio_bounds(monkeypatch) -> None:
+    monkeypatch.setenv("PV_RATIO_EWMA_ALPHA", "2")
+    monkeypatch.setenv("PV_RATIO_EWMA_MIN", "1.2")
+    monkeypatch.setenv("PV_RATIO_EWMA_MAX", "0.8")
+    monkeypatch.setenv("LOAD_RATIO_EWMA_ALPHA", "-1")
+    monkeypatch.setenv("LOAD_RATIO_EWMA_MIN", "1.1")
+    monkeypatch.setenv("LOAD_RATIO_EWMA_MAX", "0.7")
+
+    policy = ForecastCorrectionPolicy.from_env()
+
+    assert policy.pv_ewma_alpha == 1.0
+    assert policy.pv_ratio_min == policy.pv_ratio_max == 1.2
+    assert policy.load_ewma_alpha == 0.0
+    assert policy.load_ratio_min == policy.load_ratio_max == 1.1
 
 
 def _coeff() -> EnergyModelCoefficients:

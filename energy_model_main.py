@@ -42,7 +42,13 @@ from app.soc_cost_optimizer import (
     optimize_soc_by_expected_cost,
     to_plain_dict,
 )
-from app.forecast_correction import _build_forecast_correction, _load_forecast_hourly_history
+from app.forecast_correction import (
+    ForecastCorrectionInput,
+    ForecastCorrectionPolicy,
+    _build_forecast_correction,
+    _load_forecast_hourly_history,
+    build_forecast_correction,
+)
 from app.pv_physical_forecast import build_physical_pv_candidate
 from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
 
@@ -2240,17 +2246,21 @@ def _build_selected_pv_forecast(
     physical_selected = bool(physical_diagnostics.get("enabled"))
     if physical_selected:
         raw_hourly_pv = physical_candidate.hourly_pv_kwh
-    correction = _build_forecast_correction(
-        rows=context.rows,
-        hourly_load_forecast=raw_hourly_load,
-        hourly_pv_forecast=raw_hourly_pv,
-        target_date=context.target_date,
-        lat=config.latitude,
-        lon=config.longitude,
-        timezone=config.timezone,
-        forecast=context.forecast,
-        skip_pv_correction=physical_selected,
-        allow_load_safety_floor=consumption.occupancy_adjustment is None,
+    correction = build_forecast_correction(
+        ForecastCorrectionInput(
+            rows=context.rows,
+            hourly_load_forecast=raw_hourly_load,
+            hourly_pv_forecast=raw_hourly_pv,
+            target_date=context.target_date,
+            latitude=config.latitude,
+            longitude=config.longitude,
+            timezone=config.timezone,
+            forecast=context.forecast,
+        ),
+        ForecastCorrectionPolicy.from_env(
+            skip_pv_correction=physical_selected,
+            allow_load_safety_floor=consumption.occupancy_adjustment is None,
+        ),
     )
     hourly_load = _coerce_hourly_float_dict(correction.get("hourly_load_kwh"))
     hourly_pv = _coerce_hourly_float_dict(correction.get("hourly_pv_kwh"))
