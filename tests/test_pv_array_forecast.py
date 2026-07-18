@@ -6,8 +6,11 @@ import pytest
 
 from app.pv_array_forecast import (
     PVArrayConfig,
+    PvCalibrationInput,
+    PvCalibrationPolicy,
     build_pv_array_forecast,
     calibrate_performance_ratio,
+    calibrate_performance_ratio_for,
     forecast_pv_arrays,
     forecast_pv_arrays_forecast_solar,
 )
@@ -22,6 +25,28 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+def test_typed_calibration_boundary_returns_insufficient_history_without_fetching() -> None:
+    def unexpected_get(*args, **kwargs):
+        raise AssertionError("archive fetch must not run without sufficient history")
+
+    result = calibrate_performance_ratio_for(
+        PvCalibrationInput(
+            arrays=[PVArrayConfig("south", 0, 20, 1.0)],
+            rows=[],
+            target_date="2026-07-18",
+            latitude=35.0,
+            longitude=139.0,
+            timezone="Asia/Tokyo",
+        ),
+        PvCalibrationPolicy(min_days=1),
+        http_get=unexpected_get,
+    )
+
+    assert result["source"] == "insufficient_history"
+    assert result["factor"] == 1.0
+    assert result["sample_days"] == 0
 
 
 def test_forecast_pv_arrays_sums_three_orientations() -> None:

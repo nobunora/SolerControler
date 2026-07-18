@@ -29,6 +29,33 @@ class PVArrayConfig:
     temp_coeff_per_deg: float = -0.0035
 
 
+@dataclass(frozen=True)
+class PvCalibrationInput:
+    arrays: list[PVArrayConfig]
+    rows: list[dict[str, Any]]
+    target_date: str
+    latitude: float
+    longitude: float
+    timezone: str
+
+
+@dataclass(frozen=True)
+class PvCalibrationPolicy:
+    lookback_days: int = 45
+    min_days: int = 3
+    min_factor: float = 0.2
+    max_factor: float = 5.0
+
+    @classmethod
+    def from_env(cls) -> "PvCalibrationPolicy":
+        return cls(
+            lookback_days=int(os.getenv("PV_ARRAY_CALIBRATION_LOOKBACK_DAYS", "45")),
+            min_days=int(os.getenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "3")),
+            min_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MIN_FACTOR", "0.2")),
+            max_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MAX_FACTOR", "5.0")),
+        )
+
+
 def _parse_time(raw: Any) -> datetime | None:
     if raw is None:
         return None
@@ -344,20 +371,22 @@ def _fetch_archive_weather_daily_by_day(
     return out
 
 
-def calibrate_performance_ratio(
+def calibrate_performance_ratio_for(
+    calibration_input: PvCalibrationInput,
+    policy: PvCalibrationPolicy,
     *,
-    arrays: list[PVArrayConfig],
-    rows: list[dict[str, Any]],
-    target_date: str,
-    lat: float,
-    lon: float,
-    timezone: str,
-    lookback_days: int = 45,
-    min_days: int = 3,
-    min_factor: float = 0.2,
-    max_factor: float = 5.0,
     http_get: HttpGet = requests.get,
 ) -> dict[str, Any]:
+    arrays = calibration_input.arrays
+    rows = calibration_input.rows
+    target_date = calibration_input.target_date
+    lat = calibration_input.latitude
+    lon = calibration_input.longitude
+    timezone = calibration_input.timezone
+    lookback_days = policy.lookback_days
+    min_days = policy.min_days
+    min_factor = policy.min_factor
+    max_factor = policy.max_factor
     actual_by_day = _daily_actual_pv(rows, target_date=target_date, lookback_days=lookback_days)
     actual_by_day = {d: v for d, v in actual_by_day.items() if v > 0.05}
     if not arrays or len(actual_by_day) < min_days:
@@ -543,6 +572,40 @@ def calibrate_performance_ratio(
         "weather_adjustments": weather_adjustments,
         "weather_regression": weather_regression,
     }
+
+
+def calibrate_performance_ratio(
+    *,
+    arrays: list[PVArrayConfig],
+    rows: list[dict[str, Any]],
+    target_date: str,
+    lat: float,
+    lon: float,
+    timezone: str,
+    lookback_days: int = 45,
+    min_days: int = 3,
+    min_factor: float = 0.2,
+    max_factor: float = 5.0,
+    http_get: HttpGet = requests.get,
+) -> dict[str, Any]:
+    """Backward-compatible adapter for the typed calibration boundary."""
+    return calibrate_performance_ratio_for(
+        PvCalibrationInput(
+            arrays=arrays,
+            rows=rows,
+            target_date=target_date,
+            latitude=lat,
+            longitude=lon,
+            timezone=timezone,
+        ),
+        PvCalibrationPolicy(
+            lookback_days=lookback_days,
+            min_days=min_days,
+            min_factor=min_factor,
+            max_factor=max_factor,
+        ),
+        http_get=http_get,
+    )
 
 
 def forecast_pv_arrays(
@@ -898,17 +961,16 @@ def build_pv_array_forecast(
 ) -> dict[str, Any] | None:
     if not arrays:
         return None
-    calibration = calibrate_performance_ratio(
-        arrays=arrays,
-        rows=rows,
-        target_date=target_date,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
-        lookback_days=int(os.getenv("PV_ARRAY_CALIBRATION_LOOKBACK_DAYS", "45")),
-        min_days=int(os.getenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "3")),
-        min_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MIN_FACTOR", "0.2")),
-        max_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MAX_FACTOR", "5.0")),
+    calibration = calibrate_performance_ratio_for(
+        PvCalibrationInput(
+            arrays=arrays,
+            rows=rows,
+            target_date=target_date,
+            latitude=lat,
+            longitude=lon,
+            timezone=timezone,
+        ),
+        PvCalibrationPolicy.from_env(),
         http_get=http_get,
     )
     base_factor = parse_csv_float(calibration.get("factor"), default=1.0)
