@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 
 from app.kpnet_workflow import (
+    FORCED_CHARGE_PROFILE,
     KpNetConfig,
     NightChargePlan,
     ProfileOverrides,
     _build_payload,
+    _apply_settings_profile,
     _build_dynamic_forced_profile,
     _default_csv_target_months,
     _extract_simple_visualization_soc_percent,
@@ -284,6 +286,57 @@ def test_build_payload_detects_outage_only_drift() -> None:
     )
 
     assert changed_fields == ["onPowerOutageMode", "onPowerOutageChargePowerW"]
+
+
+def test_apply_settings_profile_dry_run_confirms_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def confirm_setting(self, payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            assert payload == {"socChargeMode": "50"}
+            return True, "confirmed", "", "<html>confirmed</html>"
+
+        def write_setting(self, confirm_html: str) -> dict[str, object]:
+            raise AssertionError("dry-run must not write settings")
+
+    cfg = KpNetConfig(
+        **{
+            **_build_cfg(plan_path=tmp_path / "plan.json").__dict__,
+            "dry_run": True,
+        }
+    )
+    monkeypatch.setattr(
+        "app.kpnet_workflow._build_payload",
+        lambda **kwargs: ({"socChargeMode": "50"}, ["socChargeMode"]),
+    )
+    summary: dict[str, object] = {"setting_results": []}
+    current = {"socChargeMode": "0"}
+
+    returned = _apply_settings_profile(
+        client=FakeClient(),
+        cfg=cfg,
+        run_dir=tmp_path,
+        summary=summary,
+        current=current,
+        value_maps=_value_maps(),
+        profile=FORCED_CHARGE_PROFILE,
+    )
+
+    assert returned is current
+    assert (tmp_path / "confirm_night-green.html").read_text(encoding="utf-8") == "<html>confirmed</html>"
+    assert summary["setting_results"] == [
+        {
+            "profile": "night-green",
+            "changed_fields": ["socChargeMode"],
+            "status": "dry-run-confirmed",
+            "title": "confirmed",
+            "confirm_path": str(tmp_path / "confirm_night-green.html"),
+        }
+    ]
 
 
 def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:

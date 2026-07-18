@@ -1538,6 +1538,84 @@ def _run_csv_phase(
     LOGGER.info("Plot generated: %s", plot_path)
 
 
+def _apply_settings_profile(
+    *,
+    client: KpNetClient,
+    cfg: KpNetConfig,
+    run_dir: Path,
+    summary: dict[str, Any],
+    current: dict[str, Any],
+    value_maps: dict[str, dict[str, str]],
+    profile: ProfileOverrides,
+) -> dict[str, Any]:
+    payload, changed_fields = _build_payload(
+        csrf_setting=client.csrf_setting,
+        pcsid=client.pcsid,
+        current=current,
+        overrides=profile,
+        value_maps=value_maps,
+    )
+    intent = build_settings_intent(
+        profile_name=profile.name,
+        current_values=current,
+        desired_values=payload,
+        changed_fields=changed_fields,
+        dry_run=cfg.dry_run,
+    )
+    payload = dict(intent.desired_values)
+    changed_fields = [change.field for change in intent.expected_changes]
+    if not intent.has_changes:
+        summary["setting_results"].append(
+            {
+                "profile": profile.name,
+                "changed_fields": [],
+                "status": "skipped-no-change",
+            }
+        )
+        return current
+
+    ok, title, err, confirm_html = client.confirm_setting(payload)
+    confirm_path = run_dir / f"confirm_{profile.name}.html"
+    confirm_path.write_text(confirm_html, encoding="utf-8")
+
+    if not ok:
+        summary["setting_results"].append(
+            {
+                "profile": profile.name,
+                "changed_fields": changed_fields,
+                "status": "confirm-failed",
+                "title": title,
+                "error": err,
+                "confirm_path": str(confirm_path),
+            }
+        )
+        raise RuntimeError(f"KP-NET setting confirmation failed for profile={profile.name}: {err or title}")
+
+    if intent.dry_run:
+        summary["setting_results"].append(
+            {
+                "profile": profile.name,
+                "changed_fields": changed_fields,
+                "status": "dry-run-confirmed",
+                "title": title,
+                "confirm_path": str(confirm_path),
+            }
+        )
+        return current
+
+    write_result = client.write_setting(confirm_html)
+    summary["setting_results"].append(
+        {
+            "profile": profile.name,
+            "changed_fields": changed_fields,
+            "status": "applied",
+            "write_result": write_result,
+            "confirm_path": str(confirm_path),
+        }
+    )
+    return client.read_current_settings()
+
+
 def _run_settings_phase(
     client: KpNetClient,
     cfg: KpNetConfig,
@@ -1669,72 +1747,15 @@ def _run_settings_phase(
     )
 
     for profile in profiles:
-        payload, changed_fields = _build_payload(
-            csrf_setting=client.csrf_setting,
-            pcsid=client.pcsid,
+        current = _apply_settings_profile(
+            client=client,
+            cfg=cfg,
+            run_dir=run_dir,
+            summary=summary,
             current=current,
-            overrides=profile,
             value_maps=maps,
+            profile=profile,
         )
-        intent = build_settings_intent(
-            profile_name=profile.name,
-            current_values=current,
-            desired_values=payload,
-            changed_fields=changed_fields,
-            dry_run=cfg.dry_run,
-        )
-        payload = dict(intent.desired_values)
-        changed_fields = [change.field for change in intent.expected_changes]
-        if not intent.has_changes:
-            summary["setting_results"].append(
-                {
-                    "profile": profile.name,
-                    "changed_fields": [],
-                    "status": "skipped-no-change",
-                }
-            )
-            continue
-
-        ok, title, err, confirm_html = client.confirm_setting(payload)
-        confirm_path = run_dir / f"confirm_{profile.name}.html"
-        confirm_path.write_text(confirm_html, encoding="utf-8")
-
-        if not ok:
-            summary["setting_results"].append(
-                {
-                    "profile": profile.name,
-                    "changed_fields": changed_fields,
-                    "status": "confirm-failed",
-                    "title": title,
-                    "error": err,
-                    "confirm_path": str(confirm_path),
-                }
-            )
-            raise RuntimeError(f"KP-NET setting confirmation failed for profile={profile.name}: {err or title}")
-
-        if intent.dry_run:
-            summary["setting_results"].append(
-                {
-                    "profile": profile.name,
-                    "changed_fields": changed_fields,
-                    "status": "dry-run-confirmed",
-                    "title": title,
-                    "confirm_path": str(confirm_path),
-                }
-            )
-            continue
-
-        write_result = client.write_setting(confirm_html)
-        summary["setting_results"].append(
-            {
-                "profile": profile.name,
-                "changed_fields": changed_fields,
-                "status": "applied",
-                "write_result": write_result,
-                "confirm_path": str(confirm_path),
-            }
-        )
-        current = client.read_current_settings()
 
 
 def run_kpnet_workflow() -> int:
