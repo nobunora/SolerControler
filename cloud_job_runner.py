@@ -19,12 +19,14 @@ from app.forced_charge import (
     ChargeObservation,
     ChargePolicy,
     ChargeReapplyPolicy,
+    ChargeDemand,
     ChargeState,
     ChargeTransition,
     MonitorClock,
     MonitorDevicePort,
     MonitorStatusPort,
     decide_transition,
+    requires_forced_charge,
 )
 from app.settings.forced_charge import ForcedChargeSettings
 from app.soc_decision_feedback import build_soc_decision_feedback
@@ -526,9 +528,12 @@ def _should_keep_standby_without_charge(
     required_charge_percent: float,
     required_charge_kwh: float,
 ) -> bool:
-    percent_epsilon = _env_float("ADJUST03_NO_CHARGE_PERCENT_EPSILON", 0.5, min_value=0.0)
-    kwh_epsilon = _env_float("ADJUST03_NO_CHARGE_KWH_EPSILON", 0.05, min_value=0.0)
-    return required_charge_percent <= percent_epsilon and required_charge_kwh <= kwh_epsilon
+    settings = ForcedChargeSettings.from_env()
+    return not requires_forced_charge(
+        ChargeDemand(required_charge_percent, required_charge_kwh),
+        percent_epsilon=settings.no_charge_percent_epsilon,
+        kwh_epsilon=settings.no_charge_kwh_epsilon,
+    )
 
 
 def _estimate_required_charge_kwh(
@@ -1109,6 +1114,7 @@ def _monitor_partial_forced_and_stop(
     monitor_clock = clock or _SystemMonitorClock()
     device = device_port or _RunnerMonitorDevicePort()
     status = status_port or _RunnerMonitorStatusPort()
+    forced_charge_settings = ForcedChargeSettings.from_env()
     if not plan_path.exists():
         print(f"[cloud_job_runner] 03-monitor plan missing: {plan_path}", flush=True)
         return
@@ -1146,9 +1152,10 @@ def _monitor_partial_forced_and_stop(
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     if latest_soc is not None:
         required_charge_percent = max(0.0, target_soc - latest_soc)
-    if _should_keep_standby_without_charge(
-        required_charge_percent=required_charge_percent,
-        required_charge_kwh=required_kwh,
+    if not requires_forced_charge(
+        ChargeDemand(required_charge_percent, required_kwh),
+        percent_epsilon=forced_charge_settings.no_charge_percent_epsilon,
+        kwh_epsilon=forced_charge_settings.no_charge_kwh_epsilon,
     ):
         status.persist_no_charge(
             plan_meta=plan_meta,
@@ -1172,7 +1179,6 @@ def _monitor_partial_forced_and_stop(
         latest_soc_percent=latest_soc,
         csv_paths=csv_paths,
     )
-    forced_charge_settings = ForcedChargeSettings.from_env()
     poll_seconds = forced_charge_settings.poll_interval_seconds
     soc_margin = min(target_soc, forced_charge_settings.stop_soc_margin_percent)
     timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
