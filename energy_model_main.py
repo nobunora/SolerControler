@@ -17,7 +17,9 @@ from app.consumption_forecast import ConsumptionForecast, forecast_daily_consump
 from app.energy_plan import (
     EnergyPlanOutput as EnergyModelOutput,
     ForecastInputPort,
+    ForecastSettings,
     HistoricalInputPort,
+    HistoricalInputSettings,
     PlanDocumentV1,
     WeatherHistoryFetchResult,
     WeatherHistoryPort,
@@ -87,6 +89,8 @@ class EnergyModelConfig:
     @classmethod
     def from_env(cls) -> "EnergyModelConfig":
         _load_dotenv_if_present()
+        forecast_settings = ForecastSettings.from_env()
+        historical_settings = HistoricalInputSettings.from_env()
         battery_temp = (
             float(os.environ["BATTERY_TEMP_C"])
             if "BATTERY_TEMP_C" in os.environ
@@ -96,16 +100,12 @@ class EnergyModelConfig:
             os.getenv("DAYTIME_SOC_OPT_STEP_PERCENT", "1.0").strip() or "1.0"
         )
         return cls(
-            artifacts_dir=Path(os.getenv("ARTIFACTS_DIR", "artifacts")),
-            latitude=float(os.getenv("FORECAST_LATITUDE", "35.67452")),
-            longitude=float(os.getenv("FORECAST_LONGITUDE", "139.48216")),
-            timezone=os.getenv("TIMEZONE", "Asia/Tokyo"),
-            consumption_min_training_days=int(
-                os.getenv("CONSUMPTION_MODEL_MIN_TRAINING_DAYS", "45")
-            ),
-            consumption_fallback_window_days=int(
-                os.getenv("CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS", "14")
-            ),
+            artifacts_dir=historical_settings.artifacts_dir,
+            latitude=forecast_settings.latitude,
+            longitude=forecast_settings.longitude,
+            timezone=forecast_settings.timezone,
+            consumption_min_training_days=historical_settings.min_training_days,
+            consumption_fallback_window_days=historical_settings.fallback_window_days,
             reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
             cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
             battery_temp_c=battery_temp,
