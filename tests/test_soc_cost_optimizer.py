@@ -126,6 +126,44 @@ def test_cost_optimizer_charges_more_when_daytime_power_is_expensive() -> None:
     assert expensive_day.target_soc_7_percent > cheap_day.target_soc_7_percent
 
 
+def test_cost_optimizer_charges_more_for_higher_forecast_load() -> None:
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+    common = {
+        "capacity_kwh": 10.0,
+        "soc_now_percent": 0.0,
+        "reserve_soc_percent": 0.0,
+        "hourly_pv_kwh": {10: 4.0, 11: 4.0},
+        "uncertainty": uncertainty,
+        "cost_model": SocCostModel(
+            day_buy_rate_yen_per_kwh=45.0,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.75,
+        ),
+        "soc_step_percent": 1.0,
+    }
+
+    low_load = optimize_soc_by_expected_cost(
+        hourly_load_kwh={7: 1.0, 18: 1.0},
+        **common,
+    )
+    high_load = optimize_soc_by_expected_cost(
+        hourly_load_kwh={7: 4.0, 8: 4.0, 18: 4.0, 19: 4.0},
+        **common,
+    )
+
+    assert low_load is not None
+    assert high_load is not None
+    assert high_load.target_soc_7_percent > low_load.target_soc_7_percent
+    assert high_load.required_night_charge_kwh > low_load.required_night_charge_kwh
+
+
 def test_candidate_counts_night_charge_cost_and_reduces_day_buy() -> None:
     candidate = evaluate_soc_candidate(
         target_soc_percent=50.0,

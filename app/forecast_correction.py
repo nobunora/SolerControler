@@ -762,8 +762,9 @@ def _recent_and_analog_hourly_floor(
     historical_temperature_features: dict[str, dict[str, float | None]],
     target_features: dict[str, float | None],
     target_pv_kwh: float,
+    target_hourly_pv_kwh: dict[int, float] | None = None,
 ) -> dict[str, object]:
-    """Build one 24-hour q75/analog floor without day/night branches."""
+    """Build one 24-hour q75/similar-day blend floor without day/night branches."""
 
     enabled = env_bool("LOAD_RECENT_ANALOG_FLOOR_ENABLED", default=True)
     window_days = max(1, int(env_float("LOAD_RECENT_ANALOG_WINDOW_DAYS", default=14.0)))
@@ -771,6 +772,11 @@ def _recent_and_analog_hourly_floor(
     quantile_probability = env_float_clamped("LOAD_RECENT_ANALOG_QUANTILE", 0.75, min_val=0.0, max_val=1.0)
     analog_safety_factor = max(1.0, env_float("LOAD_ANALOG_SAFETY_FACTOR", default=1.20))
     similarity_threshold = env_float_clamped("LOAD_ANALOG_MIN_SIMILARITY", 0.50, min_val=0.0, max_val=1.0)
+    analog_neighbor_count = max(1, int(env_float("LOAD_ANALOG_NEIGHBOR_COUNT", default=5.0)))
+    pv_profile_distance_scale = max(
+        0.1,
+        env_float("LOAD_ANALOG_PV_PROFILE_DISTANCE_SCALE_KWH", default=2.5),
+    )
     days = sorted(day for day, hourly in actual_history.items() if any(values.get("load", 0.0) > 0 for values in hourly.values()))
     if not enabled:
         return {"enabled": False, "applied": False, "reason": "disabled", "hourly_floor_kwh": {}}
@@ -788,18 +794,33 @@ def _recent_and_analog_hourly_floor(
     target_enthalpy = float(target_features.get("mean_enthalpy_kj_kg") or 50.0)
     target_thermal72 = float(target_features.get("thermal_72h_end") or 0.0)
     target_latent72 = float(target_features.get("latent_72h_end") or 0.0)
+    target_pv_profile = target_hourly_pv_kwh or {}
     analog_candidates: list[tuple[float, str, float]] = []
     for day in days:
         features = historical_temperature_features.get(day)
         if features is None:
             continue
         historical_pv = sum(max(0.0, values.get("pv", 0.0)) for values in actual_history[day].values())
+        pv_profile_distance = 0.0
+        if target_pv_profile:
+            pv_profile_distance = math.sqrt(
+                sum(
+                    pow(
+                        max(0.0, target_pv_profile.get(hour, 0.0))
+                        - max(0.0, actual_history[day].get(hour, {}).get("pv", 0.0)),
+                        2.0,
+                    )
+                    for hour in range(7, 23)
+                )
+                / 16.0
+            )
         distance = math.sqrt(
             pow((target_cdh28 - float(features.get("cooling_degree_hours_28") or 0.0)) / 10.0, 2.0)
             + pow((target_enthalpy - float(features.get("mean_enthalpy_kj_kg") or 50.0)) / 8.0, 2.0)
             + pow((target_thermal72 - float(features.get("thermal_72h_end") or 0.0)) / 4.0, 2.0)
             + pow((target_latent72 - float(features.get("latent_72h_end") or 0.0)) / 4.0, 2.0)
             + pow((max(0.0, target_pv_kwh) - historical_pv) / 5.0, 2.0)
+            + pow(pv_profile_distance / pv_profile_distance_scale, 2.0)
         )
         analog_candidates.append((distance, day, math.exp(-distance)))
     analog_candidates.sort(key=lambda item: item[0])
@@ -807,6 +828,11 @@ def _recent_and_analog_hourly_floor(
     analog_similarity = analog_candidates[0][2] if analog_candidates else 0.0
     analog_allowed = analog_day is not None and analog_similarity >= similarity_threshold
     analog_features = historical_temperature_features.get(analog_day, {}) if analog_day else {}
+    similar_days = [
+        (day, similarity)
+        for _, day, similarity in analog_candidates[:analog_neighbor_count]
+        if similarity >= similarity_threshold
+    ]
 
     recent_days = days[-window_days:]
     hourly_floors: dict[str, float] = {}
@@ -821,9 +847,19 @@ def _recent_and_analog_hourly_floor(
         if not recent_values:
             continue
         q75 = _quantile(recent_values, quantile_probability)
+        neighbor_values = [
+            (
+                max(0.0, actual_history[day][hour].get("load", 0.0)),
+                similarity,
+            )
+            for day, similarity in similar_days
+            if hour in actual_history.get(day, {})
+            and actual_history[day][hour].get("load", 0.0) > 0.0
+        ]
+        neighbor_weight = sum(similarity for _, similarity in neighbor_values)
         analog_actual = (
-            max(0.0, actual_history.get(str(analog_day), {}).get(hour, {}).get("load", 0.0))
-            if analog_allowed else 0.0
+            sum(value * similarity for value, similarity in neighbor_values) / neighbor_weight
+            if neighbor_weight > 0.0 else 0.0
         )
         analog_floor = analog_actual * analog_safety_factor if analog_actual > 0.0 else 0.0
         floor = max(q75, analog_floor)
@@ -831,13 +867,15 @@ def _recent_and_analog_hourly_floor(
         hourly_details[str(hour)] = {
             "quantile_kwh": round(q75, 4),
             "analog_floor_kwh": round(analog_floor, 4),
-            "source": "analog" if analog_floor > q75 else "q75",
+            "analog_blended_actual_kwh": round(analog_actual, 4),
+            "analog_neighbor_count": len(neighbor_values),
+            "source": "analog_blend" if analog_floor > q75 else "q75",
         }
     return {
         "enabled": True,
         "applied": bool(hourly_floors),
         "reason": "ok",
-        "method": "unified_24h_q75_with_similarity_gated_analog_1p20",
+        "method": "unified_24h_q75_with_similarity_weighted_analog_blend_1p20",
         "sample_count": len(days),
         "window_days": window_days,
         "quantile": quantile_probability,
@@ -847,6 +885,17 @@ def _recent_and_analog_hourly_floor(
         "analog_min_similarity": similarity_threshold,
         "analog_safety_factor": analog_safety_factor,
         "analog_allowed": analog_allowed,
+        "analog_neighbor_limit": analog_neighbor_count,
+        "pv_profile_distance_scale_kwh": pv_profile_distance_scale,
+        "analog_vector_features": [
+            "temperature_humidity_thermal_state",
+            "daily_pv_kwh",
+            "hourly_pv_profile_07_22",
+        ],
+        "analog_days": [
+            {"date": day, "similarity": round(similarity, 6)}
+            for day, similarity in similar_days
+        ],
         "hourly_floor_kwh": hourly_floors,
         "hourly_details": hourly_details,
     }
@@ -995,6 +1044,7 @@ def build_forecast_correction(
         historical_temperature_features=historical_temperature_features,
         target_features=target_features,
         target_pv_kwh=sum(max(0.0, value) for hour, value in hourly_pv_forecast.items() if 7 <= hour < 23),
+        target_hourly_pv_kwh=hourly_pv_forecast,
     )
     hourly_floor_raw = load_safety_floor.get("hourly_floor_kwh")
     hourly_floor = _coerce_hourly_values(hourly_floor_raw)

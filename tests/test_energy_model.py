@@ -656,7 +656,7 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     assert rationale["pv_ratio_ewma_applied"] == pytest.approx(1.35)
     assert rationale["pv_ratio_ewma_raw"] > rationale["pv_ratio_ewma_applied"]
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(1.35)
-    assert rationale["corrected_hourly_load_forecast_kwh"]["7"] == pytest.approx(1.2)
+    assert rationale["corrected_hourly_load_forecast_kwh"]["7"] == pytest.approx(1.2, rel=0.002)
     assert rationale["corrected_hourly_load_forecast_kwh"]["17"] == pytest.approx(1.2, rel=0.002)
     assert rationale["corrected_hourly_load_forecast_kwh"]["17"] > rationale["corrected_hourly_load_forecast_kwh"]["7"]
     assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(0.0)
@@ -885,6 +885,63 @@ def test_recent_and_analog_floor_uses_similar_day_with_safety_factor(monkeypatch
     assert floor["analog_similarity"] == pytest.approx(1.0)
     assert floor["hourly_details"]["7"]["analog_floor_kwh"] == pytest.approx(12.0)
     assert floor["hourly_floor_kwh"]["7"] == pytest.approx(12.0)
+
+
+def test_recent_and_analog_floor_blends_multiple_similar_days(monkeypatch) -> None:
+    monkeypatch.setenv("LOAD_ANALOG_SAFETY_FACTOR", "1.0")
+    monkeypatch.setenv("LOAD_ANALOG_MIN_SIMILARITY", "0.50")
+    monkeypatch.setenv("LOAD_ANALOG_NEIGHBOR_COUNT", "2")
+    monkeypatch.setenv("LOAD_RECENT_ANALOG_QUANTILE", "0.0")
+    actual_history = {
+        "2026-07-10": {7: {"load": 4.0, "pv": 4.0}},
+        "2026-07-11": {7: {"load": 12.0, "pv": 6.0}},
+        "2026-07-12": {7: {"load": 1.0, "pv": 0.0}},
+    }
+    historical_features = {
+        "2026-07-10": {"cooling_degree_hours_28": 8.0},
+        "2026-07-11": {"cooling_degree_hours_28": 12.0},
+        "2026-07-12": {"cooling_degree_hours_28": 0.0},
+    }
+
+    floor = _recent_and_analog_hourly_floor(
+        actual_history=actual_history,
+        historical_temperature_features=historical_features,
+        target_features={"cooling_degree_hours_28": 10.0},
+        target_pv_kwh=5.0,
+    )
+
+    assert [item["date"] for item in floor["analog_days"]] == ["2026-07-10", "2026-07-11"]
+    assert floor["hourly_details"]["7"]["analog_neighbor_count"] == 2
+    assert floor["hourly_details"]["7"]["analog_blended_actual_kwh"] == pytest.approx(8.0)
+    assert floor["hourly_floor_kwh"]["7"] == pytest.approx(8.0)
+
+
+def test_recent_and_analog_floor_uses_hourly_pv_shape_in_distance(monkeypatch) -> None:
+    monkeypatch.setenv("LOAD_ANALOG_SAFETY_FACTOR", "1.0")
+    monkeypatch.setenv("LOAD_ANALOG_MIN_SIMILARITY", "0.50")
+    monkeypatch.setenv("LOAD_ANALOG_NEIGHBOR_COUNT", "1")
+    monkeypatch.setenv("LOAD_RECENT_ANALOG_QUANTILE", "0.0")
+    actual_history = {
+        "2026-07-10": {7: {"load": 4.0, "pv": 5.0}},
+        "2026-07-11": {12: {"load": 12.0, "pv": 5.0}},
+        "2026-07-12": {12: {"load": 1.0, "pv": 0.0}},
+    }
+    historical_features = {
+        day: {"cooling_degree_hours_28": 10.0}
+        for day in actual_history
+    }
+
+    floor = _recent_and_analog_hourly_floor(
+        actual_history=actual_history,
+        historical_temperature_features=historical_features,
+        target_features={"cooling_degree_hours_28": 10.0},
+        target_pv_kwh=5.0,
+        target_hourly_pv_kwh={12: 5.0},
+    )
+
+    assert floor["analog_day"] == "2026-07-11"
+    assert floor["analog_days"] == [{"date": "2026-07-11", "similarity": 1.0}]
+    assert floor["hourly_floor_kwh"]["12"] == pytest.approx(12.0)
 
 
 def test_cost_optimizer_uses_adaptive_load_scenarios() -> None:
