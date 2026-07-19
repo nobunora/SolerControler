@@ -847,6 +847,7 @@ def test_actual_hourly_history_uses_same_algorithm_for_night_and_day() -> None:
 def test_recent_and_analog_floor_uses_similar_day_with_safety_factor(monkeypatch) -> None:
     monkeypatch.setenv("LOAD_ANALOG_SAFETY_FACTOR", "1.20")
     monkeypatch.setenv("LOAD_ANALOG_MIN_SIMILARITY", "0.50")
+    monkeypatch.setenv("LOAD_ANALOG_NEIGHBOR_COUNT", "1")
     actual_history = {
         "2026-07-10": {7: {"load": 10.0, "pv": 5.0}},
         "2026-07-11": {7: {"load": 8.0, "pv": 2.0}},
@@ -942,6 +943,34 @@ def test_recent_and_analog_floor_uses_hourly_pv_shape_in_distance(monkeypatch) -
     assert floor["analog_day"] == "2026-07-11"
     assert floor["analog_days"] == [{"date": "2026-07-11", "similarity": 1.0}]
     assert floor["hourly_floor_kwh"]["12"] == pytest.approx(12.0)
+
+
+def test_recent_and_analog_floor_keeps_nearest_days_below_similarity_threshold(monkeypatch) -> None:
+    monkeypatch.setenv("LOAD_ANALOG_SAFETY_FACTOR", "1.0")
+    monkeypatch.setenv("LOAD_ANALOG_MIN_SIMILARITY", "0.99")
+    monkeypatch.setenv("LOAD_ANALOG_NEIGHBOR_COUNT", "2")
+    actual_history = {
+        "2026-07-10": {7: {"load": 4.0, "pv": 4.0}},
+        "2026-07-11": {7: {"load": 8.0, "pv": 6.0}},
+        "2026-07-12": {7: {"load": 12.0, "pv": 10.0}},
+    }
+    historical_features = {
+        "2026-07-10": {"cooling_degree_hours_28": 8.0},
+        "2026-07-11": {"cooling_degree_hours_28": 12.0},
+        "2026-07-12": {"cooling_degree_hours_28": 30.0},
+    }
+
+    floor = _recent_and_analog_hourly_floor(
+        actual_history=actual_history,
+        historical_temperature_features=historical_features,
+        target_features={"cooling_degree_hours_28": 10.0},
+        target_pv_kwh=5.0,
+    )
+
+    assert floor["analog_allowed"] is False
+    assert floor["analog_selection_policy"] == "nearest_k_without_absolute_rejection"
+    assert [item["date"] for item in floor["analog_days"]] == ["2026-07-10", "2026-07-11"]
+    assert floor["hourly_details"]["7"]["analog_neighbor_count"] == 2
 
 
 def test_cost_optimizer_uses_adaptive_load_scenarios() -> None:

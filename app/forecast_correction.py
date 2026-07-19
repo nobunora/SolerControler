@@ -831,7 +831,6 @@ def _recent_and_analog_hourly_floor(
     similar_days = [
         (day, similarity)
         for _, day, similarity in analog_candidates[:analog_neighbor_count]
-        if similarity >= similarity_threshold
     ]
 
     recent_days = days[-window_days:]
@@ -885,6 +884,7 @@ def _recent_and_analog_hourly_floor(
         "analog_min_similarity": similarity_threshold,
         "analog_safety_factor": analog_safety_factor,
         "analog_allowed": analog_allowed,
+        "analog_selection_policy": "nearest_k_without_absolute_rejection",
         "analog_neighbor_limit": analog_neighbor_count,
         "pv_profile_distance_scale_kwh": pv_profile_distance_scale,
         "analog_vector_features": [
