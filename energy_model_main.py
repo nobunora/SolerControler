@@ -111,7 +111,7 @@ class EnergyModelConfig:
             timezone=forecast_settings.timezone,
             consumption_min_training_days=historical_settings.min_training_days,
             consumption_fallback_window_days=historical_settings.fallback_window_days,
-            reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "0")),
+            reserve_soc_percent=float(os.getenv("NIGHT_RESERVE_SOC_PERCENT", "30")),
             cycle_count=float(os.getenv("BATTERY_CYCLE_COUNT", "0")),
             battery_temp_c=battery_temp,
             pv_midday_load_fraction=(

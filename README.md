@@ -154,7 +154,7 @@ python kpnet_main.py
 - `PV_ARRAY_FORECAST_ENABLED=true`（`config/pv_arrays.json` の東・南・西などの面別アレイをOpen-Meteo hourly GTIで予測）
 - `PV_ARRAY_CONFIG_PATH=config/pv_arrays.json`
 - `PV_ARRAY_CALIBRATION_LOOKBACK_DAYS=45`（実測発電量でperformance_ratioを補正する履歴日数）
-- `NIGHT_RESERVE_SOC_PERCENT=0`（翌朝SOC目標の予備残量）
+- `NIGHT_RESERVE_SOC_PERCENT=30`（最適化が選ぶ翌朝SOC目標の下限）
 - `OVERNIGHT_DISCHARGE_GUARD_CAP_KWH=0`（最新計測時刻から7:00までの残り夜間放電見込みの上限。`0`は上限なし）
 - `WEATHER_ARCHIVE_CHUNK_DAYS=14`（過去気象を分割取得し、成功した期間をキャッシュへ保存）
 - `EVENING_LOAD_TEMPERATURE_MIN_EFFECTIVE_SAMPLES=5`（類似温度の有効標本が未満なら回帰を抑止）
@@ -164,6 +164,7 @@ python kpnet_main.py
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
 - `NIGHT23_SETTINGS_PROFILE=standby`（23:00は外部データ取得/予測をせず、4時判断まで待機モードへ寄せる）
 - `ADJUST03_REGENERATE_PLAN=true`（04:00で当日計画を毎回再生成）
+- `ADJUST03_MIN_TARGET_SOC_PERCENT=30`（04:00制御の実行時下限。計画値がこれを下回っても実測SOCが下限へ達するまで強制充電）
 - `ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40`（04:00制御でSOC実測レートが取れない場合のフォールバック）
 - `ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5`（充電完了予想時刻の5分前に再確認し、未達なら再計算して7時まで継続）
 - `ADJUST03_POST_CHARGE_HOLD_PROFILE=standby`（設定SOC到達後の7時までの維持プロファイル）

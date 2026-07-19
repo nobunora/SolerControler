@@ -1120,8 +1120,20 @@ def _monitor_partial_forced_and_stop(
         return
 
     plan_meta = _read_plan_meta(plan_path)
+    planned_target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
+    target_soc = max(planned_target_soc, forced_charge_settings.min_target_soc_percent)
+    if target_soc > planned_target_soc:
+        plan_meta = {
+            **plan_meta,
+            "planned_target_soc_7_percent": planned_target_soc,
+            "target_soc_7_percent": target_soc,
+        }
+        print(
+            "[cloud_job_runner] 03-monitor minimum target applied "
+            f"planned={planned_target_soc:.2f}% effective={target_soc:.2f}%",
+            flush=True,
+        )
     required_charge_percent = _required_charge_percent_from_plan(plan_meta)
-    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
     soc_reading = device.read_soc(csv_paths)

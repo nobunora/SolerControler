@@ -198,7 +198,7 @@ def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
     assert _adjust03_target_date(now=now) == "2026-05-27"
 
 
-def test_monitor_forced_charge_switches_to_standby_when_low_target_is_reached(
+def test_monitor_forced_charge_applies_minimum_when_plan_target_is_zero(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -208,10 +208,10 @@ def test_monitor_forced_charge_switches_to_standby_when_low_target_is_reached(
 
     monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",
-        lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 25.0, "effective_capacity_kwh": 10.0},
+        lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 0.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    soc_values = iter([0.0, 25.0])
+    soc_values = iter([0.0, 30.0])
     monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: next(soc_values))
     monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
@@ -257,6 +257,7 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
 ) -> None:
     plan_path = tmp_path / "night_charge_plan.json"
     plan_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "0")
 
     monkeypatch.setattr(
         "cloud_job_runner._read_plan_meta",

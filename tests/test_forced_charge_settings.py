@@ -8,6 +8,7 @@ from app.settings.forced_charge import ForcedChargeSettings
 def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
     keys = (
         "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
+        "ADJUST03_MIN_TARGET_SOC_PERCENT",
         "ADJUST03_FORCE_MONITOR_POLL_SECONDS",
         "ADJUST03_SOC_RETRY_ATTEMPTS",
         "ADJUST03_SOC_RETRY_DELAY_SECONDS",
@@ -25,6 +26,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
 
     assert settings == ForcedChargeSettings(
         cutoff=time(7, 0),
+        min_target_soc_percent=30.0,
         poll_interval_seconds=180,
         retry_attempts=3,
         retry_delay_seconds=5.0,
@@ -41,6 +43,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
 
 def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     monkeypatch.setenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "")
+    monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "101")
     monkeypatch.setenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "1")
     monkeypatch.setenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "-1")
     monkeypatch.setenv("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", "0")
@@ -54,6 +57,7 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     settings = ForcedChargeSettings.from_env()
 
     assert settings.cutoff == time(7, 0)
+    assert settings.min_target_soc_percent == 100.0
     assert settings.poll_interval_seconds == 60
     assert settings.stop_soc_margin_percent == 0.0
     assert settings.max_consecutive_soc_failures == 1
