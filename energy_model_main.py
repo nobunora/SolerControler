@@ -308,6 +308,19 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, Any]]:
     for path in csv_paths:
         with path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
+            required_financial_columns = (
+                "買電電力量[kWh]",
+                "売電電力量[kWh]",
+            )
+            fieldnames = set(reader.fieldnames or ())
+            missing_columns = [
+                column for column in required_financial_columns if column not in fieldnames
+            ]
+            if missing_columns:
+                raise RuntimeError(
+                    "required financial CSV columns are missing "
+                    f"({', '.join(missing_columns)}): {path}"
+                )
             for row in reader:
                 d = (row.get("年月日") or "").strip()
                 t = (row.get("時刻") or "").strip()
@@ -326,6 +339,8 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, Any]]:
                         "dt": dt,
                         "load": fv("消費電力量[kWh]"),
                         "pv": fv("発電電力量[kWh]"),
+                        "sell": fv("売電電力量[kWh]"),
+                        "buy": fv("買電電力量[kWh]"),
                         "charge": fv("充電電力量[kWh]"),
                         "discharge": fv("放電電力量[kWh]"),
                         "soc": soc,
@@ -493,6 +508,28 @@ def _soc_cost_model_from_env(
     day_buy_penalty = max(0.0, _env_float("SOC_COST_DAY_BUY_PENALTY_FACTOR", 1.0))
     export_value_mode = os.getenv("SOC_EXPORT_VALUE_MODE", "penalty").strip().lower() or "penalty"
     sell_revenue = max(0.0, _env_float("SOC_SELL_REVENUE_YEN_PER_KWH", 0.0))
+    export_contract_status = os.getenv("SOC_EXPORT_CONTRACT_STATUS", "").strip().lower()
+    valid_contract_statuses = {"active", "inactive", "unknown"}
+    if export_contract_status not in valid_contract_statuses:
+        raise RuntimeError(
+            "SOC_EXPORT_CONTRACT_STATUS must be active, inactive, or unknown"
+        )
+    if export_contract_status == "active" and export_value_mode != "revenue":
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be revenue when SOC_EXPORT_CONTRACT_STATUS is active"
+        )
+    if export_contract_status == "inactive" and export_value_mode not in {"penalty", "neutral"}:
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be penalty or neutral when SOC_EXPORT_CONTRACT_STATUS is inactive"
+        )
+    if export_contract_status == "unknown" and export_value_mode != "neutral":
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be neutral when SOC_EXPORT_CONTRACT_STATUS is unknown"
+        )
+    if export_value_mode == "revenue" and sell_revenue <= 0:
+        raise RuntimeError(
+            "SOC_SELL_REVENUE_YEN_PER_KWH must be positive when SOC_EXPORT_VALUE_MODE is revenue"
+        )
     charge_efficiency = _env_float(
         "SOC_COST_USABLE_CHARGE_EFFICIENCY",
         _env_float("SOC_COST_CHARGE_EFFICIENCY", battery_round_trip_efficiency),

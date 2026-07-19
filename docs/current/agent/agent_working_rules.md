@@ -33,6 +33,15 @@ Subagents are useful but forgetful. Give them everything needed in a compact pac
 - Do not call forecast APIs, Sheets, Drive, or other external services during comparison simulations unless explicitly asked.
 - Prefer fast replay or diff scripts that reuse saved inputs over full production workflows.
 
+## Financial Decision Integrity
+
+- Every CSV field used by tariffs, revenue, penalties, or SOC cost optimization must have an end-to-end fixture test that passes through the production CSV reader and the downstream calculation. Tests that inject already-parsed dictionaries are necessary but not sufficient.
+- Treat an aggregate zero as invalid when the selected source rows contain a non-zero value for that field. The production decision must fail closed or explicitly mark the input unavailable; it must not silently substitute zero.
+- Before deploying a financial objective, compare at least one raw-source aggregate with the value recorded in the generated plan. A mismatch blocks deployment.
+- Temporary tariff or contract assumptions must be explicit in production configuration and documented with their business condition. Revalidate the condition before each related production change; do not preserve an expired assumption only because it is already deployed.
+- Add directional invariant tests for money semantics: purchase must not reduce cost, recognized sales revenue must not increase cost, and a penalty mode must not be used as a substitute for unverified contract status.
+- When a simulation repeatedly produces an implausible boundary value such as zero monthly purchases, investigate the source pipeline before accepting or deploying the result. Sensitivity tests with hand-built values do not validate production data wiring.
+
 ## Reporting
 
 - Report briefly: changed files, reason, checks run, risks, and open questions.

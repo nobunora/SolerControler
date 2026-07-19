@@ -181,6 +181,9 @@ python kpnet_main.py
 - `NIGHT8_DAY_RATE_TIER2_YEN=39.10`
 - `NIGHT8_DAY_RATE_TIER3_YEN=43.62`
 - `NIGHT8_NIGHT_RATE_YEN=28.85`
+- `SOC_EXPORT_CONTRACT_STATUS=inactive`（売電契約状態。`active|inactive|unknown` を明示）
+- `SOC_EXPORT_VALUE_MODE=neutral`（売電未開始・売電収入0円のため、売電を収入にもペナルティにも算入しない）
+- `SOC_SELL_REVENUE_YEN_PER_KWH=0`（`active + revenue` の場合は正の契約単価が必須）
 - `DAY_RATE_YEN_PER_KWH=31`（`COST_TARIFF_MODE=flat` 時に使用）
 - `DATA_DB_PATH=artifacts/solar_monitor.db`
 - `DATA_BACKEND=sqlite|postgres|firestore`

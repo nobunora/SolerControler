@@ -39,8 +39,10 @@ from energy_model_main import (
     _monthly_day_buy_kwh_before_target,
     _load_scenarios_for_cost_optimizer,
     _expected_rest_of_month_day_buy_kwh,
+    _read_rows,
     _reshape_hourly_pv_by_weather,
     _selected_pv_uncertainty,
+    _soc_cost_model_from_env,
 )
 
 
@@ -226,6 +228,47 @@ def test_decision_cost_breakdown_contains_complete_objective() -> None:
     assert component_total == pytest.approx(breakdown["total_expected_yen"])
 
 
+@pytest.mark.parametrize(
+    ("contract_status", "mode", "sell_revenue"),
+    [
+        ("", "penalty", "0"),
+        ("active", "penalty", "0"),
+        ("active", "revenue", "0"),
+    ],
+)
+def test_soc_cost_model_rejects_unverified_export_contract_assumptions(
+    monkeypatch: pytest.MonkeyPatch,
+    contract_status: str,
+    mode: str,
+    sell_revenue: str,
+) -> None:
+    monkeypatch.setenv("SOC_EXPORT_CONTRACT_STATUS", contract_status)
+    monkeypatch.setenv("SOC_EXPORT_VALUE_MODE", mode)
+    monkeypatch.setenv("SOC_SELL_REVENUE_YEN_PER_KWH", sell_revenue)
+
+    with pytest.raises(RuntimeError, match="SOC_EXPORT"):
+        _soc_cost_model_from_env(battery_round_trip_efficiency=0.93)
+
+
+@pytest.mark.parametrize(
+    ("contract_status", "mode", "sell_revenue"),
+    [("inactive", "penalty", "0"), ("active", "revenue", "16")],
+)
+def test_soc_cost_model_accepts_explicit_consistent_export_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    contract_status: str,
+    mode: str,
+    sell_revenue: str,
+) -> None:
+    monkeypatch.setenv("SOC_EXPORT_CONTRACT_STATUS", contract_status)
+    monkeypatch.setenv("SOC_EXPORT_VALUE_MODE", mode)
+    monkeypatch.setenv("SOC_SELL_REVENUE_YEN_PER_KWH", sell_revenue)
+
+    model = _soc_cost_model_from_env(battery_round_trip_efficiency=0.93)
+
+    assert model.export_value_mode == mode
+
+
 def test_forecast_pv_energy_applies_temperature_coeff() -> None:
     coeff = _coeff()
     # 25C基準では 2.0kWh/h * 5h = 10kWh
@@ -257,6 +300,66 @@ def test_monthly_day_buy_uses_billing_close_day(monkeypatch: pytest.MonkeyPatch)
     assert before["billing_period_start"] == "2026-06-15"
     assert before["billing_period_end"] == "2026-07-14"
     assert rest["remaining_days_after_target"] == 23
+
+
+def test_energy_model_csv_reader_preserves_financial_energy_fields(tmp_path: Path) -> None:
+    csv_path = tmp_path / "monitoring.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,発電電力量[kWh],消費電力量[kWh],売電電力量[kWh],買電電力量[kWh],充電電力量[kWh],放電電力量[kWh],蓄電残量(SOC)[%]",
+                "2026/07/19,12:00,1.2,2.5,0.3,1.6,0.1,0.2,40",
+            ]
+        ),
+        encoding="utf-8-sig",
+    )
+
+    rows = _read_rows([csv_path])
+
+    assert rows[0]["buy"] == pytest.approx(1.6)
+    assert rows[0]["sell"] == pytest.approx(0.3)
+
+
+def test_energy_model_csv_reader_rejects_missing_financial_fields(tmp_path: Path) -> None:
+    csv_path = tmp_path / "monitoring.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,発電電力量[kWh],消費電力量[kWh],充電電力量[kWh],放電電力量[kWh],蓄電残量(SOC)[%]",
+                "2026/07/19,12:00,1.2,2.5,0.1,0.2,40",
+            ]
+        ),
+        encoding="utf-8-sig",
+    )
+
+    with pytest.raises(RuntimeError, match="買電電力量.*売電電力量"):
+        _read_rows([csv_path])
+
+
+def test_monthly_buy_aggregate_uses_values_from_production_csv_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("SOC_MONTHLY_TIER_CLOSE_DAY", "14")
+    csv_path = tmp_path / "monitoring.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "年月日,時刻,発電電力量[kWh],消費電力量[kWh],売電電力量[kWh],買電電力量[kWh],充電電力量[kWh],放電電力量[kWh],蓄電残量(SOC)[%]",
+                "2026/07/15,12:00,1.0,3.0,0.0,2.0,0.0,0.0,20",
+                "2026/07/16,12:00,1.0,4.0,0.0,3.0,0.0,0.0,20",
+            ]
+        ),
+        encoding="utf-8-sig",
+    )
+
+    rows = _read_rows([csv_path])
+    before = _monthly_day_buy_kwh_before_target(rows, target_date="2026-07-20")
+    rest = _expected_rest_of_month_day_buy_kwh(rows, target_date="2026-07-20")
+
+    assert before["kwh"] == pytest.approx(5.0)
+    assert rest["recent_daily_avg_kwh"] == pytest.approx(2.5)
+    assert rest["kwh"] == pytest.approx(62.5)
 
 
 def test_compute_night_charge_target() -> None:

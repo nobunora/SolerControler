@@ -43,6 +43,16 @@ def _env_example_keys() -> set[str]:
     return keys
 
 
+def _env_example_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if raw and not raw.startswith("#") and "=" in raw:
+            key, value = raw.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
 def test_env_example_documents_every_required_production_setting() -> None:
     assert REQUIRED_ENV_KEYS <= _env_example_keys()
 
@@ -79,6 +89,23 @@ def test_deploy_script_rejects_implicit_empty_backup_destinations() -> None:
 
     assert "Drive backup is enabled, but DRIVE_BACKUP_FOLDER_ID is empty" in script
     assert "Sheets export is enabled, but SHEETS_SPREADSHEET_ID is empty" in script
+
+
+def test_production_export_cost_configuration_matches_inactive_contract() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert '"SOC_EXPORT_CONTRACT_STATUS=inactive"' in script
+    assert '"SOC_EXPORT_VALUE_MODE=neutral"' in script
+    assert '"SOC_SELL_REVENUE_YEN_PER_KWH=0"' in script
+
+
+def test_example_preserves_production_soc_and_export_safety_settings() -> None:
+    values = _env_example_values()
+
+    assert values["NIGHT_RESERVE_SOC_PERCENT"] == "30"
+    assert values["SOC_EXPORT_CONTRACT_STATUS"] == "inactive"
+    assert values["SOC_EXPORT_VALUE_MODE"] == "neutral"
+    assert values["SOC_SELL_REVENUE_YEN_PER_KWH"] == "0"
 
 
 def test_production_deploy_supports_non_mutating_validation() -> None:

@@ -425,6 +425,8 @@ def test_cost_optimization_request_preserves_zero_percent_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", "true")
+    monkeypatch.setenv("SOC_EXPORT_CONTRACT_STATUS", "unknown")
+    monkeypatch.setenv("SOC_EXPORT_VALUE_MODE", "neutral")
     night_charge = _prepare_night_charge_with_pv_totals(
         monkeypatch,
         {"total_kwh": 1.0, "morning_kwh": 0.5, "midday_kwh": 0.5},
