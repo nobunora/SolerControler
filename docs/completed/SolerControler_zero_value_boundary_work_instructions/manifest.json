@@ -1,0 +1,28 @@
+{
+  "title": "SolerControler zero-value boundary audit and fix instructions",
+  "repository": "C:\\VSC\\SolerControler",
+  "review_head": "95eb45c",
+  "created_date": "2026-07-19",
+  "completed_date": "2026-07-19",
+  "completion_commits": ["f234603", "2d386a6", "5ddbf18", "32bf85c"],
+  "index": "00_INDEX.md",
+  "instruction_count": 5,
+  "files": [
+    "00_INDEX.md",
+    "01_overall_policy.md",
+    "02_pv_zero_forecast.md",
+    "03_soc_cap_zero.md",
+    "04_temperature_zero.md",
+    "05_night_charge_window_contract.md"
+  ],
+  "confirmed_findings": {
+    "P1": [
+      "Explicit zero PV forecast is treated as missing",
+      "SOC cap 0 percent is replaced by 100 percent"
+    ],
+    "P2": [
+      "Forecast temperature 0 C is replaced by 20 C",
+      "Night charge window setting contract is ambiguous"
+    ]
+  }
+}
