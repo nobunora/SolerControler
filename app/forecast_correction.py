@@ -18,6 +18,7 @@ from typing import Any
 
 import requests
 
+from app.comfort_load_forecast import ADAPTIVE_LOOKBACK_HOURS, predict_hourly_comfort_load
 from app.utils import env_bool, env_float, env_float_clamped, to_float, to_int
 
 
@@ -260,7 +261,7 @@ def _fetch_hourly_weather(
         "longitude": lon,
         "start_date": start_date,
         "end_date": end_date,
-        "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m",
+        "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m",
         "timezone": timezone,
     }
     try:
@@ -273,25 +274,30 @@ def _fetch_hourly_weather(
     temps = hourly.get("temperature_2m", [])
     humidity = hourly.get("relative_humidity_2m", [])
     dew_points = hourly.get("dew_point_2m", [])
+    raw_winds = hourly.get("wind_speed_10m", [])
+    winds = raw_winds if isinstance(raw_winds, list) and len(raw_winds) == len(times) else [0.0] * len(times)
     out: dict[str, dict[int, dict[str, float]]] = {}
     values = zip(
         times if isinstance(times, list) else [],
         temps if isinstance(temps, list) else [],
         humidity if isinstance(humidity, list) else [],
         dew_points if isinstance(dew_points, list) else [],
+        winds,
     )
-    for raw_time, raw_temp, raw_humidity, raw_dew_point in values:
+    for raw_time, raw_temp, raw_humidity, raw_dew_point, raw_wind in values:
         try:
             dt = datetime.fromisoformat(str(raw_time))
             temp_c = float(raw_temp)
             humidity_percent = float(raw_humidity)
             dew_point_c = float(raw_dew_point)
+            wind_speed_10m = max(0.0, float(raw_wind))
         except Exception:
             continue
         out.setdefault(dt.date().isoformat(), {})[dt.hour] = {
             "temp_c": temp_c,
             "relative_humidity_percent": humidity_percent,
             "dew_point_c": dew_point_c,
+            "wind_speed_10m": wind_speed_10m,
         }
     return out
 
@@ -756,151 +762,6 @@ def _temperature_hourly_multipliers(
     }
 
 
-def _recent_and_analog_hourly_floor(
-    *,
-    actual_history: dict[str, dict[int, dict[str, float]]],
-    historical_temperature_features: dict[str, dict[str, float | None]],
-    target_features: dict[str, float | None],
-    target_pv_kwh: float,
-    target_hourly_pv_kwh: dict[int, float] | None = None,
-) -> dict[str, object]:
-    """Build one 24-hour q75/similar-day blend floor without day/night branches."""
-
-    enabled = env_bool("LOAD_RECENT_ANALOG_FLOOR_ENABLED", default=True)
-    window_days = max(1, int(env_float("LOAD_RECENT_ANALOG_WINDOW_DAYS", default=14.0)))
-    min_days = max(1, int(env_float("LOAD_RECENT_ANALOG_MIN_DAYS", default=3.0)))
-    quantile_probability = env_float_clamped("LOAD_RECENT_ANALOG_QUANTILE", 0.75, min_val=0.0, max_val=1.0)
-    analog_safety_factor = max(1.0, env_float("LOAD_ANALOG_SAFETY_FACTOR", default=1.20))
-    similarity_threshold = env_float_clamped("LOAD_ANALOG_MIN_SIMILARITY", 0.50, min_val=0.0, max_val=1.0)
-    analog_neighbor_count = max(1, int(env_float("LOAD_ANALOG_NEIGHBOR_COUNT", default=5.0)))
-    pv_profile_distance_scale = max(
-        0.1,
-        env_float("LOAD_ANALOG_PV_PROFILE_DISTANCE_SCALE_KWH", default=2.5),
-    )
-    days = sorted(day for day, hourly in actual_history.items() if any(values.get("load", 0.0) > 0 for values in hourly.values()))
-    if not enabled:
-        return {"enabled": False, "applied": False, "reason": "disabled", "hourly_floor_kwh": {}}
-    if len(days) < min_days:
-        return {
-            "enabled": True,
-            "applied": False,
-            "reason": "insufficient_history",
-            "sample_count": len(days),
-            "min_days": min_days,
-            "hourly_floor_kwh": {},
-        }
-
-    target_cdh28 = float(target_features.get("cooling_degree_hours_28") or 0.0)
-    target_enthalpy = float(target_features.get("mean_enthalpy_kj_kg") or 50.0)
-    target_thermal72 = float(target_features.get("thermal_72h_end") or 0.0)
-    target_latent72 = float(target_features.get("latent_72h_end") or 0.0)
-    target_pv_profile = target_hourly_pv_kwh or {}
-    analog_candidates: list[tuple[float, str, float]] = []
-    for day in days:
-        features = historical_temperature_features.get(day)
-        if features is None:
-            continue
-        historical_pv = sum(max(0.0, values.get("pv", 0.0)) for values in actual_history[day].values())
-        pv_profile_distance = 0.0
-        if target_pv_profile:
-            pv_profile_distance = math.sqrt(
-                sum(
-                    pow(
-                        max(0.0, target_pv_profile.get(hour, 0.0))
-                        - max(0.0, actual_history[day].get(hour, {}).get("pv", 0.0)),
-                        2.0,
-                    )
-                    for hour in range(7, 23)
-                )
-                / 16.0
-            )
-        distance = math.sqrt(
-            pow((target_cdh28 - float(features.get("cooling_degree_hours_28") or 0.0)) / 10.0, 2.0)
-            + pow((target_enthalpy - float(features.get("mean_enthalpy_kj_kg") or 50.0)) / 8.0, 2.0)
-            + pow((target_thermal72 - float(features.get("thermal_72h_end") or 0.0)) / 4.0, 2.0)
-            + pow((target_latent72 - float(features.get("latent_72h_end") or 0.0)) / 4.0, 2.0)
-            + pow((max(0.0, target_pv_kwh) - historical_pv) / 5.0, 2.0)
-            + pow(pv_profile_distance / pv_profile_distance_scale, 2.0)
-        )
-        analog_candidates.append((distance, day, math.exp(-distance)))
-    analog_candidates.sort(key=lambda item: item[0])
-    analog_day = analog_candidates[0][1] if analog_candidates else None
-    analog_similarity = analog_candidates[0][2] if analog_candidates else 0.0
-    analog_allowed = analog_day is not None and analog_similarity >= similarity_threshold
-    analog_features = historical_temperature_features.get(analog_day, {}) if analog_day else {}
-    similar_days = [
-        (day, similarity)
-        for _, day, similarity in analog_candidates[:analog_neighbor_count]
-    ]
-
-    recent_days = days[-window_days:]
-    hourly_floors: dict[str, float] = {}
-    hourly_details: dict[str, dict[str, float | str | bool | None]] = {}
-    for hour in range(24):
-        recent_values = [
-            max(0.0, actual_history[day].get(hour, {}).get("load", 0.0))
-            for day in recent_days
-            if hour in actual_history[day]
-        ]
-        recent_values = [value for value in recent_values if value > 0.0]
-        if not recent_values:
-            continue
-        q75 = _quantile(recent_values, quantile_probability)
-        neighbor_values = [
-            (
-                max(0.0, actual_history[day][hour].get("load", 0.0)),
-                similarity,
-            )
-            for day, similarity in similar_days
-            if hour in actual_history.get(day, {})
-            and actual_history[day][hour].get("load", 0.0) > 0.0
-        ]
-        neighbor_weight = sum(similarity for _, similarity in neighbor_values)
-        analog_actual = (
-            sum(value * similarity for value, similarity in neighbor_values) / neighbor_weight
-            if neighbor_weight > 0.0 else 0.0
-        )
-        analog_floor = analog_actual * analog_safety_factor if analog_actual > 0.0 else 0.0
-        floor = max(q75, analog_floor)
-        hourly_floors[str(hour)] = round(floor, 4)
-        hourly_details[str(hour)] = {
-            "quantile_kwh": round(q75, 4),
-            "analog_floor_kwh": round(analog_floor, 4),
-            "analog_blended_actual_kwh": round(analog_actual, 4),
-            "analog_neighbor_count": len(neighbor_values),
-            "source": "analog_blend" if analog_floor > q75 else "q75",
-        }
-    return {
-        "enabled": True,
-        "applied": bool(hourly_floors),
-        "reason": "ok",
-        "method": "unified_24h_q75_with_similarity_weighted_analog_blend_1p20",
-        "sample_count": len(days),
-        "window_days": window_days,
-        "quantile": quantile_probability,
-        "analog_day": analog_day,
-        "analog_similarity": round(analog_similarity, 6),
-        "analog_features": analog_features,
-        "analog_min_similarity": similarity_threshold,
-        "analog_safety_factor": analog_safety_factor,
-        "analog_allowed": analog_allowed,
-        "analog_selection_policy": "nearest_k_without_absolute_rejection",
-        "analog_neighbor_limit": analog_neighbor_count,
-        "pv_profile_distance_scale_kwh": pv_profile_distance_scale,
-        "analog_vector_features": [
-            "temperature_humidity_thermal_state",
-            "daily_pv_kwh",
-            "hourly_pv_profile_07_22",
-        ],
-        "analog_days": [
-            {"date": day, "similarity": round(similarity, 6)}
-            for day, similarity in similar_days
-        ],
-        "hourly_floor_kwh": hourly_floors,
-        "hourly_details": hourly_details,
-    }
-
-
 def build_forecast_correction(
     correction_input: ForecastCorrectionInput,
     policy: ForecastCorrectionPolicy,
@@ -911,7 +772,6 @@ def build_forecast_correction(
     target_date = correction_input.target_date
     forecast = correction_input.forecast
     skip_pv_correction = policy.skip_pv_correction
-    allow_load_safety_floor = policy.allow_load_safety_floor
     if not policy.enabled:
         return {
             "enabled": False,
@@ -946,11 +806,14 @@ def build_forecast_correction(
     historical_temperature_features: dict[str, dict[str, float | None]] = {}
     all_weather: dict[str, dict[int, dict[str, float]]] = {}
     if history_dates:
+        history_weather_start = (
+            datetime.fromisoformat(history_dates[0]) - timedelta(hours=ADAPTIVE_LOOKBACK_HOURS)
+        ).date().isoformat()
         all_weather = _fetch_hourly_weather(
             lat=correction_input.latitude,
             lon=correction_input.longitude,
             timezone=correction_input.timezone,
-            start_date=history_dates[0],
+            start_date=history_weather_start,
             end_date=history_dates[-1],
             archive=True,
         )
@@ -968,6 +831,7 @@ def build_forecast_correction(
                 "temp_c": temp,
                 "relative_humidity_percent": to_float(item.get("relative_humidity_percent")) or 60.0,
                 "dew_point_c": to_float(item.get("dew_point_c")) or 16.0,
+                "wind_speed_10m": to_float(item.get("wind_speed_10m")) or 0.0,
             }
     if not target_weather:
         target_weather = _fetch_hourly_weather(
@@ -982,7 +846,12 @@ def build_forecast_correction(
         fallback_temp = to_float(forecast.get("temp_c"))
         if fallback_temp is not None:
             target_weather = {
-                hour: {"temp_c": fallback_temp, "relative_humidity_percent": 60.0, "dew_point_c": 16.0}
+                hour: {
+                    "temp_c": fallback_temp,
+                    "relative_humidity_percent": 60.0,
+                    "dew_point_c": 16.0,
+                    "wind_speed_10m": 0.0,
+                }
                 for hour in range(24)
             }
     all_weather[target_date] = target_weather
@@ -1039,29 +908,38 @@ def build_forecast_correction(
         multiplier = load_ratio * temperature_hourly_multipliers.get(hour, 1.0)
         corrected_load[hour] = max(0.0, value) * max(0.0, multiplier)
 
-    load_safety_floor = _recent_and_analog_hourly_floor(
-        actual_history=actual_history,
-        historical_temperature_features=historical_temperature_features,
-        target_features=target_features,
-        target_pv_kwh=sum(max(0.0, value) for hour, value in hourly_pv_forecast.items() if 7 <= hour < 23),
-        target_hourly_pv_kwh=hourly_pv_forecast,
+    comfort_model_enabled = env_bool("LOAD_COMFORT_MODEL_ENABLED", default=True)
+    comfort_model = (
+        predict_hourly_comfort_load(
+            actual_history=actual_history,
+            weather_by_day=all_weather,
+            target_date=target_date,
+            min_samples=max(24, int(env_float("LOAD_COMFORT_MODEL_MIN_SAMPLES", default=336.0))),
+        )
+        if comfort_model_enabled
+        else {"enabled": False, "applied": False, "reason": "disabled"}
     )
-    hourly_floor_raw = load_safety_floor.get("hourly_floor_kwh")
-    hourly_floor = _coerce_hourly_values(hourly_floor_raw)
-    applied_hours: list[int] = []
-    if allow_load_safety_floor:
-        for hour, floor in hourly_floor.items():
-            if floor > corrected_load.get(hour, 0.0) + 1e-9:
-                corrected_load[hour] = floor
-                applied_hours.append(hour)
-    safety_floor_applied = bool(applied_hours)
-    load_safety_floor["allowed_by_occupancy"] = allow_load_safety_floor
-    load_safety_floor["applied"] = safety_floor_applied
-    load_safety_floor["applied_hours"] = applied_hours
-    load_safety_floor["forecast_after_floor_kwh"] = round(
-        sum(max(0.0, corrected_load.get(hour, 0.0)) for hour in range(24)),
-        4,
-    )
+    residual_multipliers = comfort_model.pop("_residual_multipliers", [])
+    comfort_hourly = _coerce_hourly_values(comfort_model.get("hourly_load_kwh"))
+    if comfort_model.get("applied") is True and len(comfort_hourly) == 24:
+        corrected_load = comfort_hourly
+        confidence = to_float(comfort_model.get("confidence")) or 0.0
+        load_scenarios = _adaptive_load_scenarios(
+            residual_multipliers if isinstance(residual_multipliers, list) else [],
+            confidence=confidence,
+        )
+    comfort_model["hourly_load_kwh"] = {
+        str(hour): round(value, 4)
+        for hour, value in sorted(comfort_hourly.items())
+    }
+
+    load_safety_floor = {
+        "enabled": False,
+        "applied": False,
+        "reason": "removed",
+        "hourly_floor_kwh": {},
+        "applied_hours": [],
+    }
     peak_penalty = {"enabled": False, "applied_factor": 0.0, "reason": "removed"}
     return {
         "enabled": True,
@@ -1071,7 +949,7 @@ def build_forecast_correction(
         "peak_penalty": peak_penalty,
         "rationale": {
             "enabled": True,
-            "method": "unified_24h_temperature_humidity_thermal_history_q75",
+            "method": "adaptive_comfort_thermal_inertia_hgb_with_existing_fallback",
             "history_source": history_source,
             "history_days": history_dates[-14:],
             "pv_ratio_ewma_raw": round(pv_ratio_raw, 6),
@@ -1090,6 +968,7 @@ def build_forecast_correction(
             "load_sample_count": load_summary["sample_count"],
             "load_latest_days": load_summary["latest_days"],
             "evening_load_temperature": temperature_correction,
+            "comfort_load_model": comfort_model,
             "recent_and_analog_hourly_floor": load_safety_floor,
             "load_scenarios": load_scenarios,
             "soc_peak_unmet_penalty": peak_penalty,

@@ -292,11 +292,10 @@ class ConsumptionForecaster:
             model = HistGradientBoostingRegressor(
                 categorical_features=CATEGORICAL_FEATURE_INDICES,
                 learning_rate=0.05,
-                loss="quantile",
+                loss="squared_error",
                 max_depth=6,
                 max_iter=300,
                 min_samples_leaf=5,
-                quantile=0.75,
                 random_state=self.random_state,
             )
             model.fit(feature_rows, targets)

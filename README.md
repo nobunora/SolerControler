@@ -159,8 +159,8 @@ python kpnet_main.py
 - `WEATHER_ARCHIVE_CHUNK_DAYS=14`（過去気象を分割取得し、成功した期間をキャッシュへ保存）
 - `EVENING_LOAD_TEMPERATURE_MIN_EFFECTIVE_SAMPLES=5`（類似温度の有効標本が未満なら回帰を抑止）
 - `LOAD_TEMPERATURE_HIGH_FLOOR_ENABLED=true`（高温時は温度補正だけで消費予測を減らさない）
-- `LOAD_RECENT_ANALOG_FLOOR_ENABLED=true`（直近実績・75%分位・短期EWMAの最大値と類似日実績を日中予測の下限に使用）
-- `LOAD_ANALOG_SAFETY_FACTOR=1.20`（類似日実績へ掛ける安全係数）
+- `LOAD_COMFORT_MODEL_ENABLED=true`（固定温湿度しきい値を使わない適応快適・熱慣性HGBで時間別消費を予測）
+- `LOAD_COMFORT_MODEL_MIN_SAMPLES=336`（14日相当の時間別実績に満たない場合は既存補正へフォールバック）
 - `KP_DEFAULT_CHARGE_POWER_KW=4.0`（夜間実測が取れない場合のフォールバック。実測の強制充電中央値に合わせる）
 - `NIGHT23_SETTINGS_PROFILE=standby`（23:00は外部データ取得/予測をせず、4時判断まで待機モードへ寄せる）
 - `ADJUST03_REGENERATE_PLAN=true`（04:00で当日計画を毎回再生成）
