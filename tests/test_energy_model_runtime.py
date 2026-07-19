@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -218,6 +219,9 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
 def _prepare_night_charge_with_pv_totals(
     monkeypatch: pytest.MonkeyPatch,
     totals: dict[str, object],
+    *,
+    temp_c: object = 25.0,
+    battery_temp_c: float | None = None,
 ):
     forecast = ConsumptionForecast(
         target_date=datetime(2026, 7, 20).date(),
@@ -228,12 +232,12 @@ def _prepare_night_charge_with_pv_totals(
         features=[],
     )
     context = EnergyModelContext(
-        config=EnergyModelConfig.from_env(),
+        config=replace(EnergyModelConfig.from_env(), battery_temp_c=battery_temp_c),
         csv_paths=[],
         rows=[],
         coefficients=_coefficients(),
         historical_profile={"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
-        forecast={"sun_hours": 5.0, "temp_c": 25.0},
+        forecast={"sun_hours": 5.0, "temp_c": temp_c},
         target_date="2026-07-20",
         latest_soc_percent=20.0,
         occupancy_events=[],
@@ -297,6 +301,63 @@ def test_prepare_night_charge_preserves_positive_pv_total(
     )
 
     assert preparation.inputs.predicted_pv_kwh_override == pytest.approx(1.5)
+
+
+def test_prepare_night_charge_preserves_zero_forecast_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.5, "morning_kwh": 0.5, "midday_kwh": 1.0},
+        temp_c=0.0,
+        battery_temp_c=None,
+    )
+
+    assert preparation.inputs.temp_forecast_c == 0.0
+    assert preparation.inputs.battery_temp_c == 0.0
+
+
+@pytest.mark.parametrize(
+    ("raw_temp_c", "expected_temp_c"),
+    [
+        (None, 20.0),
+        (-1.0, -1.0),
+        (0.1, 0.1),
+        ("0", 0.0),
+        ("", 20.0),
+        (float("nan"), 20.0),
+        (float("inf"), 20.0),
+        (-float("inf"), 20.0),
+    ],
+)
+def test_prepare_night_charge_normalizes_forecast_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_temp_c: object,
+    expected_temp_c: float,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.5, "morning_kwh": 0.5, "midday_kwh": 1.0},
+        temp_c=raw_temp_c,
+        battery_temp_c=None,
+    )
+
+    assert preparation.inputs.temp_forecast_c == pytest.approx(expected_temp_c)
+    assert preparation.inputs.battery_temp_c == pytest.approx(expected_temp_c)
+
+
+def test_prepare_night_charge_prefers_measured_battery_temperature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.5, "morning_kwh": 0.5, "midday_kwh": 1.0},
+        temp_c=0.0,
+        battery_temp_c=7.0,
+    )
+
+    assert preparation.inputs.temp_forecast_c == 0.0
+    assert preparation.inputs.battery_temp_c == 7.0
 
 
 def test_build_soc_constraints_preserves_zero_percent_cap(

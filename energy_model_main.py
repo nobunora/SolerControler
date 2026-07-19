@@ -2128,7 +2128,12 @@ def _prepare_night_charge(
             "midday_load_fraction": config.pv_midday_load_fraction,
         }
 
-    temp_c = _to_optional_float(forecast.get("temp_c")) or 20.0
+    parsed_temp_c = _to_optional_float(forecast.get("temp_c"))
+    temp_c = (
+        20.0
+        if parsed_temp_c is None or not math.isfinite(parsed_temp_c)
+        else parsed_temp_c
+    )
     expected_overnight_discharge_kwh = 0.0
     monthly_day_buy = _monthly_day_buy_kwh_before_target(
         context.rows,
