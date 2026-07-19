@@ -802,6 +802,30 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
     assert monitored == [plan_path]
 
 
+def test_run_adjust_03_plan_refresh_skips_device_monitoring(monkeypatch, tmp_path) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    calls: list[str] = []
+
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("cloud_job_runner._run_csv_with_retry", lambda **_: calls.append("csv"))
+    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("cloud_job_runner._persist_previous_day_soc_feedback", lambda **_: True)
+    monkeypatch.setattr("cloud_job_runner._ensure_night_plan_available", lambda _: calls.append("plan") or True)
+    monkeypatch.setattr("cloud_job_runner._run_db_pipeline_slot", lambda *_, **__: calls.append("db"))
+    monkeypatch.setattr(
+        "cloud_job_runner._monitor_partial_forced_and_stop",
+        lambda _: (_ for _ in ()).throw(AssertionError("plan refresh must not control the device")),
+    )
+    monkeypatch.setattr(
+        "cloud_job_runner._run_optional_04_exports_and_backups",
+        lambda: (_ for _ in ()).throw(AssertionError("plan refresh must not run optional side effects")),
+    )
+
+    _run_adjust_03(plan_refresh_only=True)
+
+    assert calls == ["csv", "plan", "db"]
+
+
 def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> None:
     writes: dict[tuple[str, str], dict] = {}
 

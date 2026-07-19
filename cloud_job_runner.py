@@ -1425,7 +1425,7 @@ def _run_optional_04_exports_and_backups() -> None:
         print("[cloud_job_runner] drive-backup skipped: DRIVE_BACKUP_FOLDER_ID is empty", flush=True)
 
 
-def _run_adjust_03() -> None:
+def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
     # 夜間コントローラ:
     # 1) 04:00にCSVを取得して現在SOCを把握
     # 2) 当日分の最新予報を04:00時点で再生成
@@ -1448,6 +1448,9 @@ def _run_adjust_03() -> None:
             "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
         },
     )
+    if plan_refresh_only:
+        print("[cloud_job_runner] 03-plan refresh completed without device control", flush=True)
+        return
     _monitor_partial_forced_and_stop(plan_path)
     _run_optional_04_exports_and_backups()
 
@@ -1464,7 +1467,7 @@ def main() -> int:
         _run_night_23()
         return 0
     if slot in {"3", "03", "adjust", "adjust03"}:
-        _run_adjust_03()
+        _run_adjust_03(plan_refresh_only="--plan-refresh-only" in sys.argv[1:])
         return 0
     if slot in {"7", "07", "day", "day07"}:
         _run_day_07()

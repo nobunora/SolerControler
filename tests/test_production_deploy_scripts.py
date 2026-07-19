@@ -77,6 +77,16 @@ def test_manual_actual_import_cannot_overwrite_production_plan() -> None:
     assert "$env:DATA_PIPELINE_INCLUDE_NIGHT_PLAN = 'false'" in script
 
 
+def test_plan_refresh_cloud_job_mode_is_limited_to_slot_03() -> None:
+    script = (ROOT / "scripts" / "run_cloud_job_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[switch]$PlanRefreshOnly" in script
+    assert "-PlanRefreshOnly requires -Slot 03" in script
+    assert "--args=--plan-refresh-only" in script
+
+
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:
     config = (ROOT / "cloudbuild.dashboard.yaml").read_text(encoding="utf-8")
 
