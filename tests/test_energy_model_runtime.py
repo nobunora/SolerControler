@@ -7,15 +7,22 @@ import pytest
 
 from app.consumption_forecast import ConsumptionForecast
 from app.energy_model import EnergyModelCoefficients
+from app.soc_cost_optimizer import PvForecastUncertainty
 from energy_model_main import (
     ConsumptionForecastBundle,
     EnergyModelConfig,
     EnergyModelContext,
+    LegacyOptimizationDecision,
+    PvForecastBundle,
+    SocConstraintSet,
     WeatherHistoryFetchResult,
     _build_consumption_forecasts,
+    _build_soc_constraints,
     build_energy_plan,
     _load_execution_context,
     _prepare_night_charge,
+    _run_soc_optimization,
+    _soc_cap_or_unbounded,
 )
 
 
@@ -290,6 +297,126 @@ def test_prepare_night_charge_preserves_positive_pv_total(
     )
 
     assert preparation.inputs.predicted_pv_kwh_override == pytest.approx(1.5)
+
+
+def test_build_soc_constraints_preserves_zero_percent_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    night_charge = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.0, "morning_kwh": 0.5, "midday_kwh": 0.5},
+    )
+    context = EnergyModelContext(
+        config=EnergyModelConfig.from_env(),
+        csv_paths=[],
+        rows=[],
+        coefficients=_coefficients(),
+        historical_profile={"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
+        forecast={},
+        target_date="2026-07-20",
+        latest_soc_percent=20.0,
+        occupancy_events=[],
+    )
+    pv_forecast = PvForecastBundle(
+        array_forecast=None,
+        hourly_load_kwh={},
+        hourly_pv_kwh={},
+        hourly_weather_shape={},
+        physical_diagnostics={},
+        correction={},
+        selected_method="existing",
+        source="test",
+        uncertainty=PvForecastUncertainty(1.0, 0.0, 0.0, 0, "test"),
+        sunset_hour=18,
+    )
+    zero_cap = {
+        "applied": True,
+        "cap_target_soc_percent": 0.0,
+        "reason": "zero_headroom",
+    }
+    no_cap = {"applied": False, "cap_target_soc_percent": None, "reason": "not_applied"}
+    monkeypatch.setattr("energy_model_main._morning_pv_headroom_guard", lambda **_: zero_cap)
+    monkeypatch.setattr(
+        "energy_model_main._daytime_net_surplus_headroom_guard", lambda **_: no_cap
+    )
+    monkeypatch.setattr(
+        "energy_model_main._historical_daytime_soc_gain_guard", lambda *_, **__: no_cap
+    )
+
+    constraints = _build_soc_constraints(context, pv_forecast, night_charge)
+
+    assert constraints.max_target_soc_percent == 0.0
+    assert constraints.active_constraints[0].cap_target_soc_percent == 0.0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, 100.0), (0.0, 0.0), (0.1, 0.1), (100.0, 100.0), (-1.0, -1.0), (101.0, 101.0)],
+)
+def test_soc_cap_or_unbounded_defaults_only_missing_values(
+    value: float | None,
+    expected: float,
+) -> None:
+    assert _soc_cap_or_unbounded(value) == pytest.approx(expected)
+
+
+def test_cost_optimization_request_preserves_zero_percent_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DAYTIME_SOC_COST_OPTIMIZATION_ENABLED", "true")
+    night_charge = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.0, "morning_kwh": 0.5, "midday_kwh": 0.5},
+    )
+    context = EnergyModelContext(
+        config=EnergyModelConfig.from_env(),
+        csv_paths=[],
+        rows=[],
+        coefficients=_coefficients(),
+        historical_profile={"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
+        forecast={},
+        target_date="2026-07-20",
+        latest_soc_percent=20.0,
+        occupancy_events=[],
+    )
+    pv_forecast = PvForecastBundle(
+        array_forecast=None,
+        hourly_load_kwh={},
+        hourly_pv_kwh={},
+        hourly_weather_shape={},
+        physical_diagnostics={},
+        correction={},
+        selected_method="existing",
+        source="test",
+        uncertainty=PvForecastUncertainty(1.0, 0.0, 0.0, 0, "test"),
+        sunset_hour=18,
+    )
+    constraints = SocConstraintSet(
+        reserve_soc_percent=0.0,
+        max_target_soc_percent=0.0,
+        apply_pv_headroom_caps=True,
+        active_constraints=[],
+        morning_headroom={"applied": True, "cap_target_soc_percent": 0.0},
+        daytime_net_surplus={"applied": True, "cap_target_soc_percent": 80.0},
+        historical_soc_gain={"applied": False, "cap_target_soc_percent": None},
+    )
+    captured = {}
+    monkeypatch.setattr("energy_model_main.load_soc_decision_prior_from_firestore", lambda **_: None)
+    monkeypatch.setattr("energy_model_main._soc_decision_target_features", lambda **_: {})
+    monkeypatch.setattr(
+        "energy_model_main.optimize_soc_request",
+        lambda request: captured.setdefault("request", request) and None,
+    )
+
+    _run_soc_optimization(
+        context,
+        night_charge,
+        pv_forecast,
+        constraints,
+        LegacyOptimizationDecision(result=None, payload=None),
+    )
+
+    assert captured["request"].max_target_soc_percent == 0.0
 
 
 def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tmp_path) -> None:

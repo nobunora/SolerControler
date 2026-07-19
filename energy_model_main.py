@@ -344,6 +344,11 @@ def _to_optional_float(value: object) -> float | None:
         return None
 
 
+def _soc_cap_or_unbounded(value: object) -> float:
+    cap = _to_optional_float(value)
+    return 100.0 if cap is None else cap
+
+
 def _to_optional_int(value: object) -> int | None:
     as_float = _to_optional_float(value)
     if as_float is None:
@@ -2303,7 +2308,7 @@ def _build_soc_constraints(
             if guard.get("applied") or guard is annotated[0]:
                 max_target_soc = min(
                     max_target_soc,
-                    _to_optional_float(guard.get("cap_target_soc_percent")) or 100.0,
+                    _soc_cap_or_unbounded(guard.get("cap_target_soc_percent")),
                 )
     return SocConstraintSet(
         reserve_soc_percent=reserve_soc,
@@ -2394,15 +2399,14 @@ def _run_soc_optimization(
         respect_guard = config.cost_respect_morning_headroom_cap
         cost_max_soc = 100.0
         if respect_guard and constraints.apply_pv_headroom_caps:
-            cost_max_soc = (
-                _to_optional_float(constraints.morning_headroom.get("cap_target_soc_percent"))
-                or 100.0
+            cost_max_soc = _soc_cap_or_unbounded(
+                constraints.morning_headroom.get("cap_target_soc_percent")
             )
         for guard in (constraints.daytime_net_surplus, constraints.historical_soc_gain):
             if constraints.apply_pv_headroom_caps and guard.get("applied"):
                 cost_max_soc = min(
                     cost_max_soc,
-                    _to_optional_float(guard.get("cap_target_soc_percent")) or 100.0,
+                    _soc_cap_or_unbounded(guard.get("cap_target_soc_percent")),
                 )
         load_scenarios = _load_scenarios_for_cost_optimizer(pv_forecast.correction)
         weather_upside_probability = _weather_upside_probability_for_cost_optimizer(
