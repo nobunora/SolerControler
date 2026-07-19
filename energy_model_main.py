@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import os
 import statistics
 import time
@@ -2097,16 +2098,23 @@ def _prepare_night_charge(
     pv_totals = _pv_forecast_totals(pv_array_forecast)
     predicted_pv_total_raw = _to_optional_float(pv_totals.get("total_kwh"))
     predicted_pv_override = predicted_pv_total_raw
-    if predicted_pv_override is not None and predicted_pv_override <= 0:
+    if predicted_pv_override is not None and (
+        predicted_pv_override < 0 or not math.isfinite(predicted_pv_override)
+    ):
         predicted_pv_override = None
     predicted_morning_pv_override = _to_optional_float(pv_totals.get("morning_kwh"))
-    if predicted_morning_pv_override is not None and predicted_morning_pv_override <= 0:
+    if predicted_morning_pv_override is not None and (
+        predicted_morning_pv_override < 0
+        or not math.isfinite(predicted_morning_pv_override)
+    ):
         predicted_morning_pv_override = None
     predicted_midday_surplus_override = _estimate_midday_surplus_from_pv_forecast(
         pv_forecast=pv_array_forecast,
         consumption_forecast=consumption.daily,
     )
-    if predicted_pv_total_raw is not None and predicted_pv_total_raw <= 0:
+    if predicted_pv_total_raw is not None and (
+        predicted_pv_total_raw < 0 or not math.isfinite(predicted_pv_total_raw)
+    ):
         predicted_midday_surplus_override = None
     if isinstance(pv_array_forecast, dict) and pv_array_forecast.get("enabled"):
         pv_array_forecast["surplus_estimate"] = {

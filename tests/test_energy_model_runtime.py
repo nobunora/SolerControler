@@ -8,11 +8,14 @@ import pytest
 from app.consumption_forecast import ConsumptionForecast
 from app.energy_model import EnergyModelCoefficients
 from energy_model_main import (
+    ConsumptionForecastBundle,
     EnergyModelConfig,
+    EnergyModelContext,
     WeatherHistoryFetchResult,
     _build_consumption_forecasts,
     build_energy_plan,
     _load_execution_context,
+    _prepare_night_charge,
 )
 
 
@@ -203,6 +206,90 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
     assert bundle.training_diagnostics["joined_training_day_count"] == 1
     assert bundle.training_diagnostics["fallback_reason"] is None
     assert bundle.occupancy_adjustment is None
+
+
+def _prepare_night_charge_with_pv_totals(
+    monkeypatch: pytest.MonkeyPatch,
+    totals: dict[str, object],
+):
+    forecast = ConsumptionForecast(
+        target_date=datetime(2026, 7, 20).date(),
+        morning_load_kwh=2.0,
+        daytime_load_kwh=8.0,
+        source="test",
+        sample_count=1,
+        features=[],
+    )
+    context = EnergyModelContext(
+        config=EnergyModelConfig.from_env(),
+        csv_paths=[],
+        rows=[],
+        coefficients=_coefficients(),
+        historical_profile={"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
+        forecast={"sun_hours": 5.0, "temp_c": 25.0},
+        target_date="2026-07-20",
+        latest_soc_percent=20.0,
+        occupancy_events=[],
+    )
+    consumption = ConsumptionForecastBundle(
+        daily=forecast,
+        base_daily=forecast,
+        training_diagnostics={},
+        occupancy_adjustment=None,
+    )
+    monkeypatch.setattr(
+        "energy_model_main._build_pv_forecast_or_disabled",
+        lambda **_: {
+            "enabled": True,
+            "totals": totals,
+        },
+    )
+    monkeypatch.setattr(
+        "energy_model_main._monthly_day_buy_kwh_before_target", lambda *_, **__: {}
+    )
+    monkeypatch.setattr(
+        "energy_model_main._expected_rest_of_month_day_buy_kwh", lambda *_, **__: {}
+    )
+
+    return _prepare_night_charge(context, consumption)
+
+
+def test_prepare_night_charge_preserves_zero_pv_forecast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 0.0, "morning_kwh": 0.0, "midday_kwh": 0.0},
+    )
+
+    assert preparation.inputs.predicted_pv_kwh_override == 0.0
+    assert preparation.inputs.predicted_morning_pv_kwh_override == 0.0
+    assert preparation.inputs.predicted_midday_surplus_kwh_override == 0.0
+    assert preparation.result.predicted_pv_kwh == 0.0
+
+
+@pytest.mark.parametrize("total_kwh", [None, -1.0, float("nan"), float("inf"), -float("inf")])
+def test_prepare_night_charge_rejects_missing_or_invalid_pv_total(
+    monkeypatch: pytest.MonkeyPatch,
+    total_kwh: float | None,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": total_kwh, "morning_kwh": 1.0, "midday_kwh": 1.0},
+    )
+
+    assert preparation.inputs.predicted_pv_kwh_override is None
+
+
+def test_prepare_night_charge_preserves_positive_pv_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preparation = _prepare_night_charge_with_pv_totals(
+        monkeypatch,
+        {"total_kwh": 1.5, "morning_kwh": 0.5, "midday_kwh": 1.0},
+    )
+
+    assert preparation.inputs.predicted_pv_kwh_override == pytest.approx(1.5)
 
 
 def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tmp_path) -> None:
