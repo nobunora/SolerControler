@@ -174,6 +174,21 @@
 9. `fixed` 条件で0時跨ぎと開始終了同一を補正する
 10. `KP_DAY_DISCHARGE_WINDOW_START` で日中放電開始時刻を決める
 
+`KP_NIGHT_CHARGE_WINDOW_START/END` は、履歴からの充電電力推定と現在時刻の夜間判定に使う論理窓です。
+開始が終了より後なら日付をまたぎ、`23:00-07:00` は480分です。開始と終了が同じ場合は、既存の
+時刻判定との互換性を保つため24時間として扱います。
+
+KP-NETへ送る実機スケジュールは別契約で、外部機器の日付またぎ対応が未確認のため、現在は
+`00:00` から決定済み終了時刻までの同日内に制限します。このため設定窓が `23:00-07:00` でも、
+実機側の最大窓は終了が07:00なら420分です。設定開始を早めても、実機開始へ直接は反映されません。
+実機の日付またぎまたは2分割設定は、機器仕様を確認するまで追加しません。
+
+`night_charge_plan` の診断には、設定窓、論理時間、実機開始・終了、要求時間、適用時間、切捨て時間、
+制限理由を記録します。主なフィールドは `configured_window_start/end`、
+`logical_window_duration_minutes`、`logical_window_crosses_midnight`、`device_schedule_start/end`、
+`device_schedule_duration_minutes`、`truncated_minutes`、`requested_charge_duration_minutes`、
+`applied_charge_duration_minutes`、`limitation_reason` です。
+
 `SocChargeMode` はKP-NET側の候補値へ丸める必要があります。生目標が34%で候補値が10%刻みなら、
 送信するSOC上限コードは40%になります。ただし充電開始時刻は40%到達ではなく34%到達を狙うため、
 現在SOCから生目標までの差分を `ADJUST03_FORCE_CHARGE_RATE_*` の実測SOC上昇率で逆算します。

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import app.kpnet_workflow as kpnet_workflow
 from app.kpnet_workflow import (
     FORCED_CHARGE_PROFILE,
     KpNetConfig,
@@ -119,6 +120,28 @@ def test_parse_hhmm_valid_and_invalid() -> None:
         _parse_hhmm("24:00", name="X")
     with pytest.raises(RuntimeError):
         _parse_hhmm("abc", name="X")
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "duration_minutes", "crosses_midnight"),
+    [
+        ("23:00", "07:00", 480, True),
+        ("00:00", "07:00", 420, False),
+        ("22:30", "06:30", 480, True),
+        ("01:00", "05:00", 240, False),
+        ("05:00", "05:00", 1440, True),
+    ],
+)
+def test_night_window_contract_describes_logical_window(
+    start: str,
+    end: str,
+    duration_minutes: int,
+    crosses_midnight: bool,
+) -> None:
+    contract = kpnet_workflow._night_window_contract(start, end)
+
+    assert contract["logical_window_duration_minutes"] == duration_minutes
+    assert contract["logical_window_crosses_midnight"] is crosses_midnight
 
 
 def test_in_time_window_cross_midnight() -> None:
@@ -498,6 +521,58 @@ def test_build_dynamic_forced_profile_uses_plan_and_csv(tmp_path: Path) -> None:
     assert profile.discharge_start_m == "0"
     assert profile.discharge_end_h == "23"
     assert profile.discharge_end_m == "0"
+    night_plan_summary = summary["night_charge_plan"]
+    assert night_plan_summary["configured_window_start"] == "23:00"
+    assert night_plan_summary["configured_window_end"] == "07:00"
+    assert night_plan_summary["logical_window_duration_minutes"] == 480
+    assert night_plan_summary["logical_window_crosses_midnight"] is True
+    assert night_plan_summary["device_schedule_start"] == "03:48"
+    assert night_plan_summary["device_schedule_end"] == "06:00"
+    assert night_plan_summary["device_schedule_duration_minutes"] == 132
+    assert night_plan_summary["truncated_minutes"] == 120
+    assert night_plan_summary["requested_charge_duration_minutes"] == 132
+    assert night_plan_summary["applied_charge_duration_minutes"] == 132
+    assert night_plan_summary["limitation_reason"] == "configured_window_exceeds_device_same_day_window"
+
+
+def test_build_dynamic_forced_profile_reports_device_window_clipping(tmp_path: Path) -> None:
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text(
+        "年月日,時刻,充電電力量[kWh]\n2026/05/01,23:30,0.5\n",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-05-03"},
+                "result": {
+                    "required_night_charge_kwh": 10.0,
+                    "target_soc_7_percent": 50.0,
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    summary: dict[str, object] = {}
+
+    profile = _build_dynamic_forced_profile(
+        cfg=_build_cfg(plan_path=plan_path),
+        value_maps=_value_maps(),
+        summary=summary,
+    )
+
+    assert profile.charge_start_h == "0"
+    assert profile.charge_start_m == "0"
+    assert profile.charge_end_h == "6"
+    assert profile.charge_end_m == "0"
+    night_plan_summary = summary["night_charge_plan"]
+    assert night_plan_summary["requested_charge_duration_minutes"] == 600
+    assert night_plan_summary["applied_charge_duration_minutes"] == 360
+    assert night_plan_summary["duration_clipped_to_window"] is True
+    assert night_plan_summary["limitation_reason"] == "requested_duration_exceeds_device_same_day_window"
 
 
 def test_build_dynamic_forced_profile_applies_slot23_discharge_guard(

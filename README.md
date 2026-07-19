@@ -148,6 +148,7 @@ python kpnet_main.py
 - `KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json`
 - `KP_NIGHT_CHARGE_WINDOW_START=23:00`
 - `KP_NIGHT_CHARGE_WINDOW_END=07:00`
+- 上記2値は履歴推定・夜間判定の論理窓です。実機スケジュールは00:00以降の同日内へ制限されます。詳細は `docs/current/product/OPERATION_CONDITIONS_GUIDE.md` を参照してください。
 - `KP_DAY_DISCHARGE_WINDOW_START=07:00`
 - `KP_DAY_DISCHARGE_WINDOW_END=23:00`
 - `PV_ARRAY_FORECAST_ENABLED=true`（`config/pv_arrays.json` の東・南・西などの面別アレイをOpen-Meteo hourly GTIで予測）

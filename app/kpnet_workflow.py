@@ -145,6 +145,25 @@ def _in_time_window(minute_of_day: int, start_minute: int, end_minute: int) -> b
     return minute_of_day >= start_minute or minute_of_day < end_minute
 
 
+def _night_window_contract(start: str, end: str) -> dict[str, object]:
+    start_h, start_m = _parse_hhmm(start, name="KP_NIGHT_CHARGE_WINDOW_START")
+    end_h, end_m = _parse_hhmm(end, name="KP_NIGHT_CHARGE_WINDOW_END")
+    start_minute = start_h * 60 + start_m
+    end_minute = end_h * 60 + end_m
+    crosses_midnight = start_minute >= end_minute
+    duration_minutes = (
+        24 * 60
+        if start_minute == end_minute
+        else (end_minute - start_minute) % (24 * 60)
+    )
+    return {
+        "configured_window_start": f"{start_h:02d}:{start_m:02d}",
+        "configured_window_end": f"{end_h:02d}:{end_m:02d}",
+        "logical_window_duration_minutes": duration_minutes,
+        "logical_window_crosses_midnight": crosses_midnight,
+    }
+
+
 def _now_in_timezone(timezone_name: str) -> datetime:
     tz_name = timezone_name.strip() or "Asia/Tokyo"
     try:
@@ -821,6 +840,10 @@ def _build_dynamic_forced_profile(
 
     night_window_start = _parse_hhmm(cfg.night_charge_window_start, name="KP_NIGHT_CHARGE_WINDOW_START")
     night_window_end = _parse_hhmm(cfg.night_charge_window_end, name="KP_NIGHT_CHARGE_WINDOW_END")
+    window_contract = _night_window_contract(
+        cfg.night_charge_window_start,
+        cfg.night_charge_window_end,
+    )
 
     estimated_charge_power_kw = _estimate_charge_power_kw(
         plan.csv_paths,
@@ -871,6 +894,7 @@ def _build_dynamic_forced_profile(
     )
     charge_end_minute = charge_end_h * 60 + charge_end_m
     window_duration_minutes = charge_end_minute
+    requested_duration_minutes = duration_minutes
     duration_clipped = False
     if duration_minutes > window_duration_minutes:
         duration_minutes = window_duration_minutes
@@ -887,6 +911,18 @@ def _build_dynamic_forced_profile(
         )
     charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
     charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
+    applied_duration_minutes = max(0, charge_end_minute - charge_start_minute)
+    logical_duration_minutes = int(window_contract["logical_window_duration_minutes"])
+    truncated_minutes = max(0, logical_duration_minutes - charge_end_minute)
+    configured_start_minute = night_window_start[0] * 60 + night_window_start[1]
+    if duration_clipped:
+        limitation_reason = "requested_duration_exceeds_device_same_day_window"
+    elif truncated_minutes > 0:
+        limitation_reason = "configured_window_exceeds_device_same_day_window"
+    elif requested_duration_minutes > 0 and charge_start_minute < configured_start_minute:
+        limitation_reason = "configured_start_not_enforced_by_device_schedule"
+    else:
+        limitation_reason = "none"
     discharge_start_h, discharge_start_m = _resolve_day_discharge_start_hhmm(
         cfg=cfg,
         conditions=conditions,
@@ -930,6 +966,14 @@ def _build_dynamic_forced_profile(
         "duration_minutes": duration_minutes,
         "duration_clipped_to_window": duration_clipped,
         "no_cross_midnight": True,
+        **window_contract,
+        "device_schedule_start": f"{charge_start_h:02d}:{charge_start_m:02d}",
+        "device_schedule_end": f"{charge_end_h:02d}:{charge_end_m:02d}",
+        "device_schedule_duration_minutes": applied_duration_minutes,
+        "truncated_minutes": truncated_minutes,
+        "requested_charge_duration_minutes": requested_duration_minutes,
+        "applied_charge_duration_minutes": applied_duration_minutes,
+        "limitation_reason": limitation_reason,
         "fixed_charge_end_time": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "night_window_start": cfg.night_charge_window_start,
         "night_window_end": cfg.night_charge_window_end,
@@ -966,6 +1010,18 @@ def _build_dynamic_forced_profile(
         charge_end_m,
         target_soc_7_percent,
         soc_charge_code,
+    )
+    LOGGER.info(
+        "Night window configured=%s-%s logical=%smin crossesMidnight=%s device=%s-%s applied=%smin truncated=%smin limitation=%s",
+        window_contract["configured_window_start"],
+        window_contract["configured_window_end"],
+        logical_duration_minutes,
+        window_contract["logical_window_crosses_midnight"],
+        f"{charge_start_h:02d}:{charge_start_m:02d}",
+        f"{charge_end_h:02d}:{charge_end_m:02d}",
+        applied_duration_minutes,
+        truncated_minutes,
+        limitation_reason,
     )
 
     return replace(
