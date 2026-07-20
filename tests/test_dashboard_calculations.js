@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { minuteOf, allocateNightGridCharge } = require("../static/dashboard_calculations.js");
+const { minuteOf, allocateNightGridCharge, plannedBatteryValues } = require("../static/dashboard_calculations.js");
 
 assert.equal(minuteOf("02:43"), 163);
 assert.equal(minuteOf("04:00"), 240);
@@ -21,3 +21,25 @@ assert.equal(allocateNightGridCharge(rows, 2, "04:00", "04:00").reduce((a, b) =>
 
 const fallback = allocateNightGridCharge(rows, 3, "", "");
 assert.deepEqual(fallback.slice(4, 7), [1, 1, 1]);
+
+assert.deepEqual(
+  plannedBatteryValues(
+    { setting_soc_target_percent: null, night_charge_kwh: null },
+    { soc_charge_mode: "0", planned_target_soc_percent: 77, planned_night_charge_kwh: 3.1403 }
+  ),
+  { targetSocPercent: 77, nightChargeKwh: 3.1403 }
+);
+assert.deepEqual(
+  plannedBatteryValues(
+    { setting_soc_target_percent: 65, night_charge_kwh: 2.5 },
+    { soc_charge_mode: "0", planned_target_soc_percent: 77, planned_night_charge_kwh: 3.1403 }
+  ),
+  { targetSocPercent: 77, nightChargeKwh: 3.1403 }
+);
+assert.deepEqual(
+  plannedBatteryValues(
+    { setting_soc_target_percent: 65, night_charge_kwh: 2.5 },
+    { soc_charge_mode: "0" }
+  ),
+  { targetSocPercent: 65, nightChargeKwh: 2.5 }
+);

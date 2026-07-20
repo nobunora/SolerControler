@@ -520,6 +520,30 @@ def _build_latest_schedule_from_events(
     return schedule
 
 
+def _merge_latest_plan_into_schedule(
+    schedule: dict[str, Any],
+    plan: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged = dict(schedule)
+    if not plan:
+        return merged
+    schedule_date = str(merged.get("plan_date") or "").strip()
+    plan_date = str(plan.get("date") or _nested_dict(plan, "forecast").get("date") or "").strip()
+    if schedule_date and plan_date != schedule_date:
+        return merged
+    result = _nested_dict(plan, "result")
+    target_soc = to_float(result.get("target_soc_7_percent"))
+    night_charge = to_float(result.get("required_night_charge_kwh"))
+    if target_soc is not None:
+        merged["planned_target_soc_percent"] = target_soc
+    if night_charge is not None:
+        merged["planned_night_charge_kwh"] = night_charge
+    updated_at = str(plan.get("updated_at") or "").strip()
+    if updated_at:
+        merged["plan_updated_at"] = updated_at
+    return merged
+
+
 def _latest_row_by_date(rows: list[dict[str, Any]], *, date_key: str = "date") -> dict[str, Any] | None:
     dated = [row for row in rows if row.get(date_key)]
     if not dated:
@@ -1841,6 +1865,10 @@ def _load_firestore_slice(
             event_rows=latest_events,
             battery_row=latest_battery,
             plan_date=end_date_iso,
+        )
+        latest_schedule = _merge_latest_plan_into_schedule(
+            latest_schedule,
+            _firestore_plans_by_date(client, [end_date_iso]).get(end_date_iso),
         )
 
     raw = DashboardRawData(

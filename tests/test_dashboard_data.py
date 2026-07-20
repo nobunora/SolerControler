@@ -10,6 +10,7 @@ from app.dashboard_data import (
     _build_energy_daily,
     _build_dashboard_warnings,
     _build_latest_schedule_from_events,
+    _merge_latest_plan_into_schedule,
     _build_dashboard_slice,
     _get_global_bounds_firestore,
     _load_firestore_slice,
@@ -733,6 +734,50 @@ def test_latest_schedule_treats_no_charge_decision_as_completed() -> None:
     assert schedule["settings_completed"] is True
     assert schedule["settings_completed_status"] == "skipped-no-charge"
     assert schedule["schedule_source"] == "03-no-charge"
+
+
+def test_latest_plan_is_exposed_without_overwriting_execution_history() -> None:
+    schedule = {
+        "plan_date": "2026-07-20",
+        "soc_charge_mode": "0",
+        "status": "skipped-no-charge",
+        "recorded_at": "2026-07-19T19:03:21Z",
+    }
+
+    merged = _merge_latest_plan_into_schedule(
+        schedule,
+        {
+            "date": "2026-07-20",
+            "updated_at": "2026-07-19T23:31:16Z",
+            "result": {
+                "target_soc_7_percent": 77.0,
+                "required_night_charge_kwh": 3.1403,
+            },
+        },
+    )
+
+    assert merged["soc_charge_mode"] == "0"
+    assert merged["status"] == "skipped-no-charge"
+    assert merged["recorded_at"] == "2026-07-19T19:03:21Z"
+    assert merged["planned_target_soc_percent"] == pytest.approx(77.0)
+    assert merged["planned_night_charge_kwh"] == pytest.approx(3.1403)
+    assert merged["plan_updated_at"] == "2026-07-19T23:31:16Z"
+
+
+def test_latest_plan_for_different_date_is_not_mixed_into_schedule() -> None:
+    schedule = {"plan_date": "2026-07-20", "soc_charge_mode": "0"}
+
+    merged = _merge_latest_plan_into_schedule(
+        schedule,
+        {
+            "date": "2026-07-21",
+            "updated_at": "2026-07-20T23:31:16Z",
+            "result": {"target_soc_7_percent": 80.0},
+        },
+    )
+
+    assert "planned_target_soc_percent" not in merged
+    assert "plan_updated_at" not in merged
 
 
 def test_dashboard_warnings_do_not_mix_previous_battery_day_with_latest_plan() -> None:

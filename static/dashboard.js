@@ -1,7 +1,7 @@
     const WINDOW_DAYS = 31;
     const CHUNK_DAYS = 120;
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
-    const { allocateNightGridCharge } = window.DashboardCalculations;
+    const { allocateNightGridCharge, plannedBatteryValues } = window.DashboardCalculations;
     const dashboardDates = window.DashboardDates;
     const dashboardApi = window.DashboardApi;
 
@@ -995,34 +995,37 @@
         const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
         const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
         const batteryRow = date ? store.battery.get(date) : null;
-        const nightCharge = batteryRow && batteryRow.night_charge_kwh != null ? n(batteryRow.night_charge_kwh) : null;
+        const sch = store.latestSchedule || {};
+        const planned = plannedBatteryValues(batteryRow, sch);
+        const nightCharge = planned.nightChargeKwh;
         const socPeak = maxForecastSocPoint(labels, soc);
         const actualText = actualHours.length
           ? `消費実績 ${String(Math.min(...actualHours)).padStart(2, "0")}:00-${String(Math.max(...actualHours)).padStart(2, "0")}:59`
           : "消費実績なし";
         const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
+        const planUpdated = sch.plan_updated_at ? new Date(sch.plan_updated_at) : null;
+        const planUpdatedText = planUpdated && !Number.isNaN(planUpdated.getTime())
+          ? ` / 計画更新 ${planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })}`
+          : "";
         const socText = socPeak ? ` / 予想SOCピーク ${socPeak.label}ごろ ${socPeak.value.toFixed(0)}%` : "";
         const nightText = nightCharge != null && nightCharge > 0 ? ` / 夜間系統充電 ${nightCharge.toFixed(2)}kWh` : "";
-        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}、以降は予測。夜間系統充電は家の消費とは別の請求対象買電です）`;
+        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}${planUpdatedText}、以降は予測。夜間系統充電は家の消費とは別の請求対象買電です）`;
       }
       chart.update("none");
     }
 
     function estimateHourlyNightGridCharge(rows, date) {
       const batteryRow = date ? store.battery.get(date) : null;
-      const totalKwh = Math.max(0, Number(batteryRow && batteryRow.night_charge_kwh != null ? batteryRow.night_charge_kwh : 0) || 0);
       const sch = store.latestSchedule || {};
+      const planned = plannedBatteryValues(batteryRow, sch);
+      const totalKwh = Math.max(0, planned.nightChargeKwh);
       return allocateNightGridCharge(rows, totalKwh, sch.charge_start_time, sch.charge_end_time);
     }
 
     function estimateHourlyForecastSoc(rows, date) {
       const sch = store.latestSchedule || {};
       const batteryRow = date ? store.battery.get(date) : null;
-      const targetSocRaw = Number(
-        (batteryRow && batteryRow.setting_soc_target_percent != null)
-          ? batteryRow.setting_soc_target_percent
-          : sch.soc_charge_mode
-      );
+      const targetSocRaw = plannedBatteryValues(batteryRow, sch).targetSocPercent;
       if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);
       const capacityKwh = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
       const roundTripEff = Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9)));
