@@ -337,6 +337,31 @@ def test_cost_optimizer_expands_load_scenarios_and_normalizes_probability() -> N
     assert any("load_high" in s.label for s in result.forecast_scenarios)
 
 
+def test_cost_optimizer_uses_joint_scenarios_without_cross_product() -> None:
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10.0,
+        soc_now_percent=30.0,
+        reserve_soc_percent=30.0,
+        hourly_load_kwh={18: 2.0},
+        hourly_pv_kwh={10: 2.0},
+        uncertainty=PvForecastUncertainty(1.0, 0.2, 0.04, 10, "test"),
+        cost_model=SocCostModel(39.10, 28.85, 0.93, 0.0),
+        soc_step_percent=10.0,
+        load_scenarios=(ForecastScenario("ignored_load", 1.0, 1.0, 1.8),),
+        joint_scenarios=(
+            ForecastScenario("paired_prior", 0.6, 1.0, 1.0),
+            ForecastScenario("paired_hot", 0.4, 0.8, 1.4),
+        ),
+    )
+
+    assert result is not None
+    assert [scenario.label for scenario in result.forecast_scenarios] == [
+        "paired_prior",
+        "paired_hot",
+    ]
+    assert sum(scenario.probability for scenario in result.forecast_scenarios) == pytest.approx(1.0)
+
+
 def test_cost_optimizer_returns_selected_and_rejected_candidate_summaries() -> None:
     hourly_pv = {10: 2.0, 11: 2.0}
     hourly_load = {7: 1.0, 18: 1.0, 19: 1.0}

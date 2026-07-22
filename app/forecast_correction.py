@@ -483,6 +483,63 @@ def _adaptive_load_scenarios(
     ]
 
 
+def _paired_forecast_error_scenarios(
+    *,
+    forecast_history: dict[str, dict[int, dict[str, float]]],
+    actual_history: dict[str, dict[int, dict[str, float]]],
+    current_pv_correction: float,
+    current_load_correction: float,
+    max_days: int = 14,
+) -> list[dict[str, float | str]]:
+    """Keep realized PV/load errors paired, with a prior for sparse history."""
+
+    pairs: list[tuple[str, float, float]] = []
+    for day in sorted(set(forecast_history) & set(actual_history))[-max(1, max_days):]:
+        forecast_pv = sum(max(0.0, item.get("pv", 0.0)) for item in forecast_history[day].values())
+        forecast_load = sum(max(0.0, item.get("load", 0.0)) for item in forecast_history[day].values())
+        actual_pv = sum(max(0.0, item.get("pv", 0.0)) for item in actual_history[day].values())
+        actual_load = sum(max(0.0, item.get("load", 0.0)) for item in actual_history[day].values())
+        if forecast_pv <= 0.0 or forecast_load <= 0.0:
+            continue
+        pairs.append((day, actual_pv / forecast_pv, actual_load / forecast_load))
+    if len(pairs) < 2:
+        return []
+
+    confidence = len(pairs) / (len(pairs) + 5.0)
+    base_probability = 1.0 - confidence
+    pair_probability = confidence / len(pairs)
+    scenarios: list[dict[str, float | str]] = [
+        {
+            "label": "paired_prior",
+            "probability": base_probability,
+            "pv_multiplier": 1.0,
+            "load_multiplier": 1.0,
+        }
+    ]
+    pv_baseline = max(0.01, current_pv_correction)
+    load_baseline = max(0.01, current_load_correction)
+    for day, pv_ratio, load_ratio in pairs:
+        relative_pv = max(0.01, pv_ratio / pv_baseline)
+        relative_load = max(0.01, load_ratio / load_baseline)
+        scenarios.append(
+            {
+                "label": f"paired_{day}",
+                "probability": pair_probability,
+                "pv_multiplier": _clip_float(
+                    _bounded_exp(confidence * math.log(relative_pv)),
+                    min_val=0.25,
+                    max_val=3.0,
+                ),
+                "load_multiplier": _clip_float(
+                    _bounded_exp(confidence * math.log(relative_load)),
+                    min_val=0.50,
+                    max_val=2.0,
+                ),
+            }
+        )
+    return scenarios
+
+
 def _temperature_correction_hours() -> range:
     raw = os.getenv("LOAD_TEMPERATURE_CORRECTION_HOURS", "0-23").strip()
     if "-" not in raw:
@@ -940,12 +997,21 @@ def build_forecast_correction(
         "hourly_floor_kwh": {},
         "applied_hours": [],
     }
+    raw_pv_total = sum(max(0.0, value) for value in hourly_pv_forecast.values())
+    raw_load_total = sum(max(0.0, value) for value in hourly_load_forecast.values())
+    paired_scenarios = _paired_forecast_error_scenarios(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        current_pv_correction=(sum(corrected_pv.values()) / raw_pv_total if raw_pv_total > 0.0 else 1.0),
+        current_load_correction=(sum(corrected_load.values()) / raw_load_total if raw_load_total > 0.0 else 1.0),
+    )
     peak_penalty = {"enabled": False, "applied_factor": 0.0, "reason": "removed"}
     return {
         "enabled": True,
         "hourly_load_kwh": corrected_load,
         "hourly_pv_kwh": corrected_pv,
         "load_scenarios": load_scenarios,
+        "paired_scenarios": paired_scenarios,
         "peak_penalty": peak_penalty,
         "rationale": {
             "enabled": True,
@@ -971,6 +1037,7 @@ def build_forecast_correction(
             "comfort_load_model": comfort_model,
             "recent_and_analog_hourly_floor": load_safety_floor,
             "load_scenarios": load_scenarios,
+            "paired_scenarios": paired_scenarios,
             "soc_peak_unmet_penalty": peak_penalty,
             "raw_hourly_load_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())},
             "raw_hourly_pv_forecast_kwh": {str(k): round(v, 4) for k, v in sorted(hourly_pv_forecast.items())},

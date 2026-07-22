@@ -41,6 +41,9 @@
     [switch]$SkipIamSetup,
     [switch]$SkipSecretSetup,
     [switch]$SkipJobDeploy,
+    [switch]$SkipJob23Deploy,
+    [switch]$SkipJob03Deploy,
+    [switch]$SkipJob07Deploy,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
     [switch]$RunSmokeTest,
@@ -61,22 +64,32 @@ function Invoke-GCloud {
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$Args
     )
-    $gcloudCmd = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
-    if (-not (Test-Path $gcloudCmd)) {
-        throw "gcloud.cmd not found: $gcloudCmd"
+    $cloudSdkRoot = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk"
+    $gcloudPython = Join-Path $cloudSdkRoot "platform\bundledpython\python.exe"
+    $gcloudEntryPoint = Join-Path $cloudSdkRoot "lib\gcloud.py"
+    if (-not (Test-Path $gcloudPython) -or -not (Test-Path $gcloudEntryPoint)) {
+        throw "Google Cloud SDK Python entrypoint was not found under: $cloudSdkRoot"
     }
-    # Run the batch launcher through cmd.exe so `exit` inside gcloud.cmd cannot
-    # terminate this PowerShell deployment script before later steps run. Use
-    # its directory as cwd because cmd.exe /c mishandles quoted script paths.
-    Push-Location (Split-Path -Parent $gcloudCmd)
-    try {
-        & cmd.exe /d /c gcloud.cmd @Args
-        $gcloudExitCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $gcloudPython
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.Environment["CLOUDSDK_ROOT_DIR"] = $cloudSdkRoot
+    [void]$startInfo.ArgumentList.Add("-S")
+    [void]$startInfo.ArgumentList.Add($gcloudEntryPoint)
+    foreach ($arg in $Args) {
+        [void]$startInfo.ArgumentList.Add($arg)
     }
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $process.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $gcloudExitCode = $process.ExitCode
     if ($gcloudExitCode -ne 0) {
         throw "gcloud failed: $($Args -join ' ')"
+    }
+    if ($stdout) {
+        Write-Output $stdout.TrimEnd()
     }
 }
 
@@ -343,7 +356,7 @@ if (-not $repoExists) {
 
 if (-not $SkipBuild) {
     Write-Host "Build container image..."
-    Invoke-GCloud builds submit --region $Region --tag $image --project $ProjectId .
+    Invoke-GCloud builds submit --region $Region --tag $image --project $ProjectId $repoRoot
 } else {
     Write-Host "Skip build (using existing image): $image"
 }
@@ -551,6 +564,7 @@ $commonEnv = @(
     "PV_FORECAST_ERROR_RATIO_MEAN=1.0",
     "PV_FORECAST_ERROR_RATIO_STD=0.30",
     "SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED=false",
+    "SOC_COST_PAIRED_SCENARIOS_ENABLED=true",
     "PV_CHARGE_OPPORTUNITY_FLOOR_RATIO=0.30",
     "PV_CHARGE_OPPORTUNITY_FLOOR_MIN_PV_KWH=3.0",
     "DAYTIME_PV_HEADROOM_CAP_ENABLED=true",
@@ -622,9 +636,9 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
 if (-not $SkipJobDeploy) {
-    Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg
-    Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg
-    Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
+    if (-not $SkipJob23Deploy) { Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg }
+    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
+    if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
 }
 
 if (-not $SkipIamSetup) {

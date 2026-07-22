@@ -3,6 +3,9 @@ param(
     [switch]$SkipPreRelease,
     [switch]$SkipJobBuild,
     [switch]$SkipJobDeploy,
+    [switch]$SkipJob23Deploy,
+    [switch]$SkipJob03Deploy,
+    [switch]$SkipJob07Deploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup
@@ -89,6 +92,9 @@ $jobDeployArgs = @{
 }
 if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }
 if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
+if ($SkipJob23Deploy) { $jobDeployArgs.SkipJob23Deploy = $true }
+if ($SkipJob03Deploy) { $jobDeployArgs.SkipJob03Deploy = $true }
+if ($SkipJob07Deploy) { $jobDeployArgs.SkipJob07Deploy = $true }
 & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
 if ($LASTEXITCODE -ne 0) { throw 'Cloud Run Jobs deployment failed.' }
 

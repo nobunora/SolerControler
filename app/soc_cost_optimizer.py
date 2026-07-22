@@ -230,6 +230,7 @@ class SocOptimizationRequest:
     min_pv_multiplier: float = 0.0
     max_pv_multiplier: float = 3.0
     load_scenarios: tuple[ForecastScenario, ...] | None = None
+    joint_scenarios: tuple[ForecastScenario, ...] | None = None
     weather_upside_probability: float = 0.0
     weather_upside_z: float = 3.5
     peak_soc_target_percent: float | None = None
@@ -269,11 +270,35 @@ def _build_forecast_scenarios(
     uncertainty: PvForecastUncertainty,
     sigma_buckets: tuple[SigmaBucket, ...],
     load_scenarios: tuple[ForecastScenario, ...] | None,
+    joint_scenarios: tuple[ForecastScenario, ...] | None,
     min_pv_multiplier: float,
     max_pv_multiplier: float,
     weather_upside_probability: float,
     weather_upside_z: float,
 ) -> tuple[ForecastScenario, ...]:
+    if joint_scenarios:
+        valid_joint = tuple(
+            ForecastScenario(
+                label=scenario.label,
+                probability=max(0.0, scenario.probability),
+                pv_multiplier=max(min_pv_multiplier, min(max_pv_multiplier, scenario.pv_multiplier)),
+                load_multiplier=max(0.0, scenario.load_multiplier),
+            )
+            for scenario in joint_scenarios
+            if scenario.label and scenario.probability > 0.0
+        )
+        total_joint_probability = sum(scenario.probability for scenario in valid_joint)
+        if total_joint_probability > 0.0:
+            return tuple(
+                ForecastScenario(
+                    label=scenario.label,
+                    probability=scenario.probability / total_joint_probability,
+                    pv_multiplier=scenario.pv_multiplier,
+                    load_multiplier=scenario.load_multiplier,
+                )
+                for scenario in valid_joint
+            )
+
     pv_scenarios: list[ForecastScenario] = []
     upside_probability = max(0.0, min(1.0, weather_upside_probability))
     if sigma_buckets:
@@ -468,6 +493,7 @@ def evaluate_soc_candidate(
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
     load_scenarios: tuple[ForecastScenario, ...] | None = None,
+    joint_scenarios: tuple[ForecastScenario, ...] | None = None,
     weather_upside_probability: float = 0.0,
     weather_upside_z: float = 3.5,
     peak_soc_target_percent: float | None = None,
@@ -502,6 +528,7 @@ def evaluate_soc_candidate(
         uncertainty=uncertainty,
         sigma_buckets=sigma_buckets,
         load_scenarios=load_scenarios,
+        joint_scenarios=joint_scenarios,
         min_pv_multiplier=min_pv_multiplier,
         max_pv_multiplier=max_pv_multiplier,
         weather_upside_probability=weather_upside_probability,
@@ -597,6 +624,7 @@ def optimize_soc_by_expected_cost(
     min_pv_multiplier: float = 0.0,
     max_pv_multiplier: float = 3.0,
     load_scenarios: tuple[ForecastScenario, ...] | None = None,
+    joint_scenarios: tuple[ForecastScenario, ...] | None = None,
     weather_upside_probability: float = 0.0,
     weather_upside_z: float = 3.5,
     peak_soc_target_percent: float | None = None,
@@ -621,6 +649,7 @@ def optimize_soc_by_expected_cost(
         uncertainty=uncertainty,
         sigma_buckets=sigma_buckets,
         load_scenarios=load_scenarios,
+        joint_scenarios=joint_scenarios,
         min_pv_multiplier=min_pv_multiplier,
         max_pv_multiplier=max_pv_multiplier,
         weather_upside_probability=weather_upside_probability,
@@ -644,6 +673,7 @@ def optimize_soc_by_expected_cost(
             min_pv_multiplier=min_pv_multiplier,
             max_pv_multiplier=max_pv_multiplier,
             load_scenarios=load_scenarios,
+            joint_scenarios=joint_scenarios,
             weather_upside_probability=weather_upside_probability,
             weather_upside_z=weather_upside_z,
             peak_soc_target_percent=peak_soc_target_percent,
@@ -739,6 +769,7 @@ def optimize_soc_request(request: SocOptimizationRequest) -> SocCostOptimization
         min_pv_multiplier=request.min_pv_multiplier,
         max_pv_multiplier=request.max_pv_multiplier,
         load_scenarios=request.load_scenarios,
+        joint_scenarios=request.joint_scenarios,
         weather_upside_probability=request.weather_upside_probability,
         weather_upside_z=request.weather_upside_z,
         peak_soc_target_percent=request.peak_soc_target_percent,

@@ -2213,6 +2213,36 @@ def _prepare_night_charge(
     return preparation
 
 
+def _paired_scenarios_for_cost_optimizer(
+    forecast_correction: dict[str, object] | None = None,
+) -> tuple[ForecastScenario, ...] | None:
+    if not _env_bool("SOC_COST_PAIRED_SCENARIOS_ENABLED", True):
+        return None
+    paired = (forecast_correction or {}).get("paired_scenarios")
+    if not isinstance(paired, list):
+        return None
+    scenarios: list[ForecastScenario] = []
+    for item in paired:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        probability = _to_optional_float(item.get("probability"))
+        pv_multiplier = _to_optional_float(item.get("pv_multiplier"))
+        load_multiplier = _to_optional_float(item.get("load_multiplier"))
+        if (
+            not label
+            or probability is None
+            or probability <= 0.0
+            or pv_multiplier is None
+            or pv_multiplier <= 0.0
+            or load_multiplier is None
+            or load_multiplier <= 0.0
+        ):
+            continue
+        scenarios.append(ForecastScenario(label, probability, pv_multiplier, load_multiplier))
+    return tuple(scenarios) if len(scenarios) >= 3 else None
+
+
 def _build_selected_pv_forecast(
     context: EnergyModelContext,
     consumption: ConsumptionForecastBundle,
@@ -2455,6 +2485,7 @@ def _run_soc_optimization(
                     _soc_cap_or_unbounded(guard.get("cap_target_soc_percent")),
                 )
         load_scenarios = _load_scenarios_for_cost_optimizer(pv_forecast.correction)
+        paired_scenarios = _paired_scenarios_for_cost_optimizer(pv_forecast.correction)
         weather_upside_probability = _weather_upside_probability_for_cost_optimizer(
             context.forecast
         )
@@ -2510,6 +2541,7 @@ def _run_soc_optimization(
             min_pv_multiplier=config.cost_min_pv_multiplier,
             max_pv_multiplier=config.cost_max_pv_multiplier,
             load_scenarios=load_scenarios,
+            joint_scenarios=paired_scenarios,
             weather_upside_probability=weather_upside_probability,
             weather_upside_z=config.cost_weather_upside_z,
             peak_soc_target_percent=peak_target_soc,
@@ -2583,7 +2615,11 @@ def _run_soc_optimization(
                         "tier3_rate_yen_per_kwh": cost_model.day_tier3_rate_yen_per_kwh,
                     },
                     "scenario_count": len(optimized.forecast_scenarios),
-                    "scenario_method": "pv_sigma_x_load_scenarios_with_weather_upside",
+                    "scenario_method": (
+                        "smoothed_paired_pv_load_residuals"
+                        if paired_scenarios
+                        else "pv_sigma_x_load_scenarios_with_weather_upside"
+                    ),
                     "weather_upside_probability": weather_upside_probability,
                     "weather_upside_z": config.cost_weather_upside_z,
                 },

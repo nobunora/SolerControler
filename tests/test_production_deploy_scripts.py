@@ -117,17 +117,38 @@ def test_production_adjust03_starts_at_three_and_holds_standby_until_seven() -> 
     assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
 
 
-def test_job_deploy_is_not_terminated_by_gcloud_batch_launcher() -> None:
+def test_job_deploy_uses_isolated_gcloud_python_and_absolute_build_source() -> None:
     script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
 
-    assert "Push-Location (Split-Path -Parent $gcloudCmd)" in script
-    assert "& cmd.exe /d /c gcloud.cmd @Args" in script
+    assert 'platform\\bundledpython\\python.exe' in script
+    assert 'lib\\gcloud.py' in script
+    assert "[System.Diagnostics.ProcessStartInfo]::new()" in script
+    assert "$process.WaitForExit()" in script
+    assert "$gcloudExitCode = $process.ExitCode" in script
+    assert "$process.StandardOutput.ReadToEndAsync()" in script
+    assert "Write-Output $stdout.TrimEnd()" in script
+    assert "cmd.exe /d /c gcloud.cmd" not in script
+    assert "builds submit --region $Region --tag $image --project $ProjectId $repoRoot" in script
 
 
 def test_production_disables_fixed_weather_upside_scenario() -> None:
     script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
 
     assert '"SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED=false"' in script
+
+
+def test_production_enables_smoothed_paired_pv_load_scenarios() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert '"SOC_COST_PAIRED_SCENARIOS_ENABLED=true"' in script
+
+
+def test_high_level_wrapper_supports_resuming_individual_job_deploys() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
+
+    for slot in ("23", "03", "07"):
+        assert f"[switch]$SkipJob{slot}Deploy" in script
+        assert f"if ($SkipJob{slot}Deploy) {{ $jobDeployArgs.SkipJob{slot}Deploy = $true }}" in script
 
 
 def test_example_preserves_production_soc_and_export_safety_settings() -> None:

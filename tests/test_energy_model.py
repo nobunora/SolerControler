@@ -21,6 +21,7 @@ from app.forecast_correction import (
     _actual_hourly_totals_by_day,
     _add_thermal_states,
     _evening_temperature_correction,
+    _paired_forecast_error_scenarios,
     _temperature_features_for_day,
     _temperature_hourly_multipliers,
     build_forecast_correction,
@@ -38,12 +39,59 @@ from energy_model_main import (
     _hourly_weather_summary,
     _monthly_day_buy_kwh_before_target,
     _load_scenarios_for_cost_optimizer,
+    _paired_scenarios_for_cost_optimizer,
     _expected_rest_of_month_day_buy_kwh,
     _read_rows,
     _reshape_hourly_pv_by_weather,
     _selected_pv_uncertainty,
     _soc_cost_model_from_env,
 )
+
+
+def test_paired_forecast_error_scenarios_preserve_same_day_errors_and_shrink_sparse_data() -> None:
+    forecast = {
+        "2026-07-20": {hour: {"pv": 1.0, "load": 2.0} for hour in range(24)},
+        "2026-07-21": {hour: {"pv": 1.0, "load": 2.0} for hour in range(24)},
+    }
+    actual = {
+        "2026-07-20": {hour: {"pv": 1.2, "load": 3.0} for hour in range(24)},
+        "2026-07-21": {hour: {"pv": 0.8, "load": 1.6} for hour in range(24)},
+    }
+
+    scenarios = _paired_forecast_error_scenarios(
+        forecast_history=forecast,
+        actual_history=actual,
+        current_pv_correction=1.0,
+        current_load_correction=1.0,
+    )
+
+    assert [item["label"] for item in scenarios] == [
+        "paired_prior",
+        "paired_2026-07-20",
+        "paired_2026-07-21",
+    ]
+    assert sum(float(item["probability"]) for item in scenarios) == pytest.approx(1.0)
+    assert scenarios[1]["pv_multiplier"] > 1.0
+    assert scenarios[1]["load_multiplier"] > 1.0
+    assert scenarios[2]["pv_multiplier"] < 1.0
+    assert scenarios[2]["load_multiplier"] < 1.0
+    assert scenarios[1]["load_multiplier"] < 1.5
+
+
+def test_paired_scenarios_for_cost_optimizer_requires_two_realized_pairs(monkeypatch) -> None:
+    monkeypatch.setenv("SOC_COST_PAIRED_SCENARIOS_ENABLED", "true")
+    scenarios = _paired_scenarios_for_cost_optimizer(
+        {
+            "paired_scenarios": [
+                {"label": "paired_prior", "probability": 0.6, "pv_multiplier": 1.0, "load_multiplier": 1.0},
+                {"label": "paired_a", "probability": 0.2, "pv_multiplier": 0.9, "load_multiplier": 1.2},
+                {"label": "paired_b", "probability": 0.2, "pv_multiplier": 1.1, "load_multiplier": 0.8},
+            ]
+        }
+    )
+
+    assert scenarios is not None
+    assert [scenario.label for scenario in scenarios] == ["paired_prior", "paired_a", "paired_b"]
 
 
 def test_typed_forecast_correction_boundary_preserves_disabled_result(monkeypatch) -> None:
