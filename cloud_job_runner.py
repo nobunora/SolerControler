@@ -1396,7 +1396,7 @@ def _monitor_partial_forced_and_stop(
 
 def _run_night_23() -> None:
     # 23:00 is only a mode-control guard. Forecast/data work is centralized in
-    # the 04:00 controller, which still has enough time to reach 100% if needed.
+    # the 03:00 controller, which still has enough time to reach 100% if needed.
     profile = os.getenv("NIGHT23_SETTINGS_PROFILE", "standby").strip() or "standby"
     _run_settings_profile_with_retry(
         profile=profile,
@@ -1427,8 +1427,8 @@ def _run_optional_04_exports_and_backups() -> None:
 
 def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
     # 夜間コントローラ:
-    # 1) 04:00にCSVを取得して現在SOCを把握
-    # 2) 当日分の最新予報を04:00時点で再生成
+    # 1) 03:00にCSVを取得して現在SOCを把握
+    # 2) 当日分の最新予報を03:00時点で再生成
     # 3) すぐ強制充電を開始し、目標到達または7時まで監視
     _run_csv_with_retry(label="03-initial-csv")
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))

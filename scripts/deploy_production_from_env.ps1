@@ -2,6 +2,7 @@ param(
     [switch]$ValidateOnly,
     [switch]$SkipPreRelease,
     [switch]$SkipJobBuild,
+    [switch]$SkipJobDeploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup
@@ -79,8 +80,15 @@ $jobDeployArgs = @{
     DriveBackupFolderId = $driveFolder
     NightPlanArchiveGcsPrefix = $archivePrefix
     RunSmokeTest = $true
+    # Cloud capacity is already checked by ValidateOnly/CheckCloud. Running the
+    # legacy Windows PowerShell capacity helper here can terminate the parent
+    # deployment process after gcloud.cmd exits.
+    SkipCapacityCheck = $true
+    SkipIamSetup = $true
+    SkipSecretSetup = $true
 }
 if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }
+if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
 & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
 if ($LASTEXITCODE -ne 0) { throw 'Cloud Run Jobs deployment failed.' }
 

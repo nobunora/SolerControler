@@ -107,6 +107,10 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "forecast_precipitation_probability",
             "forecast_cloud_cover",
             "forecast_shortwave_radiation_w_m2",
+            "forecast_temp_c",
+            "forecast_relative_humidity_percent",
+            "forecast_dew_point_c",
+            "forecast_wind_speed_10m",
             "source",
             "updated_at",
         ),
@@ -245,8 +249,10 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                forecast_temp_c, forecast_relative_humidity_percent,
+                forecast_dew_point_c, forecast_wind_speed_10m,
                 source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.get("date"),
@@ -259,6 +265,10 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_precipitation_probability")),
                 _as_float(row.get("forecast_cloud_cover")),
                 _as_float(row.get("forecast_shortwave_radiation_w_m2")),
+                _as_float(row.get("forecast_temp_c")),
+                _as_float(row.get("forecast_relative_humidity_percent")),
+                _as_float(row.get("forecast_dew_point_c")),
+                _as_float(row.get("forecast_wind_speed_10m")),
                 row.get("source"),
                 row.get("updated_at"),
             ),
@@ -307,8 +317,10 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                forecast_temp_c, forecast_relative_humidity_percent,
+                forecast_dew_point_c, forecast_wind_speed_10m,
                 source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
@@ -318,6 +330,10 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_precipitation_probability=excluded.forecast_precipitation_probability,
                 forecast_cloud_cover=excluded.forecast_cloud_cover,
                 forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
+                forecast_temp_c=excluded.forecast_temp_c,
+                forecast_relative_humidity_percent=excluded.forecast_relative_humidity_percent,
+                forecast_dew_point_c=excluded.forecast_dew_point_c,
+                forecast_wind_speed_10m=excluded.forecast_wind_speed_10m,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
@@ -332,6 +348,10 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_precipitation_probability")),
                 _as_float(row.get("forecast_cloud_cover")),
                 _as_float(row.get("forecast_shortwave_radiation_w_m2")),
+                _as_float(row.get("forecast_temp_c")),
+                _as_float(row.get("forecast_relative_humidity_percent")),
+                _as_float(row.get("forecast_dew_point_c")),
+                _as_float(row.get("forecast_wind_speed_10m")),
                 row.get("source"),
                 row.get("updated_at"),
             ),

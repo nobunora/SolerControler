@@ -109,6 +109,27 @@ def test_production_export_cost_configuration_matches_inactive_contract() -> Non
     assert '"SOC_SELL_REVENUE_YEN_PER_KWH=0"' in script
 
 
+def test_production_adjust03_starts_at_three_and_holds_standby_until_seven() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert '-SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *"' in script
+    assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" in script
+    assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
+
+
+def test_job_deploy_is_not_terminated_by_gcloud_batch_launcher() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "Push-Location (Split-Path -Parent $gcloudCmd)" in script
+    assert "& cmd.exe /d /c gcloud.cmd @Args" in script
+
+
+def test_production_disables_fixed_weather_upside_scenario() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert '"SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED=false"' in script
+
+
 def test_example_preserves_production_soc_and_export_safety_settings() -> None:
     values = _env_example_values()
 
@@ -126,6 +147,16 @@ def test_production_deploy_supports_non_mutating_validation() -> None:
     assert "[switch]$ValidateOnly" in script
     assert "'check_production_env.ps1') -CheckCloud" in script
     assert "No deployment was performed" in script
+
+
+def test_production_deploy_skips_duplicate_legacy_capacity_subprocess() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "SkipCapacityCheck = $true" in script
+    assert "SkipIamSetup = $true" in script
+    assert "SkipSecretSetup = $true" in script
 
 
 def test_production_deploy_splats_named_job_arguments() -> None:

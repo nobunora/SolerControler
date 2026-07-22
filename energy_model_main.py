@@ -847,6 +847,9 @@ def _hourly_weather_records_from_open_meteo(
                     _list_value(hourly.get(f"relative_humidity_2m{suffix}"), idx)
                 ),
                 "dew_point_c": _to_optional_float(_list_value(hourly.get(f"dew_point_2m{suffix}"), idx)),
+                "wind_speed_10m": _to_optional_float(
+                    _list_value(hourly.get(f"wind_speed_10m{suffix}"), idx)
+                ),
             }
         )
     return out
@@ -873,7 +876,8 @@ def _fetch_open_meteo_previous_day1_forecast(
             "weather_code_previous_day1,precipitation_previous_day1,"
             "precipitation_probability_previous_day1,cloud_cover_previous_day1,"
             "shortwave_radiation_previous_day1,temperature_2m_previous_day1,"
-            "relative_humidity_2m_previous_day1,dew_point_2m_previous_day1"
+            "relative_humidity_2m_previous_day1,dew_point_2m_previous_day1,"
+            "wind_speed_10m_previous_day1"
         ),
     }
     resp = requests.get(url, params=params, timeout=20)
@@ -916,7 +920,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         "longitude": lon,
         "hourly": (
             "weather_code,precipitation,precipitation_probability,cloud_cover,shortwave_radiation,"
-            "temperature_2m,relative_humidity_2m,dew_point_2m"
+            "temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m"
         ),
         "daily": (
             "sunshine_duration,temperature_2m_mean,weather_code,"

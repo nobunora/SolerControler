@@ -205,6 +205,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             forecast_precipitation_probability REAL,
             forecast_cloud_cover REAL,
             forecast_shortwave_radiation_w_m2 REAL,
+            forecast_temp_c REAL,
+            forecast_relative_humidity_percent REAL,
+            forecast_dew_point_c REAL,
+            forecast_wind_speed_10m REAL,
             source TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(date, hour)
@@ -238,6 +242,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "forecast_precipitation_probability": "REAL",
             "forecast_cloud_cover": "REAL",
             "forecast_shortwave_radiation_w_m2": "REAL",
+            "forecast_temp_c": "REAL",
+            "forecast_relative_humidity_percent": "REAL",
+            "forecast_dew_point_c": "REAL",
+            "forecast_wind_speed_10m": "REAL",
         },
     )
     _ensure_sqlite_columns(
@@ -417,12 +425,16 @@ def ingest_sunshine_from_night_plan(
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                forecast_temp_c, forecast_relative_humidity_percent,
+                forecast_dew_point_c, forecast_wind_speed_10m,
                 source, updated_at
             )
             VALUES (
                 :date, :hour, :forecast_pv_kwh, :forecast_load_kwh, :forecast_charge_kwh,
                 :forecast_weather_code, :forecast_precipitation_mm, :forecast_precipitation_probability,
                 :forecast_cloud_cover, :forecast_shortwave_radiation_w_m2,
+                :forecast_temp_c, :forecast_relative_humidity_percent,
+                :forecast_dew_point_c, :forecast_wind_speed_10m,
                 :source, :updated_at
             )
             ON CONFLICT(date, hour) DO UPDATE SET
@@ -434,6 +446,10 @@ def ingest_sunshine_from_night_plan(
                 forecast_precipitation_probability=excluded.forecast_precipitation_probability,
                 forecast_cloud_cover=excluded.forecast_cloud_cover,
                 forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
+                forecast_temp_c=excluded.forecast_temp_c,
+                forecast_relative_humidity_percent=excluded.forecast_relative_humidity_percent,
+                forecast_dew_point_c=excluded.forecast_dew_point_c,
+                forecast_wind_speed_10m=excluded.forecast_wind_speed_10m,
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,

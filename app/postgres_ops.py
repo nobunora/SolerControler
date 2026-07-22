@@ -162,6 +162,10 @@ def ensure_schema(conn) -> None:
             forecast_precipitation_probability DOUBLE PRECISION,
             forecast_cloud_cover DOUBLE PRECISION,
             forecast_shortwave_radiation_w_m2 DOUBLE PRECISION,
+            forecast_temp_c DOUBLE PRECISION,
+            forecast_relative_humidity_percent DOUBLE PRECISION,
+            forecast_dew_point_c DOUBLE PRECISION,
+            forecast_wind_speed_10m DOUBLE PRECISION,
             source TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(date, hour)
@@ -182,6 +186,10 @@ def ensure_schema(conn) -> None:
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_precipitation_probability DOUBLE PRECISION",
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_cloud_cover DOUBLE PRECISION",
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_shortwave_radiation_w_m2 DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_temp_c DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_relative_humidity_percent DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_dew_point_c DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_wind_speed_10m DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_soc_percent DOUBLE PRECISION",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS pv_charge_end_at TEXT",
             "ALTER TABLE battery_daily_metrics ADD COLUMN IF NOT EXISTS settings_run_id TEXT",
@@ -313,6 +321,8 @@ def ingest_sunshine_from_night_plan(
                     date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
                     forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                     forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
+                    forecast_temp_c, forecast_relative_humidity_percent,
+                    forecast_dew_point_c, forecast_wind_speed_10m,
                     source, updated_at
                 )
                 VALUES (
@@ -321,6 +331,8 @@ def ingest_sunshine_from_night_plan(
                     %(forecast_weather_code)s, %(forecast_precipitation_mm)s,
                     %(forecast_precipitation_probability)s, %(forecast_cloud_cover)s,
                     %(forecast_shortwave_radiation_w_m2)s,
+                    %(forecast_temp_c)s, %(forecast_relative_humidity_percent)s,
+                    %(forecast_dew_point_c)s, %(forecast_wind_speed_10m)s,
                     %(source)s, %(updated_at)s
                 )
                 ON CONFLICT(date, hour) DO UPDATE SET
@@ -332,6 +344,10 @@ def ingest_sunshine_from_night_plan(
                     forecast_precipitation_probability=excluded.forecast_precipitation_probability,
                     forecast_cloud_cover=excluded.forecast_cloud_cover,
                     forecast_shortwave_radiation_w_m2=excluded.forecast_shortwave_radiation_w_m2,
+                    forecast_temp_c=excluded.forecast_temp_c,
+                    forecast_relative_humidity_percent=excluded.forecast_relative_humidity_percent,
+                    forecast_dew_point_c=excluded.forecast_dew_point_c,
+                    forecast_wind_speed_10m=excluded.forecast_wind_speed_10m,
                     source=excluded.source,
                     updated_at=excluded.updated_at
                 """,

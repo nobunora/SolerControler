@@ -62,6 +62,10 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
                 "forecast_precipitation_probability": to_float(weather.get("precipitation_probability")),
                 "forecast_cloud_cover": to_float(weather.get("cloud_cover")),
                 "forecast_shortwave_radiation_w_m2": to_float(weather.get("shortwave_radiation_w_m2")),
+                "forecast_temp_c": to_float(weather.get("temp_c")),
+                "forecast_relative_humidity_percent": to_float(weather.get("relative_humidity_percent")),
+                "forecast_dew_point_c": to_float(weather.get("dew_point_c")),
+                "forecast_wind_speed_10m": to_float(weather.get("wind_speed_10m")),
             }
         )
     return rows

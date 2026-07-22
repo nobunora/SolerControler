@@ -38,6 +38,9 @@
     [double]$MaxAppDataBucketMB = 5120.0,
     [switch]$SkipArtifactPrune,
     [switch]$SkipCapacityCheck,
+    [switch]$SkipIamSetup,
+    [switch]$SkipSecretSetup,
+    [switch]$SkipJobDeploy,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
     [switch]$RunSmokeTest,
@@ -62,8 +65,17 @@ function Invoke-GCloud {
     if (-not (Test-Path $gcloudCmd)) {
         throw "gcloud.cmd not found: $gcloudCmd"
     }
-    & $gcloudCmd @Args
-    if ($LASTEXITCODE -ne 0) {
+    # Run the batch launcher through cmd.exe so `exit` inside gcloud.cmd cannot
+    # terminate this PowerShell deployment script before later steps run. Use
+    # its directory as cwd because cmd.exe /c mishandles quoted script paths.
+    Push-Location (Split-Path -Parent $gcloudCmd)
+    try {
+        & cmd.exe /d /c gcloud.cmd @Args
+        $gcloudExitCode = $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+    if ($gcloudExitCode -ne 0) {
         throw "gcloud failed: $($Args -join ' ')"
     }
 }
@@ -291,11 +303,13 @@ $cloudSchedulerServiceAgent = "service-$projectNumber@gcp-sa-cloudscheduler.iam.
 $runSa = Ensure-ServiceAccount -AccountId $RunServiceAccountName -DisplayName "Solar Battery Cloud Run Job SA"
 $schedulerSa = Ensure-ServiceAccount -AccountId $SchedulerServiceAccountName -DisplayName "Solar Battery Scheduler Invoker SA"
 
-Write-Host "Grant build runtime IAM to $computeSa"
-Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$computeSa" --role "roles/artifactregistry.writer" | Out-Null
-Invoke-GCloud iam service-accounts add-iam-policy-binding $schedulerSa --member "serviceAccount:$cloudSchedulerServiceAgent" --role "roles/iam.serviceAccountTokenCreator" --project $ProjectId | Out-Null
-Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/datastore.user" | Out-Null
-Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/serviceusage.serviceUsageConsumer" | Out-Null
+if (-not $SkipIamSetup) {
+    Write-Host "Grant build runtime IAM to $computeSa"
+    Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$computeSa" --role "roles/artifactregistry.writer" | Out-Null
+    Invoke-GCloud iam service-accounts add-iam-policy-binding $schedulerSa --member "serviceAccount:$cloudSchedulerServiceAgent" --role "roles/iam.serviceAccountTokenCreator" --project $ProjectId | Out-Null
+    Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/datastore.user" | Out-Null
+    Invoke-GCloud projects add-iam-policy-binding $ProjectId --member "serviceAccount:$runSa" --role "roles/serviceusage.serviceUsageConsumer" | Out-Null
+}
 
 if (-not $NightPlanArchiveGcsPrefix) {
     $NightPlanArchiveGcsPrefix = "gs://$ProjectId-solar-db-us/night_charge_plans"
@@ -312,7 +326,9 @@ try {
 } catch {
     Invoke-GCloud storage buckets create "gs://$nightPlanArchiveBucket" --project $ProjectId --location "US" --uniform-bucket-level-access | Out-Null
 }
-Invoke-GCloud storage buckets add-iam-policy-binding "gs://$nightPlanArchiveBucket" --member "serviceAccount:$runSa" --role "roles/storage.objectAdmin" --project $ProjectId | Out-Null
+if (-not $SkipIamSetup) {
+    Invoke-GCloud storage buckets add-iam-policy-binding "gs://$nightPlanArchiveBucket" --member "serviceAccount:$runSa" --role "roles/storage.objectAdmin" --project $ProjectId | Out-Null
+}
 
 Write-Host "Ensure Artifact Registry repository..."
 $repoExists = $true
@@ -407,18 +423,20 @@ function Upsert-SecretVersion {
 }
 
 $creds = $null
-try {
-    $creds = Get-MonitorCredentials
-} catch {
-    if ((Test-SecretExists -SecretName $usernameSecret) -and (Test-SecretExists -SecretName $passwordSecret)) {
-        Write-Warning "Monitor credentials were not found locally; reusing existing Secret Manager secrets."
-    } else {
-        throw
+if (-not $SkipSecretSetup) {
+    try {
+        $creds = Get-MonitorCredentials
+    } catch {
+        if ((Test-SecretExists -SecretName $usernameSecret) -and (Test-SecretExists -SecretName $passwordSecret)) {
+            Write-Warning "Monitor credentials were not found locally; reusing existing Secret Manager secrets."
+        } else {
+            throw
+        }
     }
-}
-if ($null -ne $creds) {
-    Upsert-SecretVersion -SecretName $usernameSecret -SecretValue $creds.username
-    Upsert-SecretVersion -SecretName $passwordSecret -SecretValue $creds.password
+    if ($null -ne $creds) {
+        Upsert-SecretVersion -SecretName $usernameSecret -SecretValue $creds.username
+        Upsert-SecretVersion -SecretName $passwordSecret -SecretValue $creds.password
+    }
 }
 
 $secretEnvList = @(
@@ -439,9 +457,11 @@ if ($DataBackend -eq "postgres") {
     $secretEnvList += "PGPASSWORD=${pgPasswordSecret}:latest"
 }
 
-Write-Host "Grant Secret Accessor to $runSa"
-Invoke-GCloud secrets add-iam-policy-binding $usernameSecret --member "serviceAccount:$runSa" --role "roles/secretmanager.secretAccessor" --project $ProjectId | Out-Null
-Invoke-GCloud secrets add-iam-policy-binding $passwordSecret --member "serviceAccount:$runSa" --role "roles/secretmanager.secretAccessor" --project $ProjectId | Out-Null
+if (-not $SkipSecretSetup) {
+    Write-Host "Grant Secret Accessor to $runSa"
+    Invoke-GCloud secrets add-iam-policy-binding $usernameSecret --member "serviceAccount:$runSa" --role "roles/secretmanager.secretAccessor" --project $ProjectId | Out-Null
+    Invoke-GCloud secrets add-iam-policy-binding $passwordSecret --member "serviceAccount:$runSa" --role "roles/secretmanager.secretAccessor" --project $ProjectId | Out-Null
+}
 
 $commonEnv = @(
     "TIMEZONE=Asia/Tokyo",
@@ -530,6 +550,7 @@ $commonEnv = @(
     "PV_FORECAST_ERROR_MIN_SAMPLE_DAYS=5",
     "PV_FORECAST_ERROR_RATIO_MEAN=1.0",
     "PV_FORECAST_ERROR_RATIO_STD=0.30",
+    "SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED=false",
     "PV_CHARGE_OPPORTUNITY_FLOOR_RATIO=0.30",
     "PV_CHARGE_OPPORTUNITY_FLOOR_MIN_PV_KWH=3.0",
     "DAYTIME_PV_HEADROOM_CAP_ENABLED=true",
@@ -600,14 +621,18 @@ $commonEnvArg = [string]::Join(",", $commonEnv)
 $secretEnvArg = [string]::Join(",", $secretEnvList)
 
 Write-Host "Deploy Cloud Run jobs..."
-Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg
-Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg
-Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
+if (-not $SkipJobDeploy) {
+    Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg
+    Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg
+    Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg
+}
 
-Write-Host "Grant run.invoker to scheduler service account..."
-Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
-Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
-Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+if (-not $SkipIamSetup) {
+    Write-Host "Grant run.invoker to scheduler service account..."
+    Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+    Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+    Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+}
 
 function Upsert-SchedulerRunJob {
     param(
@@ -632,7 +657,7 @@ function Upsert-SchedulerRunJob {
 
 Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 4 * * *" -TargetJobName $Job03Name
+Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
 Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
 Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
@@ -657,7 +682,7 @@ if ($RunSmokeTest) {
 Write-Host ""
 Write-Host "Done."
 Write-Host "Image: $image"
-Write-Host "Jobs: $Job23Name (23:00 mode control), $Job03Name (04:00 night controller + export/backup), $Job07Name (07:00)"
+Write-Host "Jobs: $Job23Name (23:00 mode control), $Job03Name (03:00 night controller + export/backup), $Job07Name (07:00)"
 Write-Host "Schedulers: solar-battery-run-23, solar-battery-run-03, solar-battery-run-07"
 Write-Host "Sheets export: integrated into $Job03Name"
 Write-Host "Drive backup: integrated into $Job03Name"

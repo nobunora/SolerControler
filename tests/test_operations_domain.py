@@ -12,7 +12,15 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
     plan = {
         "forecast": {
             "date": "2026-07-16",
-            "hourly_weather": [{"hour": 10, "weather_code": 2, "cloud_cover": 35}],
+            "hourly_weather": [{
+                "hour": 10,
+                "weather_code": 2,
+                "cloud_cover": 35,
+                "temp_c": 31.5,
+                "relative_humidity_percent": 68.0,
+                "dew_point_c": 24.9,
+                "wind_speed_10m": 3.4,
+            }],
         },
         "daytime_soc_optimization": {
             "hourly_pv_forecast_kwh": {"10": 2.5},
@@ -35,6 +43,10 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
             "forecast_precipitation_probability": None,
             "forecast_cloud_cover": 35.0,
             "forecast_shortwave_radiation_w_m2": None,
+            "forecast_temp_c": 31.5,
+            "forecast_relative_humidity_percent": 68.0,
+            "forecast_dew_point_c": 24.9,
+            "forecast_wind_speed_10m": 3.4,
         }
     ]
     assert extract_final_pv_totals_from_plan(plan)["total_kwh"] == 2.5
