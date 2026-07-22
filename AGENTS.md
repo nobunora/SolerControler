@@ -20,6 +20,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 
 ## Production Operations (Mandatory)
 
+- Before every production deployment, read and follow `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` in full. Its validation, safe-resume, verification, and stop conditions are mandatory; do not rely on memory or a previous run.
 - For every production deployment, validation, data import, backup, or Cloud Run Job execution, use the repository scripts below. Do not reconstruct equivalent `gcloud` or credential-bearing commands ad hoc.
 - Before a production deployment, run `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -ValidateOnly`.
 - Deploy with `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1` only after validation and relevant tests pass.

@@ -67,6 +67,27 @@ def test_agent_instructions_require_canonical_production_scripts() -> None:
     assert "run_cloud_job_from_env.ps1" in instructions
     assert "run_kpnet_soc_gap_report.ps1 -SkipDownload" in instructions
     assert "python scripts/security_check.py" in instructions
+    assert "docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md" in instructions
+    assert "Before every production deployment" in instructions
+
+
+def test_production_deployment_runbook_documents_safe_resume_and_verification() -> None:
+    runbook = (ROOT / "docs" / "current" / "ops" / "PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "-ValidateOnly",
+        "-SkipPreRelease",
+        "-SkipJobBuild",
+        "-SkipJob23Deploy",
+        "-SkipJob03Deploy",
+        "-SkipJob07Deploy",
+        "-SkipJobDeploy",
+        "scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun",
+        "Completed=True",
+    ):
+        assert required in runbook
 
 
 def test_manual_actual_import_cannot_overwrite_production_plan() -> None:
