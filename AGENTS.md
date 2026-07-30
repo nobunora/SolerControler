@@ -43,5 +43,6 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Token and exploration rules: read `docs/current/agent/codex_token_usage_rules.md` only when the task needs broad code search, MCP/tool exploration, subagents, or simulation loops.
 - Design and refactor judgment: read `docs/current/agent/agent_working_rules.md` only when changing architecture, splitting work across subagents, or when a patch would touch several files.
 - AI Pwsh Bridge command-generation and Markdown authoring rules: read `docs/current/agent/ai_pwsh_bridge_usage_rules.md` before generating executable bridge commands, patching Markdown through PowerShell, or handling LF/CRLF warnings.
+- Skill authoring rules: read `docs/current/agent/skill_creation_rules.md` before creating or modifying a reusable Skill.
 - Report template: read `docs/current/agent/report_template.md` only after the user explicitly asks for a report.
 - Do not create milestone reports or files under `docs/completed/reports/` unless the user explicitly asks.
