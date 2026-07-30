@@ -1107,6 +1107,28 @@ def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypa
     assert rationale["corrected_hourly_pv_forecast_kwh"]["7"] == pytest.approx(2.0)
 
 
+def test_physical_pv_uses_weather_vector_residual_with_confidence_weight(monkeypatch) -> None:
+    monkeypatch.setenv("PHYSICAL_PV_VECTOR_RESIDUAL_ENABLED", "true")
+    monkeypatch.setenv("PHYSICAL_PV_VECTOR_RESIDUAL_SPREAD_KWH", "0.6")
+    monkeypatch.setattr(
+        "app.forecast_correction._load_forecast_hourly_history",
+        lambda *, target_date: ({"2026-05-30": {7: {"pv": 1.0, "load": 1.0, "shortwave": 100.0, "weather_code": 3.0}}}, "test_history"),
+    )
+    monkeypatch.setattr(
+        "app.forecast_correction._fetch_hourly_weather",
+        lambda **kwargs: {"2026-05-30": {}, "2026-05-31": {}},
+    )
+    correction = _build_forecast_correction(
+        rows=[{"dt": datetime.fromisoformat("2026-05-30T07:00:00"), "pv": 4.0, "load": 1.0}],
+        hourly_load_forecast={7: 1.0}, hourly_pv_forecast={7: 2.0}, target_date="2026-05-31",
+        lat=35.0, lon=139.0, timezone="Asia/Tokyo",
+        forecast={"date": "2026-05-31", "hourly_weather": [{"hour": 7, "weather_code": 3, "shortwave_radiation_w_m2": 100.0, "temp_c": 20.0}]},
+        skip_pv_correction=True,
+    )
+    assert correction["hourly_pv_kwh"][7] == pytest.approx(2.5)
+    assert correction["rationale"]["physical_pv_vector_residual"]["applied"][0]["count"] == 1
+
+
 def test_selected_pv_uncertainty_uses_physical_neutral_mean(monkeypatch) -> None:
     monkeypatch.setenv("PV_FORECAST_ERROR_MIN_SAMPLE_DAYS", "1")
     monkeypatch.setenv("PHYSICAL_PV_FORECAST_ERROR_RATIO_STD", "0.22")

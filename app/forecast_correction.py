@@ -158,7 +158,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
         try:
             rows = conn.execute(
                 """
-                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_shortwave_radiation_w_m2
+                SELECT date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_shortwave_radiation_w_m2, forecast_weather_code
                 FROM forecast_hourly
                 WHERE date >= ? AND date < ?
                 ORDER BY date, hour
@@ -179,6 +179,7 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
             "pv": max(0.0, float(row["forecast_pv_kwh"] or 0.0)),
             "load": max(0.0, float(row["forecast_load_kwh"] or 0.0)),
             "shortwave": max(0.0, float(row["forecast_shortwave_radiation_w_m2"] or 0.0)),
+            "weather_code": to_float(row["forecast_weather_code"]),
         }
     return out
 
@@ -217,6 +218,7 @@ def _load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[st
             "pv": max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0),
             "load": max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0),
             "shortwave": max(0.0, to_float(row.get("forecast_shortwave_radiation_w_m2")) or 0.0),
+            "weather_code": to_float(row.get("forecast_weather_code")),
         }
     return out
 
@@ -244,6 +246,53 @@ def _daily_pairs_for_ratio(
         if forecast_total > 0:
             pairs.append((day, forecast_total, actual_total))
     return pairs
+
+
+def _weather_class(weather_code: object) -> str:
+    code = to_int(weather_code)
+    if code is None:
+        return "unknown"
+    if code <= 3:
+        return "clear"
+    if 45 <= code <= 48:
+        return "fog"
+    if 51 <= code <= 67:
+        return "rain"
+    if 80 <= code <= 99:
+        return "shower"
+    return "other"
+
+
+def _physical_vector_residual_correction(
+    *, forecast_history: dict[str, dict[int, dict[str, float]]], actual_history: dict[str, dict[int, dict[str, float]]], forecast: dict[str, object], hourly_pv: dict[int, float]
+) -> tuple[dict[int, float], dict[str, object]]:
+    hourly_weather = forecast.get("hourly_weather")
+    if not isinstance(hourly_weather, list) or not env_bool("PHYSICAL_PV_VECTOR_RESIDUAL_ENABLED", default=True):
+        return hourly_pv, {"enabled": False, "reason": "disabled_or_weather_missing"}
+    target = {to_int(item.get("hour")): item for item in hourly_weather if isinstance(item, dict) and to_int(item.get("hour")) is not None}
+    spread = max(0.01, env_float("PHYSICAL_PV_VECTOR_RESIDUAL_SPREAD_KWH", default=0.6))
+    corrected, applied = dict(hourly_pv), []
+    for hour, value in hourly_pv.items():
+        weather = target.get(hour, {})
+        shortwave = to_float(weather.get("shortwave_radiation_w_m2")) or 0.0
+        cls = _weather_class(weather.get("weather_code"))
+        residuals = []
+        for day, history in forecast_history.items():
+            prior = history.get(hour, {})
+            actual = actual_history.get(day, {}).get(hour, {})
+            prior_pv, prior_sw = to_float(prior.get("pv")) or 0.0, to_float(prior.get("shortwave")) or 0.0
+            if prior_pv <= 0 or prior_sw <= 0 or shortwave <= 0 or _weather_class(prior.get("weather_code")) != cls:
+                continue
+            if 0.7 * shortwave <= prior_sw <= 1.3 * shortwave:
+                residuals.append((to_float(actual.get("pv")) or 0.0) - prior_pv)
+        if not residuals:
+            continue
+        center = sorted(residuals)[len(residuals) // 2]
+        variance = (spread ** 2 if len(residuals) == 1 else sum((item - center) ** 2 for item in residuals) / len(residuals))
+        weight = (len(residuals) / (len(residuals) + 2.0)) * (spread ** 2 / (spread ** 2 + variance))
+        corrected[hour] = max(0.0, value + weight * center)
+        applied.append({"hour": hour, "count": len(residuals), "weight": round(weight, 4), "residual_kwh": round(center, 4)})
+    return corrected, {"enabled": True, "spread_kwh": spread, "applied": applied}
 
 
 def _fetch_hourly_weather(
@@ -943,6 +992,14 @@ def build_forecast_correction(
         hour: max(0.0, value) * pv_multiplier
         for hour, value in hourly_pv_forecast.items()
     }
+    vector_residual = {"enabled": False, "reason": "not_physical"}
+    if skip_pv_correction:
+        corrected_pv, vector_residual = _physical_vector_residual_correction(
+            forecast_history=forecast_history,
+            actual_history=actual_history,
+            forecast=forecast,
+            hourly_pv=corrected_pv,
+        )
     corrected_load: dict[int, float] = {}
     correction_hours = set(_temperature_correction_hours())
     temperature_hourly_multipliers = _temperature_hourly_multipliers(
@@ -1026,6 +1083,7 @@ def build_forecast_correction(
             "pv_ewma_alpha": pv_alpha,
             "pv_sample_count": pv_summary["sample_count"],
             "pv_latest_days": pv_summary["latest_days"],
+            "physical_pv_vector_residual": vector_residual,
             "load_ratio_ewma_raw": round(load_ratio_raw, 6),
             "load_ratio_ewma_applied": round(load_ratio, 6),
             "load_ratio_floor": load_min,
