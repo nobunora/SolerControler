@@ -32,7 +32,7 @@ from app.configuration.environment import env
 from app.parsing.numbers import to_float, to_int
 
 
-def open_firestore():
+def open_firestore() -> Any:
     project_id = os.getenv("FIRESTORE_PROJECT_ID", "").strip() or None
     database_id = os.getenv("FIRESTORE_DATABASE_ID", "").strip() or "(default)"
     if project_id:
@@ -41,18 +41,18 @@ def open_firestore():
 
 
 # readable-code-audit: skip STRUCT-04 — retained as a no-op adapter so the three storage backends share one initialization interface
-def ensure_schema(_client) -> None:
+def ensure_schema(_client: Any) -> None:
     # Firestore is schemaless.
     return
 
 
-def pipeline_run_exists(client, *, run_key: str) -> bool:
+def pipeline_run_exists(client: Any, *, run_key: str) -> bool:
     snap = client.collection("pipeline_runs").document(run_key).get()
-    return snap.exists
+    return bool(snap.exists)
 
 
 def upsert_pipeline_run(
-    client,
+    client: Any,
     *,
     run_key: str,
     slot: str,
@@ -75,7 +75,7 @@ def upsert_pipeline_run(
 
 
 def ingest_monitoring_csvs(
-    client,
+    client: Any,
     *,
     csv_paths: list[Path],
     ingested_at: str,
@@ -107,7 +107,7 @@ def ingest_monitoring_csvs(
 # readable-code-audit: skip DUP-01 — Firestore writes documents rather than relational rows and requires backend-specific merge semantics
 # readable-code-audit: skip STRUCT-04 — plan upload, daily data, and hourly data must use the same plan snapshot in one ingestion boundary
 def ingest_sunshine_from_night_plan(
-    client,
+    client: Any,
     *,
     night_plan_path: Path,
     timezone: str,
@@ -229,7 +229,7 @@ def ingest_sunshine_from_night_plan(
 
 
 def ingest_settings_summary(
-    client,
+    client: Any,
     *,
     settings_summary_path: Path,
     slot: str,
@@ -287,7 +287,7 @@ def ingest_settings_summary(
         batch.commit()
 
 
-def record_planned_day_mode(client, *, settings_summary_path: Path, recorded_at: str) -> None:
+def record_planned_day_mode(client: Any, *, settings_summary_path: Path, recorded_at: str) -> None:
     summary = json.loads(settings_summary_path.read_text(encoding="utf-8"))
     run_id = str(summary.get("run_id", settings_summary_path.parent.name))
     day_plan = summary.get("daytime_mode_plan")
@@ -310,7 +310,7 @@ def record_planned_day_mode(client, *, settings_summary_path: Path, recorded_at:
 
 
 def recalc_cost_daily(
-    client,
+    client: Any,
     *,
     day_rate_yen_per_kwh: float,
     updated_at: str,
@@ -378,7 +378,7 @@ def recalc_cost_daily(
         batch.commit()
     return
 def upsert_battery_daily_metrics(
-    client,
+    client: Any,
     *,
     summary_path: Path,
     updated_at: str,
@@ -421,7 +421,7 @@ def upsert_battery_daily_metrics(
 
 
 # readable-code-audit: skip STRUCT-04 — this scan filters one source collection and writes the last valid value for each day in the same batch boundary
-def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
+def recalc_battery_pv_charge_end_soc(client: Any, *, updated_at: str) -> int:
     latest_by_day: dict[str, tuple[str, float]] = {}
     for doc in client.collection("monitoring_samples").stream():
         row = doc.to_dict() or {}
@@ -479,7 +479,7 @@ def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
 
 
 # readable-code-audit: skip STRUCT-04 — Firestore aggregation and writes must use one consistent document-read snapshot for dashboard materialization
-def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
+def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     """Materialize daily monitoring totals for fast dashboard reads."""
 
     by_day: dict[str, dict[str, float | str | None]] = {}
@@ -554,13 +554,13 @@ def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
     return len(by_day)
 
 
-def recalc_battery_end_of_day_soc(client, *, updated_at: str) -> int:
+def recalc_battery_end_of_day_soc(client: Any, *, updated_at: str) -> int:
     # Backward-compatible entry point. The dashboard now tracks the SOC at the
     # last PV charging sample, not the final sample of the day.
     return recalc_battery_pv_charge_end_soc(client, updated_at=updated_at)
 
 
-def upsert_model_parameters_from_plan(client, *, night_plan_path: Path, updated_at: str) -> None:
+def upsert_model_parameters_from_plan(client: Any, *, night_plan_path: Path, updated_at: str) -> None:
     if not night_plan_path.exists():
         return
     data = json.loads(night_plan_path.read_text(encoding="utf-8"))
@@ -592,7 +592,7 @@ def upsert_model_parameters_from_plan(client, *, night_plan_path: Path, updated_
         )
 
 
-def recalc_model_hit_rates(client, *, updated_at: str) -> float | None:
+def recalc_model_hit_rates(client: Any, *, updated_at: str) -> float | None:
     rows = []
     for doc in client.collection("sunshine_daily").stream():
         row = doc.to_dict() or {}
