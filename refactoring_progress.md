@@ -54,8 +54,16 @@
 
 ## 2026-08-01 — 初期SOC欠損時の安全停止順序テスト
 
-- コミット: 次のコミットで記録。
+- コミット: `1bf9ef0 test: cover forced charge standby helper`
 - `tests/test_cloud_job_runner.py` に `test_initial_soc_unavailable_helper_applies_standby_before_persisting` を追加。
 - standbyプロファイルを適用してから停止理由を保存する順序を、抽出したヘルパー単体で保証。
 - 個別検証: `python -m pytest -q tests/test_cloud_job_runner.py -k 'initial_soc_unavailable or monitor_keeps_standby'`
 - 結果: `2 passed, 42 deselected`
+
+## 2026-08-01 — 安全な抽出単位の統合確認
+
+- 対象: `tests/test_energy_model.py`、`tests/test_dashboard_data.py`、`tests/test_cloud_job_runner.py`
+- 検証: `python -m pytest -q tests/test_energy_model.py tests/test_dashboard_data.py tests/test_cloud_job_runner.py`
+- 結果: `127 passed`
+- `git diff --check`: 成功
+- この時点で、対象3領域の安全な抽出と、それぞれの抽出ヘルパーの個別契約テストを完了。
