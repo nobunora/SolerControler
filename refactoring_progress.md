@@ -624,3 +624,10 @@
 - 実装変更: `app/dashboard_data.py` を `app/dashboard/data.py` へ移動した。旧パスは公開データ型、repository、公開読取関数だけを明示的に再exportする。サーバーと検証スクリプトは正規モジュールを使用する。
 - 検証: `tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `37 passed in 1.17s`。`compileall` と `git diff --check` も成功。
 - 安全性: DB・Firestore読取、ダッシュボードHTTP公開、本番環境は実行していない。
+
+## 2026-08-01 — モジュール再編 P4-5: ダッシュボードサーバーをパッケージへ移動
+
+- 実装変更: `dashboard_server.py` のHTTP・認証・静的配信実装を `app/dashboard/server.py` へ移し、ルートを起動専用にした。テストは正規モジュールのHTML・静的資産helperを検証する。
+- 修正した移動起因の不具合: 初回後テストでテンプレートと静的資産を `app/dashboard/` 配下から探して3件失敗した。実ファイルはリポジトリルートの `templates/` と `static/` にあり、移動前からの配信契約を維持するため `_PROJECT_ROOT` を明示して参照先を固定した。
+- 変更後検証: `tests/test_dashboard_server.py tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `41 passed in 1.15s`。`compileall` と `git diff --check` も成功。
+- 安全性: HTML、静的URL、認証、HTTP応答、実サーバー公開、本番環境は変更・実行していない。

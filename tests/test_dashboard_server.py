@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from dashboard_server import _html, _static_asset
+from app.dashboard.server import _html, _static_asset
 
 
 def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
