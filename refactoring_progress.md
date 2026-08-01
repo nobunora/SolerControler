@@ -631,3 +631,12 @@
 - 修正した移動起因の不具合: 初回後テストでテンプレートと静的資産を `app/dashboard/` 配下から探して3件失敗した。実ファイルはリポジトリルートの `templates/` と `static/` にあり、移動前からの配信契約を維持するため `_PROJECT_ROOT` を明示して参照先を固定した。
 - 変更後検証: `tests/test_dashboard_server.py tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `41 passed in 1.15s`。`compileall` と `git diff --check` も成功。
 - 安全性: HTML、静的URL、認証、HTTP応答、実サーバー公開、本番環境は変更・実行していない。
+
+## 2026-08-01 — モジュール再編 P7: Cloud Jobオーケストレーターをランタイムパッケージへ移動
+
+- 目的: 23:00・03:00・07:00のCloud Run Job制御を `app/runtime/cloud_job.py` へ配置し、ルート `cloud_job_runner.py` を起動専用にした。
+- 変更前検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed in 12.61s`。
+- テスト境界: Cloud Jobテストは旧ルートのSOC判定、Firestore復元、サブプロセス、03:00監視、スロット処理をモンキーパッチしていた。テスト名とケースを変えず、対象モジュール名だけを `app.runtime.cloud_job` に機械的に置換した。旧入口へ私的実装を再exportしない。
+- 実装変更: Cloud Jobの全実装を正規モジュールへ移動した。ルートは `main()` を呼ぶ起動専用ファイルであり、呼び出す `energy_model_main.py`、`kpnet_main.py`、`db_pipeline_main.py`、`sheets_export_main.py` のファイル名は変更していない。
+- 変更後検証: 同じ3テストは `71 passed in 12.50s`。`compileall` と `git diff --check` も成功。
+- 安全性: Cloud Run Job、KP-NET設定、Firestore書込み、Drive、外部コマンド、本番環境は実行していない。

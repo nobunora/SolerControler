@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from cloud_job_runner import (
+from app.runtime.cloud_job import (
     ForcedChargeCompletionEstimator,
     _execute_monitor_terminal_transition,
     SocReading,
@@ -208,20 +208,20 @@ def test_monitor_forced_charge_applies_minimum_when_plan_target_is_zero(
     calls: list[tuple[str, bool]] = []
 
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 0.0, "effective_capacity_kwh": 10.0},
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
     soc_values = iter([0.0, 30.0])
-    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: next(soc_values))
-    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: next(soc_values))
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile",
+        "app.runtime.cloud_job._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
     db_calls: list[tuple[str, bool, bool, dict[str, str] | None]] = []
     monkeypatch.setattr(
-        "cloud_job_runner._run_db_pipeline_slot",
+        "app.runtime.cloud_job._run_db_pipeline_slot",
         lambda slot, *, include_csv=True, include_settings=True, extra_env=None: db_calls.append(
             (slot, include_csv, include_settings, extra_env)
         ),
@@ -261,26 +261,26 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
     monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "0")
 
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "required_night_charge_kwh": 0.2,
             "target_soc_7_percent": 2.0,
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: 10.0)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: 10.0)
     persisted: list[dict] = []
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_no_charge_decision_to_firestore",
+        "app.runtime.cloud_job._persist_03_no_charge_decision_to_firestore",
         lambda **kwargs: persisted.append(kwargs) or True,
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile",
+        "app.runtime.cloud_job._run_settings_profile",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no KP-NET setting change expected")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_db_pipeline_slot",
+        "app.runtime.cloud_job._run_db_pipeline_slot",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no settings ingestion expected")),
     )
 
@@ -302,7 +302,7 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
 
 
 def test_read_soc_with_fallback_uses_realtime(monkeypatch) -> None:
-    monkeypatch.setattr("cloud_job_runner._latest_realtime_soc_percent", lambda: 42.0)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: 42.0)
 
     reading = _read_soc_with_fallback([])
 
@@ -397,10 +397,10 @@ def test_read_soc_with_fallback_uses_fresh_csv(monkeypatch) -> None:
     now = datetime.now()
     monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
     monkeypatch.setattr(
-        "cloud_job_runner._latest_realtime_soc_percent",
+        "app.runtime.cloud_job._latest_realtime_soc_percent",
         lambda: (_ for _ in ()).throw(RuntimeError("offline")),
     )
-    monkeypatch.setattr("cloud_job_runner._latest_csv_soc_reading", lambda _paths: (38.0, now))
+    monkeypatch.setattr("app.runtime.cloud_job._latest_csv_soc_reading", lambda _paths: (38.0, now))
 
     reading = _read_soc_with_fallback([])
 
@@ -413,11 +413,11 @@ def test_read_soc_with_fallback_rejects_stale_csv(monkeypatch) -> None:
     monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
     monkeypatch.setenv("ADJUST03_CSV_SOC_MAX_AGE_MINUTES", "60")
     monkeypatch.setattr(
-        "cloud_job_runner._latest_realtime_soc_percent",
+        "app.runtime.cloud_job._latest_realtime_soc_percent",
         lambda: (_ for _ in ()).throw(RuntimeError("offline")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._latest_csv_soc_reading",
+        "app.runtime.cloud_job._latest_csv_soc_reading",
         lambda _paths: (38.0, datetime.now() - timedelta(hours=2)),
     )
 
@@ -440,35 +440,35 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
     time_values = iter([0.0, 0.0, 0.0, 4000.0])
 
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {"required_night_charge_kwh": 1.0, "target_soc_7_percent": 25.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr(
-        "cloud_job_runner._latest_kpnet_csv_paths",
+        "app.runtime.cloud_job._latest_kpnet_csv_paths",
         lambda _: [],
     )
     monkeypatch.setattr(
-        "cloud_job_runner._latest_realtime_soc_percent",
+        "app.runtime.cloud_job._latest_realtime_soc_percent",
         lambda: 20.0,
     )
     monkeypatch.setattr(
-        "cloud_job_runner._seconds_until_cutoff",
+        "app.runtime.cloud_job._seconds_until_cutoff",
         lambda **kwargs: next(cutoff_values),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_csv_with_retry",
+        "app.runtime.cloud_job._run_csv_with_retry",
         lambda *, label="kpnet-csv": (_ for _ in ()).throw(AssertionError("03 monitor must not fetch CSV")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner.time.sleep",
+        "app.runtime.cloud_job.time.sleep",
         lambda seconds: sleeps.append(seconds),
     )
     monkeypatch.setattr(
-        "cloud_job_runner.time.time",
+        "app.runtime.cloud_job.time.time",
         lambda: next(time_values),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile",
+        "app.runtime.cloud_job._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
 
@@ -488,11 +488,11 @@ def test_monitor_terminal_executor_preserves_timeout_persistence_reason(
     calls: list[str] = []
     reasons: list[str] = []
     monkeypatch.setattr(
-        "cloud_job_runner._run_03_settings_profile_with_db",
+        "app.runtime.cloud_job._run_03_settings_profile_with_db",
         lambda *, profile, dynamic_forced_profile, label: calls.append(label),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _meta, reason: reasons.append(reason) or True,
     )
 
@@ -514,11 +514,11 @@ def test_monitor_terminal_executor_preserves_timeout_persistence_reason(
 def test_monitor_terminal_executor_persists_sensor_reason_when_standby_fails(monkeypatch) -> None:
     reasons: list[str] = []
     monkeypatch.setattr(
-        "cloud_job_runner._run_03_settings_profile_with_db",
+        "app.runtime.cloud_job._run_03_settings_profile_with_db",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("standby failed")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _meta, reason: reasons.append(reason) or True,
     )
 
@@ -551,7 +551,7 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
     monkeypatch.setenv("ADJUST03_MAX_CONSECUTIVE_SOC_FAILURES", "2")
     monkeypatch.setenv("ADJUST03_ALLOW_FORCED_START_WITHOUT_SOC", "true")
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "date": "2026-07-14",
             "required_night_charge_kwh": 1.0,
@@ -559,19 +559,19 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._read_soc_with_fallback", lambda _: next(readings))
-    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
-    monkeypatch.setattr("cloud_job_runner.time.time", lambda: 0.0)
-    monkeypatch.setattr("cloud_job_runner.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._read_soc_with_fallback", lambda _: next(readings))
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job.time.time", lambda: 0.0)
+    monkeypatch.setattr("app.runtime.cloud_job.time.sleep", lambda _seconds: None)
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile",
+        "app.runtime.cloud_job._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
-    monkeypatch.setattr("cloud_job_runner._run_db_pipeline_slot", lambda *args, **kwargs: None)
-    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _plan, reason: reasons.append(reason) or True,
     )
 
@@ -589,14 +589,14 @@ def test_monitor_exception_after_forced_start_attempts_fail_safe_standby(monkeyp
     readings = iter([SocReading(20.0, "realtime", None, None), RuntimeError("sensor transport failed")])
 
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "required_night_charge_kwh": 1.0,
             "target_soc_7_percent": 80.0,
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
 
     def read_soc(_paths):
         value = next(readings)
@@ -604,15 +604,15 @@ def test_monitor_exception_after_forced_start_attempts_fail_safe_standby(monkeyp
             raise value
         return value
 
-    monkeypatch.setattr("cloud_job_runner._read_soc_with_fallback", read_soc)
-    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job._read_soc_with_fallback", read_soc)
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
-        "cloud_job_runner._run_03_settings_profile_with_db",
+        "app.runtime.cloud_job._run_03_settings_profile_with_db",
         lambda *, profile, dynamic_forced_profile, label: profiles.append(profile),
     )
-    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _meta, reason, **kwargs: stop_reasons.append(reason) or True,
     )
 
@@ -629,28 +629,28 @@ def test_forced_start_failure_attempts_fail_safe_standby(monkeypatch, tmp_path) 
     profiles: list[str] = []
 
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "required_night_charge_kwh": 1.0,
             "target_soc_7_percent": 80.0,
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
     monkeypatch.setattr(
-        "cloud_job_runner._read_soc_with_fallback",
+        "app.runtime.cloud_job._read_soc_with_fallback",
         lambda _paths: SocReading(20.0, "realtime", None, None),
     )
-    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
-    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
 
     def apply_profile(*, profile, dynamic_forced_profile, label):
         profiles.append(profile)
         if profile == "forced":
             raise RuntimeError("write confirmation failed")
 
-    monkeypatch.setattr("cloud_job_runner._run_03_settings_profile_with_db", apply_profile)
-    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_stop_reason", lambda *args, **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_03_settings_profile_with_db", apply_profile)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_stop_reason", lambda *args, **kwargs: True)
 
     with pytest.raises(RuntimeError, match="write confirmation failed"):
         _monitor_partial_forced_and_stop(plan_path)
@@ -666,22 +666,22 @@ def test_forced_reapply_failure_attempts_fail_safe_standby(monkeypatch, tmp_path
 
     monkeypatch.setenv("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", "1")
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "required_night_charge_kwh": 1.0,
             "target_soc_7_percent": 80.0,
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
     monkeypatch.setattr(
-        "cloud_job_runner._read_soc_with_fallback",
+        "app.runtime.cloud_job._read_soc_with_fallback",
         lambda _paths: SocReading(20.0, "realtime", None, None),
     )
-    monkeypatch.setattr("cloud_job_runner._seconds_until_cutoff", lambda **kwargs: 3600)
-    monkeypatch.setattr("cloud_job_runner._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _meta, reason, **kwargs: stop_reasons.append(reason) or True,
     )
 
@@ -695,7 +695,7 @@ def test_forced_reapply_failure_attempts_fail_safe_standby(monkeypatch, tmp_path
             if forced_calls == 2:
                 raise RuntimeError("reapply confirmation failed")
 
-    monkeypatch.setattr("cloud_job_runner._run_03_settings_profile_with_db", apply_profile)
+    monkeypatch.setattr("app.runtime.cloud_job._run_03_settings_profile_with_db", apply_profile)
 
     with pytest.raises(RuntimeError, match="reapply confirmation failed"):
         _monitor_partial_forced_and_stop(plan_path)
@@ -712,7 +712,7 @@ def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_
     reading = SocReading(None, "unavailable", "realtime offline; CSV SOC unavailable", None)
     monkeypatch.delenv("ADJUST03_ALLOW_FORCED_START_WITHOUT_SOC", raising=False)
     monkeypatch.setattr(
-        "cloud_job_runner._read_plan_meta",
+        "app.runtime.cloud_job._read_plan_meta",
         lambda _: {
             "date": "2026-07-14",
             "required_night_charge_kwh": 1.0,
@@ -720,15 +720,15 @@ def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_
             "effective_capacity_kwh": 10.0,
         },
     )
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._read_soc_with_fallback", lambda _: reading)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._read_soc_with_fallback", lambda _: reading)
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile",
+        "app.runtime.cloud_job._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
-    monkeypatch.setattr("cloud_job_runner._run_db_pipeline_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "cloud_job_runner._persist_03_monitor_stop_reason",
+        "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _plan, reason, *, soc_reading=None: persisted.append((reason, soc_reading)) or True,
     )
 
@@ -770,19 +770,19 @@ def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:
 
     monkeypatch.delenv("NIGHT23_SETTINGS_PROFILE", raising=False)
     monkeypatch.setattr(
-        "cloud_job_runner._run_settings_profile_with_retry",
+        "app.runtime.cloud_job._run_settings_profile_with_retry",
         lambda *, profile, dynamic_forced_profile, label: calls.append((profile, dynamic_forced_profile)),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_csv_with_retry",
+        "app.runtime.cloud_job._run_csv_with_retry",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not fetch CSV")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_with_retry",
+        "app.runtime.cloud_job._run_with_retry",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not run forecasts")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_db_pipeline_slot",
+        "app.runtime.cloud_job._run_db_pipeline_slot",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("23:00 must not run data pipeline")),
     )
 
@@ -808,18 +808,18 @@ def test_run_adjust_03_regenerates_missing_plan(monkeypatch, tmp_path) -> None:
             )
 
     monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
-    monkeypatch.setattr("cloud_job_runner._run", fake_run)
-    monkeypatch.setattr("cloud_job_runner._adjust03_target_date", lambda: "2026-05-27")
-    monkeypatch.setattr("cloud_job_runner._restore_night_plan_from_firestore", lambda *args, **kwargs: False)
+    monkeypatch.setattr("app.runtime.cloud_job._run", fake_run)
+    monkeypatch.setattr("app.runtime.cloud_job._adjust03_target_date", lambda: "2026-05-27")
+    monkeypatch.setattr("app.runtime.cloud_job._restore_night_plan_from_firestore", lambda *args, **kwargs: False)
     monkeypatch.setattr(
-        "cloud_job_runner._persist_night_plan_to_firestore",
+        "app.runtime.cloud_job._persist_night_plan_to_firestore",
         lambda _path, *, source: persisted.append(source) or True,
     )
     monkeypatch.setattr(
-        "cloud_job_runner._persist_previous_day_soc_feedback",
+        "app.runtime.cloud_job._persist_previous_day_soc_feedback",
         lambda *, target_date, csv_paths: feedback_targets.append(target_date) or True,
     )
-    monkeypatch.setattr("cloud_job_runner._monitor_partial_forced_and_stop", lambda path: monitored.append(path))
+    monkeypatch.setattr("app.runtime.cloud_job._monitor_partial_forced_and_stop", lambda path: monitored.append(path))
 
     _run_adjust_03()
 
@@ -835,17 +835,17 @@ def test_run_adjust_03_plan_refresh_skips_device_monitoring(monkeypatch, tmp_pat
     calls: list[str] = []
 
     monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
-    monkeypatch.setattr("cloud_job_runner._run_csv_with_retry", lambda **_: calls.append("csv"))
-    monkeypatch.setattr("cloud_job_runner._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("cloud_job_runner._persist_previous_day_soc_feedback", lambda **_: True)
-    monkeypatch.setattr("cloud_job_runner._ensure_night_plan_available", lambda _: calls.append("plan") or True)
-    monkeypatch.setattr("cloud_job_runner._run_db_pipeline_slot", lambda *_, **__: calls.append("db"))
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: calls.append("csv"))
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: True)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: calls.append("plan") or True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: calls.append("db"))
     monkeypatch.setattr(
-        "cloud_job_runner._monitor_partial_forced_and_stop",
+        "app.runtime.cloud_job._monitor_partial_forced_and_stop",
         lambda _: (_ for _ in ()).throw(AssertionError("plan refresh must not control the device")),
     )
     monkeypatch.setattr(
-        "cloud_job_runner._run_optional_04_exports_and_backups",
+        "app.runtime.cloud_job._run_optional_04_exports_and_backups",
         lambda: (_ for _ in ()).throw(AssertionError("plan refresh must not run optional side effects")),
     )
 
@@ -876,7 +876,7 @@ def test_persist_03_monitor_schedule_records_dashboard_event(monkeypatch) -> Non
         def collection(self, collection_name: str) -> FakeCollection:
             return FakeCollection(collection_name)
 
-    monkeypatch.setattr("cloud_job_runner._open_firestore_for_plan", lambda: FakeClient())
+    monkeypatch.setattr("app.runtime.cloud_job._open_firestore_for_plan", lambda: FakeClient())
 
     persisted = _persist_03_monitor_schedule_to_firestore(
         plan_meta={"date": "2026-06-03"},
@@ -920,7 +920,7 @@ def test_persist_03_no_charge_decision_records_completed_event(monkeypatch) -> N
         def collection(self, collection_name: str) -> FakeCollection:
             return FakeCollection(collection_name)
 
-    monkeypatch.setattr("cloud_job_runner._open_firestore_for_plan", lambda: FakeClient())
+    monkeypatch.setattr("app.runtime.cloud_job._open_firestore_for_plan", lambda: FakeClient())
 
     persisted = _persist_03_no_charge_decision_to_firestore(
         plan_meta={"date": "2026-07-09"},
