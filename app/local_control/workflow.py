@@ -16,7 +16,7 @@ from app.browser_automation import (
     fetch_forecast_12h,
     login_monitoring_service,
 )
-from app.config import AppConfig
+from app.local_control.config import AppConfig
 from app.csv_utils import parse_monitoring_csv
 from app.decision import decide_battery_setting
 from app.history_store import persist_history

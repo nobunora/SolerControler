@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.config import AppConfig
+from app.local_control.config import AppConfig
 from app.models import DesiredBatterySetting, ForecastResult, MonitoringMetrics
 
 

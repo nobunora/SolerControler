@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app.config import AppConfig
+from app.local_control.config import AppConfig
 
 HISTORY_COLUMNS = [
     "run_at",

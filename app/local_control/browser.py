@@ -8,7 +8,7 @@ from typing import Optional
 
 from playwright.sync_api import Error, Page
 
-from app.config import AppConfig
+from app.local_control.config import AppConfig
 from app.models import ApplyResult, DesiredBatterySetting, ForecastResult
 
 logger = logging.getLogger(__name__)
