@@ -50,3 +50,11 @@
 - 変更: SQLite connectionと週次backup接続を外部DB-API境界として `Any` で明示し、Firestore client factoryの戻り値を明示した。backendごとのtransaction順、commit、ingest順、SQL/Firestore処理は変更していない。
 - 変更後検証: `--follow-imports=skip` で対象2ファイルのmypyは0エラー。関連テストは `25 passed in 1.65s`。`compileall` と `git diff --check` は成功した。
 - 外部安全性: DB、Firestore、backupは実行していない。
+
+## 2026-08-01 — T1-6A: Weekly backup
+
+- 開始コミット: `4f612005762f0240372bfa4a08116e0bbc830e10`
+- 変更前検証: weekly backupテストは `1 passed in 0.40s`。対象mypyは2エラーだった。
+- 変更: DB cursorとconnectionを外部DB-API境界として `Any` で明示した。週判定、SQL、placeholder、保存JSON、出力パス、cleanup例外の扱いは変更していない。
+- 変更後検証: 同じテストは `1 passed in 0.44s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: 実DBとバックアップ先は使用していない。

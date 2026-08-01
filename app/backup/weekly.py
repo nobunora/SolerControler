@@ -23,7 +23,7 @@ def _backup_due(*, now_utc: datetime, weekday: int) -> bool:
     return now_utc.weekday() == weekday
 
 
-def _fetch_rows(cursor, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+def _fetch_rows(cursor: Any, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
     cursor.execute(sql, params)
     rows = cursor.fetchall()
     out: list[dict[str, Any]] = []
@@ -42,7 +42,7 @@ def _fetch_rows(cursor, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any
 
 
 def create_weekly_diff_backup(
-    conn,
+    conn: Any,
     *,
     backend: str,
     out_dir: Path,
