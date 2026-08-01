@@ -347,3 +347,16 @@
 - 個別検証: `System.Management.Automation.Language.Parser::ParseFile` により両PowerShellスクリプトを構文解析した。
 - 個別検証結果: `PowerShell parse check passed.`。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 例外処理を含む更新Skillsの全体再検査
+
+- 使用Skills: `readable-code-audit`。対象はテスト・生成物・キャッシュを除く `app`、`scripts`、ダッシュボードJavaScript、PowerShellスクリプトである。
+- 例外処理検査: ASTで全Pythonの `except Exception` を確認した。`pass` だけを持つ広域例外は、理由を追記した週次バックアップのclose処理以外に存在せず、未説明候補は `0`。
+- 解析フォールバックの確認: 4件の空に見える候補は、`ValueError` / `TypeError` を限定して捕捉し、数値・日付・複数入力形式を順に試すための通常制御フローだった。広域例外の握りつぶしではないため、不要なコメントやスキップは追加していない。
+- 構造検査: サイズ70行以上または分岐複雑度18以上のPython関数について、直近の有効な `STRUCT-04` / `DUP-01` 例外なしに残る候補は `0`。
+- コメント検査: `TODO`、`FIXME`、`XXX` は対象ソースで `0`。JavaScriptの文字列展開内にある単純な値選択は確認したが、連鎖条件演算子や制御フローを隠す三項演算子はなかった。
+- 全回帰: `python -m pytest -q`
+- 全回帰結果: `403 passed, 1 skipped in 19.93s`。
+- Python構文検査: `python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py` 成功。
+- PowerShell構文検査: `System.Management.Automation.Language.Parser::ParseFile` により `scripts` 配下22ファイルを確認し成功。
+- 形式検査: `git diff --check` 成功。
