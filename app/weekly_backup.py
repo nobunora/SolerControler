@@ -89,6 +89,7 @@ def create_weekly_diff_backup(
         try:
             cur.close()
         except Exception:
+            # Closing after a read failure cannot change the backup payload, so cleanup errors are non-fatal.
             pass
 
     out_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

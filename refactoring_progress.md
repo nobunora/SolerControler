@@ -318,10 +318,22 @@
 ## 2026-08-01 — 型抑制の根拠を追跡可能にする監査サイクル
 
 - 対象ルール: `TOOL-01`。コンパイラ、型チェッカー、リンターの抑制は、根拠なく新しい問題を隠してはいけない。
-- 検出: `type: ignore` は5行だけで、`app/consumption_forecast.py`、`app/comfort_load_forecast.py`、`app/night_plan_archive.py`、`app/kpnet_workflow.py` にあった。
+- 検出: `type: ignore` は6行だけで、`app/consumption_forecast.py`、`app/comfort_load_forecast.py`、`app/night_plan_archive.py`、`app/kpnet_workflow.py` にあった。
 - 確認結果: 2件は任意のscikit-learn依存がない実行環境のフォールバック、2件はGoogle Cloudの任意実行時importに対する型スタブ不足、2件はdatetime配列を表せないmatplotlib型スタブに対する抑制だった。抑制が実行時例外を握りつぶすためのものではないことを確認した。
 - 処置: 各抑制の直前に `readable-code-audit: skip TOOL-01` を付け、型チェッカーが理解できない契約と、実行時の代替経路を簡単な英語で記録した。
 - 個別テスト: `python -m pytest -q tests/test_consumption_forecast.py tests/test_comfort_load_forecast.py tests/test_night_plan_archive.py tests/test_kpnet_workflow.py`
 - 個別テスト結果: `50 passed in 7.64s`。
 - 構文検査: `python -m compileall -q app scripts` 成功。
+- 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 例外フォールバックの契約を再確認
+
+- 対象ルール: `STRUCT-06`、`REVIEW-03`。例外時に空値・代替値・失敗状態へ移る処理が、呼出し側に成功したように見えないかを確認した。
+- 監査範囲: `app` と `scripts` のPython、およびダッシュボードJavaScriptの全ての `except Exception` / `catch` を抽出した。大半は外部API・設定・診断データの欠損に対して、空の値、理由付き結果、または画面のエラー表示へ明示的に移行していた。
+- 確認した例外: `app/weekly_backup.py` のカーソルcloseだけが `pass` を使っていた。読み取り後のclose失敗は、既に組み立てたバックアップpayloadを変更できず、書込み結果を失敗扱いにすると利用可能なバックアップまで捨てるため、非致命として保持する。
+- 処置: `except Exception: pass` の直前に、後始末エラーを無視してよい具体的な理由を中学生程度の英語で追加した。実行時の例外処理順・戻り値・バックアップJSONは変更していない。
+- ログ訂正: 直前の型抑制サイクルにある `type: ignore` の検出件数を5行から実数の6行へ訂正した。scikit-learn 2件、Google Cloud 2件、matplotlib 2件の内訳と一致する。
+- 個別テスト: `python -m pytest -q tests/test_weekly_backup.py`
+- 個別テスト結果: `1 passed in 0.47s`。
+- 構文検査: `python -m compileall -q app/weekly_backup.py` 成功。
 - 形式検査: `git diff --check` 成功。
