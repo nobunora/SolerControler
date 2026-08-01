@@ -393,14 +393,14 @@
 ## 2026-08-01 — 理想構成・ギャップ・段階移行計画を文書化
 
 - 要求: ソーラーコントローラーの理想的な構成、現状とのギャップ、AIが単独で実施できる詳細なリファクタリング計画を作成する。
-- 文書: `docs/current/architecture/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md` を追加した。
+- 文書: `docs/completed/refactor/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md` を追加した。
 - 内容: 計画・予測・運用永続化・KP-NET・ダッシュボード・バックアップの理想的な機能境界、34個のルートモジュールのギャップ、互換import、テスト境界、停止条件、フェーズ別の対象テスト、最終検証、AI向け実行制約を記録した。
 - 重要判断: まず低リスクな運用永続化を `app/operations/` へ寄せる。予測、KP-NET、ダッシュボードは私的ヘルパーへのテスト依存を先に整理してから移動する。金額、SOC、安全制御、外部機器操作、外部書込みの仕様変更は構成移動と分ける。
 - 変更範囲: 本サイクルは計画文書と進捗ログのみであり、アプリケーション動作、外部サービス、実機操作、保存データを変更していない。
 
 ## 2026-08-01 — モジュール再編計画の監査と実行精度改善
 
-- 監査対象: `docs/current/architecture/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md`。`readable-code-audit` の責務、機能配置、公開契約、テスト、例外判断の規則で再確認した。
+- 監査対象: `docs/completed/refactor/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md`。`readable-code-audit` の責務、機能配置、公開契約、テスト、例外判断の規則で再確認した。
 - 検出1: 既存の `energy_plan/` と新設案 `planning/` が同じSOC計画責務を持ち、探索先が競合していた。新設 `planning/` を廃止し、既存 `energy_plan/` を計画全体の所有者として拡張する案へ修正した。
 - 検出2: `app/` 直下だけを主対象にしており、ルートのPython、Dockerfile、Cloud Build YAML、mypy、pytest、requirements、ignore設定の追随が不足していた。ルートPython7件と全構成ファイルの追随台帳を追加した。
 - 検出3: `energy_model_main.py` 2863行、`cloud_job_runner.py` 1485行、`db_pipeline_main.py` 426行、`dashboard_server.py` 357行は薄い入口ではなかった。対応する機能パッケージへ実装を移し、ルートを起動専用にするフェーズを追加した。
@@ -410,7 +410,7 @@
 
 ## 2026-08-01 — モジュール再編 P0-1: 変更前基準を固定
 
-- 実行計画: `docs/current/architecture/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md` の P0-1。後続の構成移動で振る舞いが変わらないことを比較するため、変更前の全回帰結果と復元可能なGit基準点を記録する。
+- 実行計画: `docs/completed/refactor/SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md` の P0-1。後続の構成移動で振る舞いが変わらないことを比較するため、変更前の全回帰結果と復元可能なGit基準点を記録する。
 - 開始時確認: `git status --short` は出力なしで、作業ツリーはクリーンだった。基準コミットは `ad8f0c08a4e837f0671093c761226251085f068c`。
 - 変更前全回帰: `python -m pytest -q` を実行した。
 - 結果: `403 passed, 1 skipped in 21.12s`。失敗はなく、以降の各カードはこの結果を保持すべき動作の基準にする。

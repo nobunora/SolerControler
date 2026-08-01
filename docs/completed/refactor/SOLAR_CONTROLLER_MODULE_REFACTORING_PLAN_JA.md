@@ -148,7 +148,7 @@ sheets_export_main.py     # 現状どおり薄い入口
 4. 一つのパッケージまたは一つの互換境界だけを変更する。
 5. 旧公開パスを維持する場合、旧モジュールには移動先と互換性の理由を簡潔な英語コメントで書く。削除予定が未定なら、削除しない。
 6. 変更後に対象テスト、`python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py`、`git diff --check` を実行する。
-7. 合格後に一つの論理的なコミットを作り、`refactoring_progress.md` に日本語で対象、判断、不変条件、実行コマンド、結果、残リスクを書く。
+7. 合格後に一つの論理的なコミットを作り、`docs/completed/refactor/2026-08-module-refactoring-progress.md` に日本語で対象、判断、不変条件、実行コマンド、結果、残リスクを書く。
 8. 金額、SOC、安全制御、外部機器操作、Firestore/DB書込みの意味を変える変更は、構成移動とは別コミットにする。
 9. Pythonモジュールの `__module__`、クラス同一性、例外型、モンキーパッチ先、循環importも互換性に含める。値が同じだけでは合格としない。
 10. 各作業開始前に直前の合格コミットIDを記録する。失敗時は未コミット差分を闇雲に消さず、差分を保存して原因を記録し、そのコミットから作業単位を再設計する。
@@ -161,7 +161,7 @@ sheets_export_main.py     # 現状どおり薄い入口
 
 手順:
 
-1. `python -m pytest -q` を実行し、基準結果を `refactoring_progress.md` に記録する。
+1. `python -m pytest -q` を実行し、基準結果を `docs/completed/refactor/2026-08-module-refactoring-progress.md` に記録する。
 2. 各候補について `rg -n "app\.(旧モジュール名)" app tests scripts . --glob '*.py' --glob '*.ps1' --glob '*.sh'` を実行する。PowerShellでは裸の `*.py` パス引数を使わない。
 3. 次の台帳を計画文書または進捗ログへ記録する: 旧import、入口、テスト、私的ヘルパー参照、外部契約、対象テスト、互換モジュールの要否。
 4. `cloud_job_runner.py`、`db_pipeline_main.py`、`energy_model_main.py`、`kpnet_main.py`、`dashboard_server.py` のimportと責務を再確認する。
@@ -471,7 +471,7 @@ git rev-parse HEAD
 ```
 
 - `git status --short` に出力があれば停止する。既存変更を削除、退避、上書きしない。
-- `git rev-parse HEAD` の値を `refactoring_progress.md` のカード開始記録へ書く。この値がロールバック基準である。
+- `git rev-parse HEAD` の値を `docs/completed/refactor/2026-08-module-refactoring-progress.md` のカード開始記録へ書く。この値がロールバック基準である。
 - 対象カードに書かれた「変更前テスト」を実行する。1件でも失敗またはエラーなら、ソースを変更せず停止する。
 - `.env` を表示、編集、ステージしない。本番サービス、KP-NET実機、Firestore、Drive、Cloud Run Jobを実行しない。
 
@@ -482,7 +482,7 @@ git rev-parse HEAD
 3. `app/` とルートエントリポイントの第一者importを新パスへ変更する。
 4. カード指定の互換性テストを追加する。
 5. `pyproject.toml` のmypy strict対象に新パッケージがなければ追加する。
-6. `refactoring_progress.md` に日本語で結果を追記する。
+6. `docs/completed/refactor/2026-08-module-refactoring-progress.md` に日本語で結果を追記する。
 
 次は禁止する。
 
@@ -519,7 +519,7 @@ git status --short
 #### P0-1: 全回帰ベースライン
 
 - 変更前テスト: `python -m pytest -q`
-- 変更: `refactoring_progress.md` に日時、GitコミットID、テスト件数、skip件数、所要時間を記録するだけ。
+- 変更: `docs/completed/refactor/2026-08-module-refactoring-progress.md` に日時、GitコミットID、テスト件数、skip件数、所要時間を記録するだけ。
 - 変更後検査: `git diff --check`
 - コミット: `docs: record module migration baseline`
 - 停止条件: テスト失敗、`.env` がステージ済み、作業ツリーが開始時点でdirty。
@@ -534,7 +534,7 @@ rg -n "monkeypatch\.setattr|patch\(" tests --glob '*.py'
 rg -n "COPY |ENTRYPOINT|CMD|python .*_main\.py|cloud_job_runner\.py|dashboard_server\.py" Dockerfile Dockerfile.dashboard cloudbuild.dashboard.yaml scripts --glob '*.ps1' --glob '*.sh'
 ```
 
-- 変更: 検出した旧パス、文字列モンキーパッチ、ルート実行ファイル参照を `refactoring_progress.md` に記録するだけ。
+- 変更: 検出した旧パス、文字列モンキーパッチ、ルート実行ファイル参照を `docs/completed/refactor/2026-08-module-refactoring-progress.md` に記録するだけ。
 - コミット: `docs: record module import migration inventory`
 - 停止条件: コマンド自体がエラーになる場合。検索結果が0件であることはエラーではない。
 
@@ -674,7 +674,7 @@ P6-10からP6-17は必ず番号順に一枚ずつ実行する。複数カード�
 
 1. `git status --short` を実行する。
 2. 出力が1行でもあれば、そのカードを開始せず停止する。
-3. `git rev-parse HEAD` を実行し、ハッシュを `refactoring_progress.md` のカード開始記録へ書く。
+3. `git rev-parse HEAD` を実行し、ハッシュを `docs/completed/refactor/2026-08-module-refactoring-progress.md` のカード開始記録へ書く。
 4. カード指定の変更前テストを実行する。
 5. テストが1件でも失敗したら、ソースを変更せず停止する。
 
@@ -698,7 +698,7 @@ git diff --check
 git status --short
 ```
 
-3. 変更前後のテスト件数、失敗修正、互換記号、構文検査、差分検査を `refactoring_progress.md` に日本語で記録する。
+3. 変更前後のテスト件数、失敗修正、互換記号、構文検査、差分検査を `docs/completed/refactor/2026-08-module-refactoring-progress.md` に日本語で記録する。
 4. カード指定のメッセージでコミットする。
 5. `git status --short` が空であることを確認してから次へ進む。
 
