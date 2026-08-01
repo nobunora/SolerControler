@@ -55,13 +55,13 @@ def _conninfo_from_env() -> str:
     )
 
 
-def open_postgres():
+def open_postgres() -> Any:
     conn = psycopg.connect(_conninfo_from_env(), row_factory=dict_row)
     return conn
 
 
 # readable-code-audit: skip STRUCT-04 — PostgreSQL schema statements must remain ordered in one migration boundary
-def ensure_schema(conn) -> None:
+def ensure_schema(conn: Any) -> None:
     ddl = [
         """
         CREATE TABLE IF NOT EXISTS monitoring_samples (
@@ -208,7 +208,7 @@ def ensure_schema(conn) -> None:
 
 
 def ingest_monitoring_csvs(
-    conn,
+    conn: Any,
     *,
     csv_paths: list[Path],
     ingested_at: str,
@@ -256,7 +256,7 @@ def ingest_monitoring_csvs(
 # readable-code-audit: skip DUP-01 — PostgreSQL uses its own driver bindings and conflict syntax, so the backend write boundary remains deliberately separate
 # readable-code-audit: skip STRUCT-04 — forecast and actual rows are written in one PostgreSQL transaction so a run cannot leave a mixed snapshot
 def ingest_sunshine_from_night_plan(
-    conn,
+    conn: Any,
     *,
     night_plan_path: Path,
     timezone: str,
@@ -402,7 +402,7 @@ def ingest_sunshine_from_night_plan(
 
 
 def ingest_settings_summary(
-    conn,
+    conn: Any,
     *,
     settings_summary_path: Path,
     slot: str,
@@ -438,7 +438,7 @@ def ingest_settings_summary(
     conn.commit()
 
 
-def record_planned_day_mode(conn, *, settings_summary_path: Path, recorded_at: str) -> None:
+def record_planned_day_mode(conn: Any, *, settings_summary_path: Path, recorded_at: str) -> None:
     summary = json.loads(settings_summary_path.read_text(encoding="utf-8"))
     run_id = str(summary.get("run_id", settings_summary_path.parent.name))
     day_plan = summary.get("daytime_mode_plan")
@@ -465,7 +465,7 @@ def record_planned_day_mode(conn, *, settings_summary_path: Path, recorded_at: s
 
 
 def recalc_cost_daily(
-    conn,
+    conn: Any,
     *,
     day_rate_yen_per_kwh: float,
     updated_at: str,
@@ -519,7 +519,7 @@ def recalc_cost_daily(
     conn.commit()
     return
 def upsert_battery_daily_metrics(
-    conn,
+    conn: Any,
     *,
     summary_path: Path,
     updated_at: str,
@@ -587,7 +587,7 @@ def upsert_battery_daily_metrics(
     conn.commit()
 
 
-def recalc_battery_pv_charge_end_soc(conn, *, updated_at: str) -> int:
+def recalc_battery_pv_charge_end_soc(conn: Any, *, updated_at: str) -> int:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -635,12 +635,12 @@ def recalc_battery_pv_charge_end_soc(conn, *, updated_at: str) -> int:
     return updated
 
 
-def recalc_battery_end_of_day_soc(conn, *, updated_at: str) -> int:
+def recalc_battery_end_of_day_soc(conn: Any, *, updated_at: str) -> int:
     # Backward-compatible wrapper. The metric is now PV-charge-end SOC.
     return recalc_battery_pv_charge_end_soc(conn, updated_at=updated_at)
 
 
-def upsert_model_parameters_from_plan(conn, *, night_plan_path: Path, updated_at: str) -> None:
+def upsert_model_parameters_from_plan(conn: Any, *, night_plan_path: Path, updated_at: str) -> None:
     if not night_plan_path.exists():
         return
     data = json.loads(night_plan_path.read_text(encoding="utf-8"))
@@ -669,7 +669,7 @@ def upsert_model_parameters_from_plan(conn, *, night_plan_path: Path, updated_at
     conn.commit()
 
 
-def recalc_model_hit_rates(conn, *, updated_at: str) -> float | None:
+def recalc_model_hit_rates(conn: Any, *, updated_at: str) -> float | None:
     with conn.cursor() as cur:
         cur.execute(
             """
