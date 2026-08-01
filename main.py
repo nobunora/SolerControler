@@ -1,4 +1,4 @@
-from app.main import main
+from app.local_control.workflow import main
 
 
 if __name__ == "__main__":

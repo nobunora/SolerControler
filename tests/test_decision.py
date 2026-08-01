@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 
-from app.decision import decide_battery_setting
+from app.local_control.decision import decide_battery_setting
 from app.models import ForecastResult, MonitoringMetrics
 
 
