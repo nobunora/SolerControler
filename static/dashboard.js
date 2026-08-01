@@ -17,7 +17,10 @@
       if (v <= 1) return 1;
       const p = Math.pow(10, Math.floor(Math.log10(v)));
       const m = v / p;
-      const c = m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10;
+      let c = 10;
+      if (m <= 1) c = 1;
+      else if (m <= 2) c = 2;
+      else if (m <= 5) c = 5;
       return c * p;
     }
 
@@ -971,7 +974,11 @@
       const labels = rows.map((row) => `${String(Number(row.hour)).padStart(2, "0")}:00`);
       const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
       const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
-      const load = rows.map((row) => row.actual_load_kwh == null ? (row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh)) : n(row.actual_load_kwh));
+      const load = rows.map((row) => {
+        if (row.actual_load_kwh != null) return n(row.actual_load_kwh);
+        if (row.forecast_load_kwh != null) return n(row.forecast_load_kwh);
+        return null;
+      });
       const nightGridCharge = estimateHourlyNightGridCharge(rows, date);
       const soc = estimateHourlyForecastSoc(rows, date);
       const actualHours = rows.filter((row) => row.actual_load_kwh != null).map((row) => Number(row.hour));
