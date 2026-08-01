@@ -99,6 +99,7 @@ function Get-SourceFiles {
     try {
         $children = Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop
     } catch {
+        # An unreadable path cannot contribute source text, so return only the files collected before this branch.
         return $results
     }
 

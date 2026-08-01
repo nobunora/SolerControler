@@ -142,6 +142,7 @@ Return account subtotal, credits, and service-level subtotals.
                 return $lastFinalResult
             }
         } catch {
+            # Each prompt asks for the same billing data, so one failed wording must not stop the other safe variants.
             continue
         } finally {
             if (Test-Path $tmpPath) {

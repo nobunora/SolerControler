@@ -337,3 +337,13 @@
 - 個別テスト結果: `1 passed in 0.47s`。
 - 構文検査: `python -m compileall -q app/weekly_backup.py` 成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — PowerShellの例外継続理由を明文化
+
+- 対象ルール: `COMMENT-02`、`STRUCT-06`。PowerShellの例外処理で、継続・空の収集結果を返す理由がコードだけでは判断しにくい箇所を確認した。
+- 確認した候補: `scripts/get_gcp_actual_cost.ps1` は同一の請求情報を異なる文面で問い合わせるリトライ列、`scripts/export_source_bundle_to_c.ps1` は収集不能なパスを除外して既に列挙済みのソース一覧を返す再帰処理だった。
+- 処置: 両方の `catch` に、継続してよい不変条件を中学生程度の英語で追記した。前者は一つの問い合わせ失敗で安全な代替文面を止めないこと、後者は読めないパスからはソース本文を取得できないことを記録している。
+- 不変条件: 外部API呼出し、例外時の `continue` / 返却値、生成されるファイル一覧、終了コードには変更を加えていない。
+- 個別検証: `System.Management.Automation.Language.Parser::ParseFile` により両PowerShellスクリプトを構文解析した。
+- 個別検証結果: `PowerShell parse check passed.`。
+- 形式検査: `git diff --check` 成功。
