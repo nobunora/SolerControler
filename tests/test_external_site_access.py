@@ -10,9 +10,9 @@ import requests
 
 from app.forecast_correction import _fetch_hourly_weather
 from app.kpnet_workflow import KpNetClient
-from app.pv_array_forecast import (
+from app.forecasting.pv_array import (
     PVArrayConfig,
-    _fetch_hourly,
+    fetch_open_meteo_hourly,
     build_pv_array_forecast,
     forecast_pv_arrays,
 )
@@ -58,7 +58,7 @@ def test_open_meteo_pv_boundary_rejects_malformed_success_payload(
     message: str,
 ) -> None:
     with pytest.raises(RuntimeError, match=message):
-        _fetch_hourly(
+        fetch_open_meteo_hourly(
             endpoint="https://api.open-meteo.com/v1/forecast",
             lat=35.0,
             lon=139.0,
@@ -131,7 +131,7 @@ def test_open_meteo_retries_one_transient_server_error(monkeypatch) -> None:
         calls += 1
         return next(responses)
 
-    rows = _fetch_hourly(
+    rows = fetch_open_meteo_hourly(
         endpoint="https://api.open-meteo.com/v1/forecast",
         lat=35.0,
         lon=139.0,
@@ -156,7 +156,7 @@ def test_open_meteo_does_not_retry_client_error(monkeypatch) -> None:
         return _HttpErrorResponse(400)
 
     with pytest.raises(RuntimeError, match="after 1 attempt"):
-        _fetch_hourly(
+        fetch_open_meteo_hourly(
             endpoint="https://api.open-meteo.com/v1/forecast",
             lat=35.0,
             lon=139.0,

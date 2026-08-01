@@ -534,3 +534,14 @@
 - 変更後検証: 影響範囲の3テストは `55 passed in 5.63s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 特徴量、学習・フォールバック、気象入力、予測値、外部アクセスは変更していない。
+
+## 2026-08-01 — モジュール再編 P2-4: PV配列予測を予測パッケージへ移動
+
+- 目的: 複数PV配列の気象・校正・発電量予測を `app/forecasting/pv_array.py` へ移動した。
+- 変更前検証: `tests/test_pv_array_forecast.py tests/test_external_site_access.py tests/test_energy_model.py` は `70 passed, 1 skipped in 3.04s`。
+- 私的参照の整理: 外部サイト接続テストが `_fetch_hourly` を直接検証していた。Open-Meteoの応答検証・エラー正規化は実際の外部接続契約なので、`fetch_open_meteo_hourly` という公開名と短い英語docstringに置換し、テストを新APIへ向けた。
+- 実装変更: 旧パスは公開型・校正関数・取得関数・予測関数を明示的に再exportする互換モジュールへ置き換えた。エネルギーモデル入口とテストは正規モジュールを使用する。
+- 互換性検証: `tests/test_forecasting_pv_array_compatibility.py` を追加し、全公開記号が旧・新パスで同一であることを確認する。
+- 変更後検証: 影響範囲の4テストは `71 passed, 1 skipped in 3.37s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: provider選択、リトライ、校正係数、PV計算、外部アクセス、本番環境は変更していない。

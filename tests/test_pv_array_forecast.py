@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from app.pv_array_forecast import (
+from app.forecasting.pv_array import (
     PVArrayConfig,
     PvCalibrationInput,
     PvCalibrationPolicy,

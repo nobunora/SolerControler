@@ -46,7 +46,7 @@ from app.forecasting.occupancy import (
     filter_training_load_rows,
     load_occupancy_events_from_env,
 )
-from app.pv_array_forecast import build_pv_array_forecast, load_pv_array_configs
+from app.forecasting.pv_array import build_pv_array_forecast, load_pv_array_configs
 from app.soc_cost_optimizer import (
     DEFAULT_SIGMA_BUCKETS,
     ForecastScenario,
