@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.operations_db import ensure_schema, ingest_monitoring_csvs, open_db
-from app.weekly_backup import create_weekly_diff_backup
+from app.backup.weekly import create_weekly_diff_backup
 
 
 def test_create_weekly_diff_backup(tmp_path: Path) -> None:

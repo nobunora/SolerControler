@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.operations import sqlite as sqlite_ops
-from app.weekly_backup import create_weekly_diff_backup
+from app.backup.weekly import create_weekly_diff_backup
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
