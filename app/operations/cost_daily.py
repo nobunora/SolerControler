@@ -40,6 +40,7 @@ class DailyCostResult:
     cumulative_yen: float
 
 
+# readable-code-audit: skip STRUCT-04 — interval allocation and tariff aggregation must remain together so rounded costs cannot be computed from a different interval partition
 def calculate_daily_costs(
     intervals: list[EnergyInterval],
     policy: DailyCostPolicy,

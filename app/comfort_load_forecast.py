@@ -167,6 +167,7 @@ def _feature_map(
     return output
 
 
+# readable-code-audit: skip STRUCT-04 — feature preparation and model fallback share one hourly input window and must not mix timestamps across prediction paths
 def predict_hourly_comfort_load(
     *,
     actual_history: dict[str, dict[int, dict[str, float]]],

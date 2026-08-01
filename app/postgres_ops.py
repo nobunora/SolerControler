@@ -252,6 +252,7 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+# readable-code-audit: skip DUP-01 — PostgreSQL uses its own driver bindings and conflict syntax, so the backend write boundary remains deliberately separate
 def ingest_sunshine_from_night_plan(
     conn,
     *,

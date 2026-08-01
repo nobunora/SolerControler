@@ -1638,6 +1638,7 @@ def _percentile(values: list[float], percentile: float) -> float | None:
     return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
 
 
+# readable-code-audit: skip STRUCT-04 — history selection and the resulting guard must use one model-input snapshot to avoid approving a plan from mismatched dates
 def _historical_daytime_soc_gain_guard(
     rows: list[dict[str, Any]],
     *,

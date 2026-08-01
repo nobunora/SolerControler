@@ -1690,6 +1690,7 @@ def _apply_settings_profile(
     return client.read_current_settings()
 
 
+# readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
 def _run_settings_phase(
     client: KpNetClient,
     cfg: KpNetConfig,

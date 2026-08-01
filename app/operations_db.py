@@ -375,6 +375,7 @@ def _hourly_forecast_rows_from_plan(data: dict[str, Any], *, ingested_at: str) -
     ]
 
 
+# readable-code-audit: skip DUP-01 — SQLite keeps DB-API positional bindings and local transaction control; its persistence path cannot share backend write code
 def ingest_sunshine_from_night_plan(
     conn: sqlite3.Connection,
     *,

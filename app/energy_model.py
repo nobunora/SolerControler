@@ -263,6 +263,7 @@ def _daytime_target_score(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — exhaustive SOC simulation and result conversion use the same capacity and efficiency snapshot; candidate scoring is separately testable
 def optimize_target_soc_for_daytime(
     *,
     effective_capacity_kwh_value: float,

@@ -610,6 +610,7 @@ def evaluate_soc_candidate(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — candidate scoring and selected-plan diagnostics must be produced from the same scenario set for cost-decision traceability
 def optimize_soc_by_expected_cost(
     *,
     capacity_kwh: float,

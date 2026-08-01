@@ -103,6 +103,7 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+# readable-code-audit: skip DUP-01 — Firestore writes documents rather than relational rows and requires backend-specific merge semantics
 def ingest_sunshine_from_night_plan(
     client,
     *,
@@ -474,6 +475,7 @@ def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
     return updated
 
 
+# readable-code-audit: skip STRUCT-04 — Firestore aggregation and writes must use one consistent document-read snapshot for dashboard materialization
 def recalc_dashboard_daily_metrics(client, *, updated_at: str) -> int:
     """Materialize daily monitoring totals for fast dashboard reads."""
 

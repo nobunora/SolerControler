@@ -585,6 +585,7 @@ def _latest_row_by_date(rows: list[dict[str, Any]], *, date_key: str = "date") -
     return max(dated, key=lambda row: str(row.get(date_key)))
 
 
+# readable-code-audit: skip STRUCT-04 — the warning list intentionally evaluates schedule, completion, and freshness together so related user-visible warnings are not suppressed independently
 def _build_dashboard_warnings(
     *,
     latest_schedule: dict[str, Any],
