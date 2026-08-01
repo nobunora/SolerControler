@@ -451,6 +451,28 @@ def test_recalc_battery_pv_charge_end_soc_uses_latest_solar_charge_sample_per_da
         conn.close()
 
 
+def test_forecast_daily_values_from_plan_prefers_final_pv_contract() -> None:
+    values = ops._forecast_daily_values_from_plan(
+        {
+            "forecast": {"date": " 2026-05-03 ", "sun_hours": 3.5, "temp_c": 22.0},
+            "result": {"final_pv_forecast_source": "physical_pv_forecast"},
+            "pv_array_forecast": {
+                "totals": {"total_kwh": 9.9},
+                "calibration": {"factor": 0.8, "effective_factor": 0.9},
+            },
+            "daytime_soc_optimization": {"hourly_pv_forecast_kwh": {"7": 1.2}},
+        }
+    )
+
+    assert values["forecast_date"] == "2026-05-03"
+    assert values["pv_totals"]["total_kwh"] == 1.2
+    assert values["pv_totals"]["morning_kwh"] == 1.2
+    assert values["pv_totals"]["midday_kwh"] == 0.0
+    assert values["pv_totals"]["evening_kwh"] == 0.0
+    assert values["pv_calibration_factor"] == 0.9
+    assert values["forecast_source"] == "physical_pv_forecast"
+
+
 def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

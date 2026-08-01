@@ -341,6 +341,28 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+def _forecast_daily_values_from_plan(data: dict[str, Any]) -> dict[str, Any]:
+    """Collect the plan values written to one forecast-day database row."""
+    forecast = data.get("forecast", {})
+    forecast = forecast if isinstance(forecast, dict) else {}
+    pv_forecast = data.get("pv_array_forecast", {})
+    pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
+    pv_calibration = pv_calibration if isinstance(pv_calibration, dict) else {}
+    pv_totals = _extract_final_pv_totals_from_plan(data)
+    return {
+        "forecast_date": str(forecast.get("date", "")).strip(),
+        "sun_hours": forecast.get("sun_hours"),
+        "temp_c": forecast.get("temp_c"),
+        "weather_code": forecast.get("weather_code"),
+        "precipitation_sum_mm": forecast.get("precipitation_sum_mm"),
+        "precipitation_probability_mean": forecast.get("precipitation_probability_mean"),
+        "shortwave_radiation_sum_mj_m2": forecast.get("shortwave_radiation_sum_mj_m2"),
+        "pv_totals": pv_totals,
+        "pv_calibration_factor": pv_calibration.get("effective_factor") or pv_calibration.get("factor"),
+        "forecast_source": _extract_final_pv_source_from_plan(data),
+    }
+
+
 def ingest_sunshine_from_night_plan(
     conn: sqlite3.Connection,
     *,
@@ -351,18 +373,8 @@ def ingest_sunshine_from_night_plan(
     if not night_plan_path.exists():
         return
     data = json.loads(night_plan_path.read_text(encoding="utf-8"))
-    forecast = data.get("forecast", {})
-    forecast_date = str(forecast.get("date", "")).strip()
-    tomorrow_hours = forecast.get("sun_hours")
-    tomorrow_temp = forecast.get("temp_c")
-    tomorrow_weather_code = forecast.get("weather_code")
-    tomorrow_precip_sum = forecast.get("precipitation_sum_mm")
-    tomorrow_precip_probability = forecast.get("precipitation_probability_mean")
-    tomorrow_shortwave = forecast.get("shortwave_radiation_sum_mj_m2")
-    pv_forecast = data.get("pv_array_forecast", {})
-    pv_totals = _extract_final_pv_totals_from_plan(data)
-    pv_calibration = pv_forecast.get("calibration", {}) if isinstance(pv_forecast, dict) else {}
-    forecast_source = _extract_final_pv_source_from_plan(data)
+    daily_values = _forecast_daily_values_from_plan(data)
+    forecast_date = daily_values["forecast_date"]
     lat = float(env("FORECAST_LATITUDE", default="35.67452"))
     lon = float(env("FORECAST_LONGITUDE", default="139.48216"))
 
@@ -396,25 +408,18 @@ def ingest_sunshine_from_night_plan(
             """,
             (
                 forecast_date,
-                float(tomorrow_hours) if tomorrow_hours is not None else None,
-                float(tomorrow_temp) if tomorrow_temp is not None else None,
-                to_int(tomorrow_weather_code),
-                to_float(tomorrow_precip_sum),
-                to_float(tomorrow_precip_probability),
-                to_float(tomorrow_shortwave),
-                to_float(pv_totals.get("total_kwh") if isinstance(pv_totals, dict) else None),
-                to_float(pv_totals.get("morning_kwh") if isinstance(pv_totals, dict) else None),
-                to_float(pv_totals.get("midday_kwh") if isinstance(pv_totals, dict) else None),
-                to_float(pv_totals.get("evening_kwh") if isinstance(pv_totals, dict) else None),
-                to_float(
-                    (
-                        pv_calibration.get("effective_factor")
-                        if isinstance(pv_calibration, dict)
-                        else None
-                    )
-                    or (pv_calibration.get("factor") if isinstance(pv_calibration, dict) else None)
-                ),
-                forecast_source,
+                float(daily_values["sun_hours"]) if daily_values["sun_hours"] is not None else None,
+                float(daily_values["temp_c"]) if daily_values["temp_c"] is not None else None,
+                to_int(daily_values["weather_code"]),
+                to_float(daily_values["precipitation_sum_mm"]),
+                to_float(daily_values["precipitation_probability_mean"]),
+                to_float(daily_values["shortwave_radiation_sum_mj_m2"]),
+                to_float(daily_values["pv_totals"].get("total_kwh") if isinstance(daily_values["pv_totals"], dict) else None),
+                to_float(daily_values["pv_totals"].get("morning_kwh") if isinstance(daily_values["pv_totals"], dict) else None),
+                to_float(daily_values["pv_totals"].get("midday_kwh") if isinstance(daily_values["pv_totals"], dict) else None),
+                to_float(daily_values["pv_totals"].get("evening_kwh") if isinstance(daily_values["pv_totals"], dict) else None),
+                to_float(daily_values["pv_calibration_factor"]),
+                daily_values["forecast_source"],
                 ingested_at,
             ),
         )
