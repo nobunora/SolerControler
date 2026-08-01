@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from app.utils import parse_csv_float
+from app.parsing.numbers import parse_csv_float
 
 try:
     from sklearn.ensemble import HistGradientBoostingRegressor

@@ -16,7 +16,7 @@ from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 from app.configuration.environment import env_bool, env_float, env_float_clamped
-from app.utils import to_float
+from app.parsing.numbers import to_float
 
 
 # 夜間の放射量ノイズを物理モデルへ入れず、蓄電池の昼間運用窓とも揃える。

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from app.utils import to_float
+from app.parsing.numbers import to_float
 
 
 @dataclass(frozen=True)

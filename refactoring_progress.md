@@ -679,6 +679,14 @@
 - 変更後検証: `tests/test_utils.py tests/test_forced_charge_settings.py tests/test_operations_db.py tests/test_configuration_environment.py` は `47 passed in 1.17s`。`compileall` と `git diff --check` も成功した（改行コード警告のみ）。
 - 安全性: `.env` の値は読み出しておらず、外部サービス・本番環境は実行していない。旧APIのオブジェクト同一性を互換性テストで確認した。
 
+## 2026-08-01 — モジュール再編 P6-13: 外部数値解析ヘルパーの分離
+
+- 目的: `to_float`、`to_int`、`parse_csv_float` の所有先を `app/parsing/numbers.py` に統一した。
+- 変更前検証: P6-12完了時点の作業ツリーはクリーンで、既存のユーティリティ・予測・DB境界を基準にした。
+- 実装変更: 数値変換ロジックとCSV数値パターンを新モジュールへ移動した。`app/utils.py` は環境ヘルパーと互換再exportだけを持つ入口へ縮小し、アプリ・スクリプト内部の数値関数importを正規パスへ更新した。旧・新関数の同一性テストを追加した。
+- 変更後検証: `tests/test_utils.py tests/test_consumption_forecast.py tests/test_pv_array_forecast.py tests/test_operations_db.py tests/test_parsing_numbers.py` は `56 passed in 5.23s`。初回の末尾空行を `git diff --check` で検出して除去後、`compileall` と差分検査は成功した。
+- 安全性: 入力変換の条件分岐・戻り値・例外処理は変更していない。外部サービスと本番環境は実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。

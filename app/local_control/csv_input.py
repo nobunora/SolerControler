@@ -7,7 +7,7 @@ from typing import Iterable
 
 from app.local_control.config import AppConfig
 from app.local_control.models import MonitoringMetrics
-from app.utils import parse_csv_float
+from app.parsing.numbers import parse_csv_float
 
 
 def _read_rows(csv_path: Path) -> list[dict[str, str]]:

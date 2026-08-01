@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 from app.constants import SOCBounds, validate_soc_percent
 from app.kpnet import build_settings_intent
 from app.configuration.environment import env, env_bool, load_dotenv_if_present
-from app.utils import parse_csv_float, to_float
+from app.parsing.numbers import parse_csv_float, to_float
 
 LOGGER = logging.getLogger(__name__)
 

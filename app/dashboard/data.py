@@ -15,7 +15,7 @@ from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
 from app.dashboard.repositories import DashboardLoadRequest
 from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourly_actuals
 from app.tariff import tiered_day_cost
-from app.utils import to_float
+from app.parsing.numbers import to_float
 
 
 _SETTINGS_COMPLETED_STATUSES = {"applied", "skipped-no-change", "skipped-no-charge"}

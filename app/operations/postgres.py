@@ -26,7 +26,7 @@ from app.operations.domain import (
     tiered_increment_cost as _tiered_day_increment_cost,
 )
 from app.configuration.environment import env
-from app.utils import to_float
+from app.parsing.numbers import to_float
 
 
 def _conninfo_from_env() -> str:

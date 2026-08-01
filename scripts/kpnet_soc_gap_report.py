@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from app.operations.firestore import open_firestore
 from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
-from app.utils import parse_csv_float
+from app.parsing.numbers import parse_csv_float
 
 
 JST = ZoneInfo("Asia/Tokyo")

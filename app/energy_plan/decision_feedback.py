@@ -10,7 +10,7 @@ from typing import Any
 
 from app.energy_plan.soc_cost import SocCostModel
 from app.configuration.environment import env_bool, env_float
-from app.utils import parse_csv_float, to_float
+from app.parsing.numbers import parse_csv_float, to_float
 
 
 MODEL_VERSION = 1
