@@ -20,6 +20,7 @@ from app.night_plan_archive import (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Archive full night_charge_plans detail JSON to GCS.")
+    # Archive changes are opt-in because this command can affect durable remote history.
     parser.add_argument("--apply", action="store_true", help="Write Firestore/GCS changes. Default is dry-run.")
     parser.add_argument("--include-latest", action="store_true", help="Also rewrite night_charge_plans/latest.")
     parser.add_argument("--rebuild-summary", action="store_true", help="Rebuild Firestore summary fields from archived detail.")

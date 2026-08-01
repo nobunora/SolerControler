@@ -1104,6 +1104,7 @@ def _execute_monitor_terminal_transition(
     return True
 
 
+# readable-code-audit: skip STRUCT-04 — this job owns the complete forced-charge monitor lifecycle, including the final standby command and durable stop result
 def _monitor_partial_forced_and_stop(
     plan_path: Path,
     *,

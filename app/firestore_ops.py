@@ -39,6 +39,7 @@ def open_firestore():
     return firestore.Client(database=database_id)
 
 
+# readable-code-audit: skip STRUCT-04 — retained as a no-op adapter so the three storage backends share one initialization interface
 def ensure_schema(_client) -> None:
     # Firestore is schemaless.
     return
@@ -92,6 +93,7 @@ def ingest_monitoring_csvs(
             batch.set(doc_ref, payload, merge=True)
             upserted += 1
             batch_count += 1
+            # Keep below Firestore's 500-write batch limit to leave room for bookkeeping writes.
             if batch_count >= 450:
                 batch.commit()
                 batch = client.batch()

@@ -18,6 +18,7 @@ class EnergyInterval:
 
 @dataclass(frozen=True)
 class DailyCostPolicy:
+    # tiered モードで使う単価・境界は Night8 の契約値を初期値にする。flat モードでは日中単価だけを使う。
     tariff_mode: str = "flat"
     day_rate_yen_per_kwh: float = 0.0
     day_start_hhmm: str = "07:00"

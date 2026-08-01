@@ -31,8 +31,10 @@ class DailyWindow:
         end = minute_of_day(self.end)
         current = minute_of_day(value)
         if start == end:
+            # Equal endpoints represent a full-day window, not an empty interval.
             return True
         if start < end:
             return start <= current < end
+        # A window crossing midnight is split into its late-day and early-day parts.
         return current >= start or current < end
 

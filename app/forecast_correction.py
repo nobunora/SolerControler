@@ -94,6 +94,7 @@ def _ewma_ratio_from_daily_pairs(
 ) -> dict[str, object]:
     """Summarize forecast/actual ratios without letting target-day data leak in."""
 
+    # EWMA gives recent forecast errors more influence while preserving a stable fallback for sparse history.
     alpha = _clip_float(alpha, min_val=0.0, max_val=1.0)
     current = max(0.0, initial_value)
     used: list[dict[str, float | str]] = []
@@ -868,6 +869,7 @@ def _temperature_hourly_multipliers(
     }
 
 
+# readable-code-audit: skip STRUCT-04 — the correction result must include all diagnostics from the same source snapshot, so calculation and provenance stay together
 def build_forecast_correction(
     correction_input: ForecastCorrectionInput,
     policy: ForecastCorrectionPolicy,

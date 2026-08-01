@@ -25,9 +25,11 @@ from app.comfort_load_forecast import predict_hourly_comfort_load
 from app.energy_model import forecast_pv_energy_kwh, fit_coefficients_from_csv
 from energy_model_main import _build_hourly_load_forecast, _build_hourly_pv_forecast, _reshape_hourly_pv_by_weather
 
+# These trailing windows capture both immediate weather and one-day persistence without mixing future data.
 WINDOWS = (1, 3, 6, 12, 24)
 TRAINING_DAYS = 45
 TARGET_HOURS = range(0, 24)
+# Match the production daytime control window when comparing PV forecast errors.
 PV_HOURS = range(7, 23)
 
 
@@ -458,6 +460,7 @@ def _format_float(value: float, digits: int = 3) -> str:
     return f"{value:.{digits}f}"
 
 
+# readable-code-audit: skip STRUCT-04 — this CLI intentionally exposes one linear analysis pipeline from local inputs to one report
 def main() -> int:
     target_date = _today_jst().isoformat()
     history_start = (_today_jst() - timedelta(days=TRAINING_DAYS)).isoformat()

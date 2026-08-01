@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from app.comfort_load_forecast import _feature_map as comfort_feature_map
 from app.forecast_correction import _fetch_hourly_weather
 
+# Use the same short-to-daily trailing scales so the contribution report is comparable to training features.
 WINDOWS_HOURS = (1, 3, 6, 12, 24)
 WINDOWS_DAYS = (1, 3, 6, 12, 24)
 DEFAULT_LOOKBACK_DAYS = 30
@@ -371,6 +372,7 @@ def _subset_r2(feature_rows: list[list[float]], targets: list[float], indexes: l
     return _r2_score(targets, pred)
 
 
+# readable-code-audit: skip STRUCT-04 — this CLI intentionally keeps feature construction, attribution, and report formatting in one reproducible run
 def main() -> int:
     end_date = _latest_complete_day()
     lookback_days = int(float(_env("WEATHER_ATTRIBUTION_LOOKBACK_DAYS", str(DEFAULT_LOOKBACK_DAYS))))

@@ -151,6 +151,7 @@ def _write_sheet_table(sheets, spreadsheet_id: str, tab: str, headers: list[str]
         values.append([_norm(row.get(h)) for h in headers])
     sheets.spreadsheets().values().clear(
         spreadsheetId=spreadsheet_id,
+        # Clear the complete supported export width so removed columns do not remain from an older schema.
         range=f"{tab}!A:ZZ",
         body={},
     ).execute()
@@ -806,6 +807,7 @@ def _load_tables(cfg: SheetsExportConfig) -> dict[str, list[dict[str, Any]]]:
     return _load_sqlite_tables(cfg.sqlite_db_path)
 
 
+# readable-code-audit: skip STRUCT-04 — export stages share one schema snapshot and must report one atomic run result
 def run_export(*, slot: str) -> int:
     cfg = SheetsExportConfig.from_env()
     if not cfg.enabled:

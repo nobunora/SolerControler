@@ -27,6 +27,7 @@ class ForcedChargeSettings:
     @classmethod
     def from_env(cls) -> "ForcedChargeSettings":
         return cls(
+            # The 07:00 cutoff matches the start of the daytime discharge window.
             cutoff=parse_hhmm(
                 os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00",
                 name="ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
@@ -35,6 +36,7 @@ class ForcedChargeSettings:
                 100.0,
                 max(0.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=30.0)),
             ),
+            # Never poll faster than one minute; this protects the remote service and still tracks SOC closely.
             poll_interval_seconds=max(60, env_int("ADJUST03_FORCE_MONITOR_POLL_SECONDS", default=180)),
             retry_attempts=max(1, env_int("ADJUST03_SOC_RETRY_ATTEMPTS", default=3)),
             retry_delay_seconds=max(0.0, env_float("ADJUST03_SOC_RETRY_DELAY_SECONDS", default=5.0)),
@@ -60,6 +62,7 @@ class ForcedChargeSettings:
             completion_confirm_before_minutes=max(
                 0, env_int("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", default=5)
             ),
+            # Sensor values are rounded, so a small change must not be treated as real charging progress.
             no_charge_percent_epsilon=max(
                 0.0, env_float("ADJUST03_NO_CHARGE_PERCENT_EPSILON", default=0.5)
             ),

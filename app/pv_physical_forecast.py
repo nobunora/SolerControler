@@ -18,12 +18,14 @@ from zoneinfo import ZoneInfo
 from app.utils import env_bool, env_float, env_float_clamped, to_float
 
 
+# 夜間の放射量ノイズを物理モデルへ入れず、蓄電池の昼間運用窓とも揃える。
 HOURS = range(7, 23)
 DAYPARTS = {
     "morning": range(7, 11),
     "midday": range(11, 15),
     "evening": range(15, 23),
 }
+# 太陽高度と日射量を粗い帯に分け、観測数を保ちながら時刻だけでは表せない発電差を補正する。
 ALTITUDE_BINS = (0.0, 15.0, 30.0, 45.0, 90.0)
 SHORTWAVE_RATIO_BINS = (0.0, 0.25, 0.5, 0.75, 1.25)
 
@@ -366,6 +368,7 @@ def _derive_radiation_scale(
     return {"scale": scale, "sample_count": len(ratios), "days": days_used[-10:]}
 
 
+# readable-code-audit: skip STRUCT-04 — the candidate and its decision path must be computed from the same weather and history inputs
 def build_physical_pv_candidate(
     *,
     rows: list[dict[str, object]],

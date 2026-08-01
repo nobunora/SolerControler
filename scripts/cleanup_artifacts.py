@@ -14,6 +14,7 @@ from app.artifact_cleanup import collect_cleanup_candidates, delete_candidates
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prune regenerable local artifacts without deleting source data.")
     parser.add_argument("--artifacts-dir", type=Path, default=Path("artifacts"))
+    # Dry-run is the default so an operator can inspect candidates before deleting anything.
     parser.add_argument("--apply", action="store_true", help="Delete files. Default is dry-run.")
     parser.add_argument("--png-days", type=int, default=14)
     parser.add_argument("--temporary-days", type=int, default=14)

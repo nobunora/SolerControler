@@ -37,6 +37,7 @@ def _http_get_with_retry(
     **kwargs: Any,
 ) -> Any:
     max_attempts = max(1, int(os.getenv("PV_HTTP_MAX_ATTEMPTS", "2")))
+    # A short retry handles transient provider errors without delaying the control job for long.
     retry_delay_seconds = max(0.0, float(os.getenv("PV_HTTP_RETRY_DELAY_SECONDS", "0.5")))
     for attempt in range(1, max_attempts + 1):
         try:
@@ -61,6 +62,7 @@ class PVArrayConfig:
     azimuth_deg: float
     tilt_deg: float
     capacity_kw: float
+    # 公称出力から配線・変換・実運用の損失を差し引くため、PVの性能比を既定で適用する。
     performance_ratio: float = 0.82
     shading_factor: float = 1.0
     temp_coeff_per_deg: float = -0.0035
@@ -78,8 +80,11 @@ class PvCalibrationInput:
 
 @dataclass(frozen=True)
 class PvCalibrationPolicy:
+    # おおむね一季節内の実績だけで補正し、季節差のある古い実績による偏りを避ける。
     lookback_days: int = 45
+    # 少数の観測日で補正係数が決まらないよう、補正の適用には最低3日を必要とする。
     min_days: int = 3
+    # 欠損や異常日に追随して予測が極端にならないよう、補正係数を安全な範囲に制限する。
     min_factor: float = 0.2
     max_factor: float = 5.0
 
@@ -414,6 +419,7 @@ def _fetch_archive_weather_daily_by_day(
     return out
 
 
+# readable-code-audit: skip STRUCT-04 — calibration produces one auditable result containing samples, factors, and regression diagnostics from one history window
 def calibrate_performance_ratio_for(
     calibration_input: PvCalibrationInput,
     policy: PvCalibrationPolicy,

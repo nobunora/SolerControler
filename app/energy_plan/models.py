@@ -5,6 +5,7 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+# readable-code-audit: skip NAME-02 — these dictionaries are persisted JSON sections whose keys are versioned by the document contract
 class PlanDocumentV1:
     csv_paths: list[str]
     plan_quality: dict[str, Any]

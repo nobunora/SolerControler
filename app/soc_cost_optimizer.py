@@ -205,6 +205,7 @@ class SocCostOptimizationResult:
     forecast_scenarios: tuple[ForecastScenario, ...]
 
 
+# 正規分布を6区間で近似し、極端な予測誤差も候補比較に含めながら計算量を一定に保つ。
 DEFAULT_SIGMA_BUCKETS: tuple[SigmaBucket, ...] = (
     SigmaBucket("<-2sigma", 0.0228, -2.0),
     SigmaBucket("-2_to_-1sigma", 0.1359, -1.5),

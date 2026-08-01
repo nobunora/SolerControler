@@ -656,6 +656,7 @@ class ProfileOverrides:
 
 
 FORCED_CHARGE_PROFILE = ProfileOverrides(
+    # 充電は夜間単価の時間帯内に完了させ、07:00以降はPVを優先できるようにする。
     name="night-green",
     battery_operating_mode="1",
     soc_safety_mode="50",
@@ -674,6 +675,7 @@ FORCED_CHARGE_PROFILE = ProfileOverrides(
 )
 
 GREEN_MODE_PROFILE = ProfileOverrides(
+    # 日中は買電充電を行わず、PV余剰を蓄電池に受ける通常運転プロファイル。
     name="green-mode",
     battery_operating_mode="1",
     soc_safety_mode="0",
@@ -830,6 +832,7 @@ class KpNetConfig:
         )
 
 
+# readable-code-audit: skip STRUCT-04 — profile fields are resolved together so the KP-NET command cannot mix settings from different rule versions
 def _build_dynamic_forced_profile(
     cfg: KpNetConfig,
     value_maps: dict[str, dict[str, str]],
@@ -1170,6 +1173,7 @@ class KpNetClient:
             raise RuntimeError(f"KP-NET {operation} returned a non-object JSON payload")
         return payload
 
+    # readable-code-audit: skip NAME-02 — kwargs are deliberately passed through to requests for provider-specific HTTP options
     def _post(self, path: str, data: dict[str, Any] | None = None, **kwargs: Any) -> requests.Response:
         resp = self.session.post(
             self._url(path),

@@ -13,7 +13,9 @@ except Exception:  # pragma: no cover - optional runtime dependency guard
 
 
 MODEL_NAME = "adaptive_comfort_thermal_inertia_hgb_v1"
+# 直近の天気だけでなく、短・中・日周期の熱の残り方を特徴量にして、建物の熱慣性を表す。
 THERMAL_HALF_LIVES = (3, 12, 24)
+# 1週間分を上限にして、季節の変化には追随しつつ古い居住パターンを過度に混ぜない。
 ADAPTIVE_LOOKBACK_HOURS = 168
 
 FEATURE_NAMES = [

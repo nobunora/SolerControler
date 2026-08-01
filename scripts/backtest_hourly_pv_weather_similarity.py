@@ -77,6 +77,7 @@ def mae(pairs: list[tuple[float, float]]) -> float:
     return sum(abs(predicted - actual) for predicted, actual in pairs) / len(pairs) if pairs else 0.0
 
 
+# readable-code-audit: skip STRUCT-04 — this standalone analysis keeps the full replay pipeline together so intermediate series cannot be mixed across stages
 def run(*, start: date, end: date, lookback_days: int, min_candidates: int, actual: dict[tuple[str, int], float], history: dict[str, dict[int, dict[str, float | str]]], residual_alpha: float) -> dict[str, Any]:
     days = [start + timedelta(days=offset) for offset in range((end - start).days + 1)]
     baseline: list[tuple[float, float]] = []

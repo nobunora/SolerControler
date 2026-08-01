@@ -1,5 +1,7 @@
+    // 画面の既定は1請求月、分割取得は応答量を抑えつつ長期間表示を可能にする単位。
     const WINDOW_DAYS = 31;
     const CHUNK_DAYS = 120;
+    // バックエンドと同じ既定締め日を使い、集計月の境界が画面ごとにずれないようにする。
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
     const { allocateNightGridCharge, plannedBatteryValues } = window.DashboardCalculations;
     const dashboardDates = window.DashboardDates;
@@ -95,6 +97,7 @@
     function buildDateRange(startDate, endDate) {
       const out = [];
       let cur = startDate;
+      // 異常な日付入力でも無限ループにせず、通常の利用期間を十分に超える上限で打ち切る。
       for (let i = 0; i < 5000; i += 1) {
         out.push(cur);
         if (cur >= endDate) break;
@@ -305,6 +308,7 @@
       if (!root) return;
       const sch = store.latestSchedule || {};
       const chargeStart = minuteOf(sch.charge_start_time, null);
+      // All fallback times mirror the backend's 23:00-07:00 night and 07:00-23:00 day windows.
       const chargeEnd = minuteOf(sch.charge_end_time, minuteOf("07:00", 420));
       const dayStart = minuteOf(sch.day_discharge_window_start, minuteOf("07:00", 420));
       const dayEnd = minuteOf(sch.day_discharge_window_end, minuteOf("23:00", 1380));

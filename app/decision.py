@@ -10,6 +10,8 @@ def decide_battery_setting(
     cfg: AppConfig,
 ) -> DesiredBatterySetting:
     latest_soc = metrics.latest_soc
+    # Treat only a very small fraction of the low-sun threshold as "no sun";
+    # the bounds keep this branch stable when configuration is unusually small or large.
     near_zero_sun_threshold_h = max(0.05, min(0.5, cfg.forecast_low_hours * 0.2))
 
     decision: DesiredBatterySetting

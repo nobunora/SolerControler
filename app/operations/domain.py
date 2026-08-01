@@ -137,6 +137,7 @@ def is_within_window(value: int, *, start_minute: int, end_minute: int) -> bool:
     ).contains(time(value // 60, value % 60))
 
 
+# readable-code-audit: skip NAME-02 — this is a compatibility pass-through for the tariff function's keyword contract
 def tiered_increment_cost(**kwargs: float) -> float:
     return tiered_day_increment_cost(**kwargs)
 

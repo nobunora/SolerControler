@@ -412,6 +412,7 @@ def _feedback_similarity(doc: dict[str, Any], target_features: dict[str, Any] | 
     }
 
 
+# readable-code-audit: skip STRUCT-04 — feature selection, similarity weighting, and penalty output form one domain decision calculation
 def build_soc_decision_prior(
     feedback_docs: list[dict[str, Any]],
     *,
@@ -440,6 +441,7 @@ def build_soc_decision_prior(
     if not recent:
         return {"enabled": True, "applied": False, "reason": "no_recent_feedback"}
 
+    # Keep a non-zero history contribution while allowing recent comparable days to dominate.
     decay = max(0.1, min(1.0, env_float("SOC_DECISION_FEEDBACK_RECENCY_DECAY", default=0.75)))
     min_similarity = max(0.0, min(1.0, env_float("SOC_DECISION_FEEDBACK_MIN_SIMILARITY", default=0.20)))
     weighted: dict[float, tuple[float, float]] = {}

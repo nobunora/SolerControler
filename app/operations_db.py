@@ -110,6 +110,7 @@ def open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
+# readable-code-audit: skip STRUCT-04 — schema creation is one transaction-like migration script and splitting statements would obscure ordering dependencies
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """

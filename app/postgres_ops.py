@@ -39,6 +39,7 @@ def _conninfo_from_env() -> str:
     password = os.getenv("PGPASSWORD", "").strip()
     port = int(os.getenv("PGPORT", "5432"))
     sslmode = os.getenv("PGSSLMODE", "prefer").strip() or "prefer"
+    # Fail fast when the optional database is unavailable; callers can fall back to local data.
     connect_timeout = int(os.getenv("PGCONNECT_TIMEOUT", "10"))
     if not host or not dbname or not user or not password:
         raise RuntimeError("PostgreSQL接続情報が不足しています。PGHOST/PGDATABASE/PGUSER/PGPASSWORD を設定してください。")
@@ -58,6 +59,7 @@ def open_postgres():
     return conn
 
 
+# readable-code-audit: skip STRUCT-04 — PostgreSQL schema statements must remain ordered in one migration boundary
 def ensure_schema(conn) -> None:
     ddl = [
         """

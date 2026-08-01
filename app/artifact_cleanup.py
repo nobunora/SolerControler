@@ -102,6 +102,7 @@ def _csv_month_key(path: Path) -> str:
 def collect_cleanup_candidates(
     artifacts_dir: Path,
     *,
+    # 再生成可能な診断物は2週間、再現に時間が掛かるリプレイ結果は1か月残して調査可能性を保つ。
     png_days: int = 14,
     temporary_days: int = 14,
     replay_output_days: int = 30,

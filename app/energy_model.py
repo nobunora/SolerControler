@@ -245,8 +245,10 @@ def optimize_target_soc_for_daytime(
     hourly_load_kwh: dict[int, float],
     hourly_pv_kwh: dict[int, float],
     sunset_hour: int,
+    # 1%刻みなら探索の粒度と実行時間の釣合いがよく、設定SOCの過度な丸めも避けられる。
     soc_step_percent: float = 1.0,
     target_peak_soc_percent: float = 99.0,
+    # 計測・予測の微小誤差を運用目標の未達と誤判定しないための許容差。
     buy_tolerance_kwh: float = 0.05,
     sell_tolerance_kwh: float = 0.10,
     max_target_soc_percent: float = 100.0,

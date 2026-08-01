@@ -170,6 +170,7 @@ class ChargeMonitorProgress:
             and self.previous_soc_percent is not None
             and soc_percent < target_soc_percent - hysteresis_percent
         ):
+            # Reapply only after repeated lack of progress; one flat reading can be normal sensor noise.
             if soc_percent <= self.previous_soc_percent + reapply_policy.min_soc_delta_percent:
                 stagnant_polls += 1
             else:
@@ -250,6 +251,7 @@ def decide_transition(
             return _stop(ChargeState.FAILED_COMMAND, "forced_charge_confirm_failed")
         return ChargeTransition(state, (), "awaiting_forced_charge_confirmation")
     if state is ChargeState.MONITORING:
+        # Hysteresis prevents an SOC value moving by a rounding unit from ending the charge too early.
         threshold = max(0.0, policy.target_soc_percent - policy.hysteresis_percent)
         if observation.soc_percent is not None and observation.soc_percent >= threshold:
             return _stop(ChargeState.COMPLETED_TARGET, "target_reached")

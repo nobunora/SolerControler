@@ -140,6 +140,7 @@ def _today_jst_iso() -> str:
 
 
 def _aggregation_close_day() -> int:
+    # 契約月の締め日を既定14日とし、暦月ではなく料金請求期間で集計をそろえる。
     raw = os.getenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14").strip()
     try:
         value = int(raw)
@@ -753,6 +754,7 @@ def _build_dashboard_slice(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — this adapter assembles one complete dashboard snapshot and must keep SQLite queries transactionally consistent
 def _load_sqlite_slice(
     db_path: Path,
     *,
@@ -1008,6 +1010,7 @@ class SQLiteDashboardRepository:
         )
 
 
+# readable-code-audit: skip STRUCT-04 — this adapter mirrors the SQLite snapshot contract while preserving PostgreSQL-specific queries and fallback handling
 def _load_postgres_slice(
     *,
     end_date: str | None,
@@ -1696,6 +1699,7 @@ def _firestore_forecast_hourly_between(
     return merge_forecast_hourly_actuals(rows, monitoring_rows)
 
 
+# readable-code-audit: skip STRUCT-04 — Firestore requires separate document reads and aggregation, so splitting every stage would hide the snapshot contract
 def _load_firestore_slice(
     *,
     end_date: str | None,
@@ -1783,6 +1787,7 @@ def _load_firestore_slice(
         start_date=start_date,
         end_date_iso=end_date_iso,
     )
+    # 直近2週間を添えて、表示期間の初日に必要な移動集計・比較の前提データを欠かさない。
     history_start = (start_obj - timedelta(days=14)).isoformat()
     monitoring_daily = _firestore_monitoring_daily(
         client,

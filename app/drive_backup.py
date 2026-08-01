@@ -46,6 +46,7 @@ IGNORED_FILE_NAMES = {
     "devserver.err.log",
 }
 
+# These files are reproducible or transient and would make backups large without aiding recovery.
 IGNORED_SUFFIXES = {".pyc", ".pyo", ".log", ".tmp", ".bak"}
 
 SOURCE_BACKUP_NAME = "source.zip"

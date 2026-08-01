@@ -489,6 +489,7 @@ $commonEnv = @(
     "KP_DYNAMIC_MODE_SWITCH_BY_TIME=true",
     "KP_OPERATION_CONDITIONS_PATH=config/operation_conditions.json",
     "KP_NIGHT_PLAN_PATH=artifacts/night_charge_plan.json",
+    # 本番ジョブの運用既定値をここへ集約し、デプロイごとに同じ設備・契約前提を渡せるようにする。
     "KP_DEFAULT_CHARGE_POWER_KW=4.0",
     "KP_GREEN_MODE_MAX_CHARGE_PERCENT=50",
     "KP_NIGHT_CHARGE_WINDOW_START=23:00",
