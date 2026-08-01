@@ -30,7 +30,7 @@ from app.forecasting.correction import (
     _temperature_hourly_multipliers,
     build_forecast_correction,
 )
-from energy_model_main import (
+from app.energy_plan.workflow import (
     _active_constraint_names,
     _archive_weather_history,
     _annotate_pv_headroom_guard_policy,
@@ -196,7 +196,7 @@ def test_archive_weather_history_preserves_partial_chunks_and_diagnostics(monkey
             return _WeatherResponse(_daily_weather_payload(["2026-06-01", "2026-06-02"]))
         raise requests.Timeout("archive timeout")
 
-    monkeypatch.setattr("energy_model_main.requests.get", fake_get)
+    monkeypatch.setattr("app.energy_plan.workflow.requests.get", fake_get)
     rows = [
         {"dt": datetime.fromisoformat("2026-06-01T00:00:00")},
         {"dt": datetime.fromisoformat("2026-06-03T00:00:00")},
@@ -218,7 +218,7 @@ def test_archive_weather_history_reuses_cached_days(monkeypatch, tmp_path) -> No
         {"dt": datetime.fromisoformat("2026-06-02T00:00:00")},
     ]
     monkeypatch.setattr(
-        "energy_model_main.requests.get",
+        "app.energy_plan.workflow.requests.get",
         lambda *args, **kwargs: _WeatherResponse(_daily_weather_payload(["2026-06-01", "2026-06-02"])),
     )
     first = _archive_weather_history(rows, lat=35.0, lon=139.0, timezone="Asia/Tokyo")
@@ -226,7 +226,7 @@ def test_archive_weather_history_reuses_cached_days(monkeypatch, tmp_path) -> No
     def unexpected_get(*args, **kwargs):
         raise AssertionError("cache hit must not call the API")
 
-    monkeypatch.setattr("energy_model_main.requests.get", unexpected_get)
+    monkeypatch.setattr("app.energy_plan.workflow.requests.get", unexpected_get)
     second = _archive_weather_history(rows, lat=35.0, lon=139.0, timezone="Asia/Tokyo")
 
     assert first.received_dates == second.received_dates
@@ -252,7 +252,7 @@ def test_archive_weather_history_classifies_fetch_failures(
             raise failure
         return failure
 
-    monkeypatch.setattr("energy_model_main.requests.get", fake_get)
+    monkeypatch.setattr("app.energy_plan.workflow.requests.get", fake_get)
     rows = [{"dt": datetime.fromisoformat("2026-06-01T00:00:00")}]
 
     result = _archive_weather_history(rows, lat=35.0, lon=139.0, timezone="Asia/Tokyo")

@@ -602,3 +602,11 @@
 - 変更後検証: 影響範囲の4テストは `8 passed in 2.39s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 入力JSONの形式、必須値検証、夜間計画の値、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P3-5: エネルギー計画ワークフローをパッケージへ移動
+
+- 目的: CSV・気象履歴・予測・補正・SOC最適化・JSON出力を結合する計画ワークフローを `app/energy_plan/workflow.py` へ移し、ルート `energy_model_main.py` を起動専用にした。
+- 変更前検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_output.py tests/test_energy_plan_document.py` は `85 passed in 2.65s`。
+- テスト境界: 二つの既存テストと分析スクリプトはルート入口の私的helperを参照していた。入口を互換実装にしないため、これらを正規ワークフローモジュールへ向けた。Cloud Jobが実行する `energy_model_main.py` のファイル名・終了コード契約は薄いラッパーで維持する。
+- 変更後検証: 同じ対象テストは `85 passed in 3.06s`。計画指定の `compileall` と `git diff --check` も成功した。
+- 安全性: 計画値、SOC・料金計算、予測API条件、保存JSON、Cloud Job実行、本番環境は変更していない。

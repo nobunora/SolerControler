@@ -9,7 +9,7 @@ import pytest
 from app.forecasting.consumption import ConsumptionForecast
 from app.energy_plan.energy_model import EnergyModelCoefficients
 from app.energy_plan.soc_cost import PvForecastUncertainty
-from energy_model_main import (
+from app.energy_plan.workflow import (
     ConsumptionForecastBundle,
     EnergyModelConfig,
     EnergyModelContext,
@@ -89,16 +89,16 @@ def test_load_execution_context_preserves_loaded_values(
     ]
     forecast = {"date": "2026-07-17", "sun_hours": 8.0, "temp_c": 30.0}
     monkeypatch.setattr(
-        "energy_model_main._csv_paths_from_env_or_latest", lambda _: [csv_path]
+        "app.energy_plan.workflow._csv_paths_from_env_or_latest", lambda _: [csv_path]
     )
-    monkeypatch.setattr("energy_model_main._read_rows", lambda _: rows)
-    monkeypatch.setattr("energy_model_main.fit_coefficients_from_csv", lambda _: coefficients)
+    monkeypatch.setattr("app.energy_plan.workflow._read_rows", lambda _: rows)
+    monkeypatch.setattr("app.energy_plan.workflow.fit_coefficients_from_csv", lambda _: coefficients)
     monkeypatch.setattr(
-        "energy_model_main._historical_profile",
+        "app.energy_plan.workflow._historical_profile",
         lambda _: {"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
     )
-    monkeypatch.setattr("energy_model_main._forecast_from_env_or_api", lambda **_: forecast)
-    monkeypatch.setattr("energy_model_main.load_occupancy_events_from_env", lambda: [])
+    monkeypatch.setattr("app.energy_plan.workflow._forecast_from_env_or_api", lambda **_: forecast)
+    monkeypatch.setattr("app.energy_plan.workflow.load_occupancy_events_from_env", lambda: [])
 
     context = _load_execution_context(EnergyModelConfig.from_env())
 
@@ -162,19 +162,19 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
         {"dt": datetime(2026, 7, 15, 12, 0), "load": 3.0, "pv": 1.0, "soc": 50.0}
     ]
     monkeypatch.setattr(
-        "energy_model_main._csv_paths_from_env_or_latest", lambda _: [tmp_path / "x.csv"]
+        "app.energy_plan.workflow._csv_paths_from_env_or_latest", lambda _: [tmp_path / "x.csv"]
     )
-    monkeypatch.setattr("energy_model_main._read_rows", lambda _: rows)
-    monkeypatch.setattr("energy_model_main.fit_coefficients_from_csv", lambda _: _coefficients())
+    monkeypatch.setattr("app.energy_plan.workflow._read_rows", lambda _: rows)
+    monkeypatch.setattr("app.energy_plan.workflow.fit_coefficients_from_csv", lambda _: _coefficients())
     monkeypatch.setattr(
-        "energy_model_main._historical_profile",
+        "app.energy_plan.workflow._historical_profile",
         lambda _: {"morning_pv_ratio": 0.25, "midday_surplus_ratio": 0.375},
     )
     monkeypatch.setattr(
-        "energy_model_main._forecast_from_env_or_api",
+        "app.energy_plan.workflow._forecast_from_env_or_api",
         lambda **_: {"date": "2026-07-17", "sun_hours": 8.0, "temp_c": 30.0},
     )
-    monkeypatch.setattr("energy_model_main.load_occupancy_events_from_env", lambda: [])
+    monkeypatch.setattr("app.energy_plan.workflow.load_occupancy_events_from_env", lambda: [])
     weather_result = WeatherHistoryFetchResult(
             rows=[{"date": "2026-07-15", "temp": 29.0}],
             requested_dates=["2026-07-15"],
@@ -185,7 +185,7 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
             requested_periods=[],
     )
     monkeypatch.setattr(
-        "energy_model_main._archive_weather_history",
+        "app.energy_plan.workflow._archive_weather_history",
         lambda *_, **__: (_ for _ in ()).throw(AssertionError("injected port must own access")),
     )
 
@@ -202,7 +202,7 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
         sample_count=1,
         features=["temp"],
     )
-    monkeypatch.setattr("energy_model_main.forecast_daily_consumption", lambda *_, **__: expected)
+    monkeypatch.setattr("app.energy_plan.workflow.forecast_daily_consumption", lambda *_, **__: expected)
 
     bundle = _build_consumption_forecasts(
         _load_execution_context(EnergyModelConfig.from_env()),
@@ -249,17 +249,17 @@ def _prepare_night_charge_with_pv_totals(
         occupancy_adjustment=None,
     )
     monkeypatch.setattr(
-        "energy_model_main._build_pv_forecast_or_disabled",
+        "app.energy_plan.workflow._build_pv_forecast_or_disabled",
         lambda **_: {
             "enabled": True,
             "totals": totals,
         },
     )
     monkeypatch.setattr(
-        "energy_model_main._monthly_day_buy_kwh_before_target", lambda *_, **__: {}
+        "app.energy_plan.workflow._monthly_day_buy_kwh_before_target", lambda *_, **__: {}
     )
     monkeypatch.setattr(
-        "energy_model_main._expected_rest_of_month_day_buy_kwh", lambda *_, **__: {}
+        "app.energy_plan.workflow._expected_rest_of_month_day_buy_kwh", lambda *_, **__: {}
     )
 
     return _prepare_night_charge(context, consumption)
@@ -396,12 +396,12 @@ def test_build_soc_constraints_preserves_zero_percent_cap(
         "reason": "zero_headroom",
     }
     no_cap = {"applied": False, "cap_target_soc_percent": None, "reason": "not_applied"}
-    monkeypatch.setattr("energy_model_main._morning_pv_headroom_guard", lambda **_: zero_cap)
+    monkeypatch.setattr("app.energy_plan.workflow._morning_pv_headroom_guard", lambda **_: zero_cap)
     monkeypatch.setattr(
-        "energy_model_main._daytime_net_surplus_headroom_guard", lambda **_: no_cap
+        "app.energy_plan.workflow._daytime_net_surplus_headroom_guard", lambda **_: no_cap
     )
     monkeypatch.setattr(
-        "energy_model_main._historical_daytime_soc_gain_guard", lambda *_, **__: no_cap
+        "app.energy_plan.workflow._historical_daytime_soc_gain_guard", lambda *_, **__: no_cap
     )
 
     constraints = _build_soc_constraints(context, pv_forecast, night_charge)
@@ -464,10 +464,10 @@ def test_cost_optimization_request_preserves_zero_percent_cap(
         historical_soc_gain={"applied": False, "cap_target_soc_percent": None},
     )
     captured = {}
-    monkeypatch.setattr("energy_model_main.load_soc_decision_prior_from_firestore", lambda **_: None)
-    monkeypatch.setattr("energy_model_main._soc_decision_target_features", lambda **_: {})
+    monkeypatch.setattr("app.energy_plan.workflow.load_soc_decision_prior_from_firestore", lambda **_: None)
+    monkeypatch.setattr("app.energy_plan.workflow._soc_decision_target_features", lambda **_: {})
     monkeypatch.setattr(
-        "energy_model_main.optimize_soc_request",
+        "app.energy_plan.workflow.optimize_soc_request",
         lambda request: captured.setdefault("request", request) and None,
     )
 
@@ -495,14 +495,14 @@ def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tm
             return result
         return call
 
-    monkeypatch.setattr("energy_model_main._load_execution_context", stage("context", context))
-    monkeypatch.setattr("energy_model_main._build_consumption_forecasts", stage("consumption", consumption))
-    monkeypatch.setattr("energy_model_main._prepare_night_charge", stage("night", night_charge))
-    monkeypatch.setattr("energy_model_main._build_selected_pv_forecast", stage("pv", pv))
-    monkeypatch.setattr("energy_model_main._build_soc_constraints", stage("constraints", constraints))
-    monkeypatch.setattr("energy_model_main._run_legacy_soc_optimization", stage("legacy", legacy))
-    monkeypatch.setattr("energy_model_main._run_soc_optimization", stage("decision", decision))
-    monkeypatch.setattr("energy_model_main._build_energy_model_output", stage("output", output))
+    monkeypatch.setattr("app.energy_plan.workflow._load_execution_context", stage("context", context))
+    monkeypatch.setattr("app.energy_plan.workflow._build_consumption_forecasts", stage("consumption", consumption))
+    monkeypatch.setattr("app.energy_plan.workflow._prepare_night_charge", stage("night", night_charge))
+    monkeypatch.setattr("app.energy_plan.workflow._build_selected_pv_forecast", stage("pv", pv))
+    monkeypatch.setattr("app.energy_plan.workflow._build_soc_constraints", stage("constraints", constraints))
+    monkeypatch.setattr("app.energy_plan.workflow._run_legacy_soc_optimization", stage("legacy", legacy))
+    monkeypatch.setattr("app.energy_plan.workflow._run_soc_optimization", stage("decision", decision))
+    monkeypatch.setattr("app.energy_plan.workflow._build_energy_model_output", stage("output", output))
 
     assert build_energy_plan(config) is output
     assert calls == [
