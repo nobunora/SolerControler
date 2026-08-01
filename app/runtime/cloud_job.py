@@ -225,7 +225,7 @@ def _persist_night_plan_to_firestore(plan_path: Path, *, source: str) -> bool:
     if client is None:
         return False
     try:
-        from app.night_plan_archive import (
+        from app.backup.night_plan_archive import (
             build_night_plan_firestore_document,
             read_plan_file,
             upload_night_plan_to_gcs,
@@ -266,7 +266,7 @@ def _restore_night_plan_from_firestore(plan_path: Path, *, target_date: str) -> 
     if client is None:
         return False
     try:
-        from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
+        from app.backup.night_plan_archive import load_night_plan_detail_from_firestore_doc
 
         candidates = [target_date] if target_date else []
         candidates.append("latest")

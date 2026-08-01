@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
 
 from app.operations.firestore import open_firestore
 from app.forecasting.correction import load_forecast_hourly_history_from_firestore
-from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
+from app.backup.night_plan_archive import load_night_plan_detail_from_firestore_doc
 from app.forecasting.pv_physical import build_physical_pv_candidate
 
 

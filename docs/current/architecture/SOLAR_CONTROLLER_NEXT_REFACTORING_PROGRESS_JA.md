@@ -182,3 +182,8 @@
 
 - 変更: 9ファイルの `app.constants`、`app.tariff`、`app.time_windows` importだけを対応する `app.domain.*` 正規パスへ置換した。互換モジュール、名前、ロジック、公開契約は残している。
 - 検証: domain・operations・SOC optimizer・Cloud Job・Driveの指定回帰は `75 passed`。対象9ファイルのmypyと `git diff --check` は成功した。
+
+## 2026-08-01 — I-3: 夜間計画archive正規import
+
+- 変更: Firestore操作、Cloud Job、および3つの保守スクリプトの `app.night_plan_archive` importだけを `app.backup.night_plan_archive` に置換した。互換ラッパーと実行時の保存・復元契約は残している。
+- 検証: archive・Firestore・Cloud Job・KP-NETの指定回帰は `52 passed`。対象5ファイルのmypyと `git diff --check` は成功した。

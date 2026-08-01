@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from app.operations.firestore import open_firestore
-from app.night_plan_archive import (
+from app.backup.night_plan_archive import (
     build_night_plan_firestore_document,
     load_night_plan_detail_from_firestore_doc,
     night_plan_gcs_uri,
