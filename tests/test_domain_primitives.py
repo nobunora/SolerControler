@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
 from pathlib import Path
 
 import pytest
 
+from app.domain.monitoring import MonitoringPoint, validated_soc_percent
 from app.monitoring_csv import iter_monitoring_points
 from app.energy_plan.night_plan import parse_night_plan
 from app.domain.tariff import TieredTariff
@@ -47,6 +48,20 @@ def test_monitoring_csv_keeps_missing_and_rejects_invalid_soc(tmp_path: Path) ->
     points = list(iter_monitoring_points(csv_path))
     assert [point.load_kwh for point in points] == [1.5, 1.7]
     assert [point.soc_percent for point in points] == [55.0, None]
+
+
+def test_monitoring_domain_value_keeps_storage_shape() -> None:
+    point = MonitoringPoint(
+        timestamp=datetime(2026, 7, 15, 12, 0),
+        pv_kwh=1.0,
+        load_kwh=2.0,
+        sell_kwh=None,
+        buy_kwh=1.0,
+        charge_kwh=None,
+        discharge_kwh=None,
+        soc_percent=validated_soc_percent("55"),
+    )
+    assert point.as_storage_row()["soc_percent"] == 55.0
 
 
 def test_night_plan_typed_view_validates_business_fields() -> None:

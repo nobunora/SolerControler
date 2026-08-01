@@ -694,6 +694,13 @@
 - 変更後検証: `tests/test_utils.py tests/test_domain_primitives.py tests/test_domain_constants_compatibility.py` は `31 passed in 2.44s`。`compileall` と `git diff --check` は成功した。
 - 安全性: 下限・上限・float変換の式は変更していない。外部サービスと本番環境は実行していない。
 
+## 2026-08-01 — モジュール再編 P6-15: 監視ドメイン値の分離
+
+- 目的: `MonitoringPoint` と `validated_soc_percent` の所有先を `app/domain/monitoring.py` に統一し、CSV反復処理との責務を分離した。
+- 実装変更: dataclass、保存行変換、SOCの有限値・0〜100範囲検証を新モジュールへ移動した。`app/monitoring_csv.py` は正規記号を参照してCSV行を反復する形に変更し、旧公開パスを維持した。保存行形状と旧・新記号の同一性テストを追加した。
+- 変更後検証: `tests/test_domain_primitives.py tests/test_operations_domain.py tests/test_monitoring_domain_compatibility.py` は `10 passed in 3.00s`。途中でテストのdatetime import不足を検出・修正後、`compileall` と `git diff --check` は成功した。
+- 安全性: CSV列名、欠損処理、SOC判定条件、保存行キーは変更していない。外部サービスと本番環境は実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
