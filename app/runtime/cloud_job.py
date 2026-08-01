@@ -30,7 +30,7 @@ from app.forced_charge import (
 )
 from app.settings.forced_charge import ForcedChargeSettings
 from app.energy_plan.decision_feedback import build_soc_decision_feedback
-from app.constants import validate_soc_percent
+from app.domain.constants import validate_soc_percent
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")

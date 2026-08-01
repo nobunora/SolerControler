@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import time
 import os
 
-from app.time_windows import parse_hhmm
+from app.domain.time_windows import parse_hhmm
 from app.configuration.environment import env_float, env_int
 
 

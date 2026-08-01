@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
-from app.constants import SOCBounds
-from app.tariff import tiered_day_increment_cost
+from app.domain.constants import SOCBounds
+from app.domain.tariff import tiered_day_increment_cost
 
 
 @dataclass(frozen=True)

@@ -8,7 +8,7 @@ from typing import Iterable
 
 import numpy as np
 
-from app.constants import SOCBounds
+from app.domain.constants import SOCBounds
 
 
 @dataclass(frozen=True)

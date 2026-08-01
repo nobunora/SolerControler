@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
-from app.tariff import tiered_day_increment_cost
-from app.time_windows import DailyWindow, parse_hhmm
+from app.domain.tariff import tiered_day_increment_cost
+from app.domain.time_windows import DailyWindow, parse_hhmm
 
 
 @dataclass(frozen=True)

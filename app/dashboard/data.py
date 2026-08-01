@@ -14,7 +14,7 @@ from typing import Any
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
 from app.dashboard.repositories import DashboardLoadRequest
 from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourly_actuals
-from app.tariff import tiered_day_cost
+from app.domain.tariff import tiered_day_cost
 from app.parsing.numbers import to_float
 
 

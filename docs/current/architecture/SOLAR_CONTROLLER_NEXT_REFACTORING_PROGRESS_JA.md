@@ -177,3 +177,8 @@
 
 - 変更: `workflow.py` 内だけで、browser・CSV・decision・historyの4 importを同一責務の `app.local_control.*` 正規パスへ置換した。関数名、呼出し順、例外処理は変更していない。
 - 検証: `tests/test_decision.py tests/test_local_control_config_compatibility.py tests/test_local_control_models_compatibility.py` は `5 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — I-2: domain正規import
+
+- 変更: 9ファイルの `app.constants`、`app.tariff`、`app.time_windows` importだけを対応する `app.domain.*` 正規パスへ置換した。互換モジュール、名前、ロジック、公開契約は残している。
+- 検証: domain・operations・SOC optimizer・Cloud Job・Driveの指定回帰は `75 passed`。対象9ファイルのmypyと `git diff --check` は成功した。
