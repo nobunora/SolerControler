@@ -116,8 +116,9 @@ def read_monitoring_rows(csv_paths: Iterable[Path]) -> list[MonitorRow]:
 
 def summarize(rows: list[MonitorRow]) -> WindowSummary:
     soc_rows = [row for row in rows if row.soc_percent is not None]
-    soc_min = min(((float(row.soc_percent), row.hhmm) for row in soc_rows), default=None)
-    soc_max = max(((float(row.soc_percent), row.hhmm) for row in soc_rows), default=None)
+    soc_values = [(row.soc_percent, row.hhmm) for row in soc_rows if row.soc_percent is not None]
+    soc_min = min(soc_values, default=None)
+    soc_max = max(soc_values, default=None)
     return WindowSummary(
         rows=len(rows),
         first_hhmm=rows[0].hhmm if rows else "",

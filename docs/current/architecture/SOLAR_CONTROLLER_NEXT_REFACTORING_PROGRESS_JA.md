@@ -133,3 +133,16 @@
 - 変更: Firestore documentを実行時に辞書へ正規化し、forecast・気象行・既存最適化値の型を明示した。不正なdocumentや時刻は従来同様スキップする。Firestore/Storage clientのfakeだけで再計算行をSQLiteへ保存する個別テストを追加した。
 - 変更後検証: 対象mypyは0エラー。`tests/test_recompute_physical_pv_history.py tests/test_pv_physical_forecast.py` は `3 passed`。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Firestore、Cloud Storage、本番DBへの接続・書込みは実行していない。
+
+## 2026-08-01 — 補正: archive Storage import境界
+
+- 検出理由: 未使用抑制の除去後、google cloud stubの公開APIに合わせたimport形式が必要と判明した。
+- 変更・検証: 実行時のStorage client生成は同じまま `google.cloud.storage.Client` を直接importした。対象mypyは0エラー、`tests/test_night_plan_archive.py` は `2 passed`。コミットは `210d0ae`。
+- 外部安全性: Cloud Storageの読書きは実行していない。
+
+## 2026-08-01 — T2-7: KP-NET SOC差分レポート型境界
+
+- 開始コミット: `210d0ae`。
+- 変更: SOCが欠損していない行だけから最小・最大値候補を作り、`float | None` を数値として扱わないようにした。欠損SOCの無視、表示値、集計値は変わらない。
+- 変更後検証: 対象mypyは0エラー。`tests/test_kpnet_soc_gap_report.py` は `5 passed`。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Firestore、CSVダウンロード、レポートの実運用出力は実行していない。
