@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.firestore_ops import open_firestore
+from app.operations.firestore import open_firestore
 from app.forecast_correction import _load_forecast_hourly_history_from_firestore
 from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
 from app.pv_physical_forecast import build_physical_pv_candidate

@@ -19,7 +19,7 @@ from googleapiclient.http import MediaFileUpload
 
 from app.constants import FileConstants
 from app.db_sync import TABLE_SPECS
-from app.firestore_ops import open_firestore
+from app.operations.firestore import open_firestore
 
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"

@@ -284,7 +284,7 @@ def _ingest_firestore(
     now_iso: str,
     include_night_plan: bool = True,
 ) -> None:
-    from app import firestore_ops
+    from app.operations import firestore as firestore_ops
 
     client = firestore_ops.open_firestore()
     firestore_ops.ensure_schema(client)

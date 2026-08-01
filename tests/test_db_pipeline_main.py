@@ -58,7 +58,7 @@ def test_night_plan_ingestion_can_be_disabled_for_actual_only_import(
 
 
 def test_firestore_actual_only_import_does_not_write_night_plan(monkeypatch) -> None:
-    from app import firestore_ops
+    from app.operations import firestore as firestore_ops
 
     client = object()
     monkeypatch.setattr(firestore_ops, "open_firestore", lambda: client)

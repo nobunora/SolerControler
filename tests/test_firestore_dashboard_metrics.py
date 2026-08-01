@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from app.firestore_ops import recalc_dashboard_daily_metrics
+from app.operations.firestore import recalc_dashboard_daily_metrics
 
 
 class _Snapshot:

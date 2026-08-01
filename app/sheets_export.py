@@ -779,7 +779,7 @@ def _load_postgres_tables() -> dict[str, list[dict[str, Any]]]:
 
 
 def _load_firestore_tables() -> dict[str, list[dict[str, Any]]]:
-    from app.firestore_ops import open_firestore
+    from app.operations.firestore import open_firestore
 
     client = open_firestore()
     def read(col: str, order_by: str) -> list[dict[str, Any]]:

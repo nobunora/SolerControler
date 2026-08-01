@@ -436,3 +436,15 @@
 - 変更後検証: `python -m pytest -q tests/test_operations_db.py tests/test_operations_sqlite_compatibility.py tests/test_weekly_backup.py tests/test_dashboard_data.py` は `56 passed in 1.86s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: SQLiteのスキーマ、SQL、データ、外部サービス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P1-2: Firestore運用アダプターを機能パッケージへ移動
+
+- 目的: Firestoreへの実績・計画・集計値の保存は運用永続化の責務であるため、実装を `app/operations/firestore.py` へ集約した。旧 `app.firestore_ops` は外部・既存利用者のために維持する。
+- 変更前検証: `tests/test_firestore_operations.py` と `tests/test_firestore_dashboard_metrics.py` は `2 passed in 0.72s`。
+- 実装変更: `app/firestore_ops.py` を `app/operations/firestore.py` へ移動した。旧パスには全公開関数だけを明示的に再exportする互換モジュールを置いた。`db_sync`、Driveバックアップ、Sheets出力、DBパイプライン、分析・アーカイブスクリプトは正規モジュールを import する。
+- テスト境界: `test_db_pipeline_main` と `test_operations_domain` は、アダプターの正規実装を検査・モンキーパッチするよう変更した。私的属性を互換モジュールから再公開しないためであり、テスト対象の関数、入力、期待値、Firestoreの書込み契約は変更していない。
+- 実装時の是正: 初回の後検証で、旧SQLiteパスに残った私的属性参照1件と、`sheets_export.py` の関数内importのインデント崩れを検出した。前者を正規SQLiteモジュールへ向け、後者を関数本体へ正しく戻した。次の検証では、存在しない `tests/test_sheets_export.py` を指定したためpytestが実行対象なしで終了した。コード失敗として採用せず、存在する影響テストだけで再実行した。
+- 互換性検証: `tests/test_operations_firestore_compatibility.py` を追加し、旧・新モジュールの全公開関数が同一オブジェクトであることを固定した。
+- 変更後検証: `python -m pytest -q tests/test_firestore_operations.py tests/test_firestore_dashboard_metrics.py tests/test_operations_firestore_compatibility.py tests/test_db_pipeline_main.py tests/test_operations_domain.py` は `11 passed in 1.01s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: Firestore、SQLite、Drive、Sheets、外部サービス、本番環境への接続・書込みは行っていない。

@@ -54,10 +54,12 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
 
 
 def test_all_database_adapters_use_the_shared_plan_domain() -> None:
-    from app import firestore_ops, operations_db, postgres_ops
+    from app import postgres_ops
+    from app.operations import firestore as firestore_ops
+    from app.operations import sqlite as sqlite_ops
     from app.operations import domain
 
-    adapters = (operations_db, postgres_ops, firestore_ops)
+    adapters = (sqlite_ops, postgres_ops, firestore_ops)
     for adapter in adapters:
         assert adapter._extract_hourly_forecast_from_plan is domain.extract_hourly_forecast_from_plan
         assert adapter._is_within_window is domain.is_within_window

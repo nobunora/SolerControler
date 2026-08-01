@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.operations import sqlite as sqlite_ops
-from app.firestore_ops import open_firestore
+from app.operations.firestore import open_firestore
 
 
 TABLE_SPECS: dict[str, dict[str, Any]] = {

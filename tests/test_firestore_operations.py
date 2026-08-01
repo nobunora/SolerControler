@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.firestore_ops import recalc_cost_daily
+from app.operations.firestore import recalc_cost_daily
 
 
 class _Document:

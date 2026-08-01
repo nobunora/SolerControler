@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.firestore_ops import open_firestore
+from app.operations.firestore import open_firestore
 from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
 from app.utils import parse_csv_float
 
