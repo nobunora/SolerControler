@@ -207,7 +207,7 @@ def _sqlite_path(sqlite_path: Path | None) -> Path:
     return Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))
 
 
-def _open_firestore_client(*, project_id: str | None, database_id: str):
+def _open_firestore_client(*, project_id: str | None, database_id: str) -> Any:
     if project_id:
         from google.cloud import firestore
 

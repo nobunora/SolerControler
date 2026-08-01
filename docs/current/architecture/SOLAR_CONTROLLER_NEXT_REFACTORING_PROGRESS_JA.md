@@ -42,3 +42,11 @@
 - 変更: HTTP URL解析値を `ParseResult` として明示し、dashboard payloadのdict値型、session cookie属性、log hook引数を明示した。root/APIで別のslice変数名を使い、意図が異なる値の再定義を解消した。status code、header、認証判定、URL、HTML、JSONは変更していない。
 - 変更後検証: 同じ4テストは `4 passed in 0.21s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: 実HTTP serverは起動していない。
+
+## 2026-08-01 — T1-5: Operations workflowとsync境界
+
+- 開始コミット: `c4e0df8f9d166b1b454c42c5eba002340b7705f1`
+- 変更前検証: DB pipeline・operations関連テストは `25 passed in 1.51s`。workflow 4件、sync 2件のうち、対象ファイル自身の未注釈は3件だった。残るweekly backupの2件は次カードの所有範囲である。
+- 変更: SQLite connectionと週次backup接続を外部DB-API境界として `Any` で明示し、Firestore client factoryの戻り値を明示した。backendごとのtransaction順、commit、ingest順、SQL/Firestore処理は変更していない。
+- 変更後検証: `--follow-imports=skip` で対象2ファイルのmypyは0エラー。関連テストは `25 passed in 1.65s`。`compileall` と `git diff --check` は成功した。
+- 外部安全性: DB、Firestore、backupは実行していない。

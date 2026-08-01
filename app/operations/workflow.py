@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
@@ -46,7 +47,7 @@ def _settings_summary_successful(summary_path: Path) -> bool:
     )
 
 
-def _record_planned_day_mode_sqlite(conn, *, settings_summary_path: Path, recorded_at: str) -> None:
+def _record_planned_day_mode_sqlite(conn: Any, *, settings_summary_path: Path, recorded_at: str) -> None:
     summary = json.loads(settings_summary_path.read_text(encoding="utf-8"))
     run_id = str(summary.get("run_id", settings_summary_path.parent.name))
     day_plan = summary.get("daytime_mode_plan")
@@ -71,7 +72,7 @@ def _record_planned_day_mode_sqlite(conn, *, settings_summary_path: Path, record
     conn.commit()
 
 
-def _maybe_weekly_backup(conn, *, cfg: sqlite_ops.PipelineConfig, backend: str, now_utc: datetime) -> None:
+def _maybe_weekly_backup(conn: Any, *, cfg: sqlite_ops.PipelineConfig, backend: str, now_utc: datetime) -> None:
     if not cfg.weekly_backup_enabled:
         print("[db_pipeline] weekly backup: disabled")
         return
