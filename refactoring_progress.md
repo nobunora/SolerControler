@@ -370,3 +370,11 @@
 - 再利用化: 個人用Skill `readable-code-project-starter` を `C:\Users\nobun\.codex\skills\readable-code-project-starter` に作成した。新規リポジトリへ、読みやすいコードの `AGENTS.md`、プロジェクト作業規則、Skillガバナンス規則を安全にコピーまたはマージする手順を提供する。
 - 同梱知見: `readable-code-audit` の使用、`readable-code-audit: skip RULE-ID — concrete reason` の例外記法、根拠に基づく変更サイクル、機能別分割判断、英語コメントの文字コード配慮、回帰テスト先行、Skill作成後の検証をテンプレートへ組み込んだ。
 - 検証: `quick_validate.py` によるSkill構造検証は `Skill is valid!`。テンプレート内の全リソースリンクは `TEMPLATE_RESOURCE_LINKS_MISSING=0`。
+
+## 2026-08-01 — プロジェクトテンプレートへ個人用Skillを同梱
+
+- 要求: 現在の個人用Skillsを、別環境でも使えるプロジェクトテンプレートへコピーする。
+- 処置: `readable-code-project-starter` の `assets/.codex/skills/readable-code-audit/` に、個人用 `C:\Users\nobun\.codex\skills\readable-code-audit/` の全ファイルを完全コピーした。テンプレート実行時は、このフォルダを対象プロジェクトの `.codex/skills/` へ既存Skillを上書きせずにコピーする。
+- 携帯性: スターターSkill自身はテンプレートのルートフォルダをコピーすることで持ち出せる。監査Skillはプロジェクトローカルにも配置されるため、個人用Codexホームに事前導入されていない別環境でも同じ監査規則を使える。
+- 照合: 相対パス一覧とSHA-256を比較し、`AUDIT_SKILL_MISSING_FILES=0`、`AUDIT_SKILL_DIFFERENT_FILES=0` を確認した。
+- 構造検証: `quick_validate.py` は `Skill is valid!`。テンプレート内リソースリンクの欠落は `0`。
