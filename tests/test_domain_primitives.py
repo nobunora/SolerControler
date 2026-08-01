@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.monitoring_csv import iter_monitoring_points
-from app.night_plan import parse_night_plan
+from app.energy_plan.night_plan import parse_night_plan
 from app.tariff import TieredTariff
 from app.time_windows import DailyWindow, parse_hhmm
 

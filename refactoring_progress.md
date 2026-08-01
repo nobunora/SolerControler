@@ -592,3 +592,13 @@
 - 変更後検証: 影響範囲の4テストは `79 passed in 21.09s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 実績読取、類似度、後悔値、Firestore保存・読取、Cloud Jobの実機操作、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P3-4: 夜間計画ドメインを計画パッケージへ移動
+
+- 目的: 夜間充電計画の読取・検証は計画ドメイン責務であるため、`app/energy_plan/night_plan.py` へ移動した。
+- 変更前検証: `tests/test_domain_primitives.py tests/test_night_plan_archive.py tests/test_energy_plan_document.py` は `7 passed in 2.28s`。
+- 実装変更: 旧パスは夜間計画の公開型・読取・解析関数を明示的に再exportする互換モジュールへ置き換え、ドメインテストは正規モジュールを使用する。
+- 互換性検証: `tests/test_energy_plan_night_plan_compatibility.py` を追加した。
+- 変更後検証: 影響範囲の4テストは `8 passed in 2.39s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 入力JSONの形式、必須値検証、夜間計画の値、本番環境は変更していない。
