@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from app.pv_physical_forecast import build_physical_pv_candidate
+from app.forecasting.pv_physical import build_physical_pv_candidate
 
 
 def _forecast(shortwave: float | None) -> dict[str, object]:

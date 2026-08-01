@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 from app.operations.firestore import open_firestore
 from app.forecast_correction import _load_forecast_hourly_history_from_firestore
 from app.night_plan_archive import load_night_plan_detail_from_firestore_doc
-from app.pv_physical_forecast import build_physical_pv_candidate
+from app.forecasting.pv_physical import build_physical_pv_candidate
 
 
 def monitoring_rows(conn: sqlite3.Connection, target_date: str) -> list[dict[str, object]]:

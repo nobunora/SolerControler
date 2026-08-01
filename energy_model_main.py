@@ -64,7 +64,7 @@ from app.forecast_correction import (
     _load_forecast_hourly_history,
     build_forecast_correction,
 )
-from app.pv_physical_forecast import build_physical_pv_candidate
+from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
 
 

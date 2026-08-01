@@ -503,3 +503,13 @@
 - 変更後検証: 影響範囲の `tests/test_consumption_forecast.py tests/test_occupancy_schedule.py tests/test_energy_model_runtime.py tests/test_forecasting_consumption_compatibility.py` は `40 passed in 4.51s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 予測入力、学習係数、計算式、外部アクセス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P2-5: 物理PV予測を予測パッケージへ移動
+
+- 目的: 太陽位置・パネル形状・気象履歴からの物理PV候補生成は予測責務であるため、`app/forecasting/pv_physical.py` へ移動した。
+- 変更前検証: `tests/test_pv_physical_forecast.py tests/test_energy_model.py` は `54 passed in 2.59s`。
+- 実装変更: 旧 `app/pv_physical_forecast.py` は公開データ型と候補生成関数を明示的に再exportする互換モジュールへ置き換えた。エネルギーモデル入口、履歴再計算スクリプト、テストは正規モジュールを使用する。
+- 互換性検証: `tests/test_forecasting_pv_physical_compatibility.py` を追加し、旧・新パスの公開型・関数の同一性を確認する。
+- 変更後検証: 影響範囲の3テストは `55 passed in 2.72s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: PV算出式、気象・履歴の読取り条件、外部アクセス、本番環境は変更していない。
