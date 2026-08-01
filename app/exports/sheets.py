@@ -59,7 +59,7 @@ def _today_jst_str(tz_name: str) -> str:
     return datetime.now(ZoneInfo(tz_name)).date().isoformat()
 
 
-def _google_services():
+def _google_services() -> tuple[Any, Any]:
     import google.auth
     from googleapiclient.discovery import build
 
@@ -69,7 +69,7 @@ def _google_services():
     return sheets, drive
 
 
-def _ensure_spreadsheet(sheets, drive, *, spreadsheet_id: str, title: str) -> str:
+def _ensure_spreadsheet(sheets: Any, drive: Any, *, spreadsheet_id: str, title: str) -> str:
     if spreadsheet_id:
         return spreadsheet_id
     try:
@@ -98,7 +98,7 @@ def _ensure_spreadsheet(sheets, drive, *, spreadsheet_id: str, title: str) -> st
         return sid
 
 
-def _share_spreadsheet(drive, *, spreadsheet_id: str, email: str) -> None:
+def _share_spreadsheet(drive: Any, *, spreadsheet_id: str, email: str) -> None:
     if not email:
         return
     permission = {"type": "user", "role": "writer", "emailAddress": email}
@@ -114,7 +114,7 @@ def _share_spreadsheet(drive, *, spreadsheet_id: str, email: str) -> None:
         print(f"[sheets_export] share skipped/failed for {email}: {exc}")
 
 
-def _ensure_sheet_tabs(sheets, spreadsheet_id: str, titles: list[str]) -> None:
+def _ensure_sheet_tabs(sheets: Any, spreadsheet_id: str, titles: list[str]) -> None:
     meta = sheets.spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties.title").execute()
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     reqs = []
@@ -128,7 +128,7 @@ def _ensure_sheet_tabs(sheets, spreadsheet_id: str, titles: list[str]) -> None:
         ).execute()
 
 
-def _read_meta_map(sheets, spreadsheet_id: str) -> dict[str, str]:
+def _read_meta_map(sheets: Any, spreadsheet_id: str) -> dict[str, str]:
     try:
         res = (
             sheets.spreadsheets()
@@ -145,7 +145,7 @@ def _read_meta_map(sheets, spreadsheet_id: str) -> dict[str, str]:
     return out
 
 
-def _write_sheet_table(sheets, spreadsheet_id: str, tab: str, headers: list[str], rows: list[dict[str, Any]]) -> None:
+def _write_sheet_table(sheets: Any, spreadsheet_id: str, tab: str, headers: list[str], rows: list[dict[str, Any]]) -> None:
     values = [headers]
     for row in rows:
         values.append([_norm(row.get(h)) for h in headers])
@@ -163,7 +163,7 @@ def _write_sheet_table(sheets, spreadsheet_id: str, tab: str, headers: list[str]
     ).execute()
 
 
-def _ensure_sheet_headers_if_empty(sheets, spreadsheet_id: str, tab: str, headers: list[str]) -> None:
+def _ensure_sheet_headers_if_empty(sheets: Any, spreadsheet_id: str, tab: str, headers: list[str]) -> None:
     try:
         res = (
             sheets.spreadsheets()
@@ -185,7 +185,7 @@ def _ensure_sheet_headers_if_empty(sheets, spreadsheet_id: str, tab: str, header
     ).execute()
 
 
-def _update_meta(sheets, spreadsheet_id: str, *, last_export_date_jst: str, exported_at_utc: str, slot: str) -> None:
+def _update_meta(sheets: Any, spreadsheet_id: str, *, last_export_date_jst: str, exported_at_utc: str, slot: str) -> None:
     values = [
         ["key", "value"],
         ["last_export_date_jst", last_export_date_jst],

@@ -89,3 +89,11 @@
 - 変更: ソートキーの値型、Drive service戻り値、SDK refresh、Drive API JSON response、upload条件を実際の外部境界に合わせて明示した。folder IDがない場合は従来どおりuploadしない。backup名、manifest、hash、出力パス、実サービス呼出し条件は変更していない。
 - 変更後検証: 同じテストは `3 passed in 0.87s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Drive/Firestoreへの実接続、upload、backup実行は行っていない。
+
+## 2026-08-01 — T2-2: Sheets adapter型境界
+
+- 開始コミット: `42ea90a69ad4d1ea612a955f8d66e0a92ed04599`
+- 変更前検証: 対象mypyは9エラーだった。Sheets exportには外部サービスを使わない個別テストが存在しないため、import検査と型検査を境界確認に用いた。
+- 変更: Google Sheets/Drive serviceを外部SDK境界として `Any` で明示し、service factoryの戻り値を明示した。spreadsheet作成、共有、tab、header、meta、table書込みのpayloadと例外処理は変更していない。
+- 変更後検証: `import app.exports.sheets` と対象mypyは成功。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Google Sheets/Driveの作成・共有・書込みは実行していない。
