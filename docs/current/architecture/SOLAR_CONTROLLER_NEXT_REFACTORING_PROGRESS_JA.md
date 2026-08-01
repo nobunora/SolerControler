@@ -111,3 +111,11 @@
 - 開始コミット: `b3f4ee7`。
 - 変更: Open-Meteo request parameterの値型、NumPy予測配列、欠損したcomfort featureの分岐を明示した。featureが構築不能な行は従来どおり学習・予測対象にしない。分析式、入力CSV、通信先、出力形式は変更していない。
 - 検証: 対象mypyは0エラー。`compileall` と `git diff --check` は成功した。外部API、DB、分析本体は実行していない。
+
+## 2026-08-01 — T2-5: 複数日気象寄与解析型境界
+
+- 開始コミット: `682be99`。
+- 変更前検証: 対象mypyは5エラーだった。
+- 変更: Open-Meteo request parameterの許容値型、NumPy予測配列、欠損したcomfort featureの分岐を明示した。featureが構築不能な時刻は学習行に追加しないため、欠損値を数値へ偽装しない。
+- 変更後検証: 対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Open-Meteo API、DB、分析本体は実行していない。

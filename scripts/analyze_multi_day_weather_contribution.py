@@ -106,7 +106,7 @@ def _load_monitoring_hourly(start_date: date, end_date: date) -> list[dict[str, 
 
 def _fetch_daily_shortwave(*, lat: float, lon: float, timezone: str, start_date: str, end_date: str) -> dict[str, float]:
     url = "https://archive-api.open-meteo.com/v1/archive"
-    params = {
+    params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "start_date": start_date,
@@ -218,7 +218,7 @@ def _ridge_fit(matrix: list[list[float]], targets: list[float], *, ridge: float 
 def _predict(coef: np.ndarray, mean: np.ndarray, std: np.ndarray, matrix: list[list[float]]) -> np.ndarray:
     x = np.asarray(matrix, dtype=float)
     z = (x - mean) / std
-    return coef[0] + z @ coef[1:]
+    return np.asarray(coef[0] + z @ coef[1:])
 
 
 def _r2_score(y_true: list[float], y_pred: np.ndarray) -> float:
@@ -259,6 +259,8 @@ def _build_rows(
         current_shortwave = daily_shortwave.get(day.isoformat(), 0.0)
 
         base = comfort_feature_map(ts, weather_by_ts)
+        if base is None:
+            continue
         temp_windows = [_hourly_trailing_mean(weather_by_ts, ts, "temp_c", window) for window in WINDOWS_HOURS]
         humidity_windows = [_hourly_trailing_mean(weather_by_ts, ts, "relative_humidity_percent", window) for window in WINDOWS_HOURS]
         wind_windows = [_hourly_trailing_mean(weather_by_ts, ts, "wind_speed_10m", window) for window in WINDOWS_HOURS]
