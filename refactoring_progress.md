@@ -448,3 +448,13 @@
 - 変更後検証: `python -m pytest -q tests/test_firestore_operations.py tests/test_firestore_dashboard_metrics.py tests/test_operations_firestore_compatibility.py tests/test_db_pipeline_main.py tests/test_operations_domain.py` は `11 passed in 1.01s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: Firestore、SQLite、Drive、Sheets、外部サービス、本番環境への接続・書込みは行っていない。
+
+## 2026-08-01 — モジュール再編 P1-3: PostgreSQL運用アダプターを機能パッケージへ移動
+
+- 目的: PostgreSQLへの運用データ保存・集計はSQLite/Firestoreと同じ運用永続化責務であるため、実装を `app/operations/postgres.py` へ移動した。
+- 変更前検証: `tests/test_postgres_operations.py` と `tests/test_operations_domain.py` は `4 passed in 0.87s`。
+- 実装変更: `app/postgres_ops.py` を正規実装へ移動し、旧パスには公開関数だけを明示的に再exportする互換モジュールを置いた。DBパイプライン、Sheets出力、関連テストを正規モジュールへ更新した。
+- 互換性検証: `tests/test_operations_postgres_compatibility.py` を追加し、旧・新パスの全公開関数が同じオブジェクトであることを検証した。
+- 変更後検証: `python -m pytest -q tests/test_postgres_operations.py tests/test_operations_postgres_compatibility.py tests/test_operations_domain.py tests/test_db_pipeline_main.py` は `10 passed in 0.95s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: PostgreSQL、SQLite、Firestore、外部サービス、本番環境への接続・書込みは行っていない。

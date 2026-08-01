@@ -188,7 +188,7 @@ def _ingest_postgres(
     now_utc: datetime,
     include_night_plan: bool = True,
 ) -> None:
-    from app import postgres_ops
+    from app.operations import postgres as postgres_ops
 
     conn = postgres_ops.open_postgres()
     try:

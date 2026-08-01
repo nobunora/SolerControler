@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.postgres_ops import recalc_cost_daily
+from app.operations.postgres import recalc_cost_daily
 
 
 class _Cursor:

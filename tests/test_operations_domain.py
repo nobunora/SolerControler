@@ -54,8 +54,8 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
 
 
 def test_all_database_adapters_use_the_shared_plan_domain() -> None:
-    from app import postgres_ops
     from app.operations import firestore as firestore_ops
+    from app.operations import postgres as postgres_ops
     from app.operations import sqlite as sqlite_ops
     from app.operations import domain
 

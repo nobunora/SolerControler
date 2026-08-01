@@ -757,7 +757,7 @@ def _load_sqlite_tables(db_path: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def _load_postgres_tables() -> dict[str, list[dict[str, Any]]]:
-    from app.postgres_ops import open_postgres
+    from app.operations.postgres import open_postgres
 
     conn = open_postgres()
     try:
