@@ -728,6 +728,13 @@
 - 既存417件に対して、今回追加した互換性・ドメイン境界テストを含めて全件成功した。skipは既存の環境依存テストであり、今回の変更による失敗ではない。
 - 外部サービス、本番環境、Cloud Run、Firestore、Drive、KP-NETは実行していない。
 
+## 2026-08-01 — PF-2: readable-code-audit最終監査
+
+- 監査範囲: `app`、`scripts`、`tests` とルートPythonファイル。命名・構造・重複・互換層・制御フロー・コメントの観点で、計画対象の移行後状態を確認した。
+- 機械検査: wildcard import、`TODO`/`FIXME`/`XXX`/`HACK` は0件。旧5モジュールからの内部importは0件（互換性テストの旧入口importは除外）。旧所有先の互換ラッパー内にclass/def実装は0件。`compileall` と `git diff --check` は成功した。
+- 追加是正: `app/utils.py` に互換入口のdocstringと明示的 `__all__` を追加し、公開範囲を固定した。個別境界テストは `28 passed in 0.21s`。
+- 判定: 今回の計画で未処理としていた構造項目（所有先の一意化、旧入口の実装除去、内部参照更新）は0件。残ったルートPythonは既存外部契約の互換入口またはCLI入口であり、機械的移動対象ではない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
