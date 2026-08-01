@@ -236,3 +236,8 @@
 
 - 変更: Dashboardは表示データの不正時刻をunknownとして棄却し、Cloud Jobは自動実行のためsafe defaultへ戻すという異なる契約を、両方の関数にDUP-01 skipコメントで明記した。ロジックは変更していない。
 - 検証: `tests/test_dashboard_data.py tests/test_cloud_job_runner.py` は `79 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — Phase D完了検査
+
+- 全体mypyは `119 source filesで0エラー`。全テストは `432 passed, 1 skipped in 21.51s`。`python scripts/security_check.py` は成功した。
+- 外部サービス、Cloud Job、Firestore、Drive、蓄電池設定は実行していない。
