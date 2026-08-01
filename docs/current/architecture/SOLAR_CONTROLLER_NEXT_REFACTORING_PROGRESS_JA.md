@@ -221,3 +221,8 @@
 
 - 変更: `.env` 読込は共有 `load_dotenv_if_present` へ移行した。booleanとfloatのprivate helperは、未知の非空文字および不正数値に対する既存の安全なfallback契約が共有helperと異なるため、具体的なDUP-01 skipコメントを残して維持した。clampも同じfallbackに依存するため維持した。
 - 検証: Energy Plan関連の指定回帰は `108 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — D-5b: operations環境変数helperの判定
+
+- 判定: optional pipeline flagは未知の非空値をfalseとして無効化する既存の安全側契約であり、共有helperのdefault復帰とは異なる。統合せずDUP-01 skipコメントで理由を残した。
+- 検証: operations関連テストは `8 passed`。対象mypyと `git diff --check` は成功した。

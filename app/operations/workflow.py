@@ -12,6 +12,7 @@ from app.backup.weekly import create_weekly_diff_backup
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
 
+# readable-code-audit: skip DUP-01 — unknown non-empty pipeline flags intentionally disable the optional step, unlike the shared helper which returns its default.
 def _env_bool(name: str, default: bool = True) -> bool:
     raw = os.getenv(name, "").strip().lower()
     if not raw:
