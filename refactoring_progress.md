@@ -701,6 +701,13 @@
 - 変更後検証: `tests/test_domain_primitives.py tests/test_operations_domain.py tests/test_monitoring_domain_compatibility.py` は `10 passed in 3.00s`。途中でテストのdatetime import不足を検出・修正後、`compileall` と `git diff --check` は成功した。
 - 安全性: CSV列名、欠損処理、SOC判定条件、保存行キーは変更していない。外部サービスと本番環境は実行していない。
 
+## 2026-08-01 — モジュール再編 P6-16: 監視CSV処理の移動
+
+- 目的: `iter_monitoring_points` の所有先を `app/operations/monitoring_csv.py` に統一した。
+- 実装変更: CSV読込実装をoperationsへ移動し、旧 `app/monitoring_csv.py` は `MonitoringPoint`、`validated_soc_percent`、`iter_monitoring_points` の明示的再exportだけにした。内部operationsとテストは正規パスを参照し、旧公開記号の同一性と `__all__` を検証するテストを追加した。
+- 変更後検証: 指定されたドメイン・operations・DB境界と互換性テストは `31 passed in 3.84s`。`compileall` と `git diff --check` は成功した。
+- 安全性: CSVの文字コード、列名、時刻形式、欠損行の扱いは変更していない。外部サービスと本番環境は実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。

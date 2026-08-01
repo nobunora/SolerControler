@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.monitoring import MonitoringPoint, validated_soc_percent
-from app.monitoring_csv import iter_monitoring_points
+from app.operations.monitoring_csv import iter_monitoring_points
 from app.energy_plan.night_plan import parse_night_plan
 from app.domain.tariff import TieredTariff
 from app.domain.constants import clamp_percent
