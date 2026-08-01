@@ -189,9 +189,9 @@ def upload_night_plan_to_gcs(
     if not uri:
         return {}
     if storage_client is None:
-        from google.cloud import storage
+        from google.cloud.storage import Client
 
-        storage_client = storage.Client()
+        storage_client = Client()
     bucket_name, blob_name = _parse_gs_uri(uri)
     raw = _json_bytes(plan)
     gzip_bytes = gzip.compress(raw, compresslevel=9, mtime=0)
@@ -211,9 +211,9 @@ def load_night_plan_detail_from_gcs(doc: dict[str, Any], *, storage_client: Any 
     if not uri:
         return None
     if storage_client is None:
-        from google.cloud import storage
+        from google.cloud.storage import Client
 
-        storage_client = storage.Client()
+        storage_client = Client()
     bucket_name, blob_name = _parse_gs_uri(uri)
     payload = storage_client.bucket(bucket_name).blob(blob_name).download_as_bytes()
     try:
