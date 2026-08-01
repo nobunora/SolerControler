@@ -4,7 +4,7 @@
 
 ## 1. 目的と完了条件
 
-この計画は、太陽光発電・蓄電池の予測、SOC計画、実績取込、KP-NET機器操作、ダッシュボード、バックアップを扱う本リポジトリの `app/` を、機能単位で発見しやすく安全に再編するための実行手順である。
+この計画は、太陽光発電・蓄電池の予測、SOC計画、実績取込、KP-NET機器操作、ダッシュボード、バックアップを扱う本リポジトリの `app/`、ルートPythonエントリポイント、ビルド・型検査・テスト設定を、機能単位で発見しやすく安全に再編するための実行手順である。
 
 完了条件は次のすべてを満たすこと。
 
@@ -13,6 +13,8 @@
 - 現在のCLI、Cloud Runエントリポイント、環境変数、保存形式、外部JSON、既存の `app.<module>` import を壊さない。
 - 変更ごとに対象テストが成功し、最終的に全回帰、Python構文検査、差分検査が成功する。
 - 互換モジュールを残す場合は、対象、理由、削除条件が文書化される。
+- ルートのPythonは起動と終了コード変換だけを担い、業務ロジックや外部I/Oの手順を持たない。
+- Docker、Cloud Build、mypy、pytest、依存定義が新しいimport・配置を認識する。
 
 この計画は可読性監査Skillの `STRUCT-01`、`STRUCT-03`、`STRUCT-06`、`REVIEW-02`、`REVIEW-04` に従う。ディレクトリを整えること自体は目的ではない。責務の発見性が上がり、かつ互換性を確認できる場合だけ移動する。
 
@@ -40,17 +42,16 @@
 
 移動リスクも確認済みである。`forecast_correction.py`、`dashboard_data.py`、`kpnet_workflow.py` はテストおよび分析スクリプトから私的ヘルパーを直接importまたは文字列指定でモンキーパッチされる。これらはファイルを先に移動してはいけない。先にテスト境界を明確化する。
 
+ルートPythonにも実装が残る。`energy_model_main.py` は2863行、`cloud_job_runner.py` は1485行、`db_pipeline_main.py` は426行、`dashboard_server.py` は357行であり、現状では「薄いエントリポイント」という設計方針を満たさない。`sheets_export_main.py` 20行、`kpnet_main.py` 6行、`main.py` 5行は既に薄い入口である。
+
 ## 3. 理想構成
 
-以下を目標構成とする。`*_main.py`、`cloud_job_runner.py`、`dashboard_server.py` は実行環境・Docker・Cloud Runから直接参照されるため、リポジトリルートに維持する。
+以下を目標構成とする。ルートの実行ファイル名はDocker、Cloud Run、運用スクリプトから直接参照されるため維持するが、中身は対応する `app` の `main()` を呼ぶ薄いラッパーにする。
 
 ```text
 app/
-  shared/                 # 依存の薄い共通値・変換・時刻・料金・監視CSV
-    config.py
+  domain/                 # 外部I/Oに依存しない太陽光・蓄電池の共通概念
     constants.py
-    models.py
-    utils.py
     time_windows.py
     tariff.py
     monitoring_csv.py
@@ -61,7 +62,13 @@ app/
     pv_physical.py
     correction.py
     occupancy.py
-  planning/               # SOCの評価、最適化、夜間充電計画
+  energy_plan/            # 計画文書、SOC評価、最適化、夜間充電計算
+    models.py
+    ports.py
+    settings.py
+    historical.py
+    forecast.py
+    output.py
     energy_model.py
     soc_cost.py
     decision_feedback.py
@@ -85,11 +92,32 @@ app/
     weekly.py
     artifacts.py
     night_plan_archive.py
+  exports/                # 外部出力
+    sheets.py
+  local_control/          # ローカル実行用の旧来コントローラー境界
+    workflow.py
+    browser.py
+    config.py
+    csv_input.py
+    decision.py
+    history.py
+    models.py
   forced_charge/
   settings/
+  runtime/
+    cloud_job.py          # 23:00 / 03:00 / 07:00のCloud Runオーケストレーション
+  utils.py                # 分割完了までの互換入口。所有先が決まった関数から減らす
+
+cloud_job_runner.py       # app.runtime.cloud_job.main() を呼ぶだけ
+dashboard_server.py       # app.dashboard.server.main() を呼ぶだけ
+db_pipeline_main.py       # app.operations.workflow.main() を呼ぶだけ
+energy_model_main.py      # app.energy_plan.workflow.main() を呼ぶだけ
+kpnet_main.py             # 現状どおり薄い入口
+main.py                   # 現状どおり薄い入口
+sheets_export_main.py     # 現状どおり薄い入口
 ```
 
-これは最終的な所有境界であり、全モジュールを一度に移す指示ではない。`shared/` は巨大な便利箱にしてはならない。二つ以上の機能で利用され、かつ業務ポリシーを持たないものだけを置く。`energy_plan/` は計画文書の入出力モデルとして維持し、`planning/` はその入力からSOCを決定する計算を持つ。
+これは最終的な所有境界であり、全モジュールを一度に移す指示ではない。汎用的な `shared/` は作らない。太陽光・蓄電池の意味を持つ共通値だけを `domain/` に置き、文字列変換や環境変数読込みは利用機能へ寄せる。既存の `energy_plan/` をSOC計画全体の所有者として拡張し、意味の近い `planning/` を別に作らない。
 
 ## 4. ギャップ分析
 
@@ -97,10 +125,12 @@ app/
 | --- | --- | --- | --- |
 | `operations/` にアダプターがない | SQLite / Firestore / PostgreSQLの取込先を見つけにくい | 高 | 互換モジュールを残して3アダプターと同期を段階移動する。 |
 | 予測機能がルートに散在 | 予測モデル変更の影響範囲を把握しにくい | 高 | 先にテストとスクリプトの私的ヘルパー依存を解消し、その後に移動する。 |
-| SOC計画の中核が分散 | 経済最適化・フィードバック・基本計算の境界が曖昧 | 中 | まず公開契約を固定してから `planning/` を作る。 |
+| SOC計画の中核が分散 | 経済最適化・フィードバック・基本計算の境界が曖昧 | 中 | 公開契約を固定し、既存の `energy_plan/` へ集約する。 |
 | KP-NET / dashboard の実装が既存パッケージ外 | 機能名と配置が一致しない | 中 | 高結合テストの境界整理後に移動する。 |
 | バックアップ群が散在 | 復旧手順と保管実装を探しにくい | 中 | 運用スクリプトとの依存を確認後、独立パッケージへ移す。 |
-| 共通モジュールがルートに残る | 一見散在に見える | 低 | 値型・変換・料金・時刻などは移動メリットを確認してから扱う。無理に `shared/` を導入しない。 |
+| 共通モジュールがルートに残る | 所有者が不明な関数が `utils.py` に増えやすい | 低 | 太陽光・蓄電池の共通概念だけを `domain/` に置き、汎用変換は利用機能へ段階移動する。 |
+| ルートPythonに大きな実装がある | Docker/Cloud Runの入口と業務ロジックが密結合 | 高 | 各機能移行と同時に実装を `app` へ移し、ルートを薄いラッパーにする。 |
+| ビルド・検査設定が旧配置を参照する | ローカルテストは通ってもコンテナや型検査で失敗する | 高 | 各フェーズでDockerfile、Cloud Build、mypy、pytest、requirementsを追随確認する。 |
 
 ## 5. 共通の安全ルール
 
@@ -111,9 +141,11 @@ app/
 3. 変更前に最小の対象テストを実行し、結果を記録する。
 4. 一つのパッケージまたは一つの互換境界だけを変更する。
 5. 旧公開パスを維持する場合、旧モジュールには移動先と互換性の理由を簡潔な英語コメントで書く。削除予定が未定なら、削除しない。
-6. 変更後に対象テスト、`python -m compileall -q ...`、`git diff --check` を実行する。
+6. 変更後に対象テスト、`python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py`、`git diff --check` を実行する。
 7. 合格後に一つの論理的なコミットを作り、`refactoring_progress.md` に日本語で対象、判断、不変条件、実行コマンド、結果、残リスクを書く。
 8. 金額、SOC、安全制御、外部機器操作、Firestore/DB書込みの意味を変える変更は、構成移動とは別コミットにする。
+9. Pythonモジュールの `__module__`、クラス同一性、例外型、モンキーパッチ先、循環importも互換性に含める。値が同じだけでは合格としない。
+10. 各作業開始前に直前の合格コミットIDを記録する。失敗時は未コミット差分を闇雲に消さず、差分を保存して原因を記録し、そのコミットから作業単位を再設計する。
 
 ## 6. 実行フェーズ
 
@@ -124,9 +156,10 @@ app/
 手順:
 
 1. `python -m pytest -q` を実行し、基準結果を `refactoring_progress.md` に記録する。
-2. 各候補について `rg -n "app\.(旧モジュール名)" app tests scripts *.py` を実行する。
+2. 各候補について `rg -n "app\.(旧モジュール名)" app tests scripts . --glob '*.py' --glob '*.ps1' --glob '*.sh'` を実行する。PowerShellでは裸の `*.py` パス引数を使わない。
 3. 次の台帳を計画文書または進捗ログへ記録する: 旧import、入口、テスト、私的ヘルパー参照、外部契約、対象テスト、互換モジュールの要否。
 4. `cloud_job_runner.py`、`db_pipeline_main.py`、`energy_model_main.py`、`kpnet_main.py`、`dashboard_server.py` のimportと責務を再確認する。
+5. `main.py` と `sheets_export_main.py`、Dockerfile 2件、`cloudbuild.dashboard.yaml`、`pyproject.toml`、`pytest.ini`、requirements 4件、ignoreファイルを構成台帳へ登録する。
 
 合格条件:
 
@@ -152,11 +185,14 @@ app/
 4. 第一者コードのimportだけを新パスへ更新する。テストには旧importを残し、互換性を検証する。
 5. 既存の `tests/test_operations_db.py`、`tests/test_firestore_operations.py`、`tests/test_postgres_operations.py`、`tests/test_dashboard_backend_parity.py`、`tests/test_db_pipeline_main.py` を実行する。
 6. SQLite・Firestore・PostgreSQLそれぞれで、取込、費用再計算、計画由来予報、バッテリー日次指標の既存テストを通す。
+7. アダプター移行完了後、`db_pipeline_main.py` の実装を `operations/workflow.py` へ移し、ルートには同じ終了コードを返す薄い入口を残す。
 
 追加テスト:
 
 - 旧パスと新パスの代表関数が同一の結果を返すことを確認する小さな互換性テストを追加する。
 - SQLite / Firestore / PostgreSQLの共通契約が同じ入力で同じ日次意味を保持することを既存パリティテストで確認する。
+- 新旧パスからimportした公開クラスと例外型の同一性を確認する。文字列モンキーパッチがある場合は、パッチが実装側へ届くことも確認する。
+- `python -c "import app.operations.sqlite, app.operations.firestore, app.operations.postgres, app.operations.sync"` を実行し、循環importがないことを確認する。
 
 停止条件:
 
@@ -199,15 +235,15 @@ app/
 
 - 予測値、補正係数、取得タイムアウト、フォールバック理由、保存される診断JSONのどれかが変わる場合は、構成移動と分けて仕様変更として扱う。
 
-### Phase 3: SOC計画を `app/planning/` へ整理する
+### Phase 3: SOC計画を既存の `app/energy_plan/` へ整理する
 
 目的: 翌朝SOC目標、日中SOC最適化、予測不確実性、過去決定フィードバックを一つの機能境界にまとめる。
 
 対象順序:
 
-1. `energy_model.py` → `planning/energy_model.py`
-2. `soc_cost_optimizer.py` → `planning/soc_cost.py`
-3. `soc_decision_feedback.py` → `planning/decision_feedback.py`
+1. `energy_model.py` → `energy_plan/energy_model.py`
+2. `soc_cost_optimizer.py` → `energy_plan/soc_cost.py`
+3. `soc_decision_feedback.py` → `energy_plan/decision_feedback.py`
 
 手順:
 
@@ -215,6 +251,7 @@ app/
 2. 金額・SOC・売買電・ペナルティの不変条件を対象テストで明示する。
 3. 最初は旧importを保持し、`energy_model_main.py` だけを新パスへ移行する。
 4. 金額計算式、SOC境界、環境変数、計画JSONキーは変更しない。
+5. `energy_model_main.py` のオーケストレーションを `energy_plan/workflow.py` へ移し、ルートには `main()` 呼出しだけを残す。2863行を一度に移さず、設定型、入力取得、予測組立て、計画作成、出力保存の順に責務単位で抽出する。
 
 対象テスト:
 
@@ -246,12 +283,13 @@ app/
 2. `dashboard/data.py` または責務ごとの既存 `dashboard/repositories.py` / `dashboard/service.py` へ段階的に移す。
 3. `dashboard_server.py` が使う `load_dashboard_slice` と `DashboardSlice` のimport契約を維持する。
 4. SQLite・Firestore・PostgreSQLの表示値パリティとJavaScriptの既存テストを実行する。
+5. `dashboard_server.py` のHTTP・認証・静的ファイル配信を `dashboard/server.py` へ移し、ルートを薄い入口にする。APIパス、Cookie、認証失敗応答、JSON形状は変更しない。
 
 停止条件:
 
 - KP-NETの設定順序、充電停止条件、07:00への復帰、ダッシュボードAPI応答形状、認証処理のいずれかが変わる場合は停止する。
 
-### Phase 5: バックアップ・アーカイブと共有モジュール
+### Phase 5: バックアップ・アーカイブ
 
 目的: 復旧機能の発見性を上げる。ただし運用スクリプト、Drive、Firestore、復旧ファイル形式を変えない。
 
@@ -259,7 +297,47 @@ app/
 
 1. `drive_backup.py`、`weekly_backup.py`、`artifact_cleanup.py`、`night_plan_archive.py` を `backup/` へ一件ずつ移す。
 2. `tests/test_drive_backup.py`、`tests/test_weekly_backup.py`、`tests/test_artifact_cleanup.py`、`tests/test_night_plan_archive.py` を毎回実行する。
-3. `utils.py`、`tariff.py`、`time_windows.py`、`monitoring_csv.py` などは、実際に二つ以上の機能から利用されるものだけを `shared/` へ移す。名前だけで移さない。
+3. Drive API、Firestore、ローカルZIPの失敗契約と、生成ファイル名・JSON形式・ハッシュ値が変わらないことを確認する。
+
+### Phase 6: 外部出力、ローカル制御、共通ドメイン
+
+目的: 残ったルートモジュールに所有者を与え、巨大な共通フォルダを作らず再編を完了する。
+
+手順:
+
+1. `sheets_export.py` を `exports/sheets.py` へ移し、`tests/test_occupancy_schedule.py` とSheets出力の既存テスト・モックを実行する。
+2. `app/main.py`、`browser_automation.py`、`config.py`、`csv_utils.py`、`decision.py`、`history_store.py`、`models.py` を `local_control/` の候補として一件ずつ監査する。ローカル実行フロー以外にも使われる記号は先に所有者を分離する。
+3. `constants.py`、`time_windows.py`、`tariff.py`、`monitoring_csv.py` のうち、外部I/Oに依存せず複数機能が使う太陽光・蓄電池概念を `domain/` へ移す。
+4. `csv_merge.py` は監視実績の取込処理なら `operations/csv_merge.py`、単独CLI専用なら `scripts/` 側に維持する。利用箇所を確認して決める。
+5. `utils.py` の各関数について利用箇所を一覧化し、環境変数、数値変換、CSV変換などの所有機能へ移す。全関数を一括移動しない。
+
+合格条件:
+
+- `app/` 直下には `__init__.py` と、互換性のため意図して残した薄い旧モジュールだけがある。
+- すべての残存旧モジュールに移動先、維持理由、削除条件がある。
+- `local_control/` と `domain/` が互いの実装詳細へ依存せず、循環importがない。
+
+### Phase 7: Cloud Runオーケストレーターを薄くする
+
+目的: 最も高リスクな `cloud_job_runner.py` から、23:00 / 03:00 / 07:00の安全制御を `app/runtime/cloud_job.py` へ移し、ルートを起動専用にする。
+
+前提:
+
+- Phase 1から6が完了し、新しい正規importが安定している。
+- `tests/test_cloud_job_runner.py` が、サブプロセス順序、環境変数、SOC監視、待機・強制充電・日中復帰、失敗時終了を十分に固定している。
+
+手順:
+
+1. `cloud_job_runner.py` の関数・クラス・遅延import・サブプロセス文字列を台帳化する。
+2. 純粋なSOC読取・時間計算・状態選択を先に `runtime/cloud_job.py` へ移す。
+3. Firestore保存、計画復元、サブプロセス起動を次の単位として移す。
+4. 23時、03時、07時の入口を最後に移す。
+5. ルート `cloud_job_runner.py` は `app.runtime.cloud_job.main` を呼び、その終了コードを返すだけにする。
+6. 実機、Firestore、Drive、Cloud Run Jobは呼ばず、既存モックテストだけで検証する。
+
+停止条件:
+
+- サブプロセスの順序、設定プロファイル、SOC停止条件、07:00復帰、失敗時のfail-safe、終了コードが変わる場合は停止する。
 
 ## 7. 互換モジュールの規約
 
@@ -289,10 +367,12 @@ git diff --check
 
 追加で次を確認する。
 
-- `rg -n "from app\.(operations_db|firestore_ops|postgres_ops|forecast_correction|kpnet_workflow|dashboard_data)" app tests scripts` の残りは、意図した互換性テストまたは未移行の外部契約だけである。
+- `rg -n "(?:from|import) app\.(operations_db|firestore_ops|postgres_ops|db_sync|forecast_correction|kpnet_workflow|dashboard_data)" app tests scripts . --glob '*.py' --glob '*.sh'` の残りは、意図した互換性テストまたは未移行の外部契約だけである。
 - `readable-code-audit` を全ソースへ再適用し、未処置の `STRUCT-03`、`STRUCT-01`、`STRUCT-04` 候補がない。
 - `readable-code-audit: skip` はすべて近接し、具体的な理由が現在のコードと一致する。
 - 本番デプロイ、実機KP-NET操作、Firestore/Driveへの書込みは、このリファクタリング計画の検証では行わない。
+- `python -m mypy` の実行方法が環境で利用可能なら実行し、`pyproject.toml` のstrict対象へ新パッケージを追加する。利用不能なら未検証として記録する。
+- Dockerfileの `COPY` と `ENTRYPOINT`、`cloudbuild.dashboard.yaml` のDockerfile指定、requirementsの依存が新構成を含むことを静的に確認する。
 
 ## 9. AIへの実行指示
 
@@ -304,3 +384,289 @@ git diff --check
 4. 新しいテストは、移動先の正規契約または旧パス互換契約のどちらを検証するかを明確にする。
 5. テスト失敗、外部契約不明、モンキーパッチ互換性の不明があれば停止し、推測で互換性を壊さない。
 6. 各コミット後に進捗ログへ、日本語で判断・不変条件・コマンド・結果・残リスクを残す。
+7. Python importだけでなく、`subprocess` に渡す `*_main.py` のファイル名、Dockerの `COPY` / `ENTRYPOINT`、Cloud Build引数、mypy対象も検索する。
+8. Lunaなど低インテリジェンスの実行担当は、後述の作業カードを上から一枚ずつ実行する。移動先、命名、テストを独自判断で変更しない。
+
+## 10. ルート直下34モジュールの移行台帳
+
+この表を各フェーズで更新する。`維持` は無期限の放置ではなく、現時点で移動利益が確認できないことを示す。
+
+| 現在のモジュール | 目標所有先 | フェーズ | 初期判断 |
+| --- | --- | --- | --- |
+| `operations_db.py` | `operations/sqlite.py` | 1 | 移動 |
+| `firestore_ops.py` | `operations/firestore.py` | 1 | 移動 |
+| `postgres_ops.py` | `operations/postgres.py` | 1 | 移動 |
+| `db_sync.py` | `operations/sync.py` | 1 | 移動 |
+| `consumption_forecast.py` | `forecasting/consumption.py` | 2 | 移動 |
+| `comfort_load_forecast.py` | `forecasting/comfort_load.py` | 2 | 移動 |
+| `forecast_correction.py` | `forecasting/correction.py` | 2 | テスト境界整理後に移動 |
+| `pv_array_forecast.py` | `forecasting/pv_array.py` | 2 | 移動 |
+| `pv_physical_forecast.py` | `forecasting/pv_physical.py` | 2 | 移動 |
+| `occupancy_schedule.py` | `forecasting/occupancy.py` | 2 | 予測入力契約を確認後に移動 |
+| `energy_model.py` | `energy_plan/energy_model.py` | 3 | 移動 |
+| `soc_cost_optimizer.py` | `energy_plan/soc_cost.py` | 3 | 金額不変条件を固定後に移動 |
+| `soc_decision_feedback.py` | `energy_plan/decision_feedback.py` | 3 | 移動 |
+| `kpnet_workflow.py` | `kpnet/workflow.py` | 4 | 高リスク、契約テスト後に移動 |
+| `dashboard_data.py` | `dashboard/data.py` ほか | 4 | 責務分割後に移動 |
+| `drive_backup.py` | `backup/drive.py` | 5 | 移動 |
+| `weekly_backup.py` | `backup/weekly.py` | 5 | 移動 |
+| `artifact_cleanup.py` | `backup/artifacts.py` | 5 | 移動 |
+| `night_plan_archive.py` | `backup/night_plan_archive.py` | 5 | 計画文書との境界確認後に移動 |
+| `sheets_export.py` | `exports/sheets.py` | 6 | 移動 |
+| `app/main.py` | `local_control/workflow.py` | 6 | ルート `main.py` からの入口を維持して移動 |
+| `browser_automation.py` | `local_control/browser.py` | 6 | 移動 |
+| `config.py` | `local_control/config.py` または所有機能 | 6 | 利用範囲を確認して分割 |
+| `csv_utils.py` | `local_control/csv_input.py` | 6 | 移動 |
+| `decision.py` | `local_control/decision.py` | 6 | 移動 |
+| `history_store.py` | `local_control/history.py` | 6 | 移動 |
+| `models.py` | `local_control/models.py` または所有機能 | 6 | 利用範囲を確認して分割 |
+| `constants.py` | `domain/constants.py` | 6 | 移動候補 |
+| `time_windows.py` | `domain/time_windows.py` | 6 | 移動候補 |
+| `tariff.py` | `domain/tariff.py` | 6 | 金額契約を固定後に移動 |
+| `monitoring_csv.py` | `domain/monitoring_csv.py` または `operations/` | 6 | I/O責務を確認して決定 |
+| `csv_merge.py` | `operations/csv_merge.py` または `scripts/` | 6 | 利用形態を確認して決定 |
+| `utils.py` | 各所有機能 | 6 | 関数単位で縮小 |
+| `night_plan.py` | `energy_plan/night_plan.py` | 3または5 | 読込契約とアーカイブ責務を分けて移動 |
+
+## 11. ルートファイルの追随台帳
+
+| ルートファイル | 役割 | 計画上の扱い |
+| --- | --- | --- |
+| `energy_model_main.py` | 計画生成の実装とCLI | Phase 3で実装を `energy_plan/workflow.py` へ移し、薄い入口にする。 |
+| `db_pipeline_main.py` | DB取込・集計の実装とCLI | Phase 1で `operations/workflow.py` へ移し、薄い入口にする。 |
+| `dashboard_server.py` | HTTP、認証、静的配信 | Phase 4で `dashboard/server.py` へ移し、薄い入口にする。 |
+| `cloud_job_runner.py` | Cloud Runスロット制御 | Phase 7で `runtime/cloud_job.py` へ最後に移す。 |
+| `kpnet_main.py` | KP-NET CLI入口 | ファイル名と終了コードを維持する。既に薄い。 |
+| `main.py` | ローカル制御入口 | ファイル名と終了コードを維持する。既に薄い。 |
+| `sheets_export_main.py` | Sheets出力入口 | Phase 6の実装移動後も薄い入口として維持する。 |
+| `Dockerfile` | Cloud Run Jobイメージ | `COPY app`、ルート入口、requirementsを各フェーズで確認する。 |
+| `Dockerfile.dashboard` | Dashboardイメージ | `dashboard_server.py` の薄い入口と `app/dashboard` が含まれることを確認する。 |
+| `cloudbuild.dashboard.yaml` | Dashboardビルド | Dockerfile名、ビルドコンテキスト、置換変数を維持する。 |
+| `pyproject.toml` | mypy設定 | `forecasting.*`、`domain.*`、`backup.*`、`exports.*`、`local_control.*`、`runtime.*` をstrict対象へ追加する。旧対象は互換モジュールがある間維持する。 |
+| `pytest.ini` | テスト探索・marker | テスト配置を変える場合だけ更新し、`external` markerを維持する。 |
+| `requirements*.txt` | 実行環境別依存 | import移動だけでは変更しない。依存追加が必要なら別タスクとして承認を得る。 |
+| `.dockerignore` | Jobビルド除外 | 新パッケージが除外されないこと、`.env` と成果物が引き続き除外されることを確認する。 |
+| `.gcloudignore-dashboard` | Dashboardアップロード除外 | `app/`、`templates/`、`static/`、薄い入口が除外されないことを確認する。 |
+| `.gitignore` | Git追跡除外 | 新パッケージが誤って除外されず、`.env`、キャッシュ、成果物が引き続き除外されることを確認する。 |
+| `.env.example` | 公開設定契約 | キー名・初期値を構成移動では変更しない。実 `.env` は読まず、追跡・ステージしない。 |
+| `README.md`, `AGENTS.md` | 利用方法・作業規約 | 正規importや構成説明が変わったフェーズで追随更新する。 |
+
+## 12. Luna低インテリジェンス実行手順
+
+この節は実装担当への直接指示である。上位節を要約したり、複数カードを同時に処理したりしない。各カードの完了後に必ずコミットし、次のカードはクリーンな作業ツリーから開始する。
+
+### 12.1 全カード共通の開始手順
+
+次を記載順に実行する。
+
+```powershell
+git status --short
+git rev-parse HEAD
+```
+
+- `git status --short` に出力があれば停止する。既存変更を削除、退避、上書きしない。
+- `git rev-parse HEAD` の値を `refactoring_progress.md` のカード開始記録へ書く。この値がロールバック基準である。
+- 対象カードに書かれた「変更前テスト」を実行する。1件でも失敗またはエラーなら、ソースを変更せず停止する。
+- `.env` を表示、編集、ステージしない。本番サービス、KP-NET実機、Firestore、Drive、Cloud Run Jobを実行しない。
+
+### 12.2 一つの移動カードで許可される変更
+
+1. 対象の旧実装ファイルを、カードに指定された新パスへ移動する。
+2. 旧パスに互換モジュールを新規作成する。
+3. `app/` とルートエントリポイントの第一者importを新パスへ変更する。
+4. カード指定の互換性テストを追加する。
+5. `pyproject.toml` のmypy strict対象に新パッケージがなければ追加する。
+6. `refactoring_progress.md` に日本語で結果を追記する。
+
+次は禁止する。
+
+- 関数本体、計算式、SQL、HTTP、環境変数名、JSONキー、例外型、ログ文言の変更。
+- 関係ないformat、rename、コメント整理。
+- 依存パッケージの追加・更新。
+- 旧互換モジュールの削除。
+- カードにないファイルの移動。
+
+### 12.3 互換モジュールの作成手順
+
+1. 移動前に `rg -n "^(class|def) " <旧ファイル>` でトップレベル記号を列挙する。
+2. 先頭が `_` でない記号と、第一者コードが実際にimportする記号を一覧にする。
+3. 旧ファイルには、移動先から必要な記号を明示的にimportするコードだけを置く。`import *` を使わない。
+4. 旧パスと新パスから代表的なクラス・関数をimportし、`old_symbol is new_symbol` をassertするテストを追加する。
+5. 旧パスに対する文字列モンキーパッチが検出された場合、そのカードは実行せず停止する。「テスト境界整理カードが必要」と進捗ログへ書く。
+
+### 12.4 全カード共通の終了手順
+
+カード指定の変更後テストに加えて次を実行する。
+
+```powershell
+python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py
+git diff --check
+git status --short
+```
+
+- テスト、構文検査、差分検査のどれかが失敗したらコミットしない。失敗コマンド、最初の失敗、変更ファイルを進捗ログへ記録して停止する。
+- 成功した場合だけ、カードに指定されたコミットメッセージでコミットする。
+- コミット直後に `git status --short` を実行し、出力があれば次のカードへ進まない。
+
+### 12.5 Phase 0 カード
+
+#### P0-1: 全回帰ベースライン
+
+- 変更前テスト: `python -m pytest -q`
+- 変更: `refactoring_progress.md` に日時、GitコミットID、テスト件数、skip件数、所要時間を記録するだけ。
+- 変更後検査: `git diff --check`
+- コミット: `docs: record module migration baseline`
+- 停止条件: テスト失敗、`.env` がステージ済み、作業ツリーが開始時点でdirty。
+
+#### P0-2: import・設定台帳
+
+- 実行:
+
+```powershell
+rg -n "(?:from|import) app\." app tests scripts . --glob '*.py' --glob '*.sh'
+rg -n "monkeypatch\.setattr|patch\(" tests --glob '*.py'
+rg -n "COPY |ENTRYPOINT|CMD|python .*_main\.py|cloud_job_runner\.py|dashboard_server\.py" Dockerfile Dockerfile.dashboard cloudbuild.dashboard.yaml scripts --glob '*.ps1' --glob '*.sh'
+```
+
+- 変更: 検出した旧パス、文字列モンキーパッチ、ルート実行ファイル参照を `refactoring_progress.md` に記録するだけ。
+- コミット: `docs: record module import migration inventory`
+- 停止条件: コマンド自体がエラーになる場合。検索結果が0件であることはエラーではない。
+
+### 12.6 Phase 1 カード: operations
+
+カードは次の順で実行する。
+
+| カード | 旧パス → 新パス | 変更前後に同じコマンドを実行 | コミット |
+| --- | --- | --- | --- |
+| P1-1 | `app/operations_db.py` → `app/operations/sqlite.py` | `python -m pytest -q tests/test_operations_db.py tests/test_weekly_backup.py tests/test_db_pipeline_main.py` | `refactor: move sqlite operations into package` |
+| P1-2 | `app/firestore_ops.py` → `app/operations/firestore.py` | `python -m pytest -q tests/test_firestore_operations.py tests/test_firestore_dashboard_metrics.py tests/test_db_pipeline_main.py` | `refactor: move firestore operations into package` |
+| P1-3 | `app/postgres_ops.py` → `app/operations/postgres.py` | `python -m pytest -q tests/test_postgres_operations.py tests/test_dashboard_backend_parity.py` | `refactor: move postgres operations into package` |
+| P1-4 | `app/db_sync.py` → `app/operations/sync.py` | `python -m pytest -q tests/test_drive_backup.py tests/test_db_pipeline_main.py` | `refactor: move database sync into operations` |
+| P1-5 | `db_pipeline_main.py` の実装 → `app/operations/workflow.py` | `python -m pytest -q tests/test_db_pipeline_main.py tests/test_operations_db.py tests/test_firestore_operations.py tests/test_postgres_operations.py` | `refactor: isolate operations pipeline workflow` |
+
+P1-5では、ルート `db_pipeline_main.py` を次の形にする。ただし現在の実装が `main()` 以外の公開記号をテストから参照している場合は停止し、参照一覧を記録する。
+
+```python
+from app.operations.workflow import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+Phase 1完了後に次を実行する。
+
+```powershell
+python -m pytest -q tests/test_operations_db.py tests/test_firestore_operations.py tests/test_postgres_operations.py tests/test_dashboard_backend_parity.py tests/test_db_pipeline_main.py tests/test_drive_backup.py tests/test_weekly_backup.py
+```
+
+### 12.7 Phase 2 カード: forecasting
+
+P2-1は移動を行わない。先に私的参照を整理する。
+
+#### P2-1: 私的参照の分類
+
+- 実行: `rg -n "from app\.(forecast_correction|comfort_load_forecast|pv_array_forecast) import _|monkeypatch\.setattr\(\"app\.(forecast_correction|comfort_load_forecast|pv_array_forecast)" tests scripts --glob '*.py'`
+- 各検出を「独立契約として新モジュールで直接テスト」または「公開APIテストへ置換」に分類して進捗ログへ記録する。
+- このカードではテスト・実装を変更しない。
+- コミット: `docs: classify forecasting private test dependencies`
+
+移動カード:
+
+| カード | 旧パス → 新パス | 変更前後テスト | コミット |
+| --- | --- | --- | --- |
+| P2-2 | `app/consumption_forecast.py` → `app/forecasting/consumption.py` | `python -m pytest -q tests/test_consumption_forecast.py tests/test_energy_model_runtime.py tests/test_occupancy_schedule.py` | `refactor: move consumption forecast into package` |
+| P2-3 | `app/comfort_load_forecast.py` → `app/forecasting/comfort_load.py` | `python -m pytest -q tests/test_comfort_load_forecast.py tests/test_energy_model.py` | `refactor: move comfort forecast into package` |
+| P2-4 | `app/pv_array_forecast.py` → `app/forecasting/pv_array.py` | `python -m pytest -q tests/test_pv_array_forecast.py tests/test_external_site_access.py tests/test_energy_model.py` | `refactor: move pv array forecast into package` |
+| P2-5 | `app/pv_physical_forecast.py` → `app/forecasting/pv_physical.py` | `python -m pytest -q tests/test_pv_physical_forecast.py tests/test_energy_model.py` | `refactor: move physical pv forecast into package` |
+| P2-6 | `app/occupancy_schedule.py` → `app/forecasting/occupancy.py` | `python -m pytest -q tests/test_occupancy_schedule.py tests/test_consumption_forecast.py tests/test_energy_model.py` | `refactor: move occupancy forecast input into package` |
+| P2-7 | `app/forecast_correction.py` → `app/forecasting/correction.py` | `python -m pytest -q tests/test_energy_model.py tests/test_external_site_access.py tests/test_comfort_load_forecast.py` | `refactor: move forecast correction into package` |
+
+- P2-3、P2-4、P2-7は、旧パスへの私的importまたは文字列モンキーパッチが1件でも残る間は実行しない。
+- 予測値、補正係数、provider timeout、診断JSONが変更前後で異なれば停止する。
+
+### 12.8 Phase 3 カード: energy_plan
+
+| カード | 作業 | 変更前後テスト | コミット |
+| --- | --- | --- | --- |
+| P3-1 | `app/energy_model.py` → `app/energy_plan/energy_model.py` | `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py` | `refactor: move energy model into energy plan` |
+| P3-2 | `app/soc_cost_optimizer.py` → `app/energy_plan/soc_cost.py` | `python -m pytest -q tests/test_soc_cost_optimizer.py tests/test_energy_model.py tests/test_energy_model_runtime.py` | `refactor: move soc cost model into energy plan` |
+| P3-3 | `app/soc_decision_feedback.py` → `app/energy_plan/decision_feedback.py` | `python -m pytest -q tests/test_soc_decision_feedback.py tests/test_energy_model_runtime.py tests/test_cloud_job_runner.py` | `refactor: move decision feedback into energy plan` |
+| P3-4 | `app/night_plan.py` → `app/energy_plan/night_plan.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_night_plan_archive.py tests/test_energy_plan_document.py` | `refactor: move night plan into energy plan` |
+| P3-5 | `energy_model_main.py` の実装を責務単位で `app/energy_plan/workflow.py` へ抽出 | `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_output.py tests/test_energy_plan_document.py` | `refactor: isolate energy plan workflow` |
+
+P3-5は一コミットに2863行を移してはならない。次の5サブカードを順に使う。それぞれ同じ対象テストを実行し、一コミットにする。
+
+1. P3-5a: 設定データクラスと設定読込。
+2. P3-5b: 履歴・予報入力取得。
+3. P3-5c: 消費・PV・補正モデルの組立て。
+4. P3-5d: SOC計画計算と診断値組立て。
+5. P3-5e: JSON保存と `main()`。最後にルートを薄い入口へ置換。
+
+### 12.9 Phase 4 カード: kpnet と dashboard
+
+| カード | 作業 | 変更前後テスト | コミット |
+| --- | --- | --- | --- |
+| P4-1 | KP-NET私的テスト依存を分類する。移動しない。 | `python -m pytest -q tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py` | `docs: classify kpnet private test dependencies` |
+| P4-2 | `app/kpnet_workflow.py` → `app/kpnet/workflow.py` | `python -m pytest -q tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_cloud_job_runner.py` | `refactor: move kpnet workflow into package` |
+| P4-3 | Dashboard私的テスト依存を分類する。移動しない。 | `python -m pytest -q tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py tests/test_dashboard_server.py` | `docs: classify dashboard private test dependencies` |
+| P4-4 | `app/dashboard_data.py` のデータロードを `app/dashboard/data.py` へ移す | `python -m pytest -q tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` | `refactor: move dashboard data into package` |
+| P4-5 | `dashboard_server.py` の実装を `app/dashboard/server.py` へ移す | `python -m pytest -q tests/test_dashboard_server.py tests/test_dashboard_data.py` | `refactor: isolate dashboard server` |
+
+- P4-2とP4-4は旧パスへの私的参照が残る間は実行しない。
+- P4-2では実機を呼ばない。P4-4とP4-5では外部DBやHTTPサーバーを起動しない。
+
+### 12.10 Phase 5・6カード: backup、exports、local_control、domain
+
+| カード | 旧パス → 新パス | 変更前後テスト | コミット |
+| --- | --- | --- | --- |
+| P5-1 | `app/drive_backup.py` → `app/backup/drive.py` | `python -m pytest -q tests/test_drive_backup.py` | `refactor: move drive backup into package` |
+| P5-2 | `app/weekly_backup.py` → `app/backup/weekly.py` | `python -m pytest -q tests/test_weekly_backup.py` | `refactor: move weekly backup into package` |
+| P5-3 | `app/artifact_cleanup.py` → `app/backup/artifacts.py` | `python -m pytest -q tests/test_artifact_cleanup.py` | `refactor: move artifact cleanup into package` |
+| P5-4 | `app/night_plan_archive.py` → `app/backup/night_plan_archive.py` | `python -m pytest -q tests/test_night_plan_archive.py tests/test_firestore_operations.py` | `refactor: move night plan archive into package` |
+| P6-1 | `app/sheets_export.py` → `app/exports/sheets.py` | `python -m pytest -q tests/test_occupancy_schedule.py tests/test_cloud_job_runner.py` | `refactor: move sheets export into package` |
+| P6-2 | `app/browser_automation.py` → `app/local_control/browser.py` | `python -m pytest -q tests/test_decision.py tests/test_domain_primitives.py` | `refactor: move local browser automation into package` |
+| P6-3 | `app/csv_utils.py` → `app/local_control/csv_input.py` | `python -m pytest -q tests/test_decision.py tests/test_domain_primitives.py` | `refactor: move local csv input into package` |
+| P6-4 | `app/decision.py` → `app/local_control/decision.py` | `python -m pytest -q tests/test_decision.py` | `refactor: move local decision into package` |
+| P6-5 | `app/history_store.py` → `app/local_control/history.py` | `python -m pytest -q tests/test_decision.py` | `refactor: move local history into package` |
+| P6-6 | `app/main.py` → `app/local_control/workflow.py` | `python -m pytest -q tests/test_decision.py tests/test_domain_primitives.py` | `refactor: isolate local controller workflow` |
+| P6-7 | `app/constants.py` → `app/domain/constants.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_energy_model.py tests/test_cloud_job_runner.py` | `refactor: move battery constants into domain` |
+| P6-8 | `app/time_windows.py` → `app/domain/time_windows.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_domain.py tests/test_forced_charge_settings.py` | `refactor: move time windows into domain` |
+| P6-9 | `app/tariff.py` → `app/domain/tariff.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_cost_daily.py tests/test_soc_cost_optimizer.py` | `refactor: move tariff rules into domain` |
+
+- `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py` は、台帳で所有先が一意に決まるまで移動しない。曖昧なままLunaが決定してはならない。
+- P6-2、P6-3、P6-5は直接テストが不足している可能性がある。対象記号を実行する既存テストが見つからなければ、移動前に最小の契約テストを追加する別カードを作り、そのカードだけ実行する。
+
+### 12.11 Phase 7カード: cloud_job_runner
+
+P7は最後に実行する。次のサブカードを一つずつ処理し、毎回 `python -m pytest -q tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` を変更前後に実行する。
+
+1. P7-1: `SocReading` と純粋な時刻・SOC判定を `app/runtime/cloud_job.py` へ移す。
+2. P7-2: Firestoreへの結果保存・計画復元を移す。
+3. P7-3: `_run` とサブプロセス組立てを移す。呼び出すルートファイル名は変更しない。
+4. P7-4: 23:00処理を移す。
+5. P7-5: 03:00監視処理を移す。
+6. P7-6: 07:00処理と `main()` を移し、ルートを薄い入口にする。
+
+各サブカードのコミットは `refactor: extract cloud job <対象責務>` とする。テストのモック先が旧ルートを指している場合は、モック先変更だけを先行カードにし、実装移動と同じコミットに混ぜない。
+
+### 12.12 全フェーズ完了カード
+
+#### PF-1: 全検証
+
+```powershell
+python -m pytest -q
+python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py
+git diff --check
+git status --short
+```
+
+- mypyが導入済みなら、`python -m mypy` に続けて実際の対象パスを指定する。コマンドが不明なら推測せず、`pyproject.toml` と既存CI／スクリプトを検索して停止する。
+- 全て成功した場合だけ、更新済みの構成図、残存互換モジュール、未移動モジュール、全テスト結果を進捗ログへ記録する。
+- コミット: `docs: record completed module migration validation`
+
+#### PF-2: 可読性再監査
+
+- `readable-code-audit` を全ソースへ適用する。
+- 未処置の `STRUCT-01`、`STRUCT-03`、`STRUCT-04` を全件報告する。
+- 正当な例外には近接した `readable-code-audit: skip RULE-ID — concrete reason` があることを確認する。
+- 未処置件数が0で、全回帰が成功した場合だけ計画を完了扱いにする。
