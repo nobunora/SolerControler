@@ -10,16 +10,16 @@ from zoneinfo import ZoneInfo
 
 from playwright.sync_api import Page, sync_playwright
 
-from app.browser_automation import (
+from app.local_control.browser import (
     apply_battery_setting,
     download_monitoring_csv,
     fetch_forecast_12h,
     login_monitoring_service,
 )
 from app.local_control.config import AppConfig
-from app.csv_utils import parse_monitoring_csv
-from app.decision import decide_battery_setting
-from app.history_store import persist_history
+from app.local_control.csv_input import parse_monitoring_csv
+from app.local_control.decision import decide_battery_setting
+from app.local_control.history import persist_history
 from app.local_control.models import ApplyResult, DesiredBatterySetting, ForecastResult
 from app.configuration.environment import load_dotenv_if_present
 

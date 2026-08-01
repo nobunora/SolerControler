@@ -172,3 +172,8 @@
 - `scripts/backup_drive.py` は先行するDrive adapter型境界の修正により、着手時点で対象mypyが0エラーだった。`tests/test_drive_backup.py` は `3 passed`、`compileall` と `git diff --check` は成功した。
 - Phase T2の全体再検査: `python -m mypy app scripts --no-incremental` は **118 source filesで0エラー**。実サービスへの接続、backup作成・upload、Firestore操作は行っていない。
 - Phase T2完了検査: 全テストは `429 passed, 1 skipped in 20.44s`、`python scripts/security_check.py` と `git diff --check` は成功した。
+
+## 2026-08-01 — I-1: local_control正規import
+
+- 変更: `workflow.py` 内だけで、browser・CSV・decision・historyの4 importを同一責務の `app.local_control.*` 正規パスへ置換した。関数名、呼出し順、例外処理は変更していない。
+- 検証: `tests/test_decision.py tests/test_local_control_config_compatibility.py tests/test_local_control_models_compatibility.py` は `5 passed`。対象mypyと `git diff --check` は成功した。
