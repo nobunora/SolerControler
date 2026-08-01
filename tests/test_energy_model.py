@@ -13,6 +13,7 @@ from app.energy_model import (
     effective_capacity_kwh,
     fit_coefficients_from_csv,
     forecast_pv_energy_kwh,
+    _daytime_target_score,
     optimize_target_soc_for_daytime,
 )
 from app.forecast_correction import (
@@ -528,6 +529,39 @@ def test_fit_coefficients_from_csv(tmp_path: Path) -> None:
     assert coeff.soc_per_kwh_discharge > 0
     assert 0 < coeff.battery_round_trip_efficiency <= 1.5
     assert coeff.battery_usable_capacity_kwh > 0
+
+
+def test_daytime_target_score_prioritizes_buy_before_peak_soc_and_start_energy() -> None:
+    no_buy_lower_start = _daytime_target_score(
+        buy_kwh=0.0,
+        sell_kwh=0.0,
+        max_soc_percent=95.0,
+        target_peak_soc_percent=99.0,
+        buy_tolerance_kwh=0.05,
+        sell_tolerance_kwh=0.10,
+        start_energy_kwh=4.0,
+    )
+    small_buy_closer_peak = _daytime_target_score(
+        buy_kwh=0.06,
+        sell_kwh=0.0,
+        max_soc_percent=99.0,
+        target_peak_soc_percent=99.0,
+        buy_tolerance_kwh=0.05,
+        sell_tolerance_kwh=0.10,
+        start_energy_kwh=3.0,
+    )
+    no_buy_higher_start = _daytime_target_score(
+        buy_kwh=0.0,
+        sell_kwh=0.0,
+        max_soc_percent=95.0,
+        target_peak_soc_percent=99.0,
+        buy_tolerance_kwh=0.05,
+        sell_tolerance_kwh=0.10,
+        start_energy_kwh=5.0,
+    )
+
+    assert no_buy_lower_start < small_buy_closer_peak
+    assert no_buy_lower_start < no_buy_higher_start
 
 
 def test_optimize_target_soc_for_daytime_prioritizes_no_buy_and_peak_soc() -> None:

@@ -236,6 +236,33 @@ def _simulate_daytime(
     return buy_kwh, sell_kwh, sunset_energy_kwh, max_energy_kwh, max_energy_hour
 
 
+def _daytime_target_score(
+    *,
+    buy_kwh: float,
+    sell_kwh: float,
+    max_soc_percent: float,
+    target_peak_soc_percent: float,
+    buy_tolerance_kwh: float,
+    sell_tolerance_kwh: float,
+    start_energy_kwh: float,
+) -> tuple[float, ...]:
+    """Rank one starting-SOC candidate by the operational priority order."""
+    buy_excess = max(0.0, buy_kwh - buy_tolerance_kwh)
+    sell_excess = max(0.0, sell_kwh - sell_tolerance_kwh)
+    peak_gap = abs(target_peak_soc_percent - max_soc_percent)
+    peak_under_gap = max(0.0, target_peak_soc_percent - max_soc_percent)
+    # Keep electricity purchase and battery-overfill export ahead of peak-SOC tuning.
+    return (
+        buy_excess,
+        sell_excess,
+        peak_under_gap,
+        peak_gap,
+        buy_kwh,
+        sell_kwh,
+        start_energy_kwh,
+    )
+
+
 def optimize_target_soc_for_daytime(
     *,
     effective_capacity_kwh_value: float,
@@ -290,23 +317,14 @@ def optimize_target_soc_for_daytime(
             sunset_hour=sunset_hour,
         )
         max_soc = 100.0 * max_energy / cap if cap > 0 else 0.0
-        buy_excess = max(0.0, buy_kwh - buy_tolerance)
-        sell_excess = max(0.0, sell_kwh - sell_tolerance)
-        peak_gap = abs(target_peak_soc - max_soc)
-        peak_under_gap = max(0.0, target_peak_soc - max_soc)
-        # Priority:
-        # 1. Avoid daytime buy.
-        # 2. Avoid export caused by overfilling the battery.
-        # 3. Bring the daytime peak SOC close to the configured target (default 99%).
-        # 4. Prefer the lower starting SOC only after the operational goals are tied.
-        key = (
-            buy_excess,
-            sell_excess,
-            peak_under_gap,
-            peak_gap,
-            buy_kwh,
-            sell_kwh,
-            start_energy,
+        key = _daytime_target_score(
+            buy_kwh=buy_kwh,
+            sell_kwh=sell_kwh,
+            max_soc_percent=max_soc,
+            target_peak_soc_percent=target_peak_soc,
+            buy_tolerance_kwh=buy_tolerance,
+            sell_tolerance_kwh=sell_tolerance,
+            start_energy_kwh=start_energy,
         )
 
         if best_key is None or key < best_key:
