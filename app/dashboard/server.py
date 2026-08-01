@@ -10,9 +10,10 @@ import traceback
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import ParseResult, parse_qs, urlparse
 
-from app.dashboard.data import DashboardSlice, load_dashboard_slice
+from app.dashboard.data import load_dashboard_slice
+from app.dashboard.models import DashboardSlice
 
 
 _PROJECT_ROOT = Path(__file__).parents[2]
@@ -68,7 +69,7 @@ def _verify_session(token: str) -> bool:
     return hmac.compare_digest(got_sig, expected)
 
 
-def _empty_dashboard_payload() -> dict:
+def _empty_dashboard_payload() -> dict[str, object]:
     return {
         "pv_daily": [],
         "forecast_hourly": [],
@@ -94,7 +95,7 @@ def _empty_dashboard_payload() -> dict:
     }
 
 
-def _html(payload: dict, script_nonce: str) -> str:
+def _html(payload: dict[str, object], script_nonce: str) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     template = (_PROJECT_ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
     return template.replace("__DASHBOARD_DATA_PLACEHOLDER__", payload_json).replace("__NONCE__", script_nonce)
@@ -120,6 +121,7 @@ def _static_asset(path: str) -> tuple[str, bytes] | None:
 class Handler(BaseHTTPRequestHandler):
     server_version = "SolarDashboard"
     sys_version = ""
+    _new_session_cookie: str | None = None
 
     def _send_security_headers(self, script_nonce: str | None = None) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -173,10 +175,10 @@ class Handler(BaseHTTPRequestHandler):
         return "; ".join(bits)
 
     def _maybe_send_auth_cookie(self) -> None:
-        if getattr(self, "_new_session_cookie", None):
+        if self._new_session_cookie is not None:
             self.send_header("Set-Cookie", self._new_session_cookie)
 
-    def _is_authorized(self, parsed) -> bool:
+    def _is_authorized(self, parsed: ParseResult) -> bool:
         if not _auth_enabled():
             return True
 
@@ -214,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
             self._new_session_cookie = self._build_session_cookie()
         return ok
 
-    def _query_int(self, parsed, *, key: str, default: int, min_value: int, max_value: int) -> int:
+    def _query_int(self, parsed: ParseResult, *, key: str, default: int, min_value: int, max_value: int) -> int:
         qs = parse_qs(parsed.query or "")
         raw = (qs.get(key) or [""])[0].strip()
         if not raw:
@@ -225,14 +227,14 @@ class Handler(BaseHTTPRequestHandler):
             return default
         return max(min_value, min(max_value, value))
 
-    def _query_bool(self, parsed, *, key: str, default: bool) -> bool:
+    def _query_bool(self, parsed: ParseResult, *, key: str, default: bool) -> bool:
         qs = parse_qs(parsed.query or "")
         raw = (qs.get(key) or [""])[0].strip().lower()
         if not raw:
             return default
         return raw in {"1", "true", "yes", "on"}
 
-    def _query_date(self, parsed, *, key: str) -> str | None:
+    def _query_date(self, parsed: ParseResult, *, key: str) -> str | None:
         qs = parse_qs(parsed.query or "")
         raw = (qs.get(key) or [""])[0].strip()
         if not raw:
@@ -276,15 +278,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or path == "/index.html":
             try:
                 db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
-                sliced = load_dashboard_slice(
+                root_slice = load_dashboard_slice(
                     db_path,
                     end_date=None,
                     window_days=31,
                     include_static=True,
                 )
                 payload = {
-                    **sliced.data.__dict__,
-                    "meta": sliced.meta,
+                    **root_slice.data.__dict__,
+                    "meta": root_slice.meta,
                 }
             except Exception:
                 print("dashboard root render error")
@@ -310,7 +312,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 include_static = self._query_bool(parsed, key="include_static", default=True)
                 end_date = self._query_date(parsed, key="end_date")
-                sliced: DashboardSlice = load_dashboard_slice(
+                api_slice: DashboardSlice = load_dashboard_slice(
                     db_path,
                     end_date=end_date,
                     window_days=window_days,
@@ -318,8 +320,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 body = json.dumps(
                     {
-                        **sliced.data.__dict__,
-                        "meta": sliced.meta,
+                        **api_slice.data.__dict__,
+                        "meta": api_slice.meta,
                     },
                     ensure_ascii=False,
                 ).encode("utf-8")
@@ -343,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_security_headers()
         self.end_headers()
 
-    def log_message(self, fmt: str, *args) -> None:
+    def log_message(self, fmt: str, *args: object) -> None:
         _ = (fmt, args)
 
 

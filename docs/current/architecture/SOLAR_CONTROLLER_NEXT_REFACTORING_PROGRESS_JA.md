@@ -34,3 +34,11 @@
 - 変更: plan日付に一致するbattery rowを明示的に分離し、欠損rowに `.get` しないようにした。PostgreSQL cursorとFirestore clientを外部境界として `Any` で明示し、Firestore client factoryの戻り値を明示した。欠損時の既存0.0 fallback、schedule表示、query、cache、document構造は変更していない。
 - 変更後検証: 同じテストは `37 passed in 1.06s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: SQLiteのローカルfixtureとfake backendだけを使用し、Firestore/PostgreSQLには接続していない。
+
+## 2026-08-01 — T1-4: Dashboard serverのHTTP境界
+
+- 開始コミット: `a8deefa340b46bfffe9b93a9b8139700edf97acd`
+- 変更前検証: Dashboard serverテストは `4 passed in 0.21s`。対象mypyは11エラーだった。
+- 変更: HTTP URL解析値を `ParseResult` として明示し、dashboard payloadのdict値型、session cookie属性、log hook引数を明示した。root/APIで別のslice変数名を使い、意図が異なる値の再定義を解消した。status code、header、認証判定、URL、HTML、JSONは変更していない。
+- 変更後検証: 同じ4テストは `4 passed in 0.21s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: 実HTTP serverは起動していない。
