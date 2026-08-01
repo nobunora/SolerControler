@@ -640,3 +640,11 @@
 - 実装変更: Cloud Jobの全実装を正規モジュールへ移動した。ルートは `main()` を呼ぶ起動専用ファイルであり、呼び出す `energy_model_main.py`、`kpnet_main.py`、`db_pipeline_main.py`、`sheets_export_main.py` のファイル名は変更していない。
 - 変更後検証: 同じ3テストは `71 passed in 12.50s`。`compileall` と `git diff --check` も成功。
 - 安全性: Cloud Run Job、KP-NET設定、Firestore書込み、Drive、外部コマンド、本番環境は実行していない。
+
+## 2026-08-01 — Phase 7後の全回帰と残存テスト境界の是正
+
+- 発見: 全回帰で `test_soc_optimization_request_forwards_legacy_arguments` が失敗した。P3-2移動後も旧 `app.soc_cost_optimizer` をモンキーパッチしており、互換モジュール経由では正規実装のグローバル参照を差し替えられないためである。
+- 処置: テストの対象だけを `app.energy_plan.soc_cost` へ変更した。旧互換モジュールの公開契約・SOC最適化の実装・引数・結果は変更していない。
+- 個別検証: `tests/test_soc_optimization_request.py` は `1 passed in 2.26s`。
+- 全回帰: `python -m pytest -q` は `417 passed, 1 skipped in 19.88s`。
+- 構文・形式検査: 計画指定の `compileall` と `git diff --check` は成功。

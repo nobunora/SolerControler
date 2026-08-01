@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app import soc_cost_optimizer as optimizer
+from app.energy_plan import soc_cost as optimizer
 
 
 def test_soc_optimization_request_forwards_legacy_arguments(monkeypatch) -> None:
