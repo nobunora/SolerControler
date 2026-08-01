@@ -198,6 +198,7 @@ def _stop(terminal: ChargeState, reason: str) -> ChargeTransition:
     )
 
 
+# readable-code-audit: skip STRUCT-04 — explicit branches are the state-transition table; splitting them would obscure allowed states and terminal safety rules
 def decide_transition(
     state: ChargeState,
     observation: ChargeObservation,

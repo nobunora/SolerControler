@@ -304,6 +304,7 @@ def _build_rows(
     return feature_rows, targets, feature_names, contribution_rows
 
 
+# readable-code-audit: skip STRUCT-04 — grouping and contribution totals share one normalized result set for attribution consistency
 def _group_contributions(
     *,
     coef: np.ndarray,

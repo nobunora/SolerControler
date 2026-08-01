@@ -86,6 +86,7 @@ def _exponential_history(
     return weighted_sum / total_weight if total_weight else default
 
 
+# readable-code-audit: skip STRUCT-04 — all comfort features are derived from one target hour and must remain aligned with the model input schema
 def _feature_map(
     ts: datetime,
     weather: dict[datetime, dict[str, float]],

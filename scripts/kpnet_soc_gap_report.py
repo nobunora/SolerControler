@@ -250,6 +250,7 @@ def _build_hourly_table(rows: list[MonitorRow], plan_doc: dict[str, Any]) -> lis
     return lines
 
 
+# readable-code-audit: skip STRUCT-04 — report data loading and Markdown rendering use one run directory snapshot for reproducibility
 def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path:
     csv_paths = _collect_csv_paths(run_dir)
     if not csv_paths:

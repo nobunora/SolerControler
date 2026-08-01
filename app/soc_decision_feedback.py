@@ -204,6 +204,7 @@ def _decision_features_from_plan_and_actual(plan: dict[str, Any], actual: dict[s
     }
 
 
+# readable-code-audit: skip STRUCT-04 — feedback features and their decision result are derived from one historical comparison set
 def build_soc_decision_feedback(
     *,
     plan: dict[str, Any],

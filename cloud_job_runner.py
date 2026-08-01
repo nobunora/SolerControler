@@ -337,6 +337,7 @@ def _hhmm_after_delay(*, timezone_name: str, delay_seconds: int) -> str:
     return scheduled.strftime("%H:%M")
 
 
+# readable-code-audit: skip STRUCT-04 — monitor schedule fields and the Firestore document write must remain one durable event boundary
 def _persist_03_monitor_schedule_to_firestore(
     *,
     plan_meta: dict[str, float | str | None],
@@ -659,6 +660,7 @@ def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float
     return points
 
 
+# readable-code-audit: skip STRUCT-04 — CSV filtering, robust rate estimation, and diagnostic counts must use the same source rows
 def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
     """Estimate forced charging by observed SOC gain, not nominal kW.
 

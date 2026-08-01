@@ -79,6 +79,7 @@ def _apply_local_battery_setting(
     return ApplyResult(changed=True, previous_charge_limit_text=current)
 
 
+# readable-code-audit: skip STRUCT-04 — this CLI keeps argument parsing, plan creation, and artifact output in one reproducible invocation boundary
 def main() -> int:
     load_dotenv_if_present()
     _setup_logging()

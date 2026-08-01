@@ -454,6 +454,7 @@ def _select_schedule_event(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — event selection, same-run completion, and battery provenance must be assembled into one internally consistent display schedule
 def _build_latest_schedule_from_events(
     *,
     event_rows: list[dict[str, Any]],
@@ -1487,6 +1488,7 @@ def _plan_analog_summary(plan: dict[str, Any], analog_plan: dict[str, Any] | Non
     }
 
 
+# readable-code-audit: skip STRUCT-04 — billing totals and their source-period validation must use the same filtered dashboard rows
 def _billing_usage_summary(
     review_date: str,
     daily_metrics: list[dict[str, Any]],

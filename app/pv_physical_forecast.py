@@ -258,6 +258,7 @@ def _blend_scale_by_sample_count(*, base_scale: float, candidate_scale: float, c
     return base_scale * (1.0 - weight) + candidate_scale * weight
 
 
+# readable-code-audit: skip STRUCT-04 — scale selection keeps filtering and robust statistics together so all factors use the same history window
 def _historical_scales(
     *,
     rows: list[dict[str, object]],

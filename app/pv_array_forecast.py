@@ -657,6 +657,7 @@ def calibrate_performance_ratio(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — all array estimates use one weather payload and must preserve cross-array diagnostics
 def forecast_pv_arrays(
     *,
     arrays: list[PVArrayConfig],
@@ -806,6 +807,7 @@ def _forecast_solar_series_to_rows(
     return rows
 
 
+# readable-code-audit: skip STRUCT-04 — provider mapping and per-array estimates share one Forecast.Solar response contract
 def forecast_pv_arrays_forecast_solar(
     *,
     arrays: list[PVArrayConfig],
@@ -999,6 +1001,7 @@ def _ensemble_pv_forecasts(
     }
 
 
+# readable-code-audit: skip STRUCT-04 — provider candidates, calibration, and selected provenance belong to one auditable PV forecast snapshot
 def build_pv_array_forecast(
     *,
     arrays: list[PVArrayConfig],

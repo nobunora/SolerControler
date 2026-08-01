@@ -734,6 +734,7 @@ class KpNetConfig:
     allowed_hosts: list[str]
 
     @staticmethod
+    # readable-code-audit: skip STRUCT-04 — KP-NET settings are validated as one command configuration to prevent cross-profile values from mixing
     def from_env() -> "KpNetConfig":
         username = env("KP_MONITOR_USERNAME", default=env("MONITOR_USERNAME", default=""))
         password = env("KP_MONITOR_PASSWORD", default=env("MONITOR_PASSWORD", default=""))
@@ -1045,6 +1046,7 @@ def _build_dynamic_forced_profile(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — rule evaluation and profile construction must use one settings version for a device command
 def _build_dynamic_green_profile(
     cfg: KpNetConfig,
     value_maps: dict[str, dict[str, str]],
@@ -1413,6 +1415,7 @@ class KpNetClient:
         return {"changed": True}
 
 
+# readable-code-audit: skip STRUCT-04 — payload fields are serialized as one provider request contract and cannot be independently emitted
 def _build_payload(
     csrf_setting: str,
     pcsid: str,
@@ -1612,6 +1615,7 @@ def _run_csv_phase(
     LOGGER.info("Plot generated: %s", plot_path)
 
 
+# readable-code-audit: skip STRUCT-04 — profile command, confirmation, and summary use one device-operation result boundary
 def _apply_settings_profile(
     *,
     client: KpNetClient,

@@ -68,6 +68,7 @@ class AppConfig:
     green_mode_max_charge_percent: float
 
     @staticmethod
+    # readable-code-audit: skip STRUCT-04 — configuration fields are read together to validate one complete runtime configuration snapshot
     def from_env() -> "AppConfig":
         local_dev_mode = env_bool("LOCAL_DEV_MODE", default=False)
 

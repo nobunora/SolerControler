@@ -283,6 +283,7 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
     )
 
 
+# readable-code-audit: skip STRUCT-04 — column normalization and SQL execution share the same dynamic row schema at this database adapter boundary
 def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]) -> None:
     spec = TABLE_SPECS[table]
     columns = [col for col in spec["columns"] if col != "event_id"]

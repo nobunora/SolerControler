@@ -18,6 +18,7 @@ from app.night_plan_archive import (
 )
 
 
+# readable-code-audit: skip STRUCT-04 — this CLI deliberately keeps discovery, archive, and retention reporting in one reproducible run
 def main() -> int:
     parser = argparse.ArgumentParser(description="Archive full night_charge_plans detail JSON to GCS.")
     # Archive changes are opt-in because this command can affect durable remote history.

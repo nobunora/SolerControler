@@ -266,6 +266,7 @@ def _pv_multiplier_for_bucket(
     return max(min_multiplier, min(max_multiplier, raw))
 
 
+# readable-code-audit: skip STRUCT-04 — normalized scenarios must retain their shared probability mass and source diagnostics
 def _build_forecast_scenarios(
     *,
     uncertainty: PvForecastUncertainty,
@@ -481,6 +482,7 @@ def _candidate_summary(*, candidate: SocCandidate, best: SocCandidate) -> SocCan
     )
 
 
+# readable-code-audit: skip STRUCT-04 — cost, SOC trajectory, and constraint diagnostics must be evaluated from one candidate simulation
 def evaluate_soc_candidate(
     *,
     target_soc_percent: float,

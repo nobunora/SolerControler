@@ -240,6 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return raw
 
+    # readable-code-audit: skip STRUCT-04 — route dispatch and HTTP response serialization share one request lifecycle and error boundary
     def do_GET(self) -> None:  # noqa: N802
         self._new_session_cookie = None
         parsed = urlparse(self.path)

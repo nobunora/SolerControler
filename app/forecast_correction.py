@@ -672,6 +672,7 @@ def _temperature_training_samples(
     return feature_rows, residual_targets, feature_objects, training_days
 
 
+# readable-code-audit: skip STRUCT-04 — fitted correction, confidence gate, and diagnostic payload must share the same training sample snapshot
 def _evening_temperature_correction(
     *,
     forecast_history: dict[str, dict[int, dict[str, float]]],

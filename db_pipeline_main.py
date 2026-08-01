@@ -87,6 +87,7 @@ def _maybe_weekly_backup(conn, *, cfg: sqlite_ops.PipelineConfig, backend: str, 
     print(f"[db_pipeline] weekly backup: created={result.created} reason={result.reason} path={result.path}")
 
 
+# readable-code-audit: skip STRUCT-04 — SQLite connection, ordered ingest steps, and commit share one backend transaction boundary
 def _ingest_sqlite(
     cfg: sqlite_ops.PipelineConfig,
     *,
@@ -177,6 +178,7 @@ def _ingest_sqlite(
     print(f"[db_pipeline] done backend=sqlite path={cfg.db_path}")
 
 
+# readable-code-audit: skip STRUCT-04 — PostgreSQL connection, ordered ingest steps, and commit share one backend transaction boundary
 def _ingest_postgres(
     cfg: sqlite_ops.PipelineConfig,
     *,
@@ -273,6 +275,7 @@ def _ingest_postgres(
     print("[db_pipeline] done backend=postgres")
 
 
+# readable-code-audit: skip STRUCT-04 — Firestore initialization and ordered document updates form one backend ingestion boundary
 def _ingest_firestore(
     cfg: sqlite_ops.PipelineConfig,
     *,

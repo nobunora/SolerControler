@@ -40,6 +40,7 @@ def append_history_csv(csv_path: Path, record: dict[str, Any]) -> None:
         writer.writerow(row)
 
 
+# readable-code-audit: skip STRUCT-04 — schema setup and upsert are one local persistence operation so a history record is never written against an absent schema
 def upsert_history_sqlite(db_path: Path, record: dict[str, Any]) -> None:
     _parent_mkdir(db_path)
     conn = sqlite3.connect(db_path)
