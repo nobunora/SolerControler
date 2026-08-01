@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from app.consumption_forecast import ConsumptionForecast, forecast_daily_consumption
+from app.forecasting.consumption import ConsumptionForecast, forecast_daily_consumption
 from app.energy_plan import (
     EnergyPlanOutput as EnergyModelOutput,
     ForecastInputPort,

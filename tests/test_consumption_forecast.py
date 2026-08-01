@@ -5,7 +5,7 @@ from statistics import fmean
 
 import pytest
 
-from app.consumption_forecast import ConsumptionForecaster, forecast_daily_consumption
+from app.forecasting.consumption import ConsumptionForecaster, forecast_daily_consumption
 
 
 def _build_synthetic_dataset(

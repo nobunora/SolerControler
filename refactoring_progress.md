@@ -493,3 +493,13 @@
 - `comfort_load_forecast`: 二つの分析スクリプトが `_feature_map` を利用する。特徴量の内容は分析用の明示的契約に相当するため、P2-3で中学生程度の英語docstringを付けた公開関数へ昇格してスクリプトを置換してから移動する。
 - `pv_array_forecast`: 私的helper import・文字列モンキーパッチは検出0。P2-4は正規モジュールへ直接移動できる。
 - 方針: P2-2、P2-5、P2-6は私的参照なしのため先に実施する。P2-3、P2-4、P2-7は上記の境界整理を各カード内で完了させる。
+
+## 2026-08-01 — モジュール再編 P2-2: 消費電力予測を予測パッケージへ移動
+
+- 目的: 消費電力の学習・日別予測は予測責務であるため、`app/forecasting/consumption.py` に配置した。`app/forecasting/__init__.py` は予測機能の発見可能な入口として追加した。
+- 変更前検証: `tests/test_consumption_forecast.py tests/test_occupancy_schedule.py` は `8 passed in 4.09s`。
+- 実装変更: 旧 `app/consumption_forecast.py` は、公開データ型・予測器・関数を明示的に再exportする互換モジュールへ置き換えた。内部利用とテストは正規モジュールへ更新した。
+- 互換性検証: `tests/test_forecasting_consumption_compatibility.py` を追加し、旧・新パスの公開型・関数が同一オブジェクトであることを確認する。
+- 変更後検証: 影響範囲の `tests/test_consumption_forecast.py tests/test_occupancy_schedule.py tests/test_energy_model_runtime.py tests/test_forecasting_consumption_compatibility.py` は `40 passed in 4.51s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 予測入力、学習係数、計算式、外部アクセス、本番環境は変更していない。

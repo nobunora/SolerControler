@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from app.consumption_forecast import ConsumptionForecast
+from app.forecasting.consumption import ConsumptionForecast
 from app.utils import env_bool, to_float
 
 
