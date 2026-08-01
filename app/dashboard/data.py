@@ -543,7 +543,10 @@ def _build_latest_schedule_from_events(
     power_kw = to_float(schedule.get("estimated_charge_power_kw")) or 1.8
     battery_date = str(battery_row.get("date") if battery_row else "")
     battery_matches_plan = bool(battery_row) and (not plan_date or battery_date == plan_date)
-    night_kwh = to_float(battery_row.get("night_charge_kwh") if battery_matches_plan else None) or 0.0
+    matching_battery_row = battery_row if battery_matches_plan else None
+    night_kwh = to_float(
+        matching_battery_row.get("night_charge_kwh") if matching_battery_row is not None else None
+    ) or 0.0
 
     if charge_start is None and charge_end is not None and night_kwh > 0 and power_kw > 0:
         duration_minutes = int(math.ceil((night_kwh / power_kw) * 60.0))
@@ -707,7 +710,7 @@ def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return row is not None
 
 
-def _get_global_bounds_postgres(cur) -> tuple[str | None, str | None]:
+def _get_global_bounds_postgres(cur: Any) -> tuple[str | None, str | None]:
     candidates: list[str | None] = []
     for table in ("sunshine_daily", "cost_daily", "battery_daily_metrics", "forecast_hourly"):
         cur.execute(f"SELECT MIN(date) AS min_date, MAX(date) AS max_date FROM {table}")
@@ -1256,7 +1259,7 @@ def _firestore_date_value(raw: Any) -> str | None:
 
 
 def _firestore_bounds(
-    client,
+    client: Any,
     collection_name: str,
     field_name: str = "date",
 ) -> tuple[str | None, str | None]:
@@ -1275,7 +1278,7 @@ def _firestore_bounds(
     return min_date, max_date
 
 
-def _get_global_bounds_firestore(client) -> tuple[str | None, str | None]:
+def _get_global_bounds_firestore(client: Any) -> tuple[str | None, str | None]:
     candidates: list[str | None] = []
     sources = [
         ("sunshine_daily", "date"),
@@ -1293,7 +1296,7 @@ def _get_global_bounds_firestore(client) -> tuple[str | None, str | None]:
 
 
 def _firestore_rows_between(
-    client,
+    client: Any,
     *,
     collection_name: str,
     start_date: str,
@@ -1316,7 +1319,7 @@ def _firestore_rows_between(
 
 
 def _firestore_monitoring_daily(
-    client,
+    client: Any,
     *,
     start_date: str,
     end_date_iso: str,
@@ -1370,7 +1373,7 @@ def clear_dashboard_cache() -> None:
     _FIRESTORE_SLICE_CACHE.clear()
 
 
-def _open_dashboard_firestore_client():
+def _open_dashboard_firestore_client() -> Any:
     from google.cloud import firestore
 
     project_id, database_id = _dashboard_firestore_config()
@@ -1647,7 +1650,7 @@ def _build_firestore_daily_reviews(
 
 
 def _firestore_forecast_hourly_between(
-    client,
+    client: Any,
     *,
     start_date: str,
     end_date_iso: str,

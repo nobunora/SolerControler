@@ -26,3 +26,11 @@
 - 変更: psycopg connectionを外部SDK境界として `Any` で明示し、`open_postgres` の戻り値を明示した。SQL、placeholder、transaction順、commit/rollback、upsert条件は変更していない。
 - 変更後検証: 同じ2テストは `2 passed in 0.46s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: PostgreSQL接続は実行していない。
+
+## 2026-08-01 — T1-3: Dashboard dataのOptionalとbackend境界
+
+- 開始コミット: `dd9b77a75cfd74a9764877d7a0e93ab3f255fd40`
+- 変更前検証: Dashboard data・backend parityテストは `37 passed in 1.04s`。対象mypyは9エラーだった。
+- 変更: plan日付に一致するbattery rowを明示的に分離し、欠損rowに `.get` しないようにした。PostgreSQL cursorとFirestore clientを外部境界として `Any` で明示し、Firestore client factoryの戻り値を明示した。欠損時の既存0.0 fallback、schedule表示、query、cache、document構造は変更していない。
+- 変更後検証: 同じテストは `37 passed in 1.06s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: SQLiteのローカルfixtureとfake backendだけを使用し、Firestore/PostgreSQLには接続していない。
