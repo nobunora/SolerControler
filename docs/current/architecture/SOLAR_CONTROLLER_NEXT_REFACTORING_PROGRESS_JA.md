@@ -166,3 +166,9 @@
 - 開始コミット: `4e9befc`。
 - 変更: 互換モジュールが再exportする3つのデータモデルを、実際の定義元 `app.dashboard.models` から明示importした。公開名、repository、loader、互換import先は変更していない。
 - 変更後検証: 対象mypyは0エラー。`tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `37 passed`。`compileall` と `git diff --check` は成功した。
+
+## 2026-08-01 — T2-11およびPhase T2型検査完了
+
+- `scripts/backup_drive.py` は先行するDrive adapter型境界の修正により、着手時点で対象mypyが0エラーだった。`tests/test_drive_backup.py` は `3 passed`、`compileall` と `git diff --check` は成功した。
+- Phase T2の全体再検査: `python -m mypy app scripts --no-incremental` は **118 source filesで0エラー**。実サービスへの接続、backup作成・upload、Firestore操作は行っていない。
+- Phase T2完了検査: 全テストは `429 passed, 1 skipped in 20.44s`、`python scripts/security_check.py` と `git diff --check` は成功した。
