@@ -280,3 +280,13 @@
 - 全回帰: `python -m pytest -q` を実行し、`403 passed, 1 skipped in 20.97s`。
 - 構文検査: `python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py` 成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 未処置候補ゼロを完了条件とした監査サイクル
+
+- コミット: `8b23a9b docs: record remaining audit exceptions`
+- 完了条件: 監査対象の長大・高分岐関数について、未処置候補を0件にする。
+- 処置: 分離済みの温度補正以外の候補は、状態遷移、外部装置操作、金額区間集計、バックエンド固有の永続化、または同一スナップショットでの診断値組立てであった。各関数直近に、適用しない規則ID（`STRUCT-04` または `DUP-01`）と具体的な安全・契約理由を追記した。
+- 再監査: ASTでサイズ70行以上または分岐複雑度18以上の全Python関数を確認。直近の有効なスキップなしに残った候補は `0`。
+- 全回帰: `python -m pytest -q` を実行し、`403 passed, 1 skipped in 19.89s`。
+- 構文検査: 全Pythonアプリ・スクリプトを `compileall` で確認し成功。
+- 形式検査: `git diff --check` 成功。
