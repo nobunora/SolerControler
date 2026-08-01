@@ -196,3 +196,8 @@
 ## 2026-08-01 — I-5: 内部旧import監査
 
 - 検証: 指示書に列挙された34互換名を対象に、`app` と `scripts` の実装Pythonファイル（`tests` 除外）でimport文を検査した。検出は **0件**。互換モジュール自体は削除していない。
+
+## 2026-08-01 — D-1: KP-NET監視履歴の特性テスト
+
+- 変更: 実装を変えず、BOM付きCSV、欠損・不正行の除外、空充電量の0.0化、複数CSVの時刻順、最新run内の名前順CSV、CSV未発見時のEnergy Plan/Cloud Jobの異なる契約を固定するテストを追加した。
+- 検証: `tests/test_kpnet_monitoring_history.py` は `3 passed`。`git diff --check` は成功した。
