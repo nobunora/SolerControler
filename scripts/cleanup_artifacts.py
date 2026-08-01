@@ -8,7 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.artifact_cleanup import collect_cleanup_candidates, delete_candidates
+from app.backup.artifacts import collect_cleanup_candidates, delete_candidates
 
 
 def main() -> int:

@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.artifact_cleanup import collect_cleanup_candidates
+from app.backup.artifacts import collect_cleanup_candidates
 
 
 def _touch(path: Path, *, age_days: int, now: datetime) -> None:
