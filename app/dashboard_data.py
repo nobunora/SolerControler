@@ -390,15 +390,41 @@ def _empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global
     )
 
 
-def _build_latest_schedule_from_events(
-    *,
-    event_rows: list[dict[str, Any]],
-    battery_row: dict[str, Any] | None,
-    plan_date: str | None,
-) -> dict[str, Any]:
-    schedule = _default_latest_schedule(plan_date=plan_date)
+def _schedule_event_priority(candidate: tuple[dict[str, Any], dict[str, Any]]) -> int:
+    """Return the display precedence assigned to one schedule event."""
+    source = str(candidate[1].get("schedule_source") or "")
+    if source == "03-monitor":
+        return 0
+    if source == "03-no-charge":
+        return 1
+    return 2
+
+
+def _event_recency_key(row: dict[str, Any]) -> tuple[int, float, str]:
+    """Return a deterministic newest-first comparison key for event rows."""
+    recorded_at = row.get("recorded_at")
+    try:
+        parsed = (
+            recorded_at
+            if isinstance(recorded_at, datetime)
+            else datetime.fromisoformat(str(recorded_at or "").replace("Z", "+00:00"))
+        )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamp = parsed.timestamp()
+        valid = 1
+    except (TypeError, ValueError, OverflowError):
+        timestamp = float("-inf")
+        valid = 0
+    stable_id = str(row.get("event_id") or row.get("source_doc_id") or row.get("run_id") or "")
+    return valid, timestamp, stable_id
+
+
+def _schedule_event_candidates(
+    event_rows: list[dict[str, Any]], plan_date: str | None
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return events whose detail belongs to the requested schedule date."""
     candidates: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    completed_row: dict[str, Any] | None = None
     for row in event_rows:
         detail = _json_object_or_empty(row.get("detail_json"))
         if not detail:
@@ -409,43 +435,35 @@ def _build_latest_schedule_from_events(
         if plan_date and detail_plan_date and detail_plan_date != plan_date:
             continue
         candidates.append((row, detail))
+    return candidates
 
-    def _schedule_priority(candidate: tuple[dict[str, Any], dict[str, Any]]) -> int:
-        source = str(candidate[1].get("schedule_source") or "")
-        if source == "03-monitor":
-            return 0
-        if source == "03-no-charge":
-            return 1
-        return 2
 
-    def _event_recency_key(row: dict[str, Any]) -> tuple[int, float, str]:
-        recorded_at = row.get("recorded_at")
-        try:
-            parsed = (
-                recorded_at
-                if isinstance(recorded_at, datetime)
-                else datetime.fromisoformat(str(recorded_at or "").replace("Z", "+00:00"))
-            )
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            timestamp = parsed.timestamp()
-            valid = 1
-        except (TypeError, ValueError, OverflowError):
-            timestamp = float("-inf")
-            valid = 0
-        stable_id = str(row.get("event_id") or row.get("source_doc_id") or row.get("run_id") or "")
-        return valid, timestamp, stable_id
+def _select_schedule_event(
+    event_rows: list[dict[str, Any]], plan_date: str | None
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Choose the newest event from the highest-precedence schedule source."""
+    candidates = _schedule_event_candidates(event_rows, plan_date)
 
-    best_priority = min((_schedule_priority(candidate) for candidate in candidates), default=None)
-    schedule_row = (
-        max(
-            (candidate for candidate in candidates if _schedule_priority(candidate) == best_priority),
-            key=lambda candidate: _event_recency_key(candidate[0]),
-            default=None,
-        )
-        if best_priority is not None
-        else None
+    best_priority = min((_schedule_event_priority(candidate) for candidate in candidates), default=None)
+    if best_priority is None:
+        return None
+    return max(
+        (candidate for candidate in candidates if _schedule_event_priority(candidate) == best_priority),
+        key=lambda candidate: _event_recency_key(candidate[0]),
+        default=None,
     )
+
+
+def _build_latest_schedule_from_events(
+    *,
+    event_rows: list[dict[str, Any]],
+    battery_row: dict[str, Any] | None,
+    plan_date: str | None,
+) -> dict[str, Any]:
+    schedule = _default_latest_schedule(plan_date=plan_date)
+    candidates = _schedule_event_candidates(event_rows, plan_date)
+    completed_row: dict[str, Any] | None = None
+    schedule_row = _select_schedule_event(event_rows, plan_date)
     if schedule_row is not None:
         chosen_row, chosen_detail = schedule_row
         for key in (

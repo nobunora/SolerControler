@@ -17,6 +17,7 @@ from app.dashboard_data import (
     _daily_metric_is_complete,
     _empty_dashboard_slice,
     _review_candidate_dates,
+    _select_schedule_event,
     clear_dashboard_cache,
     load_dashboard_slice,
 )
@@ -583,6 +584,32 @@ def test_latest_schedule_keeps_newest_monitor_event_and_same_run_completion() ->
     assert schedule["charge_end_time"] == "07:00"
     assert schedule["recorded_at"] == "2026-06-03T03:10:00Z"
     assert schedule["settings_completed_run_id"] == "new-run"
+
+
+def test_select_schedule_event_uses_source_precedence_then_newest_event() -> None:
+    selected = _select_schedule_event(
+        [
+            {
+                "event_id": "normal-newer",
+                "detail_json": json.dumps({"plan_date": "2026-07-14", "schedule_source": "manual"}),
+                "recorded_at": "2026-07-14T03:20:00Z",
+            },
+            {
+                "event_id": "monitor-old",
+                "detail_json": json.dumps({"plan_date": "2026-07-14", "schedule_source": "03-monitor"}),
+                "recorded_at": "2026-07-14T03:00:00Z",
+            },
+            {
+                "event_id": "monitor-new",
+                "detail_json": json.dumps({"plan_date": "2026-07-14", "schedule_source": "03-monitor"}),
+                "recorded_at": "2026-07-14T03:10:00Z",
+            },
+        ],
+        "2026-07-14",
+    )
+
+    assert selected is not None
+    assert selected[0]["event_id"] == "monitor-new"
 
 
 def test_latest_schedule_selection_is_independent_of_event_order() -> None:
