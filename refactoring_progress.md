@@ -70,10 +70,18 @@
 
 ## 2026-08-01 — PV補正分岐の抽出
 
-- コミット: 次のコミットで記録。
+- コミット: `1cac52b refactor: isolate hourly pv correction`
 - `app/forecast_correction.py` から `_correct_hourly_pv` を抽出。
 - 比率補正、物理PV時の残差補正、診断情報の初期値を一つの責務へ集約。
 - `tests/test_energy_model.py` に `test_correct_hourly_pv_uses_ratio_without_physical_residual` を追加。
 - 物理PVではない経路で残差補正が呼ばれないことを確認。
 - 個別検証: `python -m pytest -q tests/test_energy_model.py -k 'correct_hourly_pv or build_forecast_correction'`
 - 結果: `4 passed, 46 deselected`
+
+## 2026-08-01 — 低リスク段階の統合確認
+
+- 対象: `tests/test_energy_model.py`、`tests/test_dashboard_data.py`、`tests/test_cloud_job_runner.py`
+- 検証: `python -m pytest -q tests/test_energy_model.py tests/test_dashboard_data.py tests/test_cloud_job_runner.py`
+- 結果: `128 passed`
+- `git diff --check`: 成功
+- 次の段階: 永続化や外部API呼び出しを伴わない、読み取り専用データ整形の抽出を優先する。
