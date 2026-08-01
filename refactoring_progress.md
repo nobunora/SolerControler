@@ -290,3 +290,14 @@
 - 全回帰: `python -m pytest -q` を実行し、`403 passed, 1 skipped in 19.89s`。
 - 構文検査: 全Pythonアプリ・スクリプトを `compileall` で確認し成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 追加記事に基づく条件式ルールの適用
+
+- 追加ルール: 条件演算子は単純な値選択だけに使い、連鎖条件演算子や制御フローを隠す使い方をしない。
+- 修正コミット: `7468d61 refactor: expand dashboard conditional selections`
+- 対象: `static/dashboard.js`
+- 変更: 軸目盛りの連鎖条件演算子を明示的な優先順の分岐へ、実績・予測負荷の入れ子条件演算子を早期return形式のマッピング関数へ置換。
+- 不変条件: 目盛りは1/2/5/10の同じ系列を返す。負荷は実績を優先し、無ければ予測、両方無ければnullを返す。
+- 個別検証: `node --test tests/test_dashboard_bootstrap.js tests/test_dashboard_calculations.js tests/test_dashboard_modules.js`
+- 結果: `3 passed`。
+- 追加監査: `tmp` と `retval` の未処置代入は0件。
