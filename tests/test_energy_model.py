@@ -22,6 +22,7 @@ from app.forecast_correction import (
     _add_thermal_states,
     _evening_temperature_correction,
     _paired_forecast_error_scenarios,
+    _target_weather_from_forecast,
     _temperature_features_for_day,
     _temperature_hourly_multipliers,
     build_forecast_correction,
@@ -818,6 +819,30 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
     }
     assert rationale["soc_peak_unmet_penalty"]["applied_factor"] == pytest.approx(0.0)
     assert len(correction["load_scenarios"]) == 5
+
+
+def test_target_weather_from_forecast_prefers_valid_hourly_payload(monkeypatch) -> None:
+    def unexpected_provider(**kwargs):
+        raise AssertionError("provider fallback must not run when the forecast supplies valid hourly weather")
+
+    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", unexpected_provider)
+
+    weather = _target_weather_from_forecast(
+        {"hourly_weather": [{"hour": 7, "temp_c": 29.0, "relative_humidity_percent": 70.0}]},
+        target_date="2026-06-01",
+        latitude=35.0,
+        longitude=139.0,
+        timezone="Asia/Tokyo",
+    )
+
+    assert weather == {
+        7: {
+            "temp_c": 29.0,
+            "relative_humidity_percent": 70.0,
+            "dew_point_c": 16.0,
+            "wind_speed_10m": 0.0,
+        }
+    }
 
 
 def test_build_forecast_correction_uses_comfort_model_when_applied(monkeypatch) -> None:

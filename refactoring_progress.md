@@ -35,3 +35,12 @@ Validation after the refactoring:
 Next unit:
 
 - Select one branch from `app/forecast_correction.py` or `cloud_job_runner.py` with direct unit-test coverage, then record its result here before starting another unit.
+
+## 2026-08-01 — Forecast weather helper contract test
+
+Commit: pending
+
+- Added `test_target_weather_from_forecast_prefers_valid_hourly_payload` in `tests/test_energy_model.py`.
+- The test proves that a valid forecast payload is used directly and that the provider fallback is not called.
+- Focused validation: `python -m pytest -q tests/test_energy_model.py -k 'target_weather_from_forecast or build_forecast_correction'`
+- Result: `4 passed, 45 deselected`.
