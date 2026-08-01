@@ -799,6 +799,7 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
     )
 
 
+# readable-code-audit: skip DUP-01 — Cloud Job must clamp retry and delay values to safe minima after malformed input fallback.
 def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
     try:
         value = int(os.getenv(name, str(default)).strip() or str(default))
@@ -807,6 +808,7 @@ def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
     return max(min_value, value)
 
 
+# readable-code-audit: skip DUP-01 — Cloud Job must clamp retry and delay values to safe minima after malformed input fallback.
 def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
     try:
         value = float(os.getenv(name, str(default)).strip() or str(default))

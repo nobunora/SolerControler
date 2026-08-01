@@ -226,3 +226,8 @@
 
 - 判定: optional pipeline flagは未知の非空値をfalseとして無効化する既存の安全側契約であり、共有helperのdefault復帰とは異なる。統合せずDUP-01 skipコメントで理由を残した。
 - 検証: operations関連テストは `8 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — D-5c: Cloud Job環境変数helperの判定
+
+- 判定: Cloud Jobのretry・delay値は不正値をdefaultに戻した後も安全な下限へclampする必要があり、strictな共有parserとは契約が異なる。統合せずDUP-01 skipコメントで理由を残した。
+- 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py` は `69 passed`。対象mypyと `git diff --check` は成功した。
