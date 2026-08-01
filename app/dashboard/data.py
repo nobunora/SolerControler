@@ -298,6 +298,7 @@ def _build_energy_daily(
     return out
 
 
+# readable-code-audit: skip DUP-01 — Dashboard rejects invalid display data as unknown, while Cloud Job must fall back to a safe executable schedule.
 def _parse_hhmm_minutes(raw: str | None) -> int | None:
     if not raw:
         return None

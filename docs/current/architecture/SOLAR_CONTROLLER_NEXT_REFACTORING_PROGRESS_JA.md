@@ -231,3 +231,8 @@
 
 - 判定: Cloud Jobのretry・delay値は不正値をdefaultに戻した後も安全な下限へclampする必要があり、strictな共有parserとは契約が異なる。統合せずDUP-01 skipコメントで理由を残した。
 - 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py` は `69 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — D-6: 時刻解析契約の明文化
+
+- 変更: Dashboardは表示データの不正時刻をunknownとして棄却し、Cloud Jobは自動実行のためsafe defaultへ戻すという異なる契約を、両方の関数にDUP-01 skipコメントで明記した。ロジックは変更していない。
+- 検証: `tests/test_dashboard_data.py tests/test_cloud_job_runner.py` は `79 passed`。対象mypyと `git diff --check` は成功した。

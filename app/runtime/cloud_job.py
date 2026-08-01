@@ -894,6 +894,7 @@ def _run_csv_with_retry(*, label: str = "kpnet-csv") -> None:
     )
 
 
+# readable-code-audit: skip DUP-01 — Cloud Job clamps or defaults invalid schedule input so an automated job always has a safe execution time, unlike Dashboard display parsing.
 def _parse_hhmm_minutes(value: str, *, default: str) -> int:
     text = value.strip() or default
     if ":" not in text:
