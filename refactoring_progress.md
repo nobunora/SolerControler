@@ -210,3 +210,11 @@
 1. SQL文そのものを動かさず、日次UPSERTに渡す値を名前付きパラメータへ置き換えられるか、現行テストで書込み列を固定して確認する。
 2. 時間別行の削除・再作成は再実行時の冪等性に関わるため、同じプランを二回取り込む個別テストを追加してから変更する。
 3. 実績天候APIの失敗・成功は予報書込みと独立であることをテスト化し、例外処理を変更する場合もその境界を越えない。
+
+## 2026-08-01 — 今回の変更領域の統合回帰
+
+- 対象: `tests/test_energy_model.py`、`tests/test_dashboard_data.py`、`tests/test_operations_db.py`、`tests/test_cloud_job_runner.py`
+- 目的: 低リスクの表示処理、中リスクのSOC計算、高リスク領域のSQLite取込前段を同時に読み込み、モジュール間の偶発的な影響がないことを確認する。
+- 実行コマンド: `python -m pytest -q tests/test_energy_model.py tests/test_dashboard_data.py tests/test_operations_db.py tests/test_cloud_job_runner.py`
+- 結果: `148 passed in 14.83s`
+- 確認した不変条件: ダッシュボード選択、SOC候補順位、予報日次・時間別保存、初期SOC欠損時の安全停止が同じテスト実行で全て成功した。
