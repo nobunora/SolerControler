@@ -360,3 +360,13 @@
 - Python構文検査: `python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py` 成功。
 - PowerShell構文検査: `System.Management.Automation.Language.Parser::ParseFile` により `scripts` 配下22ファイルを確認し成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 機能別フォルダ構成の再判断とプロジェクトテンプレート化
+
+- 対象ルール: `STRUCT-03`。関連する振る舞いを機能・ドメイン単位で配置し、見つけやすくする規則を再確認した。
+- 現状確認: `app` には `energy_plan`、`dashboard`、`operations`、`forced_charge`、`kpnet`、`settings` の機能別パッケージが既にある。ルート直下の予測系モジュールも、PV配列予測、物理PV予測、負荷予測、補正という異なる公開境界を持つ。
+- 判断: 予測系を一括移動すると、テスト、CLI、外部利用を含む既存の `app.<module>` import と、文字列指定のモンキーパッチを維持するために互換ラッパーが必要になる。現時点では発見性の改善より互換リスクと間接参照の増加が大きく、物理移動は実施しない。これは未処置違反ではなく、規則どおりに契約を確認した判断である。
+- 今後の方針: 新規の複数モジュール機能は機能別パッケージを優先する。既存モジュールを移動する場合は、import、エントリーポイント、外部契約、動的参照、テストのモンキーパッチを列挙し、互換層の削除条件を先に定める。
+- 再利用化: 個人用Skill `readable-code-project-starter` を `C:\Users\nobun\.codex\skills\readable-code-project-starter` に作成した。新規リポジトリへ、読みやすいコードの `AGENTS.md`、プロジェクト作業規則、Skillガバナンス規則を安全にコピーまたはマージする手順を提供する。
+- 同梱知見: `readable-code-audit` の使用、`readable-code-audit: skip RULE-ID — concrete reason` の例外記法、根拠に基づく変更サイクル、機能別分割判断、英語コメントの文字コード配慮、回帰テスト先行、Skill作成後の検証をテンプレートへ組み込んだ。
+- 検証: `quick_validate.py` によるSkill構造検証は `Skill is valid!`。テンプレート内の全リソースリンクは `TEMPLATE_RESOURCE_LINKS_MISSING=0`。
