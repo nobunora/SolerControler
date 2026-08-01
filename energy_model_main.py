@@ -57,7 +57,7 @@ from app.soc_cost_optimizer import (
     optimize_soc_request,
     to_plain_dict,
 )
-from app.forecast_correction import (
+from app.forecasting.correction import (
     ForecastCorrectionInput,
     ForecastCorrectionPolicy,
     _build_forecast_correction,

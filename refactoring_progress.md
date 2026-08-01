@@ -545,3 +545,14 @@
 - 変更後検証: 影響範囲の4テストは `71 passed, 1 skipped in 3.37s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: provider選択、リトライ、校正係数、PV計算、外部アクセス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P2-7: 予測補正を予測パッケージへ移動
+
+- 目的: PV・負荷・気象履歴の予測補正を `app/forecasting/correction.py` へ移動した。
+- 変更前検証: `tests/test_energy_model.py tests/test_external_site_access.py tests/test_comfort_load_forecast.py` は `64 passed, 1 skipped in 6.05s`。
+- 私的参照の整理: 分析・再計算・スモークテストが気象取得、Firestore履歴読取、熱状態追加を利用していた。これらは分析・再計算で必要な正規化済み入力の契約なので、`fetch_hourly_weather`、`load_forecast_hourly_history_from_firestore`、`add_thermal_states` を公開名と短い英語docstringへ昇格した。テストの内部モンキーパッチは正規モジュールを対象にするよう変更し、旧互換パスには私的実装を公開していない。
+- 実装変更: 旧パスは公開型・公開補助関数・補正生成関数を明示的に再exportする互換モジュールへ置き換えた。エネルギーモデル入口、関連スクリプト、テストは正規モジュールを使用する。
+- 互換性検証: `tests/test_forecasting_correction_compatibility.py` を追加した。
+- 変更後検証: 互換性テストを含む影響範囲は `65 passed, 1 skipped in 6.12s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 補正係数、履歴期間、provider timeout、診断JSON、外部アクセス、本番環境は変更していない。

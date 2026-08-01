@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from app.forecast_correction import _fetch_hourly_weather
+from app.forecasting.correction import fetch_hourly_weather
 from app.kpnet_workflow import KpNetClient
 from app.forecasting.pv_array import (
     PVArrayConfig,
@@ -177,9 +177,9 @@ def test_forecast_correction_treats_timeout_as_unavailable_and_uses_bounded_time
         observed.update(url=url, timeout=timeout, params=params)
         raise requests.Timeout("offline")
 
-    monkeypatch.setattr("app.forecast_correction.requests.get", timeout_get)
+    monkeypatch.setattr("app.forecasting.correction.requests.get", timeout_get)
 
-    result = _fetch_hourly_weather(
+    result = fetch_hourly_weather(
         lat=35.0,
         lon=139.0,
         timezone="Asia/Tokyo",

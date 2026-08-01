@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.forecasting.comfort_load import build_comfort_feature_map as comfort_feature_map
-from app.forecast_correction import _fetch_hourly_weather
+from app.forecasting.correction import fetch_hourly_weather
 
 # Use the same short-to-daily trailing scales so the contribution report is comparable to training features.
 WINDOWS_HOURS = (1, 3, 6, 12, 24)
@@ -386,7 +386,7 @@ def main() -> int:
     load_rows = _load_monitoring_hourly(start_date, end_date)
     hourly_load = _aggregate_load_by_hour(load_rows)
     hourly_weather = _flatten_weather_by_day(
-        _fetch_hourly_weather(
+        fetch_hourly_weather(
             lat=lat,
             lon=lon,
             timezone=timezone,

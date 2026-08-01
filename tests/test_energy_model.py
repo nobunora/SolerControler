@@ -16,11 +16,11 @@ from app.energy_model import (
     _daytime_target_score,
     optimize_target_soc_for_daytime,
 )
-from app.forecast_correction import (
+from app.forecasting.correction import (
     ForecastCorrectionInput,
     ForecastCorrectionPolicy,
     _actual_hourly_totals_by_day,
-    _add_thermal_states,
+    add_thermal_states,
     _evening_temperature_correction,
     _paired_forecast_error_scenarios,
     _correct_hourly_pv,
@@ -815,9 +815,9 @@ def test_build_forecast_correction_keeps_raw_and_corrected_branches(monkeypatch)
             "target_features": kwargs["target_features"],
         }
 
-    monkeypatch.setattr("app.forecast_correction._load_forecast_hourly_history", fake_history)
-    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", fake_weather)
-    monkeypatch.setattr("app.forecast_correction._evening_temperature_correction", fake_evening_temperature_correction)
+    monkeypatch.setattr("app.forecasting.correction._load_forecast_hourly_history", fake_history)
+    monkeypatch.setattr("app.forecasting.correction.fetch_hourly_weather", fake_weather)
+    monkeypatch.setattr("app.forecasting.correction._evening_temperature_correction", fake_evening_temperature_correction)
 
     rows = []
     for day in ["2026-05-28", "2026-05-29", "2026-05-30"]:
@@ -861,7 +861,7 @@ def test_target_weather_from_forecast_prefers_valid_hourly_payload(monkeypatch) 
     def unexpected_provider(**kwargs):
         raise AssertionError("provider fallback must not run when the forecast supplies valid hourly weather")
 
-    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", unexpected_provider)
+    monkeypatch.setattr("app.forecasting.correction.fetch_hourly_weather", unexpected_provider)
 
     weather = _target_weather_from_forecast(
         {"hourly_weather": [{"hour": 7, "temp_c": 29.0, "relative_humidity_percent": 70.0}]},
@@ -883,7 +883,7 @@ def test_target_weather_from_forecast_prefers_valid_hourly_payload(monkeypatch) 
 
 def test_correct_hourly_pv_uses_ratio_without_physical_residual(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.forecast_correction._physical_vector_residual_correction",
+        "app.forecasting.correction._physical_vector_residual_correction",
         lambda **_kwargs: pytest.fail("physical residual correction must not run"),
     )
 
@@ -903,11 +903,11 @@ def test_correct_hourly_pv_uses_ratio_without_physical_residual(monkeypatch) -> 
 
 def test_build_forecast_correction_uses_comfort_model_when_applied(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.forecast_correction._load_forecast_hourly_history",
+        "app.forecasting.correction._load_forecast_hourly_history",
         lambda *, target_date: ({}, "test_history"),
     )
     monkeypatch.setattr(
-        "app.forecast_correction._fetch_hourly_weather",
+        "app.forecasting.correction.fetch_hourly_weather",
         lambda **kwargs: {
             "2026-06-01": {
                 hour: {
@@ -921,7 +921,7 @@ def test_build_forecast_correction_uses_comfort_model_when_applied(monkeypatch) 
         },
     )
     monkeypatch.setattr(
-        "app.forecast_correction.predict_hourly_comfort_load",
+        "app.forecasting.correction.predict_hourly_comfort_load",
         lambda **kwargs: {
             "enabled": True,
             "applied": True,
@@ -1137,7 +1137,7 @@ def test_thermal_and_humidity_state_carries_into_next_day() -> None:
         },
     }
 
-    _add_thermal_states(weather)
+    add_thermal_states(weather)
     features = _temperature_features_for_day("2026-07-16", weather["2026-07-16"])
 
     assert weather["2026-07-16"][0]["thermal_72h"] > 0.0
@@ -1191,8 +1191,8 @@ def test_build_forecast_correction_can_skip_pv_ratio_for_physical_model(monkeypa
             for day in ["2026-05-30", "2026-05-31"]
         }
 
-    monkeypatch.setattr("app.forecast_correction._load_forecast_hourly_history", fake_history)
-    monkeypatch.setattr("app.forecast_correction._fetch_hourly_weather", fake_weather)
+    monkeypatch.setattr("app.forecasting.correction._load_forecast_hourly_history", fake_history)
+    monkeypatch.setattr("app.forecasting.correction.fetch_hourly_weather", fake_weather)
 
     correction = _build_forecast_correction(
         rows=[{"dt": datetime.fromisoformat("2026-05-30T07:00:00"), "pv": 4.0, "load": 1.0}],
@@ -1216,11 +1216,11 @@ def test_physical_pv_uses_weather_vector_residual_with_confidence_weight(monkeyp
     monkeypatch.setenv("PHYSICAL_PV_VECTOR_RESIDUAL_ENABLED", "true")
     monkeypatch.setenv("PHYSICAL_PV_VECTOR_RESIDUAL_SPREAD_KWH", "0.6")
     monkeypatch.setattr(
-        "app.forecast_correction._load_forecast_hourly_history",
+        "app.forecasting.correction._load_forecast_hourly_history",
         lambda *, target_date: ({"2026-05-30": {7: {"pv": 1.0, "load": 1.0, "shortwave": 100.0, "weather_code": 3.0}}}, "test_history"),
     )
     monkeypatch.setattr(
-        "app.forecast_correction._fetch_hourly_weather",
+        "app.forecasting.correction.fetch_hourly_weather",
         lambda **kwargs: {"2026-05-30": {}, "2026-05-31": {}},
     )
     correction = _build_forecast_correction(
