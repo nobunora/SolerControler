@@ -23,7 +23,8 @@ from app.operations.domain import (
     safe_json as _safe_json,
     tiered_increment_cost as _tiered_day_increment_cost,
 )
-from app.utils import env, env_float, load_dotenv_if_present, to_float, to_int
+from app.configuration.environment import env, env_float, load_dotenv_if_present
+from app.utils import to_float, to_int
 
 
 @dataclass(frozen=True)

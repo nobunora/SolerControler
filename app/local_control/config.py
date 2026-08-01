@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from app.utils import env, env_bool, env_float, env_int, to_float
+from app.configuration.environment import env, env_bool, env_float, env_int
+from app.utils import to_float
 
 
 @dataclass(frozen=True)

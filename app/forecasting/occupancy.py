@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from app.forecasting.consumption import ConsumptionForecast
-from app.utils import env_bool, to_float
+from app.configuration.environment import env_bool
+from app.utils import to_float
 
 
 OCCUPANCY_SCHEDULE_TAB = "occupancy_schedule"

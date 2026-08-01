@@ -13,7 +13,8 @@ from typing import Any, Callable
 import numpy as np
 import requests
 
-from app.utils import env_bool, env_float_clamped, parse_csv_float, to_float, to_int
+from app.configuration.environment import env_bool, env_float_clamped
+from app.utils import parse_csv_float, to_float, to_int
 
 
 HttpGet = Callable[..., Any]

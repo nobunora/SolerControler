@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.forecasting.occupancy import OCCUPANCY_SCHEDULE_HEADERS, OCCUPANCY_SCHEDULE_TAB
-from app.utils import env_bool
+from app.configuration.environment import env_bool
 
 
 SHEETS_SCOPE = [

@@ -9,7 +9,8 @@ from statistics import median
 from typing import Any
 
 from app.energy_plan.soc_cost import SocCostModel
-from app.utils import env_bool, env_float, parse_csv_float, to_float
+from app.configuration.environment import env_bool, env_float
+from app.utils import parse_csv_float, to_float
 
 
 MODEL_VERSION = 1

@@ -21,7 +21,7 @@ from app.csv_utils import parse_monitoring_csv
 from app.decision import decide_battery_setting
 from app.history_store import persist_history
 from app.local_control.models import ApplyResult, DesiredBatterySetting, ForecastResult
-from app.utils import load_dotenv_if_present
+from app.configuration.environment import load_dotenv_if_present
 
 
 def _setup_logging() -> None:

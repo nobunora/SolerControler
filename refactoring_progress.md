@@ -671,6 +671,14 @@
 - 安全性: 外部サービス、本番環境、CLIの実行契約は変更・実行していない。
 - コミット: `2544ed7 refactor: move local controller models into package`。
 
+## 2026-08-01 — モジュール再編 P6-12: 環境変数ヘルパーの分離
+
+- 目的: `.env` 読込と環境変数型変換の所有先を `app/configuration/environment.py` に統一した。
+- 変更前検証: 指定された設定・DB・ユーティリティ境界を実行する前提で、P6-11完了後の作業ツリーはクリーンだった。
+- 実装変更: `load_dotenv_if_present`、`env`、`env_bool`、`env_int`、`env_float`、`env_float_clamped` と真偽値集合を新モジュールへ移動した。`app/utils.py` は明示的な互換再exportへ縮小し、内部実装のimportは正規パスへ更新した。
+- 変更後検証: `tests/test_utils.py tests/test_forced_charge_settings.py tests/test_operations_db.py tests/test_configuration_environment.py` は `47 passed in 1.17s`。`compileall` と `git diff --check` も成功した（改行コード警告のみ）。
+- 安全性: `.env` の値は読み出しておらず、外部サービス・本番環境は実行していない。旧APIのオブジェクト同一性を互換性テストで確認した。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
