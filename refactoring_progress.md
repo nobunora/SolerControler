@@ -617,3 +617,10 @@
 - 実装変更: `app/kpnet_workflow.py` を `app/kpnet/workflow.py` へ移動した。旧パスは公開設定・計画型・Client・実行関数だけを明示的に再exportする。`kpnet_main.py` のCLIファイル名と終了コードは維持する。
 - 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_cloud_job_runner.py tests/test_external_site_access.py` は `101 passed, 1 skipped in 13.06s`。`compileall` と `git diff --check` も成功。
 - 安全性: KP-NETログイン、設定変更、CSVダウンロード、Cloud Job、本番環境は実行していない。
+
+## 2026-08-01 — モジュール再編 P4-3/P4-4: ダッシュボードデータ層をパッケージへ移動
+
+- 事前分類: Firestore・SQLite・PostgreSQLの私的loaderを差し替えるテストは、データ層実装を検証するためのものなので、正規の `app.dashboard.data` を対象にする。
+- 実装変更: `app/dashboard_data.py` を `app/dashboard/data.py` へ移動した。旧パスは公開データ型、repository、公開読取関数だけを明示的に再exportする。サーバーと検証スクリプトは正規モジュールを使用する。
+- 検証: `tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `37 passed in 1.17s`。`compileall` と `git diff --check` も成功。
+- 安全性: DB・Firestore読取、ダッシュボードHTTP公開、本番環境は実行していない。

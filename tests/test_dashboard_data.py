@@ -4,7 +4,7 @@ from itertools import permutations
 
 import pytest
 
-from app.dashboard_data import (
+from app.dashboard.data import (
     DashboardRawData,
     _billing_usage_summary,
     _build_energy_daily,
@@ -426,7 +426,7 @@ def test_firestore_global_bounds_combine_sources_and_ignore_failures(monkeypatch
             raise RuntimeError("index unavailable")
         return bounds[(collection_name, field_name)]
 
-    monkeypatch.setattr("app.dashboard_data._firestore_bounds", fake_bounds)
+    monkeypatch.setattr("app.dashboard.data._firestore_bounds", fake_bounds)
 
     assert _get_global_bounds_firestore(object()) == ("2025-12-01", "2026-07-14")
 
@@ -455,19 +455,19 @@ def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samp
 
 def test_firestore_slice_requests_hourly_forecast_for_entire_window(monkeypatch) -> None:
     requested: list[tuple[str, str]] = []
-    monkeypatch.setattr("app.dashboard_data._open_dashboard_firestore_client", lambda: object())
+    monkeypatch.setattr("app.dashboard.data._open_dashboard_firestore_client", lambda: object())
     monkeypatch.setattr(
-        "app.dashboard_data._get_global_bounds_firestore",
+        "app.dashboard.data._get_global_bounds_firestore",
         lambda _client: ("2026-01-01", "2026-07-14"),
     )
-    monkeypatch.setattr("app.dashboard_data._firestore_rows_between", lambda *args, **kwargs: [])
-    monkeypatch.setattr("app.dashboard_data._firestore_monitoring_daily", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.dashboard.data._firestore_rows_between", lambda *args, **kwargs: [])
+    monkeypatch.setattr("app.dashboard.data._firestore_monitoring_daily", lambda *args, **kwargs: [])
 
     def fake_hourly(_client, *, start_date, end_date_iso):
         requested.append((start_date, end_date_iso))
         return []
 
-    monkeypatch.setattr("app.dashboard_data._firestore_forecast_hourly_between", fake_hourly)
+    monkeypatch.setattr("app.dashboard.data._firestore_forecast_hourly_between", fake_hourly)
 
     _load_firestore_slice(end_date="2026-07-14", window_days=31, include_static=False)
 
@@ -485,7 +485,7 @@ def test_firestore_slice_cache_isolated_by_connection_and_clear(monkeypatch, tmp
     monkeypatch.setenv("DATA_BACKEND", "firestore")
     monkeypatch.setenv("FIRESTORE_PROJECT_ID", "project-a")
     monkeypatch.setenv("FIRESTORE_DATABASE_ID", "database-a")
-    monkeypatch.setattr("app.dashboard_data._load_firestore_slice", fake_load)
+    monkeypatch.setattr("app.dashboard.data._load_firestore_slice", fake_load)
     clear_dashboard_cache()
 
     first = load_dashboard_slice(tmp_path / "unused", end_date="2026-07-14")
@@ -532,15 +532,15 @@ def test_load_dashboard_slice_dispatches_to_backend_adapter(monkeypatch, tmp_pat
 
     monkeypatch.setenv("DATA_BACKEND", backend)
     monkeypatch.setattr(
-        "app.dashboard_data._load_sqlite_slice",
+        "app.dashboard.data._load_sqlite_slice",
         lambda *args, **kwargs: calls.append("sqlite") or "sqlite-slice",
     )
     monkeypatch.setattr(
-        "app.dashboard_data._load_postgres_slice",
+        "app.dashboard.data._load_postgres_slice",
         lambda *args, **kwargs: calls.append("postgres") or "postgres-slice",
     )
     monkeypatch.setattr(
-        "app.dashboard_data._load_firestore_slice",
+        "app.dashboard.data._load_firestore_slice",
         lambda *args, **kwargs: calls.append("firestore") or "firestore-slice",
     )
     clear_dashboard_cache()
@@ -915,7 +915,7 @@ def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_war
 
 
 def test_dashboard_does_not_warn_stale_csv_for_today_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("app.dashboard_data._today_jst_iso", lambda: "2026-06-05")
+    monkeypatch.setattr("app.dashboard.data._today_jst_iso", lambda: "2026-06-05")
     db_path = tmp_path / "solar.db"
     conn = open_db(db_path)
     try:

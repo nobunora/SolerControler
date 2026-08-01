@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from app.dashboard_data import DashboardSlice, load_dashboard_slice
+from app.dashboard.data import DashboardSlice, load_dashboard_slice
 
 
 def _env(name: str, default: str) -> str:

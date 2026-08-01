@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.dashboard_data import clear_dashboard_cache, load_dashboard_slice
+from app.dashboard.data import clear_dashboard_cache, load_dashboard_slice
 
 
 DATASETS = (
