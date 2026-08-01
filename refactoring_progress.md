@@ -38,7 +38,7 @@ Next unit:
 
 ## 2026-08-01 — Forecast weather helper contract test
 
-Commit: pending
+Commit: `2a36914 test: cover forecast weather helper priority`
 
 - Added `test_target_weather_from_forecast_prefers_valid_hourly_payload` in `tests/test_energy_model.py`.
 - The test proves that a valid forecast payload is used directly and that the provider fallback is not called.
