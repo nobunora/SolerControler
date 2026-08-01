@@ -22,6 +22,7 @@ from app.forecast_correction import (
     _add_thermal_states,
     _evening_temperature_correction,
     _paired_forecast_error_scenarios,
+    _correct_hourly_pv,
     _target_weather_from_forecast,
     _temperature_features_for_day,
     _temperature_hourly_multipliers,
@@ -843,6 +844,26 @@ def test_target_weather_from_forecast_prefers_valid_hourly_payload(monkeypatch) 
             "wind_speed_10m": 0.0,
         }
     }
+
+
+def test_correct_hourly_pv_uses_ratio_without_physical_residual(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.forecast_correction._physical_vector_residual_correction",
+        lambda **_kwargs: pytest.fail("physical residual correction must not run"),
+    )
+
+    corrected, residual, multiplier = _correct_hourly_pv(
+        hourly_pv_forecast={7: 2.0, 8: -1.0},
+        pv_ratio=1.2,
+        skip_pv_correction=False,
+        forecast_history={},
+        actual_history={},
+        forecast={},
+    )
+
+    assert corrected == {7: pytest.approx(2.4), 8: 0.0}
+    assert multiplier == pytest.approx(1.2)
+    assert residual == {"enabled": False, "reason": "not_physical"}
 
 
 def test_build_forecast_correction_uses_comfort_model_when_applied(monkeypatch) -> None:

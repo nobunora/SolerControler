@@ -910,6 +910,32 @@ def _target_weather_from_forecast(
     return target_weather
 
 
+def _correct_hourly_pv(
+    *,
+    hourly_pv_forecast: dict[int, float],
+    pv_ratio: float,
+    skip_pv_correction: bool,
+    forecast_history: dict[str, dict[int, dict[str, float]]],
+    actual_history: dict[str, dict[int, dict[str, float]]],
+    forecast: dict[str, object],
+) -> tuple[dict[int, float], dict[str, object], float]:
+    """Apply the ratio correction or physical-model residual correction to hourly PV."""
+    pv_multiplier = 1.0 if skip_pv_correction else pv_ratio
+    corrected_pv = {
+        hour: max(0.0, value) * pv_multiplier
+        for hour, value in hourly_pv_forecast.items()
+    }
+    vector_residual: dict[str, object] = {"enabled": False, "reason": "not_physical"}
+    if skip_pv_correction:
+        corrected_pv, vector_residual = _physical_vector_residual_correction(
+            forecast_history=forecast_history,
+            actual_history=actual_history,
+            forecast=forecast,
+            hourly_pv=corrected_pv,
+        )
+    return corrected_pv, vector_residual, pv_multiplier
+
+
 # readable-code-audit: skip STRUCT-04 — the correction result must include all diagnostics from the same source snapshot, so calculation and provenance stay together
 def build_forecast_correction(
     correction_input: ForecastCorrectionInput,
@@ -997,19 +1023,14 @@ def build_forecast_correction(
     if not isinstance(load_scenarios, list):
         load_scenarios = _adaptive_load_scenarios([], confidence=0.0)
 
-    pv_multiplier = 1.0 if skip_pv_correction else pv_ratio
-    corrected_pv = {
-        hour: max(0.0, value) * pv_multiplier
-        for hour, value in hourly_pv_forecast.items()
-    }
-    vector_residual = {"enabled": False, "reason": "not_physical"}
-    if skip_pv_correction:
-        corrected_pv, vector_residual = _physical_vector_residual_correction(
-            forecast_history=forecast_history,
-            actual_history=actual_history,
-            forecast=forecast,
-            hourly_pv=corrected_pv,
-        )
+    corrected_pv, vector_residual, pv_multiplier = _correct_hourly_pv(
+        hourly_pv_forecast=hourly_pv_forecast,
+        pv_ratio=pv_ratio,
+        skip_pv_correction=skip_pv_correction,
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        forecast=forecast,
+    )
     corrected_load: dict[int, float] = {}
     correction_hours = set(_temperature_correction_hours())
     temperature_hourly_multipliers = _temperature_hourly_multipliers(
