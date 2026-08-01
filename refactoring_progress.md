@@ -42,3 +42,12 @@
 ## 次の単位
 
 - `app/dashboard_data.py` の空レスポンス生成を、PostgreSQLとFirestoreにも安全に共通化できるかを確認する。既存テストを先に確認し、共通化する場合は専用の回帰テストを追加する。
+
+## 2026-08-01 — ダッシュボード空レスポンスの全バックエンド共通化
+
+- コミット: 次のコミットで記録。
+- `app/dashboard_data.py` の `_empty_dashboard_slice` をPostgreSQLおよびFirestoreの空データ経路にも適用。
+- 既存のSQLite経路と同じメタデータ形式を共有し、空レスポンス定義の重複を削減。
+- `tests/test_dashboard_data.py` に `test_empty_dashboard_slice_preserves_requested_window_and_global_bounds` を追加。
+- 個別検証: `python -m pytest -q tests/test_dashboard_data.py`
+- 結果: `34 passed`

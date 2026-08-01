@@ -15,6 +15,7 @@ from app.dashboard_data import (
     _get_global_bounds_firestore,
     _load_firestore_slice,
     _daily_metric_is_complete,
+    _empty_dashboard_slice,
     _review_candidate_dates,
     clear_dashboard_cache,
     load_dashboard_slice,
@@ -64,6 +65,25 @@ def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:
     assert row["forecast_load_kwh"] == pytest.approx(2.0)
     assert row["actual_load_kwh"] == pytest.approx(4.0)
 
+
+def test_empty_dashboard_slice_preserves_requested_window_and_global_bounds() -> None:
+    sliced = _empty_dashboard_slice(
+        window_days=14,
+        schedule={"source": "test"},
+        global_oldest="2026-06-01",
+        global_newest="2026-06-14",
+    )
+
+    assert sliced.data.latest_schedule == {"source": "test"}
+    assert sliced.data.pv_daily == []
+    assert sliced.meta == {
+        "window_days": 14,
+        "oldest_loaded_date": None,
+        "newest_loaded_date": None,
+        "global_oldest_date": "2026-06-01",
+        "global_newest_date": "2026-06-14",
+        "has_more_before": False,
+    }
 
 def test_energy_daily_prefers_saved_hourly_load_forecast() -> None:
     rows = _build_energy_daily(

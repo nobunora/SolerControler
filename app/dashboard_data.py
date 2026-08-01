@@ -1022,17 +1022,7 @@ def _load_postgres_slice(
         port = int(os.getenv("PGPORT", "5432"))
         sslmode = os.getenv("PGSSLMODE", "prefer").strip() or "prefer"
         if not host or not dbname or not user or not password:
-            return DashboardSlice(
-                data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-                meta={
-                    "window_days": window_days,
-                    "oldest_loaded_date": None,
-                    "newest_loaded_date": None,
-                    "global_oldest_date": None,
-                    "global_newest_date": None,
-                    "has_more_before": False,
-                },
-            )
+            return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
         conn = psycopg.connect(
             host=host,
             port=port,
@@ -1046,29 +1036,14 @@ def _load_postgres_slice(
         with conn.cursor() as cur:
             global_oldest, global_newest = _get_global_bounds_postgres(cur)
             if not global_newest:
-                return DashboardSlice(
-                    data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-                    meta={
-                        "window_days": window_days,
-                        "oldest_loaded_date": None,
-                        "newest_loaded_date": None,
-                        "global_oldest_date": None,
-                        "global_newest_date": None,
-                        "has_more_before": False,
-                    },
-                )
+                return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
             end_obj = _to_date_or_none(end_date) or _to_date_or_none(global_newest)
             if end_obj is None:
-                return DashboardSlice(
-                    data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-                    meta={
-                        "window_days": window_days,
-                        "oldest_loaded_date": None,
-                        "newest_loaded_date": None,
-                        "global_oldest_date": global_oldest,
-                        "global_newest_date": global_newest,
-                        "has_more_before": False,
-                    },
+                return _empty_dashboard_slice(
+                    window_days=window_days,
+                    schedule=empty_schedule,
+                    global_oldest=global_oldest,
+                    global_newest=global_newest,
                 )
             start_obj = end_obj - timedelta(days=max(1, window_days) - 1)
             start_date = start_obj.isoformat()
@@ -1701,30 +1676,15 @@ def _load_firestore_slice(
 
     global_oldest, global_newest = _get_global_bounds_firestore(client)
     if not global_newest:
-        return DashboardSlice(
-            data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-            meta={
-                "window_days": window_days,
-                "oldest_loaded_date": None,
-                "newest_loaded_date": None,
-                "global_oldest_date": None,
-                "global_newest_date": None,
-                "has_more_before": False,
-            },
-        )
+        return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
 
     end_obj = _to_date_or_none(end_date) or _to_date_or_none(global_newest)
     if end_obj is None:
-        return DashboardSlice(
-            data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-            meta={
-                "window_days": window_days,
-                "oldest_loaded_date": None,
-                "newest_loaded_date": None,
-                "global_oldest_date": global_oldest,
-                "global_newest_date": global_newest,
-                "has_more_before": False,
-            },
+        return _empty_dashboard_slice(
+            window_days=window_days,
+            schedule=empty_schedule,
+            global_oldest=global_oldest,
+            global_newest=global_newest,
         )
     start_obj = end_obj - timedelta(days=max(1, window_days) - 1)
     start_date = start_obj.isoformat()
