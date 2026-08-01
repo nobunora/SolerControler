@@ -64,7 +64,8 @@ def main() -> int:
         if not isinstance(plan, dict):
             print(f"skip\t{snap.id}\tmissing_detail", flush=True)
             continue
-        forecast = plan.get("forecast") if isinstance(plan.get("forecast"), dict) else {}
+        raw_forecast = plan.get("forecast")
+        forecast: dict[str, object] = raw_forecast if isinstance(raw_forecast, dict) else {}
         plan_date = str(forecast.get("date") or data.get("date") or "").strip()
         if not plan_date:
             print(f"skip\t{snap.id}\tmissing_date", flush=True)

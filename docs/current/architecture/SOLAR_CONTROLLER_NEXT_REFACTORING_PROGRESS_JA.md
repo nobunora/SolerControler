@@ -146,3 +146,10 @@
 - 変更: SOCが欠損していない行だけから最小・最大値候補を作り、`float | None` を数値として扱わないようにした。欠損SOCの無視、表示値、集計値は変わらない。
 - 変更後検証: 対象mypyは0エラー。`tests/test_kpnet_soc_gap_report.py` は `5 passed`。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Firestore、CSVダウンロード、レポートの実運用出力は実行していない。
+
+## 2026-08-01 — T2-8: 夜間充電計画アーカイブ型境界
+
+- 開始コミット: `9854479`。
+- 変更: 読み込んだ詳細計画のforecastを辞書へ正規化してから日付を参照するようにした。詳細が不正な場合のskip、dry-run既定、`--apply`時だけの永続書込みは変更していない。
+- 変更後検証: 対象mypyは0エラー。`tests/test_night_plan_archive.py` は `2 passed`。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Firestore/Cloud Storageへの書込みを伴うCLI本体は実行していない。
