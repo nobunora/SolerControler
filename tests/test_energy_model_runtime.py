@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.forecasting.consumption import ConsumptionForecast
-from app.energy_model import EnergyModelCoefficients
+from app.energy_plan.energy_model import EnergyModelCoefficients
 from app.soc_cost_optimizer import PvForecastUncertainty
 from energy_model_main import (
     ConsumptionForecastBundle,

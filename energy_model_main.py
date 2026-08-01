@@ -29,7 +29,7 @@ from app.energy_plan import (
     estimate_sunset_hour as _estimate_sunset_hour,
     summarize_hourly_pv as _hourly_pv_totals,
 )
-from app.energy_model import (
+from app.energy_plan.energy_model import (
     DaytimeSocOptimizationResult,
     EnergyModelCoefficients,
     NightChargeInputs,

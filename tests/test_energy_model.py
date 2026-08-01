@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from app.energy_model import (
+from app.energy_plan.energy_model import (
     EnergyModelCoefficients,
     NightChargeInputs,
     compute_night_charge_target,
