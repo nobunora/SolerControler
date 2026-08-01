@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from app import operations_db as sqlite_ops
+from app.operations import sqlite as sqlite_ops
 from app.firestore_ops import open_firestore
 
 

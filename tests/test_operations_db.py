@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from app import operations_db as ops
+from app.operations import sqlite as ops
 from app.operations.domain import tiered_increment_cost
-from app.operations_db import (
+from app.operations.sqlite import (
     ensure_schema,
     ingest_settings_summary,
     ingest_monitoring_csvs,

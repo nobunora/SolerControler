@@ -425,3 +425,14 @@
 - 文字列モンキーパッチ: `forecast_correction` は7件、`dashboard_data` は7件、`kpnet_workflow` は4件、`operations.domain` は1件を確認した。`forecast_correction`、`dashboard_data`、`kpnet_workflow` の移動はテスト境界の整理カードを先行させる必要がある。一方、`operations_db`、`firestore_ops`、`postgres_ops`、`db_sync` 自体への文字列モンキーパッチは検出されず、P1を最初の低リスク移行に選ぶ根拠を再確認した。
 - ルート入口依存: `cloud_job_runner.py`、`energy_model_main.py`、`db_pipeline_main.py`、`dashboard_server.py`、`main.py`、`kpnet_main.py`、`sheets_export_main.py` の import を列挙した。各入口を薄くするP3〜P7では、旧 `app.<module>` importを維持する互換モジュールを先に用意する。
 - 安全性: 調査だけでアプリケーションコード、外部サービス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P1-1: SQLite運用アダプターを機能パッケージへ移動
+
+- 目的: SQLiteのスキーマ作成、実績取込、日別費用・蓄電池指標集計は運用永続化の責務であるため、実装を `app/operations/sqlite.py` へ配置した。呼出し側の既存 `app.operations_db` 契約は維持する。
+- 変更前検証: `tests/test_operations_db.py`、`tests/test_weekly_backup.py`、`tests/test_dashboard_data.py` は `55 passed in 1.84s`。
+- 実装変更: `app/operations_db.py` を `app/operations/sqlite.py` へ移動した。実装側の `app/db_sync.py` は正規モジュールを import するよう変更した。旧パスには、全公開型・関数を明示的に再exportする小さな互換モジュールを置いた。ワイルドカードimportは使っていない。
+- 互換性検証: `tests/test_operations_sqlite_compatibility.py` を追加し、旧パスと正規パスの `PipelineConfig` と全公開関数が同一オブジェクトであることを固定した。
+- 発見した境界依存: 初回の変更後テストは3件失敗した。`tests/test_operations_db.py` が旧パスの `_forecast_daily_values_from_plan`、`_hourly_forecast_rows_from_plan`、`_fetch_open_meteo_daily_actual` を直接参照またはモンキーパッチしていたためである。互換モジュールへ私的実装を公開しない方針を保ち、テスト本体を正規の `app.operations.sqlite` へ向けた。これはテストを実装位置ではなく正規モジュール境界へ合わせる変更で、実行時の計算・DB入出力・例外契約は変更していない。
+- 変更後検証: `python -m pytest -q tests/test_operations_db.py tests/test_operations_sqlite_compatibility.py tests/test_weekly_backup.py tests/test_dashboard_data.py` は `56 passed in 1.86s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: SQLiteのスキーマ、SQL、データ、外部サービス、本番環境は変更していない。
