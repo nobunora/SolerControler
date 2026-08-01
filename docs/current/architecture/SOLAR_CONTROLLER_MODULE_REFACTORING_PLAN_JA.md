@@ -54,7 +54,11 @@ app/
     constants.py
     time_windows.py
     tariff.py
-    monitoring_csv.py
+    monitoring.py
+  configuration/          # dotenvと環境変数の読取境界
+    environment.py
+  parsing/                # 外部値を内部の有限数へ変換する境界
+    numbers.py
   forecasting/            # PV・負荷予測と予測補正
     consumption.py
     comfort_load.py
@@ -75,6 +79,8 @@ app/
   operations/             # 実績取込、日次集計、DBバックエンド、同期
     domain.py
     cost_daily.py
+    monitoring_csv.py
+    csv_merge.py
     sqlite.py
     firestore.py
     postgres.py
@@ -415,17 +421,17 @@ git diff --check
 | `sheets_export.py` | `exports/sheets.py` | 6 | 移動 |
 | `app/main.py` | `local_control/workflow.py` | 6 | ルート `main.py` からの入口を維持して移動 |
 | `browser_automation.py` | `local_control/browser.py` | 6 | 移動 |
-| `config.py` | `local_control/config.py` または所有機能 | 6 | 利用範囲を確認して分割 |
+| `config.py` | `local_control/config.py` | 6 | ローカル制御専用と確認済み。P6-10で移動 |
 | `csv_utils.py` | `local_control/csv_input.py` | 6 | 移動 |
 | `decision.py` | `local_control/decision.py` | 6 | 移動 |
 | `history_store.py` | `local_control/history.py` | 6 | 移動 |
-| `models.py` | `local_control/models.py` または所有機能 | 6 | 利用範囲を確認して分割 |
+| `models.py` | `local_control/models.py` | 6 | 4データクラスがローカル制御専用と確認済み。P6-11で移動 |
 | `constants.py` | `domain/constants.py` | 6 | 移動候補 |
 | `time_windows.py` | `domain/time_windows.py` | 6 | 移動候補 |
 | `tariff.py` | `domain/tariff.py` | 6 | 金額契約を固定後に移動 |
-| `monitoring_csv.py` | `domain/monitoring_csv.py` または `operations/` | 6 | I/O責務を確認して決定 |
-| `csv_merge.py` | `operations/csv_merge.py` または `scripts/` | 6 | 利用形態を確認して決定 |
-| `utils.py` | 各所有機能 | 6 | 関数単位で縮小 |
+| `monitoring_csv.py` | `domain/monitoring.py` + `operations/monitoring_csv.py` | 6 | ドメイン値とCSV I/OをP6-15・P6-16で分離 |
+| `csv_merge.py` | `operations/csv_merge.py` | 6 | 運用データ前処理としてP6-17で移動 |
+| `utils.py` | `configuration/environment.py` + `parsing/numbers.py` + `domain/constants.py` | 6 | P6-12〜P6-14で関数単位に縮小し、旧パスは互換入口にする |
 | `night_plan.py` | `energy_plan/night_plan.py` | 3または5 | 読込契約とアーカイブ責務を分けて移動 |
 
 ## 11. ルートファイルの追随台帳
@@ -633,8 +639,188 @@ P3-5は一コミットに2863行を移してはならない。次の5サブカ�
 | P6-8 | `app/time_windows.py` → `app/domain/time_windows.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_domain.py tests/test_forced_charge_settings.py` | `refactor: move time windows into domain` |
 | P6-9 | `app/tariff.py` → `app/domain/tariff.py` | `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_cost_daily.py tests/test_soc_cost_optimizer.py` | `refactor: move tariff rules into domain` |
 
-- `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py` は、台帳で所有先が一意に決まるまで移動しない。曖昧なままLunaが決定してはならない。
+- `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py` の所有先は、12.10.1の決定を正とする。Lunaは別の所有先を考案してはならない。
 - P6-2、P6-3、P6-5は直接テストが不足している可能性がある。対象記号を実行する既存テストが見つからなければ、移動前に最小の契約テストを追加する別カードを作り、そのカードだけ実行する。
+
+#### 12.10.1 保留モジュールの所有先決定
+
+この表は実装前の責務・利用元監査で確定した。実行時に再判断しない。
+
+| 旧モジュール・記号 | 正規の所有先 | 理由 |
+| --- | --- | --- |
+| `app/config.py` の `AppConfig` | `app/local_control/config.py` | ブラウザ操作、ローカルCSV、ローカル判断、ローカル履歴だけが利用する。 |
+| `app/models.py` の4データクラス | `app/local_control/models.py` | `ForecastResult`、`MonitoringMetrics`、`DesiredBatterySetting`、`ApplyResult` はローカル制御専用である。 |
+| `MonitoringPoint`、`validated_soc_percent` | `app/domain/monitoring.py` | 外部I/Oを持たない実績値とSOC境界のドメイン契約である。 |
+| `iter_monitoring_points` | `app/operations/monitoring_csv.py` | CSVファイル、文字コード、列名、日時形式を扱う運用I/Oである。 |
+| `app/csv_merge.py` | `app/operations/csv_merge.py` | CSV探索、検証、重複排除、出力は運用データの前処理である。`scripts/merge_csvs.py` はCLI入口として残す。 |
+| dotenvと環境変数読取 | `app/configuration/environment.py` | 複数機能が共有する実行時設定境界であり、予測・運用・KP-NETのどれか一つには属さない。 |
+| 外部値の数値解析 | `app/parsing/numbers.py` | `to_float`、`to_int`、`parse_csv_float` は外部値を有限数へ正規化する境界である。 |
+| `clamp_percent` | `app/domain/constants.py` | SOC・パーセント境界と同じドメイン規則である。 |
+| `app/utils.py` | 互換モジュールとして維持 | 実装は持たず、移動済み公開記号を明示的に再公開する。 |
+
+禁止事項:
+
+- `app/common/`、`app/shared/`、`app/helpers/` を新設しない。
+- `utils.py` を一括で別名の汎用モジュールへ移さない。
+- 公開関数名、引数、デフォルト値、例外型、環境変数名、CSV列名を変更しない。
+- 互換モジュールで `import *` を使わない。
+- 構成移動とロジック改善、名称改善、フォーマット全面変更を同じカードで行わない。
+
+#### 12.10.2 Luna低レベル共通実行手順
+
+P6-10からP6-17は必ず番号順に一枚ずつ実行する。複数カードを一コミットにまとめない。
+
+各カードの開始時:
+
+1. `git status --short` を実行する。
+2. 出力が1行でもあれば、そのカードを開始せず停止する。
+3. `git rev-parse HEAD` を実行し、ハッシュを `refactoring_progress.md` のカード開始記録へ書く。
+4. カード指定の変更前テストを実行する。
+5. テストが1件でも失敗したら、ソースを変更せず停止する。
+
+各カードの変更中:
+
+1. 「許可変更」に列挙されたファイルだけを変更する。
+2. 移動は `git mv <旧パス> <新パス>` を使う。
+3. 旧パスには公開記号を明示的にimportする互換モジュールを置く。
+4. 新規実装側とリポジトリ内部の利用側は正規パスをimportする。
+5. 互換性テストでは `legacy.Symbol is canonical.Symbol` を公開記号ごとに確認する。
+6. 英語コメントを追加する場合は中学生程度の短い英語にする。移動理由を説明するコメントは互換モジュールのdocstringだけでよい。
+
+各カードの終了時:
+
+1. カード指定の変更後テストを実行する。
+2. 次を実行する。
+
+```powershell
+python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py
+git diff --check
+git status --short
+```
+
+3. 変更前後のテスト件数、失敗修正、互換記号、構文検査、差分検査を `refactoring_progress.md` に日本語で記録する。
+4. カード指定のメッセージでコミットする。
+5. `git status --short` が空であることを確認してから次へ進む。
+
+共通停止条件:
+
+- 循環importが発生した。
+- 旧パスと新パスで公開オブジェクトが同一にならない。
+- 文字列モンキーパッチが旧パスを指し、正規パスへ変更するとテスト内容まで変わる。
+- 数値変換結果、環境変数の既定値、CSV出力、SOC検証、例外型が変わる。
+- 新しい依存ライブラリが必要になる。
+
+#### P6-10: ローカル制御設定
+
+- 旧パス → 新パス: `app/config.py` → `app/local_control/config.py`
+- 公開記号: `AppConfig`
+- 許可変更: 上記2ファイル、`app/local_control/browser.py`、`decision.py`、`history.py`、`csv_input.py`、`workflow.py`、`tests/test_local_control_config_compatibility.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_decision.py tests/test_utils.py`
+- 作業:
+  1. `AppConfig`実装を新パスへ移す。
+  2. `app.local_control.*` の `from app.config import AppConfig` を `from app.local_control.config import AppConfig` へ変更する。
+  3. 旧 `app/config.py` は `AppConfig`だけを明示的に再公開する。
+  4. 互換性テストで旧・新の `AppConfig` が同一であることを確認する。
+- 変更後テスト: 変更前テスト + `tests/test_local_control_config_compatibility.py`
+- コミット: `refactor: move local controller config into package`
+
+#### P6-11: ローカル制御モデル
+
+- 旧パス → 新パス: `app/models.py` → `app/local_control/models.py`
+- 公開記号: `ForecastResult`、`MonitoringMetrics`、`DesiredBatterySetting`、`ApplyResult`
+- 許可変更: 上記2ファイル、`app/local_control/browser.py`、`decision.py`、`csv_input.py`、`workflow.py`、`tests/test_decision.py`、`tests/test_local_control_models_compatibility.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_decision.py`
+- 作業: 4クラスを新パスへ移し、ローカル制御とテストのimportを正規パスへ変更し、旧パスで4クラスを明示的に再公開する。
+- 変更後テスト: 変更前テスト + `tests/test_local_control_models_compatibility.py`
+- コミット: `refactor: move local controller models into package`
+
+#### P6-12: 環境変数境界
+
+- 新規正規パス: `app/configuration/__init__.py`、`app/configuration/environment.py`
+- 移動記号: `load_dotenv_if_present`、`env`、`env_bool`、`env_int`、`env_float`、`env_float_clamped`
+- 私的定数: `TRUE_VALUES`、`FALSE_VALUES` は新モジュールで `_TRUE_VALUES`、`_FALSE_VALUES` とする。値は変更しない。
+- 許可変更: 新規2ファイル、`app/utils.py`、上記関数をimportする既存Python、`tests/test_utils.py`、`tests/test_configuration_environment.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_utils.py tests/test_forced_charge_settings.py tests/test_operations_db.py`
+- 作業:
+  1. 6関数の本体をそのまま新モジュールへ移す。
+  2. 内部利用側を `app.configuration.environment` へ変更する。
+  3. `app/utils.py` から6関数の本体を削除し、新パスから明示的にimportする。
+  4. 互換テストで6関数の同一性を確認する。
+- 停止条件: 真偽値文字列、空文字、必須値エラー、数値変換エラー、clamp結果が変わる。
+- 変更後テスト: 変更前テスト + `tests/test_configuration_environment.py`
+- コミット: `refactor: extract environment configuration helpers`
+
+#### P6-13: 外部数値の解析
+
+- 新規正規パス: `app/parsing/__init__.py`、`app/parsing/numbers.py`
+- 移動記号: `to_float`、`to_int`、`parse_csv_float`
+- 私的定数: `CSV_NUMBER_PATTERN` は `_CSV_NUMBER_PATTERN` とする。正規表現は変更しない。
+- 許可変更: 新規2ファイル、`app/utils.py`、3関数をimportする既存Python、`tests/test_utils.py`、`tests/test_parsing_numbers.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_utils.py tests/test_consumption_forecast.py tests/test_pv_array_forecast.py tests/test_operations_db.py`
+- 作業: 3関数と必要なoverloadを移し、内部importを正規パスへ変更し、`app/utils.py` は3関数を明示的に再公開する。
+- 停止条件: `None`、bool、NaN、無限大、カンマ付き数値、単位付き数値、不正文字列の結果が変わる。
+- 変更後テスト: 変更前テスト + `tests/test_parsing_numbers.py`
+- コミット: `refactor: extract external number parsing helpers`
+
+#### P6-14: パーセント境界
+
+- 旧記号 → 新所有先: `app.utils.clamp_percent` → `app.domain.constants.clamp_percent`
+- 許可変更: `app/utils.py`、`app/domain/constants.py`、`tests/test_utils.py`、`tests/test_domain_primitives.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_utils.py tests/test_domain_primitives.py`
+- 作業: 関数本体を新所有先へ移し、旧 `app.utils` から明示的に再公開する。引数名とデフォルト値を変えない。
+- 変更後テスト: 変更前テスト。追加テストで旧・新関数の同一性も確認する。
+- コミット: `refactor: move percent boundary into domain`
+
+#### P6-15: 監視実績ドメイン
+
+- 旧記号 → 新所有先: `MonitoringPoint`、`validated_soc_percent` → `app/domain/monitoring.py`
+- 許可変更: `app/monitoring_csv.py`、新規 `app/domain/monitoring.py`、`tests/test_domain_primitives.py`、`tests/test_monitoring_domain_compatibility.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_domain.py`
+- 作業:
+  1. データクラスとSOC検証関数だけを移す。
+  2. `iter_monitoring_points` はまだ旧ファイルに残し、新ドメイン型をimportさせる。
+  3. 旧ファイルから2記号を明示的に再公開する。
+- 停止条件: `as_storage_row()` のキー、日時文字列、SOC 0〜100境界、NaN処理が変わる。
+- 変更後テスト: 変更前テスト + `tests/test_monitoring_domain_compatibility.py`
+- コミット: `refactor: extract monitoring domain values`
+
+#### P6-16: 監視CSV入力
+
+- 旧記号 → 新所有先: `iter_monitoring_points` → `app/operations/monitoring_csv.py`
+- 許可変更: `app/monitoring_csv.py`、新規 `app/operations/monitoring_csv.py`、`app/operations/domain.py`、`tests/test_domain_primitives.py`、`tests/test_operations_monitoring_csv_compatibility.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_domain_primitives.py tests/test_operations_domain.py tests/test_operations_db.py`
+- 作業: CSV読取関数と必要な標準ライブラリimportを移し、`app.operations.domain` を正規パスへ変更する。旧ファイルは3公開記号だけを明示的に再公開する互換モジュールにする。
+- 停止条件: `utf-8-sig`、日本語列名、`%Y/%m/%d %H:%M`、不正行をスキップする条件が変わる。
+- 変更後テスト: 変更前テスト + `tests/test_operations_monitoring_csv_compatibility.py`
+- コミット: `refactor: move monitoring csv input into operations`
+
+#### P6-17: CSV統合
+
+- 旧パス → 新パス: `app/csv_merge.py` → `app/operations/csv_merge.py`
+- 公開記号: `DEFAULT_EXCLUDED_DIR_NAMES`、`CsvMergeResult`、`discover_csv_files`、`merge_csv_files`
+- 許可変更: 上記2ファイル、`scripts/merge_csvs.py`、`tests/test_csv_merge.py`、`tests/test_operations_csv_merge_compatibility.py`、進捗ログ。
+- 変更前テスト: `python -m pytest -q tests/test_csv_merge.py`
+- 作業: 実装を新パスへ移し、CLIとテストを正規パスへ変更し、旧パスで4公開記号を明示的に再公開する。
+- 停止条件: 除外ディレクトリ、探索順、ヘッダー不一致例外、重複判定、`source_file`、改行、UTF-8 BOM処理が変わる。
+- 変更後テスト: 変更前テスト + `tests/test_operations_csv_merge_compatibility.py`
+- コミット: `refactor: move csv merge into operations`
+
+#### P6-18: 保留モジュール完了検査
+
+次を順に実行する。
+
+```powershell
+python -m pytest -q tests/test_decision.py tests/test_utils.py tests/test_domain_primitives.py tests/test_csv_merge.py tests/test_operations_domain.py tests/test_operations_db.py
+rg -n --glob '*.py' "from app\.(config|models|monitoring_csv|csv_merge|utils) import" app scripts tests
+python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py
+git diff --check
+git status --short
+```
+
+- `rg` の残りは互換性テストまたは外部CLI互換だけでなければならない。アプリケーション実装が旧パスをimportしていたら停止して正規パスへ直す。
+- `app/config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py` がロジックを持っていたら停止する。
+- 循環import検査として、新旧両パスを同一Pythonプロセスでimportする契約テストを実行する。
+- コミット: `test: verify remaining module ownership migration`
 
 ### 12.11 Phase 7カード: cloud_job_runner
 

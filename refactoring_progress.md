@@ -661,3 +661,11 @@
 - 旧 `app.<module>` パスは、外部・既存呼出しのため公開APIのみを明示的に再exportする互換層として維持している。ルートCLIファイル名と終了コードを変更していない。
 - 検証: Drive個別テストは `3 passed in 0.94s`、最終全回帰は `417 passed, 1 skipped in 20.31s`。`compileall` と `git diff --check` は成功。
 - 安全性: Drive、Sheets、Firestore、ブラウザ自動操作、KP-NET、Cloud Run、本番環境はいずれも実行していない。
+
+## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
+
+- 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
+- 決定: ローカル設定・モデルは `local_control/`、監視ドメイン値は `domain/monitoring.py`、監視CSVとCSV統合は `operations/`、環境変数読取は `configuration/environment.py`、外部数値解析は `parsing/numbers.py`、パーセント境界は `domain/constants.py` が所有する。`app/utils.py` はロジックを持たない互換入口へ縮小する。
+- 計画更新: `SOLAR_CONTROLLER_MODULE_REFACTORING_PLAN_JA.md` に所有先表、禁止事項、共通開始・終了・停止手順、P6-10〜P6-18の個別カードを追加した。各カードに固定パス、公開記号、許可変更、変更前後テスト、停止条件、コミット名を指定した。
+- Luna向け制約: 別の所有先を考案しない、複数カードをまとめない、`import *` を使わない、外部契約と変換結果を変えない、作業ツリーが汚れていたら開始しないことを明記した。
+- 現状検証: 判断対象の契約テストは `35 passed in 2.46s`。Markdownコードフェンスは22個で対応、必須カードは各1件、曖昧な旧所有先表現は0件、`git diff --check` は成功した。アプリケーション実装と外部環境は変更していない。
