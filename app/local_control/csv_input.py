@@ -6,7 +6,7 @@ from statistics import mean
 from typing import Iterable
 
 from app.local_control.config import AppConfig
-from app.models import MonitoringMetrics
+from app.local_control.models import MonitoringMetrics
 from app.utils import parse_csv_float
 
 

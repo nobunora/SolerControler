@@ -20,7 +20,7 @@ from app.local_control.config import AppConfig
 from app.csv_utils import parse_monitoring_csv
 from app.decision import decide_battery_setting
 from app.history_store import persist_history
-from app.models import ApplyResult, DesiredBatterySetting, ForecastResult
+from app.local_control.models import ApplyResult, DesiredBatterySetting, ForecastResult
 from app.utils import load_dotenv_if_present
 
 

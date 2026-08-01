@@ -662,6 +662,15 @@
 - 検証: Drive個別テストは `3 passed in 0.94s`、最終全回帰は `417 passed, 1 skipped in 20.31s`。`compileall` と `git diff --check` は成功。
 - 安全性: Drive、Sheets、Firestore、ブラウザ自動操作、KP-NET、Cloud Run、本番環境はいずれも実行していない。
 
+## 2026-08-01 — モジュール再編 P6-11: ローカル制御モデルの移動
+
+- 目的: `ApplyResult`、`DesiredBatterySetting`、`ForecastResult`、`MonitoringMetrics` の所有先を `app/local_control/models.py` に統一した。
+- 変更前検証: `tests/test_decision.py` は `3 passed in 0.07s`。
+- 実装変更: 実装を移動し、`app/models.py` は4記号のみを明示的に再exportする互換層へ変更した。ローカル制御内部と判断テストは正規パスを参照するよう更新した。互換性テストを追加し、旧・新パスのオブジェクト同一性を検証した。
+- 変更後検証: `tests/test_decision.py tests/test_local_control_models_compatibility.py` は `4 passed in 0.12s`。`python -m compileall -q app scripts` と `git diff --check` も成功した（改行コード警告のみ）。
+- 安全性: 外部サービス、本番環境、CLIの実行契約は変更・実行していない。
+- コミット: `2544ed7 refactor: move local controller models into package`。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。

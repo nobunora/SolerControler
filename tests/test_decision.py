@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from app.local_control.decision import decide_battery_setting
-from app.models import ForecastResult, MonitoringMetrics
+from app.local_control.models import ForecastResult, MonitoringMetrics
 
 
 def _cfg(**overrides):

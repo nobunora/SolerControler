@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.local_control.config import AppConfig
-from app.models import DesiredBatterySetting, ForecastResult, MonitoringMetrics
+from app.local_control.models import DesiredBatterySetting, ForecastResult, MonitoringMetrics
 
 
 def decide_battery_setting(
