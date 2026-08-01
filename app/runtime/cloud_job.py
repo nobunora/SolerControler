@@ -31,6 +31,7 @@ from app.forced_charge import (
 from app.settings.forced_charge import ForcedChargeSettings
 from app.energy_plan.decision_feedback import build_soc_decision_feedback
 from app.domain.constants import validate_soc_percent
+from app.kpnet.monitoring_history import iter_charge_soc_points
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -635,32 +636,8 @@ def _read_soc_with_fallback(csv_paths: list[Path]) -> SocReading:
     return SocReading(None, "unavailable", "; ".join(errors), csv_observed_at)
 
 
-def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
-    points: list[tuple[datetime, float, float]] = []
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
-                charge_text = (row.get("充電電力量[kWh]") or "").strip()
-                if not date_text or not time_text or not soc_text:
-                    continue
-                try:
-                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    soc = float(soc_text)
-                    charge_kwh = float(charge_text) if charge_text else 0.0
-                except (TypeError, ValueError):
-                    continue
-                points.append((dt, soc, charge_kwh))
-    points.sort(key=lambda x: x[0])
-    return points
-
-
 # readable-code-audit: skip STRUCT-04 — CSV filtering, robust rate estimation, and diagnostic counts must use the same source rows
+# readable-code-audit: skip DUP-01 — this 14-day trend and EWMA forecast the next forced-charge stop time, unlike KP-NET's current-setting median.
 def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
     """Estimate forced charging by observed SOC gain, not nominal kW.
 
@@ -677,7 +654,7 @@ def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict
 
     samples_by_day: dict[date, list[float]] = {}
     previous: tuple[datetime, float, float] | None = None
-    for point in _iter_charge_soc_points(csv_paths):
+    for point in iter_charge_soc_points(csv_paths):
         if previous is None:
             previous = point
             continue

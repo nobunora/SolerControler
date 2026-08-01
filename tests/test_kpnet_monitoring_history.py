@@ -7,8 +7,6 @@ import pytest
 
 from app.energy_plan.workflow import _latest_kpnet_csv_paths as energy_latest_csv_paths
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths, iter_charge_soc_points
-from app.kpnet.workflow import _iter_charge_soc_points as kpnet_charge_soc_points
-from app.runtime.cloud_job import _iter_charge_soc_points as cloud_charge_soc_points
 from app.runtime.cloud_job import _latest_kpnet_csv_paths as cloud_latest_csv_paths
 
 
@@ -40,8 +38,6 @@ def test_charge_soc_points_skip_incomplete_or_invalid_rows_and_sort(tmp_path: Pa
         (datetime(2026, 7, 1, 23, 30), 40.0, 1.1),
         (datetime(2026, 7, 2, 0, 30), 45.0, 0.0),
     ]
-    assert kpnet_charge_soc_points([later, earlier]) == expected
-    assert cloud_charge_soc_points([later, earlier]) == expected
     assert iter_charge_soc_points([later, earlier]) == expected
 
 

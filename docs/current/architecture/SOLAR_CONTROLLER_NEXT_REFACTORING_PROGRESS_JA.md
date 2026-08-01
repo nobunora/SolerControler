@@ -206,3 +206,8 @@
 
 - 変更: `app.kpnet.monitoring_history` に、CSVから有効な充電/SOC観測値を時刻順で返す関数と、最新run内のCSVを返す関数を追加した。CSV未発見時は共通関数では空listを返す。既存利用元はまだ変更していない。
 - 検証: 特性テストは `3 passed`。新モジュールのmypy、`compileall`、`git diff --check` は成功した。
+
+## 2026-08-01 — D-3: 充電/SOC CSV読込の利用元移行
+
+- 変更: KP-NET workflowとCloud Jobから重複していたCSV読込関数を削除し、共通の `iter_charge_soc_points` を利用するようにした。KP-NETの現在設定向けmedianとCloud Jobの翌日停止時刻向け14日trend/EWMAは目的が異なるため、両方に具体的なDUP-01 skipコメントを残して統合していない。
+- 検証: `tests/test_kpnet_workflow.py tests/test_cloud_job_runner.py tests/test_kpnet_monitoring_history.py` は `90 passed`。対象mypyと `git diff --check` は成功した。

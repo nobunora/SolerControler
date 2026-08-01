@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 
 from app.domain.constants import SOCBounds, validate_soc_percent
 from app.kpnet import build_settings_intent
+from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.configuration.environment import env, env_bool, load_dotenv_if_present
 from app.parsing.numbers import parse_csv_float, to_float
 
@@ -546,31 +547,7 @@ def _estimate_charge_power_kw(
     return fallback_kw
 
 
-def _iter_charge_soc_points(csv_paths: list[Path]) -> list[tuple[datetime, float, float]]:
-    points: list[tuple[datetime, float, float]] = []
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
-                charge_text = (row.get("充電電力量[kWh]") or "").strip()
-                if not date_text or not time_text or not soc_text:
-                    continue
-                try:
-                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    soc = float(soc_text)
-                    charge_kwh = float(charge_text) if charge_text else 0.0
-                except (TypeError, ValueError):
-                    continue
-                points.append((dt, soc, charge_kwh))
-    points.sort(key=lambda x: x[0])
-    return points
-
-
+# readable-code-audit: skip DUP-01 — this median estimates the currently applied KP-NET setting, while Cloud Job forecasts tomorrow's stop time from a 14-day degradation trend.
 def _estimate_charge_soc_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
     fallback = float(env("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", default="40").strip() or "40")
     min_rate = float(env("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", default="25").strip() or "25")
@@ -581,7 +558,7 @@ def _estimate_charge_soc_rate_percent_per_hour(csv_paths: list[Path]) -> dict[st
 
     samples: list[float] = []
     previous: tuple[datetime, float, float] | None = None
-    for point in _iter_charge_soc_points(csv_paths):
+    for point in iter_charge_soc_points(csv_paths):
         if previous is None:
             previous = point
             continue
