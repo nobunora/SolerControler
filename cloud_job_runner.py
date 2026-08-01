@@ -1104,6 +1104,18 @@ def _execute_monitor_terminal_transition(
     return True
 
 
+def _keep_standby_when_initial_soc_is_unavailable(*, plan_meta: dict[str, object], device, status, soc_reading) -> None:
+    """Apply safe standby and persist why forced charging did not start."""
+    try:
+        device.apply_profile(
+            profile="standby",
+            dynamic_forced_profile=False,
+            label="03-initial-soc-unavailable-standby",
+        )
+    finally:
+        status.persist_stop_reason(plan_meta, "initial_soc_unavailable", soc_reading=soc_reading)
+
+
 # readable-code-audit: skip STRUCT-04 — this job owns the complete forced-charge monitor lifecycle, including the final standby command and durable stop result
 def _monitor_partial_forced_and_stop(
     plan_path: Path,
@@ -1149,18 +1161,9 @@ def _monitor_partial_forced_and_stop(
     ).strip().lower() in {"1", "true", "yes", "on"}
     if latest_soc is None and not allow_forced_without_soc:
         print("[cloud_job_runner] 03-monitor initial SOC unavailable; keep standby.", flush=True)
-        try:
-            device.apply_profile(
-                profile="standby",
-                dynamic_forced_profile=False,
-                label="03-initial-soc-unavailable-standby",
-            )
-        finally:
-            status.persist_stop_reason(
-                plan_meta,
-                "initial_soc_unavailable",
-                soc_reading=soc_reading,
-            )
+        _keep_standby_when_initial_soc_is_unavailable(
+            plan_meta=plan_meta, device=device, status=status, soc_reading=soc_reading
+        )
         return
     required_kwh = _estimate_required_charge_kwh(plan_meta=plan_meta, latest_soc_percent=latest_soc)
     if latest_soc is not None:

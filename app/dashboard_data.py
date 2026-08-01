@@ -375,6 +375,21 @@ def _default_latest_schedule(plan_date: str | None = None) -> dict[str, Any]:
     }
 
 
+def _empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_oldest: str | None = None, global_newest: str | None = None) -> DashboardSlice:
+    """Build the consistent empty response used when a backend has no usable rows."""
+    return DashboardSlice(
+        data=DashboardData([], [], [], [], [], latest_schedule=schedule),
+        meta={
+            "window_days": window_days,
+            "oldest_loaded_date": None,
+            "newest_loaded_date": None,
+            "global_oldest_date": global_oldest,
+            "global_newest_date": global_newest,
+            "has_more_before": False,
+        },
+    )
+
+
 def _build_latest_schedule_from_events(
     *,
     event_rows: list[dict[str, Any]],
@@ -764,46 +779,21 @@ def _load_sqlite_slice(
 ) -> DashboardSlice:
     empty_schedule = _default_latest_schedule()
     if not db_path.exists():
-        return DashboardSlice(
-            data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-            meta={
-                "window_days": window_days,
-                "oldest_loaded_date": None,
-                "newest_loaded_date": None,
-                "global_oldest_date": None,
-                "global_newest_date": None,
-                "has_more_before": False,
-            },
-        )
+        return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         global_oldest, global_newest = _get_global_bounds_sqlite(conn)
         if not global_newest:
-            return DashboardSlice(
-                data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-                meta={
-                    "window_days": window_days,
-                    "oldest_loaded_date": None,
-                    "newest_loaded_date": None,
-                    "global_oldest_date": None,
-                    "global_newest_date": None,
-                    "has_more_before": False,
-                },
-            )
+            return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
 
         end_obj = _to_date_or_none(end_date) or _to_date_or_none(global_newest)
         if end_obj is None:
-            return DashboardSlice(
-                data=DashboardData([], [], [], [], [], latest_schedule=empty_schedule),
-                meta={
-                    "window_days": window_days,
-                    "oldest_loaded_date": None,
-                    "newest_loaded_date": None,
-                    "global_oldest_date": global_oldest,
-                    "global_newest_date": global_newest,
-                    "has_more_before": False,
-                },
+            return _empty_dashboard_slice(
+                window_days=window_days,
+                schedule=empty_schedule,
+                global_oldest=global_oldest,
+                global_newest=global_newest,
             )
         start_obj = end_obj - timedelta(days=max(1, window_days) - 1)
         start_date = start_obj.isoformat()

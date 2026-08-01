@@ -869,6 +869,47 @@ def _temperature_hourly_multipliers(
     }
 
 
+def _target_weather_from_forecast(
+    forecast: dict[str, object],
+    *,
+    target_date: str,
+    latitude: float,
+    longitude: float,
+    timezone: str,
+) -> dict[int, dict[str, float]]:
+    """Read target weather from the forecast, then use provider/fallback data when absent."""
+    target_weather: dict[int, dict[str, float]] = {}
+    raw_hourly_weather = forecast.get("hourly_weather")
+    if isinstance(raw_hourly_weather, list):
+        for item in raw_hourly_weather:
+            if not isinstance(item, dict):
+                continue
+            hour = to_int(item.get("hour"))
+            temp = to_float(item.get("temp_c"))
+            if hour is None or not 0 <= hour <= 23 or temp is None:
+                continue
+            target_weather[hour] = {
+                "temp_c": temp,
+                "relative_humidity_percent": to_float(item.get("relative_humidity_percent")) or 60.0,
+                "dew_point_c": to_float(item.get("dew_point_c")) or 16.0,
+                "wind_speed_10m": to_float(item.get("wind_speed_10m")) or 0.0,
+            }
+    if not target_weather:
+        target_weather = _fetch_hourly_weather(
+            lat=latitude, lon=longitude, timezone=timezone,
+            start_date=target_date, end_date=target_date, archive=False,
+        ).get(target_date, {})
+    if not target_weather:
+        fallback_temp = to_float(forecast.get("temp_c"))
+        if fallback_temp is not None:
+            target_weather = {
+                hour: {"temp_c": fallback_temp, "relative_humidity_percent": 60.0,
+                       "dew_point_c": 16.0, "wind_speed_10m": 0.0}
+                for hour in range(24)
+            }
+    return target_weather
+
+
 # readable-code-audit: skip STRUCT-04 — the correction result must include all diagnostics from the same source snapshot, so calculation and provenance stay together
 def build_forecast_correction(
     correction_input: ForecastCorrectionInput,
@@ -925,43 +966,10 @@ def build_forecast_correction(
             end_date=history_dates[-1],
             archive=True,
         )
-    target_weather: dict[int, dict[str, float]] = {}
-    raw_hourly_weather = forecast.get("hourly_weather")
-    if isinstance(raw_hourly_weather, list):
-        for item in raw_hourly_weather:
-            if not isinstance(item, dict):
-                continue
-            hour = to_int(item.get("hour"))
-            temp = to_float(item.get("temp_c"))
-            if hour is None or not 0 <= hour <= 23 or temp is None:
-                continue
-            target_weather[hour] = {
-                "temp_c": temp,
-                "relative_humidity_percent": to_float(item.get("relative_humidity_percent")) or 60.0,
-                "dew_point_c": to_float(item.get("dew_point_c")) or 16.0,
-                "wind_speed_10m": to_float(item.get("wind_speed_10m")) or 0.0,
-            }
-    if not target_weather:
-        target_weather = _fetch_hourly_weather(
-            lat=correction_input.latitude,
-            lon=correction_input.longitude,
-            timezone=correction_input.timezone,
-            start_date=target_date,
-            end_date=target_date,
-            archive=False,
-        ).get(target_date, {})
-    if not target_weather:
-        fallback_temp = to_float(forecast.get("temp_c"))
-        if fallback_temp is not None:
-            target_weather = {
-                hour: {
-                    "temp_c": fallback_temp,
-                    "relative_humidity_percent": 60.0,
-                    "dew_point_c": 16.0,
-                    "wind_speed_10m": 0.0,
-                }
-                for hour in range(24)
-            }
+    target_weather = _target_weather_from_forecast(
+        forecast, target_date=target_date, latitude=correction_input.latitude,
+        longitude=correction_input.longitude, timezone=correction_input.timezone,
+    )
     all_weather[target_date] = target_weather
     _add_thermal_states(all_weather)
     historical_temperature_features = {
