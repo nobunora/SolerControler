@@ -734,6 +734,7 @@
 - 機械検査: wildcard import、`TODO`/`FIXME`/`XXX`/`HACK` は0件。旧5モジュールからの内部importは0件（互換性テストの旧入口importは除外）。旧所有先の互換ラッパー内にclass/def実装は0件。`compileall` と `git diff --check` は成功した。
 - 追加是正: `app/utils.py` に互換入口のdocstringと明示的 `__all__` を追加し、公開範囲を固定した。個別境界テストは `28 passed in 0.21s`。
 - 判定: 今回の計画で未処理としていた構造項目（所有先の一意化、旧入口の実装除去、内部参照更新）は0件。残ったルートPythonは既存外部契約の互換入口またはCLI入口であり、機械的移動対象ではない。
+- 計画指定の最終コマンド `python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py`、`git diff --check`、`git status --short` も成功し、作業ツリーはクリーンである。
 
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
