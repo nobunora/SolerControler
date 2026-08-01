@@ -363,6 +363,18 @@ def _forecast_daily_values_from_plan(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _hourly_forecast_rows_from_plan(data: dict[str, Any], *, ingested_at: str) -> list[dict[str, Any]]:
+    """Add the fixed persistence metadata to extracted hourly forecast rows."""
+    return [
+        {
+            **row,
+            "source": "night-charge-plan-hourly",
+            "updated_at": ingested_at,
+        }
+        for row in _extract_hourly_forecast_from_plan(data)
+    ]
+
+
 def ingest_sunshine_from_night_plan(
     conn: sqlite3.Connection,
     *,
@@ -423,7 +435,7 @@ def ingest_sunshine_from_night_plan(
                 ingested_at,
             ),
         )
-        hourly_rows = _extract_hourly_forecast_from_plan(data)
+        hourly_rows = _hourly_forecast_rows_from_plan(data, ingested_at=ingested_at)
         conn.execute("DELETE FROM forecast_hourly WHERE date = ?", (forecast_date,))
         conn.executemany(
             """
@@ -459,14 +471,7 @@ def ingest_sunshine_from_night_plan(
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
-            [
-                {
-                    **row,
-                    "source": "night-charge-plan-hourly",
-                    "updated_at": ingested_at,
-                }
-                for row in hourly_rows
-            ],
+            hourly_rows,
         )
 
     today_date = datetime.now().date().isoformat()

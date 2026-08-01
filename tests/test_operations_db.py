@@ -473,6 +473,40 @@ def test_forecast_daily_values_from_plan_prefers_final_pv_contract() -> None:
     assert values["forecast_source"] == "physical_pv_forecast"
 
 
+def test_hourly_forecast_rows_from_plan_adds_persistence_metadata() -> None:
+    rows = ops._hourly_forecast_rows_from_plan(
+        {
+            "forecast": {"date": "2026-05-03"},
+            "daytime_soc_optimization": {
+                "hourly_pv_forecast_kwh": {"7": 1.2},
+                "hourly_load_forecast_kwh": {"7": 0.8},
+            },
+        },
+        ingested_at="2026-05-02T23:00:00Z",
+    )
+
+    assert rows == [
+        {
+            "date": "2026-05-03",
+            "hour": 7,
+            "forecast_pv_kwh": 1.2,
+            "forecast_load_kwh": 0.8,
+            "forecast_charge_kwh": 0.4,
+            "forecast_weather_code": None,
+            "forecast_precipitation_mm": None,
+            "forecast_precipitation_probability": None,
+            "forecast_cloud_cover": None,
+            "forecast_shortwave_radiation_w_m2": None,
+            "forecast_temp_c": None,
+            "forecast_relative_humidity_percent": None,
+            "forecast_dew_point_c": None,
+            "forecast_wind_speed_10m": None,
+            "source": "night-charge-plan-hourly",
+            "updated_at": "2026-05-02T23:00:00Z",
+        }
+    ]
+
+
 def test_ingest_sunshine_from_night_plan_persists_hourly_forecast(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
