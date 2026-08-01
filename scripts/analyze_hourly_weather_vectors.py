@@ -171,7 +171,7 @@ def _daily_from_hourly(hourly: dict[date, dict[int, dict[str, float]]]) -> dict[
 
 def _fetch_archive(*, lat: float, lon: float, timezone_name: str, start_date: str, end_date: str) -> tuple[dict[str, dict[int, dict[str, float]]], dict[str, dict[str, Any]]]:
     url = "https://archive-api.open-meteo.com/v1/archive"
-    hourly_params = {
+    hourly_params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "start_date": start_date,
@@ -179,7 +179,7 @@ def _fetch_archive(*, lat: float, lon: float, timezone_name: str, start_date: st
         "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m",
         "timezone": timezone_name,
     }
-    daily_params = {
+    daily_params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "start_date": start_date,
@@ -234,7 +234,7 @@ def _fetch_archive(*, lat: float, lon: float, timezone_name: str, start_date: st
 
 def _fetch_forecast_shortwave(*, lat: float, lon: float, timezone_name: str, target_date: str) -> dict[str, dict[int, float]]:
     url = "https://api.open-meteo.com/v1/forecast"
-    params = {
+    params: dict[str, str | float] = {
         "latitude": lat,
         "longitude": lon,
         "start_date": target_date,
@@ -286,7 +286,7 @@ def _linear_fit(x_rows: list[list[float]], y: list[float]) -> tuple[np.ndarray, 
 def _predict_linear(coef: np.ndarray, mean: np.ndarray, std: np.ndarray, x_rows: list[list[float]]) -> np.ndarray:
     x = np.asarray(x_rows, dtype=float)
     xz = (x - mean) / std
-    return np.maximum(0.0, coef[0] + xz @ coef[1:])
+    return np.asarray(np.maximum(0.0, coef[0] + xz @ coef[1:]))
 
 
 def _r2_score(y_true: list[float], y_pred: np.ndarray) -> float:
@@ -319,7 +319,10 @@ def _build_model_rows(
         "shortwave_radiation_w_m2": [row["shortwave_radiation_w_m2"] for row in weather_order],
     }
 
-    feature_names = list(comfort_feature_map(timestamps[0], weather_by_ts).keys())
+    first_features = comfort_feature_map(timestamps[0], weather_by_ts)
+    if first_features is None:
+        return [], [], []
+    feature_names = list(first_features.keys())
     cumulative_names = []
     for metric in ("temp_c", "relative_humidity_percent", "wind_speed_10m", "shortwave_radiation_w_m2"):
         for window in WINDOWS:
@@ -340,7 +343,9 @@ def _build_model_rows(
         if ts not in weather_by_ts or ts not in target_by_ts:
             continue
         base = comfort_feature_map(ts, weather_by_ts)
-        row: list[float] = [float(base[name]) for name in comfort_feature_map(ts, weather_by_ts).keys()]
+        if base is None:
+            continue
+        row: list[float] = [float(base[name]) for name in base]
         for metric in ("temp_c", "relative_humidity_percent", "wind_speed_10m", "shortwave_radiation_w_m2"):
             series = weather_values[metric][: index + 1]
             for window in WINDOWS:
@@ -552,6 +557,8 @@ def main() -> int:
             continue
         actual_row = day_rows[ts.hour]
         current_model_features = comfort_feature_map(ts, weather_by_ts)
+        if current_model_features is None:
+            continue
         row = [float(current_model_features[name]) for name in current_model_features.keys()]
         row.extend([_rolling_mean(temp_series[: index + 1], window, len(temp_series[: index + 1]) - 1) for window in WINDOWS])
         row.extend([_rolling_mean(humidity_series[: index + 1], window, len(humidity_series[: index + 1]) - 1) for window in WINDOWS])
@@ -587,6 +594,8 @@ def main() -> int:
     load_target_rows: list[list[float]] = []
     for ts in observed_load_hours:
         features = comfort_feature_map(ts, weather_by_ts)
+        if features is None:
+            continue
         row = [float(features[name]) for name in features.keys()]
         row.extend([_rolling_mean(temp_series, window, len(temp_series) - 1) for window in WINDOWS])
         row.extend([_rolling_mean(humidity_series, window, len(humidity_series) - 1) for window in WINDOWS])

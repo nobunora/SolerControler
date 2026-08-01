@@ -105,3 +105,9 @@
 - 変更: JSON summary payloadを `dict[str, object]` として明示し、history recordはJSON payloadを再読込せず、既に型付けされたforecast・metrics・decision・apply resultから組み立てた。summary内容、historyキー、書込み順、local/remoteの分岐は変更していない。
 - 変更後検証: 同じテストは `5 passed in 0.14s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Playwright、ブラウザ、CSVダウンロード、蓄電池設定は実行していない。
+
+## 2026-08-01 — T2-4: 時間別気象ベクトル解析型境界
+
+- 開始コミット: `b3f4ee7`。
+- 変更: Open-Meteo request parameterの値型、NumPy予測配列、欠損したcomfort featureの分岐を明示した。featureが構築不能な行は従来どおり学習・予測対象にしない。分析式、入力CSV、通信先、出力形式は変更していない。
+- 検証: 対象mypyは0エラー。`compileall` と `git diff --check` は成功した。外部API、DB、分析本体は実行していない。
