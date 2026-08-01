@@ -189,8 +189,7 @@ def upload_night_plan_to_gcs(
     if not uri:
         return {}
     if storage_client is None:
-        # readable-code-audit: skip TOOL-01 — installed Google Cloud stubs do not expose this optional runtime import to the type checker
-        from google.cloud import storage  # type: ignore[attr-defined]
+        from google.cloud import storage
 
         storage_client = storage.Client()
     bucket_name, blob_name = _parse_gs_uri(uri)
@@ -212,8 +211,7 @@ def load_night_plan_detail_from_gcs(doc: dict[str, Any], *, storage_client: Any 
     if not uri:
         return None
     if storage_client is None:
-        # readable-code-audit: skip TOOL-01 — installed Google Cloud stubs do not expose this optional runtime import to the type checker
-        from google.cloud import storage  # type: ignore[attr-defined]
+        from google.cloud import storage
 
         storage_client = storage.Client()
     bucket_name, blob_name = _parse_gs_uri(uri)
