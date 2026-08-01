@@ -97,3 +97,11 @@
 - 変更: Google Sheets/Drive serviceを外部SDK境界として `Any` で明示し、service factoryの戻り値を明示した。spreadsheet作成、共有、tab、header、meta、table書込みのpayloadと例外処理は変更していない。
 - 変更後検証: `import app.exports.sheets` と対象mypyは成功。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Google Sheets/Driveの作成・共有・書込みは実行していない。
+
+## 2026-08-01 — T2-3: Local control workflow型境界
+
+- 開始コミット: `7eb4948`。
+- 変更前検証: local controlの対象テストは `5 passed in 0.14s`。対象mypyは10エラーだった。
+- 変更: JSON summary payloadを `dict[str, object]` として明示し、history recordはJSON payloadを再読込せず、既に型付けされたforecast・metrics・decision・apply resultから組み立てた。summary内容、historyキー、書込み順、local/remoteの分岐は変更していない。
+- 変更後検証: 同じテストは `5 passed in 0.14s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Playwright、ブラウザ、CSVダウンロード、蓄電池設定は実行していない。

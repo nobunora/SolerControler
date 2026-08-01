@@ -38,7 +38,7 @@ def _run_dir(base: Path, now: datetime) -> Path:
     return path
 
 
-def _save_run_summary(path: Path, payload: dict) -> Path:
+def _save_run_summary(path: Path, payload: dict[str, object]) -> Path:
     summary = path / "summary.json"
     summary.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -144,7 +144,7 @@ def main() -> int:
                     dry_run=cfg.dry_run,
                 )
 
-        payload = {
+        payload: dict[str, object] = {
             "run_at": now.isoformat(),
             "dry_run": cfg.dry_run,
             "local_dev_mode": cfg.local_dev_mode,
@@ -169,20 +169,18 @@ def main() -> int:
         }
         summary_path = _save_run_summary(run_dir, payload)
         history_record = {
-            "run_at": payload["run_at"],
-            "dry_run": payload["dry_run"],
-            "forecast_hours_12h": payload["forecast_hours_12h"],
-            "latest_soc": payload["metrics"]["latest_soc"],
-            "avg_soc": payload["metrics"]["avg_soc"],
-            "total_charge": payload["metrics"]["total_charge"],
-            "total_discharge": payload["metrics"]["total_discharge"],
-            "charge_limit_percent": payload["decision"]["charge_limit_percent"],
-            "mode": payload["decision"]["mode"],
-            "reason": payload["decision"]["reason"],
-            "changed": payload["apply_result"]["changed"],
-            "previous_charge_limit_text": payload["apply_result"][
-                "previous_charge_limit_text"
-            ],
+            "run_at": now.isoformat(),
+            "dry_run": cfg.dry_run,
+            "forecast_hours_12h": forecast.hours_12h,
+            "latest_soc": metrics.latest_soc,
+            "avg_soc": metrics.avg_soc,
+            "total_charge": metrics.total_charge,
+            "total_discharge": metrics.total_discharge,
+            "charge_limit_percent": desired.charge_limit_percent,
+            "mode": desired.mode,
+            "reason": desired.reason,
+            "changed": apply_result.changed,
+            "previous_charge_limit_text": apply_result.previous_charge_limit_text,
             "summary_path": str(summary_path),
             "csv_path": str(csv_path),
         }
