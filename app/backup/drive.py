@@ -144,7 +144,7 @@ def write_source_zip(root: Path | None = None, out_path: Path | None = None) -> 
 
 def _row_sort_key(table_name: str, row: dict[str, Any]) -> tuple[Any, ...]:
     spec = TABLE_SPECS[table_name]
-    keys = []
+    keys: list[tuple[int, str | float]] = []
     for key in spec["key_cols"]:
         value = row.get(key)
         if key == "hour" and value is not None:
@@ -174,7 +174,7 @@ def build_firestore_snapshot(client: Any | None = None) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for table_name in TABLE_SPECS:
         rows = [dict(doc.to_dict() or {}) | {"_doc_id": doc.id} for doc in firestore_client.collection(table_name).stream()]
-        rows.sort(key=lambda row, table_name=table_name: _row_sort_key(table_name, row))
+        rows.sort(key=lambda row: _row_sort_key(table_name, row))
         collections[table_name] = rows
         counts[table_name] = len(rows)
     return {
@@ -210,10 +210,12 @@ def write_json(payload: dict[str, Any], out_path: Path) -> BackupArtifact:
     )
 
 
-def build_drive_service():
+def build_drive_service() -> Any:
     credentials, _ = google_auth_default(scopes=[DRIVE_SCOPE])
-    if not credentials.valid and credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
+    refresh_token = getattr(credentials, "refresh_token", None)
+    refresh = getattr(credentials, "refresh", None)
+    if not credentials.valid and credentials.expired and refresh_token and callable(refresh):
+        refresh(Request())
     return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
 
@@ -269,7 +271,8 @@ def read_drive_json(service: Any, *, folder_id: str, file_name: str) -> dict[str
     if not text.strip():
         return None
     try:
-        return json.loads(text)
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else None
     except json.JSONDecodeError:
         return None
 
@@ -286,7 +289,7 @@ def upload_or_update_file(
     media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=False)
     metadata = {"name": file_name, "parents": [folder_id]}
     if existing:
-        return (
+        response = (
             service.files()
             .update(
                 fileId=existing["id"],
@@ -296,7 +299,8 @@ def upload_or_update_file(
             )
             .execute()
         )
-    return (
+        return dict(response) if isinstance(response, dict) else {}
+    response = (
         service.files()
         .create(
             body=metadata,
@@ -306,6 +310,7 @@ def upload_or_update_file(
         )
         .execute()
     )
+    return dict(response) if isinstance(response, dict) else {}
 
 
 def make_source_manifest(
@@ -394,7 +399,7 @@ def export_source_backup(
     write_json(source_manifest, manifest_path)
 
     uploaded = bool(service is not None and folder_id)
-    if uploaded:
+    if service is not None and folder_id is not None:
         upload_or_update_file(service, folder_id=folder_id, file_name=SOURCE_BACKUP_NAME, local_path=source_archive.path, mime_type="application/zip")
         upload_or_update_file(service, folder_id=folder_id, file_name=SOURCE_MANIFEST_NAME, local_path=manifest_path, mime_type="application/json")
 
@@ -431,7 +436,7 @@ def export_data_backup(
     write_json(manifest, manifest_path)
 
     uploaded = bool(service is not None and folder_id)
-    if uploaded:
+    if service is not None and folder_id is not None:
         upload_or_update_file(service, folder_id=folder_id, file_name=DATA_BACKUP_NAME, local_path=snapshot_path, mime_type="application/gzip")
         upload_or_update_file(service, folder_id=folder_id, file_name=DATA_MANIFEST_NAME, local_path=manifest_path, mime_type="application/json")
 

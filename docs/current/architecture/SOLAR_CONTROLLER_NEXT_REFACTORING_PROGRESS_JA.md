@@ -81,3 +81,11 @@
 - 検証: 指示書のリリース対象mypyコマンドをそのまま実行し、`41 source files` が0エラーで成功した。
 - 構文・形式検査: `compileall` と `git diff --check` は成功した。
 - 判定: 作成時点の59エラーは0件になった。外部サービス、本番処理、設定値は変更・実行していない。
+
+## 2026-08-01 — T2-1: Drive backup型境界
+
+- 開始コミット: `48f9e1adfbc74b228456892599d4143b56e3d554`
+- 変更前検証: Drive backupテストは `3 passed in 0.85s`。対象mypyは14エラーだった。
+- 変更: ソートキーの値型、Drive service戻り値、SDK refresh、Drive API JSON response、upload条件を実際の外部境界に合わせて明示した。folder IDがない場合は従来どおりuploadしない。backup名、manifest、hash、出力パス、実サービス呼出し条件は変更していない。
+- 変更後検証: 同じテストは `3 passed in 0.87s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Drive/Firestoreへの実接続、upload、backup実行は行っていない。
