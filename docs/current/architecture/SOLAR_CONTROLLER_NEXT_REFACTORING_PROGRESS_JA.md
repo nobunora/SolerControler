@@ -192,3 +192,7 @@
 
 - 変更: release gateの明示mypy対象をdomain正規パスへ移した。`app/energy_plan` と `app/operations` は再帰対象であるため、同じファイルを二重指定するとmypyが重複モジュールとして停止することを実行で確認し、範囲を減らさず二重指定のみ除去した。
 - 検証: `tests/test_production_deploy_scripts.py` は `21 passed`。`pwsh -NoProfile -File scripts/pre_release_local.ps1 -SkipInstall` は `429 passed, 1 skipped`、mypy `40 source filesで0エラー`、security check成功で完走した。
+
+## 2026-08-01 — I-5: 内部旧import監査
+
+- 検証: 指示書に列挙された34互換名を対象に、`app` と `scripts` の実装Pythonファイル（`tests` 除外）でimport文を検査した。検出は **0件**。互換モジュール自体は削除していない。
