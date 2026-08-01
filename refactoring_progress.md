@@ -269,3 +269,14 @@
 - 結果: `166 passed in 8.04s`
 - 構文検査: `python -m compileall -q app energy_model_main.py` 成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 修正後の全ソース再監査
+
+- 使用ルール: `readable-code-audit`。テスト・生成物・キャッシュを除くアプリケーション、CLI、フロントエンド、設定の115ファイルを対象にした。
+- 修正確認: 温度補正の履歴選別は実装として分離済み。残る先行監査の構造候補は、直近の具体的なスキップ理由を追加して再確認可能にした。
+- 有効な例外: `readable-code-audit: skip` は31件。外部装置操作、金額区間計算、ストレージ別書込み、同一スナップショットの診断値生成について、適用しない理由が関数直近にある。
+- AST候補: サイズ70行以上または分岐複雑度18以上の未スキップ関数は38件。これは機械的な候補であり、状態遷移表、CLIの直線的パイプライン、公開設定読込み、永続化アダプターを含む。今回、具体的な規則違反と確認できないものを違反としては数えず、機械的スキップも追加していない。
+- コメント検査: `TODO`、`FIXME`、`XXX` は対象ソースで検出なし。
+- 全回帰: `python -m pytest -q` を実行し、`403 passed, 1 skipped in 20.97s`。
+- 構文検査: `python -m compileall -q app scripts cloud_job_runner.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py main.py sheets_export_main.py` 成功。
+- 形式検査: `git diff --check` 成功。
