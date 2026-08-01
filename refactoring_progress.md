@@ -715,6 +715,13 @@
 - 変更後検証: `tests/test_csv_merge.py tests/test_csv_merge_compatibility.py` は `4 passed in 0.16s`。`compileall` と `git diff --check` は成功した。
 - 安全性: CSVの並び順、ヘッダー検証、重複判定、出力形式、除外ディレクトリは変更していない。実ファイル統合の本番入力や外部サービスは実行していない。
 
+## 2026-08-01 — モジュール再編 P6-18: 所有先移行の残存検証
+
+- 変更前検証: 指定された判断、ユーティリティ、ドメイン、CSV、operations、DB境界は `59 passed in 3.89s`。
+- 検査内容: `app`、`scripts`、`tests` とルートPythonファイルを対象に旧所有先5モジュールからの内部importを検索した。`tests/test_utils.py` の互換性確認以外は該当なしだった。ルート互換モジュール内の `class`/`def` 実装残りも該当なしだった。
+- 構文・形式検査: `python -m compileall -q app scripts` と `git diff --check` は成功した。PowerShell上のglob制約で一度失敗した検索は、明示的なファイル列挙に切り替えて再実行し、検査を完了した。
+- 判定: P6-10〜P6-17で決定した所有先への内部参照移行と互換入口縮小を確認した。外部契約とルートCLIファイル名は維持している。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
