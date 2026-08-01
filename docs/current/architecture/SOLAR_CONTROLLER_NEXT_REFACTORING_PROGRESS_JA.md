@@ -160,3 +160,9 @@
 - 変更: 初期SOC未取得時にstandbyへ戻す補助関数のdevice、status、SOC読取値を既存Portと値オブジェクトで明示した。standby実行後に停止理由を永続化する順序、強制充電の判断、環境値は変更していない。
 - 変更後検証: 対象mypyは0エラー。`tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py` は `69 passed`。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Cloud Job、Firestore、蓄電池設定、CSV取得を実行していない。
+
+## 2026-08-01 — T2-10: Dashboard data互換export型境界
+
+- 開始コミット: `4e9befc`。
+- 変更: 互換モジュールが再exportする3つのデータモデルを、実際の定義元 `app.dashboard.models` から明示importした。公開名、repository、loader、互換import先は変更していない。
+- 変更後検証: 対象mypyは0エラー。`tests/test_dashboard_data.py tests/test_dashboard_backend_parity.py` は `37 passed`。`compileall` と `git diff --check` は成功した。
