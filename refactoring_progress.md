@@ -478,3 +478,9 @@
 - 変更後検証: 同じ対象テストは `26 passed in 1.65s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: DB処理はテストで外部バックエンドに接続せず、SQLite、Firestore、PostgreSQL、外部サービス、本番環境への書込みは行っていない。
+
+## 2026-08-01 — モジュール再編 P1: 運用永続化フェーズの統合検証
+
+- 対象: SQLite、Firestore、PostgreSQL、同期、DBパイプライン入口の5カード。
+- 統合検証: `python -m pytest -q tests/test_operations_db.py tests/test_firestore_operations.py tests/test_postgres_operations.py tests/test_dashboard_backend_parity.py tests/test_db_pipeline_main.py tests/test_drive_backup.py tests/test_weekly_backup.py` は `32 passed in 2.01s`。
+- 結論: 旧importは明示的な互換モジュールで維持しつつ、内部実装は `app/operations/` に集約できた。外部バックエンドを使う実行はしていない。
