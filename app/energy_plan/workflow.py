@@ -68,6 +68,11 @@ from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
 from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
+from app.energy_plan.weather_history import (
+    hourly_weather_records_from_open_meteo,
+    hourly_weather_summary,
+    weather_class,
+)
 
 
 @dataclass(frozen=True)
@@ -722,121 +727,8 @@ def _list_value(values: object, index: int) -> object | None:
 
 
 def _weather_class(weather_code: int | None) -> str:
-    if weather_code is None:
-        return "unknown"
-    if weather_code == 0:
-        return "clear"
-    if 1 <= weather_code <= 3:
-        return "cloudy"
-    if weather_code in {45, 48}:
-        return "fog"
-    if 51 <= weather_code <= 67 or 80 <= weather_code <= 82:
-        return "rain"
-    if 71 <= weather_code <= 77 or 85 <= weather_code <= 86:
-        return "snow"
-    if 95 <= weather_code <= 99:
-        return "storm"
-    return "other"
-
-
-def _hourly_weather_summary(hourly_weather: list[dict[str, object]]) -> dict[str, object]:
-    daytime = [
-        row for row in hourly_weather
-        if isinstance(row, dict) and 7 <= (_to_optional_int(row.get("hour")) or -1) < 18
-    ]
-    solar = [
-        row for row in hourly_weather
-        if isinstance(row, dict) and 9 <= (_to_optional_int(row.get("hour")) or -1) < 16
-    ]
-    rain_probability_threshold = _env_float("HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD", 70.0)
-    rain_mm_threshold = _env_float("HOURLY_WEATHER_RAIN_MM_THRESHOLD", 0.1)
-    low_shortwave_threshold = _env_float("HOURLY_WEATHER_LOW_SHORTWAVE_W_M2", 120.0)
-
-    rain_hours = 0
-    low_shortwave_hours = 0
-    shortwave_sum = 0.0
-    weather_codes: list[int] = []
-    temp_values: list[float] = []
-    for row in daytime:
-        code = _to_optional_int(row.get("weather_code"))
-        if code is not None:
-            weather_codes.append(code)
-        temp = _to_optional_float(row.get("temp_c"))
-        if temp is not None:
-            temp_values.append(temp)
-        precip = _to_optional_float(row.get("precipitation_mm")) or 0.0
-        precip_probability = _to_optional_float(row.get("precipitation_probability"))
-        if (
-            _weather_class(code) in {"rain", "storm"}
-            or precip >= rain_mm_threshold
-            or (precip_probability is not None and precip_probability >= rain_probability_threshold)
-        ):
-            rain_hours += 1
-    for row in solar:
-        shortwave = _to_optional_float(row.get("shortwave_radiation_w_m2")) or 0.0
-        shortwave_sum += shortwave
-        if shortwave <= low_shortwave_threshold:
-            low_shortwave_hours += 1
-
-    dominant_code = None
-    if weather_codes:
-        dominant_code = max(set(weather_codes), key=weather_codes.count)
-    return {
-        "daytime_hour_count": len(daytime),
-        "solar_hour_count": len(solar),
-        "rain_hours_7_17": rain_hours,
-        "low_shortwave_hours_9_15": low_shortwave_hours,
-        "shortwave_sum_9_15_wh_m2": round(shortwave_sum, 3),
-        "dominant_weather_code_7_17": dominant_code,
-        "dominant_weather_class_7_17": _weather_class(dominant_code),
-        "mean_temp_c_7_17": round(sum(temp_values) / len(temp_values), 3) if temp_values else None,
-    }
-
-
-def _hourly_weather_records_from_open_meteo(
-    hourly: dict[str, object],
-    *,
-    target_date: str,
-    suffix: str = "",
-) -> list[dict[str, object]]:
-    out: list[dict[str, object]] = []
-    times = hourly.get("time", [])
-    if not isinstance(times, list):
-        return out
-    for idx, raw_time in enumerate(times):
-        time_text = str(raw_time)
-        if not time_text.startswith(f"{target_date}T"):
-            continue
-        try:
-            hour = int(time_text.split("T", 1)[1].split(":", 1)[0])
-        except (IndexError, ValueError):
-            continue
-        weather_code = _to_optional_int(_list_value(hourly.get(f"weather_code{suffix}"), idx))
-        out.append(
-            {
-                "time": time_text,
-                "hour": hour,
-                "weather_code": weather_code,
-                "weather_class": _weather_class(weather_code),
-                "precipitation_mm": _to_optional_float(_list_value(hourly.get(f"precipitation{suffix}"), idx)),
-                "precipitation_probability": _to_optional_float(
-                    _list_value(hourly.get(f"precipitation_probability{suffix}"), idx)
-                ),
-                "cloud_cover": _to_optional_float(_list_value(hourly.get(f"cloud_cover{suffix}"), idx)),
-                "shortwave_radiation_w_m2": _to_optional_float(
-                    _list_value(hourly.get(f"shortwave_radiation{suffix}"), idx)
-                ),
-                "temp_c": _to_optional_float(_list_value(hourly.get(f"temperature_2m{suffix}"), idx)),
-                "relative_humidity_percent": _to_optional_float(
-                    _list_value(hourly.get(f"relative_humidity_2m{suffix}"), idx)
-                ),
-                "dew_point_c": _to_optional_float(_list_value(hourly.get(f"dew_point_2m{suffix}"), idx)),
-                "wind_speed_10m": _to_optional_float(
-                    _list_value(hourly.get(f"wind_speed_10m{suffix}"), idx)
-                ),
-            }
-        )
-    return out
+    """Compatibility seam for tests importing the former workflow helper."""
+    return weather_class(weather_code)
 
 
 def _fetch_open_meteo_previous_day1_forecast(
@@ -869,10 +761,15 @@ def _fetch_open_meteo_previous_day1_forecast(
     hourly = resp.json().get("hourly", {})
     if not isinstance(hourly, dict):
         raise RuntimeError("Open-Meteo previous runs response has no hourly data")
-    hourly_weather = _hourly_weather_records_from_open_meteo(hourly, target_date=target_date, suffix=suffix)
+    hourly_weather = hourly_weather_records_from_open_meteo(hourly, target_date=target_date, suffix=suffix)
     if not hourly_weather:
         raise RuntimeError(f"Open-Meteo previous runs hourly forecast is empty: {target_date}")
-    summary = _hourly_weather_summary(hourly_weather)
+    summary = hourly_weather_summary(
+        hourly_weather,
+        rain_probability_threshold=_env_float("HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD", 70.0),
+        rain_mm_threshold=_env_float("HOURLY_WEATHER_RAIN_MM_THRESHOLD", 0.1),
+        low_shortwave_threshold=_env_float("HOURLY_WEATHER_LOW_SHORTWAVE_W_M2", 120.0),
+    )
     dominant_code = _to_optional_int(summary.get("dominant_weather_code_7_17"))
     shortwave_sum_wh = _to_optional_float(summary.get("shortwave_sum_9_15_wh_m2")) or 0.0
     return {
@@ -951,7 +848,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
             raise RuntimeError(f"指定日の予報を取得できませんでした: {target_date}") from exc
     weather_code = _to_optional_int(_list_value(daily.get("weather_code"), target_index))
     forecast_date = str(times[target_index])
-    hourly_weather = _hourly_weather_records_from_open_meteo(hourly, target_date=forecast_date) if isinstance(hourly, dict) else []
+    hourly_weather = hourly_weather_records_from_open_meteo(hourly, target_date=forecast_date) if isinstance(hourly, dict) else []
     return {
         "date": forecast_date,
         "sun_hours": (_to_optional_float(_list_value(sunshine, target_index)) or 0.0) / 3600.0,
@@ -966,7 +863,12 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
             _list_value(daily.get("shortwave_radiation_sum"), target_index)
         ),
         "hourly_weather": hourly_weather,
-        "hourly_weather_summary": _hourly_weather_summary(hourly_weather),
+        "hourly_weather_summary": hourly_weather_summary(
+            hourly_weather,
+            rain_probability_threshold=_env_float("HOURLY_WEATHER_RAIN_PROBABILITY_THRESHOLD", 70.0),
+            rain_mm_threshold=_env_float("HOURLY_WEATHER_RAIN_MM_THRESHOLD", 0.1),
+            low_shortwave_threshold=_env_float("HOURLY_WEATHER_LOW_SHORTWAVE_W_M2", 120.0),
+        ),
     }
 
 

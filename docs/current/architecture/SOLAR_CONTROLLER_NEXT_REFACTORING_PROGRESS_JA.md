@@ -241,3 +241,8 @@
 
 - 全体mypyは `119 source filesで0エラー`。全テストは `432 passed, 1 skipped in 21.51s`。`python scripts/security_check.py` は成功した。
 - 外部サービス、Cloud Job、Firestore、Drive、蓄電池設定は実行していない。
+
+## 2026-08-01 — M-1a: Energy Plan気象正規化の分離
+
+- 変更: Open-Meteoの時間別weather code分類、時間別record正規化、時間別集計を `app.energy_plan.weather_history` へ移した。workflowには環境値の安全fallbackとAPI呼出し順を残した。既存テストは正規モジュールの公開処理を検証するように移した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_forecast.py` は `86 passed`。Energy Plan mypy、`compileall`、`git diff --check` は成功した。

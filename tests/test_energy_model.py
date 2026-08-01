@@ -30,6 +30,7 @@ from app.forecasting.correction import (
     _temperature_hourly_multipliers,
     build_forecast_correction,
 )
+from app.energy_plan.weather_history import hourly_weather_summary as _hourly_weather_summary
 from app.energy_plan.workflow import (
     _active_constraint_names,
     _archive_weather_history,
@@ -40,7 +41,6 @@ from app.energy_plan.workflow import (
     _decision_cost_breakdown,
     _historical_daytime_soc_gain_guard,
     _historical_hourly_profile,
-    _hourly_weather_summary,
     _monthly_day_buy_kwh_before_target,
     _load_scenarios_for_cost_optimizer,
     _paired_scenarios_for_cost_optimizer,
@@ -653,7 +653,12 @@ def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:
         for hour in range(7, 18)
     ]
 
-    summary = _hourly_weather_summary(hourly)
+    summary = _hourly_weather_summary(
+        hourly,
+        rain_probability_threshold=70.0,
+        rain_mm_threshold=0.1,
+        low_shortwave_threshold=120.0,
+    )
 
     assert summary["rain_hours_7_17"] == 2
     assert summary["low_shortwave_hours_9_15"] == 2
