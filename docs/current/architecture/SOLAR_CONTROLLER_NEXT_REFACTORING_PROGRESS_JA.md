@@ -153,3 +153,10 @@
 - 変更: 読み込んだ詳細計画のforecastを辞書へ正規化してから日付を参照するようにした。詳細が不正な場合のskip、dry-run既定、`--apply`時だけの永続書込みは変更していない。
 - 変更後検証: 対象mypyは0エラー。`tests/test_night_plan_archive.py` は `2 passed`。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Firestore/Cloud Storageへの書込みを伴うCLI本体は実行していない。
+
+## 2026-08-01 — T2-9: Cloud Job monitor型境界
+
+- 開始コミット: `a17206c`。
+- 変更: 初期SOC未取得時にstandbyへ戻す補助関数のdevice、status、SOC読取値を既存Portと値オブジェクトで明示した。standby実行後に停止理由を永続化する順序、強制充電の判断、環境値は変更していない。
+- 変更後検証: 対象mypyは0エラー。`tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py` は `69 passed`。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Cloud Job、Firestore、蓄電池設定、CSV取得を実行していない。

@@ -1106,7 +1106,13 @@ def _execute_monitor_terminal_transition(
     return True
 
 
-def _keep_standby_when_initial_soc_is_unavailable(*, plan_meta: dict[str, object], device, status, soc_reading) -> None:
+def _keep_standby_when_initial_soc_is_unavailable(
+    *,
+    plan_meta: dict[str, Any],
+    device: MonitorDevicePort,
+    status: MonitorStatusPort,
+    soc_reading: SocReading,
+) -> None:
     """Apply safe standby and persist why forced charging did not start."""
     try:
         device.apply_profile(
