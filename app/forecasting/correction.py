@@ -177,12 +177,15 @@ def _load_forecast_hourly_history_from_sqlite(*, target_date: str) -> dict[str, 
         hour = to_int(row["hour"])
         if hour is None or hour < 0 or hour > 23:
             continue
-        out.setdefault(str(row["date"]), {})[hour] = {
+        values = {
             "pv": max(0.0, float(row["forecast_pv_kwh"] or 0.0)),
             "load": max(0.0, float(row["forecast_load_kwh"] or 0.0)),
             "shortwave": max(0.0, float(row["forecast_shortwave_radiation_w_m2"] or 0.0)),
-            "weather_code": to_float(row["forecast_weather_code"]),
         }
+        weather_code = to_float(row["forecast_weather_code"])
+        if weather_code is not None:
+            values["weather_code"] = weather_code
+        out.setdefault(str(row["date"]), {})[hour] = values
     return out
 
 
@@ -217,12 +220,15 @@ def load_forecast_hourly_history_from_firestore(*, target_date: str) -> dict[str
         hour = to_int(row.get("hour"))
         if not day or hour is None or hour < 0 or hour > 23:
             continue
-        out.setdefault(day, {})[hour] = {
+        values = {
             "pv": max(0.0, to_float(row.get("forecast_pv_kwh")) or 0.0),
             "load": max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0),
             "shortwave": max(0.0, to_float(row.get("forecast_shortwave_radiation_w_m2")) or 0.0),
-            "weather_code": to_float(row.get("forecast_weather_code")),
         }
+        weather_code = to_float(row.get("forecast_weather_code"))
+        if weather_code is not None:
+            values["weather_code"] = weather_code
+        out.setdefault(day, {})[hour] = values
     return out
 
 

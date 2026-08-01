@@ -58,3 +58,11 @@
 - 変更: DB cursorとconnectionを外部DB-API境界として `Any` で明示した。週判定、SQL、placeholder、保存JSON、出力パス、cleanup例外の扱いは変更していない。
 - 変更後検証: 同じテストは `1 passed in 0.44s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: 実DBとバックアップ先は使用していない。
+
+## 2026-08-01 — T1-6B: Forecast correction
+
+- 開始コミット: `3f303ca4ad080dc627f8561ee62391f96e1d5f73`
+- 変更前検証: forecast correction・energy modelテストは `53 passed in 2.54s`。対象mypyは2エラーだった。
+- 変更: forecast historyのweather codeが欠損時はdictキーを追加しないようにした。既存利用側は `.get("weather_code")` で欠損をunknownとして扱うため、従来の `None` と同じ分岐になる。PV、load、shortwave、補正比、provider呼出しは変更していない。
+- 変更後検証: 同じテストは `53 passed in 2.78s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Open-Meteo等の実通信は行っていない。
