@@ -468,3 +468,13 @@
 - 変更後検証: `python -m pytest -q tests/test_drive_backup.py tests/test_operations_sync_compatibility.py` は `4 passed in 0.88s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 同期関数はテストから実行せず、SQLite、Firestore、外部サービス、本番環境への接続・書込みは行っていない。
+
+## 2026-08-01 — モジュール再編 P1-5: DBパイプライン入口を薄くする
+
+- 目的: 取込順序・バックエンド選択・週次バックアップ判断を運用ワークフローとして `app/operations/workflow.py` へ移し、ルート `db_pipeline_main.py` を `main()` を呼ぶ起動専用ファイルにした。
+- 変更前検証: `tests/test_db_pipeline_main.py tests/test_operations_db.py tests/test_firestore_operations.py tests/test_postgres_operations.py` は `26 passed in 1.60s`。
+- 境界確認: 既存テストはルート入口の `_env_bool`、`_settings_summary_successful`、`_ingest_firestore` を直接参照していた。計画の停止条件に該当するため、互換入口に私的実装を再exportせず、テストを正規ワークフローモジュールへ切り替えた。
+- 実装変更: 実装全体を `app/operations/workflow.py` へ移動し、内部SQLite importも正規モジュールへ更新した。ルート `db_pipeline_main.py` は正規 `main` をimportして実行する6行の入口になった。
+- 変更後検証: 同じ対象テストは `26 passed in 1.65s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: DB処理はテストで外部バックエンドに接続せず、SQLite、Firestore、PostgreSQL、外部サービス、本番環境への書込みは行っていない。

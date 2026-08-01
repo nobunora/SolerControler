@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from db_pipeline_main import _env_bool, _ingest_firestore, _settings_summary_successful
+from app.operations.workflow import _env_bool, _ingest_firestore, _settings_summary_successful
 
 
 def _write_summary(tmp_path: Path, payload: dict[str, object]) -> Path:
