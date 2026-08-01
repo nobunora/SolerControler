@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.comfort_load_forecast import _feature_map as comfort_feature_map
+from app.forecasting.comfort_load import build_comfort_feature_map as comfort_feature_map
 from app.forecast_correction import _fetch_hourly_weather
 
 # Use the same short-to-daily trailing scales so the contribution report is comparable to training features.

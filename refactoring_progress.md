@@ -523,3 +523,14 @@
 - 変更後検証: 影響範囲の3テストは `8 passed in 2.28s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 予定データの形式、負荷補正ロジック、Google Sheetsアクセス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P2-3: 快適負荷予測を予測パッケージへ移動
+
+- 目的: 温湿度と履歴からの快適負荷予測を `app/forecasting/comfort_load.py` へ移動した。
+- 変更前検証: `tests/test_comfort_load_forecast.py tests/test_energy_model.py` は `54 passed in 5.57s`。
+- 私的参照の整理: 分析スクリプトが私的 `_feature_map` を利用していた。生産モデルと同じ特徴量スキーマを分析する現在の利用目的があるため、`build_comfort_feature_map` を公開関数にして、中学生程度の英語docstringで比較可能性の理由を記録した。二つの分析スクリプトはこの公開関数を使う。
+- 実装変更: 旧パスは定数・公開関数を明示的に再exportする互換モジュールへ置き換え、予測補正・テスト・分析スクリプトは正規モジュールを使用する。
+- 互換性検証: `tests/test_forecasting_comfort_load_compatibility.py` を追加し、旧・新パスの公開記号の同一性を確認する。
+- 変更後検証: 影響範囲の3テストは `55 passed in 5.63s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 特徴量、学習・フォールバック、気象入力、予測値、外部アクセスは変更していない。

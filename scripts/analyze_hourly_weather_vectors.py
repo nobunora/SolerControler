@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.comfort_load_forecast import _feature_map as comfort_feature_map
-from app.comfort_load_forecast import predict_hourly_comfort_load
+from app.forecasting.comfort_load import build_comfort_feature_map as comfort_feature_map
+from app.forecasting.comfort_load import predict_hourly_comfort_load
 from app.energy_model import forecast_pv_energy_kwh, fit_coefficients_from_csv
 from energy_model_main import _build_hourly_load_forecast, _build_hourly_pv_forecast, _reshape_hourly_pv_by_weather
 

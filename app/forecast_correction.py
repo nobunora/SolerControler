@@ -18,7 +18,7 @@ from typing import Any
 
 import requests
 
-from app.comfort_load_forecast import ADAPTIVE_LOOKBACK_HOURS, predict_hourly_comfort_load
+from app.forecasting.comfort_load import ADAPTIVE_LOOKBACK_HOURS, predict_hourly_comfort_load
 from app.utils import env_bool, env_float, env_float_clamped, to_float, to_int
 
 

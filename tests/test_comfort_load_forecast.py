@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from app.comfort_load_forecast import MODEL_NAME, predict_hourly_comfort_load
+from app.forecasting.comfort_load import MODEL_NAME, predict_hourly_comfort_load
 
 
 def _synthetic_history(*, days: int) -> tuple[
