@@ -258,3 +258,14 @@
 - 実行コマンド: `python -m pytest -q tests/test_energy_model.py -k 'temperature_training_samples or temperature_correction'`
 - 結果: `3 passed, 49 deselected in 2.53s`
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 再監査候補の処置と例外記録
+
+- コミット: `6c3992f docs: record audited structural exceptions`
+- 対象: `energy_model_main.py`、`app/soc_cost_optimizer.py`、`app/kpnet_workflow.py`、`app/comfort_load_forecast.py`、`app/dashboard_data.py`、`app/firestore_ops.py`、`app/operations/cost_daily.py`、`app/energy_model.py`、3つの予報取込アダプター。
+- 判断: 温度補正の履歴選別は分離して修正した。一方、残った候補は同一スナップショットからの診断値生成、金額の区間丸め、外部装置操作の失敗順序、またはストレージ固有の書込み契約を一つの境界として保持する必要がある。
+- 処置: 各関数の直前に `readable-code-audit: skip` を追加し、適用しない規則IDと具体的な契約理由を記録した。抽象的な「意図的」だけのスキップは使用していない。
+- 確認: `python -m pytest -q tests/test_energy_model.py tests/test_operations_db.py tests/test_dashboard_data.py tests/test_comfort_load_forecast.py tests/test_soc_cost_optimizer.py tests/test_kpnet_workflow.py`
+- 結果: `166 passed in 8.04s`
+- 構文検査: `python -m compileall -q app energy_model_main.py` 成功。
+- 形式検査: `git diff --check` 成功。
