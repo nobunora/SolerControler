@@ -3,7 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 
-from app.night_plan_archive import (
+from app.backup.night_plan_archive import (
     build_night_plan_firestore_document,
     load_night_plan_detail_from_firestore_doc,
     upload_night_plan_to_gcs,
