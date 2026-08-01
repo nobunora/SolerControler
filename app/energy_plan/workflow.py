@@ -66,6 +66,7 @@ from app.forecasting.correction import (
 )
 from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
+from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 
 
@@ -94,7 +95,7 @@ class EnergyModelConfig:
 
     @classmethod
     def from_env(cls) -> "EnergyModelConfig":
-        _load_dotenv_if_present()
+        load_dotenv_if_present()
         forecast_settings = ForecastSettings.from_env()
         historical_settings = HistoricalInputSettings.from_env()
         battery_temp = (
@@ -255,24 +256,6 @@ class OptimizationDecision:
     cost_optimization_payload: dict[str, object] | None
 
 
-def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if (
-            len(value) >= 2
-            and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'"))
-        ):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
-
-
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
     csv_paths = find_latest_kpnet_csv_paths(artifacts_dir)
     if csv_paths:
@@ -368,6 +351,7 @@ def _to_optional_int(value: object) -> int | None:
     return int(as_float)
 
 
+# readable-code-audit: skip DUP-01 — unknown non-empty values intentionally mean false here, unlike the shared helper which returns its default for unknown values.
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name, "").strip().lower()
     if not raw:
@@ -375,6 +359,7 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "y", "on"}
 
 
+# readable-code-audit: skip DUP-01 — malformed numeric planning settings must fall back locally instead of raising like the strict shared parser.
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -385,6 +370,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# readable-code-audit: skip DUP-01 — this clamp deliberately keeps Energy Plan's malformed-value fallback behavior from `_env_float`.
 def _env_float_clamped(name: str, default: float, *, min_value: float, max_value: float) -> float:
     value = _env_float(name, default)
     return max(min_value, min(max_value, value))

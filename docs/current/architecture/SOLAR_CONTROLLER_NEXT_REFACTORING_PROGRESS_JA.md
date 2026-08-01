@@ -216,3 +216,8 @@
 
 - 変更: Energy PlanとCloud Jobが共通の最新CSV探索を使うようにした。Energy Planは従来の日本語RuntimeErrorを薄い関数で維持し、Cloud Jobは既存テストのmonkeypatch境界を守るため同名の薄い委譲関数を残した。
 - 検証: `tests/test_cloud_job_runner.py tests/test_energy_model_runtime.py tests/test_energy_model.py tests/test_kpnet_monitoring_history.py` は `130 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — D-5a: Energy Plan環境変数ヘルパーの判定
+
+- 変更: `.env` 読込は共有 `load_dotenv_if_present` へ移行した。booleanとfloatのprivate helperは、未知の非空文字および不正数値に対する既存の安全なfallback契約が共有helperと異なるため、具体的なDUP-01 skipコメントを残して維持した。clampも同じfallbackに依存するため維持した。
+- 検証: Energy Plan関連の指定回帰は `108 passed`。対象mypyと `git diff --check` は成功した。
