@@ -5,7 +5,7 @@ from datetime import date, datetime
 import pytest
 
 from app.forecasting.consumption import ConsumptionForecast
-from app.occupancy_schedule import (
+from app.forecasting.occupancy import (
     apply_occupancy_schedule,
     events_from_values,
     filter_training_load_rows,

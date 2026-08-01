@@ -39,7 +39,7 @@ from app.energy_model import (
     optimize_target_soc_for_daytime,
     to_dict,
 )
-from app.occupancy_schedule import (
+from app.forecasting.occupancy import (
     OccupancyAdjustment,
     OccupancyScheduleEvent,
     apply_occupancy_schedule,

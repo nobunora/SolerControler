@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from app.energy_model import EnergyModelCoefficients
-from app.occupancy_schedule import OccupancyScheduleEvent
+from app.forecasting.occupancy import OccupancyScheduleEvent
 from app.energy_plan.weather import WeatherHistoryFetchResult
 
 

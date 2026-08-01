@@ -513,3 +513,13 @@
 - 変更後検証: 影響範囲の3テストは `55 passed in 2.72s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: PV算出式、気象・履歴の読取り条件、外部アクセス、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P2-6: 在宅予定を予測パッケージへ移動
+
+- 目的: 在宅・不在予定による負荷予測の補正は予測入力の責務であるため、`app/forecasting/occupancy.py` へ移動した。
+- 変更前検証: `tests/test_occupancy_schedule.py tests/test_energy_plan_settings.py` は `7 passed in 2.18s`。
+- 実装変更: 旧 `app/occupancy_schedule.py` は、予定定数、公開型、ロード・適用関数を明示的に再exportする互換モジュールへ置き換えた。エネルギー計画、Sheets出力、エネルギーモデル入口、テストは正規モジュールを使用する。
+- 互換性: 互換モジュールにワイルドカードimportを一度書きかけたが、計画の明示export規則に反するため、同じカード内で全公開記号の列挙へ直した。`tests/test_forecasting_occupancy_compatibility.py` は主要な公開型・関数の同一性を固定する。
+- 変更後検証: 影響範囲の3テストは `8 passed in 2.28s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 予定データの形式、負荷補正ロジック、Google Sheetsアクセス、本番環境は変更していない。
