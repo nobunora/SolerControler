@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.soc_decision_feedback import build_soc_decision_feedback, build_soc_decision_prior
+from app.energy_plan.decision_feedback import build_soc_decision_feedback, build_soc_decision_prior
 
 
 def test_build_soc_decision_feedback_finds_realized_best_soc(tmp_path: Path) -> None:

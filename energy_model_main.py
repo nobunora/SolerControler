@@ -65,7 +65,7 @@ from app.forecasting.correction import (
     build_forecast_correction,
 )
 from app.forecasting.pv_physical import build_physical_pv_candidate
-from app.soc_decision_feedback import load_soc_decision_prior_from_firestore
+from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
 
 
 @dataclass(frozen=True)

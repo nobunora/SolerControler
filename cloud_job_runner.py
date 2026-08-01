@@ -29,7 +29,7 @@ from app.forced_charge import (
     requires_forced_charge,
 )
 from app.settings.forced_charge import ForcedChargeSettings
-from app.soc_decision_feedback import build_soc_decision_feedback
+from app.energy_plan.decision_feedback import build_soc_decision_feedback
 from app.constants import validate_soc_percent
 
 

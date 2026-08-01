@@ -582,3 +582,13 @@
 - 変更後検証: 影響範囲の4テストは `99 passed in 3.10s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: 費用計算、SOC候補、シナリオ重み、料金・外部入力、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P3-3: SOC決定フィードバックを計画パッケージへ移動
+
+- 目的: 実績に基づくSOC決定の評価・事前分布生成は計画責務であるため、`app/energy_plan/decision_feedback.py` へ移動した。
+- 変更前検証: `tests/test_soc_decision_feedback.py tests/test_energy_model_runtime.py tests/test_cloud_job_runner.py` は `78 passed in 20.46s`。
+- 実装変更: 旧パスはフィードバック生成・事前分布・Firestore読取の公開関数を明示的に再exportする互換モジュールへ置き換えた。計画入口、Cloud Jobランナー、関連テストは正規モジュールを使用する。
+- 互換性検証: `tests/test_energy_plan_decision_feedback_compatibility.py` を追加した。
+- 変更後検証: 影響範囲の4テストは `79 passed in 21.09s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 実績読取、類似度、後悔値、Firestore保存・読取、Cloud Jobの実機操作、本番環境は変更していない。
