@@ -167,3 +167,46 @@
 
 - 比較関数そのものは純粋だが、採用されるSOCは充電計画へ影響するため中リスクと分類した。既存の探索結果テストを同時に実行している。
 - 次は高リスクの前段として、永続化処理から「入力JSONの解析・妥当性判定」だけを純粋関数へ分ける。書込み処理とトランザクション境界は変更しない。
+
+## 2026-08-01 — 予報日次値のプラン解析を分離（高リスク領域・第1段階）
+
+- コミット: `47b6131 refactor: isolate forecast daily plan values`
+- 対象: `app/operations_db.py`、`tests/test_operations_db.py`
+- リスク分類: この機能はSQLiteの `sunshine_daily` と `forecast_hourly` を更新するため高リスク領域とする。ただし本段階で変更したのはJSONから日次保存値を集める純粋関数だけであり、SQL、書込み対象、コミット、実績天候APIの呼出し順は変更していない。
+
+変更前:
+
+- `ingest_sunshine_from_night_plan` が、ファイル読込み、予報日次値の抽出、SQL更新、時間別行更新、実績天候取得、コミットを一つで行っていた。
+- どのプラン項目が日次テーブルへ渡るかを、SQLの引数列と突き合わせて確認する必要があった。
+
+変更内容:
+
+1. `_forecast_daily_values_from_plan` を追加し、予報日、日照時間、気温、天候、降水、短波放射、最終PV集計、校正係数、最終予報出所を一つの辞書へ集約した。
+2. `ingest_sunshine_from_night_plan` はこの辞書をSQLパラメータに変換するだけにした。
+3. PV合計は既存の `_extract_final_pv_totals_from_plan` を引き続き使う。時間別PVから導いた最終値を優先する既存契約を変更していない。
+4. 校正係数は従来どおり `effective_factor` を優先し、無い場合だけ `factor` を使う。
+
+不変条件:
+
+- 対象ファイルが無い場合は書込みをせずに戻る。
+- `sunshine_daily` のUPSERT列、`forecast_hourly` のDELETE/UPSERT順序、最後の `conn.commit()` は変更していない。
+- 実績天候取得の例外は従来どおり空データとして扱い、予報の書込みを失敗させない。
+- PV集計には `total_kwh` 以外に `peak_kw` と `source` が含まれる場合がある。この補助フィールドは削除・正規化せず、日次SQLで使用する4区分だけを読む。
+
+個別テスト:
+
+- 追加: `test_forecast_daily_values_from_plan_prefers_final_pv_contract`
+  - 計画日の前後空白を除去することを確認。
+  - 時間別PVに基づく最終PV集計と、最終予報出所を使うことを確認。
+  - `effective_factor` が `factor` より優先されることを確認。
+- 既存回帰: SQLiteへ日次・時間別予報を保存する経路を同時に実行。
+- 実行コマンド: `python -m pytest -q tests/test_operations_db.py -k 'forecast_daily_values or ingest_sunshine_from_night_plan'`
+- 結果: `2 passed, 16 deselected in 0.38s`
+- 途中検出と対処: 初回の完全辞書比較で、PV集計にはピーク値・出所も含まれることが判明した。実装は変更せず、保存対象の4区分を検証するテストへ修正した。
+- 形式検査: `git diff --check` 成功。
+
+次の高リスク手順:
+
+1. SQL文そのものを動かさず、日次UPSERTに渡す値を名前付きパラメータへ置き換えられるか、現行テストで書込み列を固定して確認する。
+2. 時間別行の削除・再作成は再実行時の冪等性に関わるため、同じプランを二回取り込む個別テストを追加してから変更する。
+3. 実績天候APIの失敗・成功は予報書込みと独立であることをテスト化し、例外処理を変更する場合もその境界を越えない。
