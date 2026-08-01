@@ -484,3 +484,12 @@
 - 対象: SQLite、Firestore、PostgreSQL、同期、DBパイプライン入口の5カード。
 - 統合検証: `python -m pytest -q tests/test_operations_db.py tests/test_firestore_operations.py tests/test_postgres_operations.py tests/test_dashboard_backend_parity.py tests/test_db_pipeline_main.py tests/test_drive_backup.py tests/test_weekly_backup.py` は `32 passed in 2.01s`。
 - 結論: 旧importは明示的な互換モジュールで維持しつつ、内部実装は `app/operations/` に集約できた。外部バックエンドを使う実行はしていない。
+
+## 2026-08-01 — モジュール再編 P2-1: 予測系の私的参照を分類
+
+- 調査対象: `forecast_correction`、`comfort_load_forecast`、`pv_array_forecast` の私的helper importと文字列指定モンキーパッチ。
+- 検査上の注意: `rg` は一致なしを終了コード1で返す。初回はそれを複合コマンド失敗として扱ったため、空結果を通常状態として許容する再実行を行った。再実行は終了コード0で完了した。
+- `forecast_correction`: `test_energy_model.py` は履歴・気象取得・夕方補正・物理残差補正を差し替え、`test_external_site_access.py` は気象取得を直接テストする。これらは予測補正の内部結合を検証しているため、P2-7で正規モジュールへテストを移してから物理移動する。旧互換層へ私的helperを公開しない。
+- `comfort_load_forecast`: 二つの分析スクリプトが `_feature_map` を利用する。特徴量の内容は分析用の明示的契約に相当するため、P2-3で中学生程度の英語docstringを付けた公開関数へ昇格してスクリプトを置換してから移動する。
+- `pv_array_forecast`: 私的helper import・文字列モンキーパッチは検出0。P2-4は正規モジュールへ直接移動できる。
+- 方針: P2-2、P2-5、P2-6は私的参照なしのため先に実施する。P2-3、P2-4、P2-7は上記の境界整理を各カード内で完了させる。
