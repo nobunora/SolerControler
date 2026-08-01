@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from app.sheets_export import run_export
+from app.exports.sheets import run_export
 
 
 def main() -> int:
