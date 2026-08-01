@@ -301,3 +301,16 @@
 - 個別検証: `node --test tests/test_dashboard_bootstrap.js tests/test_dashboard_calculations.js tests/test_dashboard_modules.js`
 - 結果: `3 passed`。
 - 追加監査: `tmp` と `retval` の未処置代入は0件。
+
+## 2026-08-01 — 「プログラマが知るべき97のこと」読了後の再監査
+
+- 読了範囲: 指定された索引の一次リンクを全件確認した後、「プログラマが知るべき97のこと」の一覧に掲載された107本をすべて読了した。
+- Skills更新: `STRUCT-06` に呼出し側が扱う失敗条件の明示を追加した。`TEST-05`（不具合再現テストを先に失敗させてから修正する）と `TOOL-01`（警告は原因修正または限定的な根拠付き抑制を行う）を追加した。Skillsの構文検証は成功した。
+- 再監査方法: アプリケーションとスクリプトのPython関数をASTで検査し、70行以上または分岐複雑度18以上の候補をすべて再確認した。`result` は外部JSONの契約キーやテスト対象であるため、単語だけでは命名違反としなかった。
+- 判定した候補: `app/firestore_ops.py` の2関数、`app/operations_db.py`、`app/postgres_ops.py`、`app/pv_array_forecast.py`、`app/operations/domain.py`、`scripts/kpnet_soc_gap_report.py` の計7箇所。
+- 判断: いずれも外部ストレージへの同一スナップショット書込み、外部API形式の正規化、または独立した診断条件を並べた決定表である。小さく分割すると、トランザクション境界・入力スナップショット・診断条件の全体像が読みにくくなるため、構造分割は行わない。
+- 処置: 全7箇所の直前に `readable-code-audit: skip STRUCT-04` を追加した。理由は、混在スナップショットを防ぐ永続化境界、プロバイダー契約の正規化、または診断決定表であることを中学生程度の英語で明記した。既存の `DUP-01` 例外とは別に、今回の構造規則をスキップする理由を明確にした。
+- 個別テスト: `python -m pytest -q tests/test_firestore_operations.py tests/test_operations_db.py tests/test_postgres_operations.py tests/test_pv_array_forecast.py tests/test_operations_domain.py tests/test_kpnet_soc_gap_report.py`
+- 個別テスト結果: `37 passed in 1.99s`。
+- 構文検査: `python -m compileall -q app scripts main.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py sheets_export_main.py` 成功。
+- 形式検査: `git diff --check` 成功。

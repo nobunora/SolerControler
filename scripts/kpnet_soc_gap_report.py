@@ -368,6 +368,7 @@ def _summary_row(label: str, summary: WindowSummary) -> str:
     )
 
 
+# readable-code-audit: skip STRUCT-04 — each branch adds one independent report diagnosis, so keeping the decision table together makes every condition visible
 def _interpretation(
     target_soc: Any,
     predicted_night_charge: Any,

@@ -253,6 +253,7 @@ def ingest_monitoring_csvs(
 
 
 # readable-code-audit: skip DUP-01 — PostgreSQL uses its own driver bindings and conflict syntax, so the backend write boundary remains deliberately separate
+# readable-code-audit: skip STRUCT-04 — forecast and actual rows are written in one PostgreSQL transaction so a run cannot leave a mixed snapshot
 def ingest_sunshine_from_night_plan(
     conn,
     *,

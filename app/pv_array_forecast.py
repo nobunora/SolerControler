@@ -745,6 +745,7 @@ def _forecast_solar_url(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — this adapter must normalize all documented provider series formats before applying one shared array factor
 def _forecast_solar_series_to_rows(
     payload: dict[str, Any],
     *,

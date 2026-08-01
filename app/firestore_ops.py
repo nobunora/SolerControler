@@ -104,6 +104,7 @@ def ingest_monitoring_csvs(
 
 
 # readable-code-audit: skip DUP-01 — Firestore writes documents rather than relational rows and requires backend-specific merge semantics
+# readable-code-audit: skip STRUCT-04 — plan upload, daily data, and hourly data must use the same plan snapshot in one ingestion boundary
 def ingest_sunshine_from_night_plan(
     client,
     *,
@@ -418,6 +419,7 @@ def upsert_battery_daily_metrics(
     )
 
 
+# readable-code-audit: skip STRUCT-04 — this scan filters one source collection and writes the last valid value for each day in the same batch boundary
 def recalc_battery_pv_charge_end_soc(client, *, updated_at: str) -> int:
     latest_by_day: dict[str, tuple[str, float]] = {}
     for doc in client.collection("monitoring_samples").stream():

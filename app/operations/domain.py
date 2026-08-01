@@ -13,6 +13,7 @@ from app.time_windows import DailyWindow, minute_of_day, parse_hhmm
 from app.utils import env, to_float, to_int
 
 
+# readable-code-audit: skip STRUCT-04 — plan values and hourly weather must be combined by hour before rows can preserve the forecast document contract
 def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, Any]]:
     forecast = data.get("forecast", {})
     forecast_date = str(forecast.get("date", "")).strip() if isinstance(forecast, dict) else ""
