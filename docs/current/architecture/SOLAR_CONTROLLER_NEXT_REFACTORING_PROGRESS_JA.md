@@ -246,3 +246,8 @@
 
 - 変更: Open-Meteoの時間別weather code分類、時間別record正規化、時間別集計を `app.energy_plan.weather_history` へ移した。workflowには環境値の安全fallbackとAPI呼出し順を残した。既存テストは正規モジュールの公開処理を検証するように移した。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_forecast.py` は `86 passed`。Energy Plan mypy、`compileall`、`git diff --check` は成功した。
+
+## 2026-08-02 — M-1b: Energy Plan気象アーカイブcacheの分離
+
+- 変更: 気象アーカイブcacheのpath、読込、保存、日付chunk、および日別Open-Meteoレスポンス正規化を `app.energy_plan.weather_history` の正規関数へ移し、実行workflowは正規関数を呼び出すようにした。HTTP通信、再試行、archive recordの組立てはworkflowに残した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。外部APIは実行していない。

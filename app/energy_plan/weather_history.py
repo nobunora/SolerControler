@@ -1,6 +1,10 @@
 """Pure Open-Meteo weather-history normalization for the Energy Plan."""
 from __future__ import annotations
 
+import json
+import os
+from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 
@@ -114,3 +118,66 @@ def hourly_weather_records_from_open_meteo(
             "wind_speed_10m": _optional_float(_list_value(hourly.get(f"wind_speed_10m{suffix}"), index)),
         })
     return records
+
+
+def weather_archive_cache_path() -> Path:
+    return Path(os.getenv("WEATHER_ARCHIVE_CACHE_PATH", "artifacts/weather_archive_cache.json"))
+
+
+def load_weather_archive_cache(path: Path) -> tuple[dict[str, dict[str, object]], list[dict[str, object]]]:
+    if not path.exists():
+        return {}, []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload.get("rows", {}) if isinstance(payload, dict) else {}
+        if not isinstance(rows, dict):
+            raise ValueError("cache rows must be an object")
+        return {str(day): dict(row) for day, row in rows.items() if isinstance(row, dict)}, []
+    except Exception as exc:
+        return {}, [{"stage": "cache_read", "exception_type": type(exc).__name__, "message": str(exc)}]
+
+
+def save_weather_archive_cache(path: Path, rows_by_date: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "rows": rows_by_date}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return []
+    except Exception as exc:
+        return [{"stage": "cache_write", "exception_type": type(exc).__name__, "message": str(exc)}]
+
+
+def consecutive_date_chunks(days: list[date], *, chunk_days: int) -> list[list[date]]:
+    chunks: list[list[date]] = []
+    for day in days:
+        if not chunks or len(chunks[-1]) >= chunk_days or day != chunks[-1][-1] + timedelta(days=1):
+            chunks.append([day])
+        else:
+            chunks[-1].append(day)
+    return chunks
+
+
+def weather_rows_from_daily(daily: object) -> list[dict[str, object]]:
+    if not isinstance(daily, dict):
+        raise ValueError("daily weather payload must be an object")
+    times = daily.get("time", [])
+    if not isinstance(times, list):
+        raise ValueError("daily.time must be a list")
+    rows: list[dict[str, object]] = []
+    for index, raw_day in enumerate(times):
+        try:
+            date.fromisoformat(str(raw_day))
+        except ValueError:
+            continue
+        weather_code = _optional_int(_list_value(daily.get("weather_code"), index))
+        sunshine_seconds = _optional_float(_list_value(daily.get("sunshine_duration"), index))
+        mean_temperature = _optional_float(_list_value(daily.get("temperature_2m_mean"), index))
+        if mean_temperature is None:
+            continue
+        rows.append({
+            "date": str(raw_day), "temp": mean_temperature,
+            "weather_code": weather_code if weather_code is not None else "unknown",
+            "sunshine_hours": sunshine_seconds / 3600.0 if sunshine_seconds is not None else 0.0,
+            "precipitation": _optional_float(_list_value(daily.get("precipitation_sum"), index)) or 0.0,
+            "shortwave_radiation_sum_mj_m2": _optional_float(_list_value(daily.get("shortwave_radiation_sum"), index)) or 0.0,
+        })
+    return rows
