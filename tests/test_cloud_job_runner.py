@@ -14,6 +14,7 @@ from cloud_job_runner import (
     _estimate_forced_charge_minutes,
     _estimate_forced_charge_rate_percent_per_hour,
     _estimate_required_charge_kwh,
+    _keep_standby_when_initial_soc_is_unavailable,
     _mask_env_updates,
     _monitor_partial_forced_and_stop,
     _persist_03_monitor_schedule_to_firestore,
@@ -735,6 +736,33 @@ def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_
 
     assert calls == [("standby", False)]
     assert persisted == [("initial_soc_unavailable", reading)]
+
+
+def test_initial_soc_unavailable_helper_applies_standby_before_persisting() -> None:
+    events: list[str] = []
+    reading = SocReading(None, "unavailable", "offline", None)
+
+    class Device:
+        def apply_profile(self, **kwargs) -> None:
+            assert kwargs == {
+                "profile": "standby",
+                "dynamic_forced_profile": False,
+                "label": "03-initial-soc-unavailable-standby",
+            }
+            events.append("standby")
+
+    class Status:
+        def persist_stop_reason(self, plan_meta, reason, *, soc_reading) -> None:
+            assert plan_meta == {"date": "2026-07-14"}
+            assert reason == "initial_soc_unavailable"
+            assert soc_reading is reading
+            events.append("persisted")
+
+    _keep_standby_when_initial_soc_is_unavailable(
+        plan_meta={"date": "2026-07-14"}, device=Device(), status=Status(), soc_reading=reading
+    )
+
+    assert events == ["standby", "persisted"]
 
 
 def test_run_night_23_only_applies_standby_mode(monkeypatch) -> None:
