@@ -640,6 +640,38 @@ def _solve_ridge_regression(feature_rows: list[list[float]], targets: list[float
     return rhs
 
 
+def _temperature_training_samples(
+    *,
+    forecast_history: dict[str, dict[int, dict[str, float]]],
+    actual_history: dict[str, dict[int, dict[str, float]]],
+    historical_temperature_features: dict[str, dict[str, float | None]],
+    correction_hours: range,
+    load_ratio: float,
+) -> tuple[list[list[float]], list[float], list[dict[str, float | None]], list[str]]:
+    """Build valid historical load-residual samples for temperature fitting."""
+    feature_rows: list[list[float]] = []
+    residual_targets: list[float] = []
+    feature_objects: list[dict[str, float | None]] = []
+    training_days: list[str] = []
+    for day in sorted(set(forecast_history) & set(actual_history) & set(historical_temperature_features)):
+        forecast_load = sum(
+            max(0.0, forecast_history[day].get(hour, {}).get("load", 0.0)) * max(0.0, load_ratio)
+            for hour in correction_hours
+        )
+        actual_load = sum(max(0.0, actual_history[day].get(hour, {}).get("load", 0.0)) for hour in correction_hours)
+        if forecast_load <= 0:
+            continue
+        features = historical_temperature_features[day]
+        ratio = actual_load / forecast_load
+        if ratio <= 0.0 or not math.isfinite(ratio):
+            continue
+        feature_rows.append(_temperature_feature_vector(features))
+        residual_targets.append(ratio - 1.0)
+        feature_objects.append(features)
+        training_days.append(day)
+    return feature_rows, residual_targets, feature_objects, training_days
+
+
 def _evening_temperature_correction(
     *,
     forecast_history: dict[str, dict[int, dict[str, float]]],
@@ -696,30 +728,14 @@ def _evening_temperature_correction(
     if not enabled:
         return {"enabled": False, "applied": False, "multiplier_delta": 0.0, "reason": "disabled"}
 
-    feature_rows: list[list[float]] = []
-    residual_targets: list[float] = []
-    feature_objects: list[dict[str, float | None]] = []
-    training_days: list[str] = []
     correction_hours = _temperature_correction_hours()
-    for day in sorted(set(forecast_history) & set(actual_history) & set(historical_temperature_features)):
-        forecast_load = sum(
-            max(0.0, forecast_history[day].get(hour, {}).get("load", 0.0)) * max(0.0, load_ratio)
-            for hour in correction_hours
-        )
-        actual_load = sum(
-            max(0.0, actual_history[day].get(hour, {}).get("load", 0.0))
-            for hour in correction_hours
-        )
-        if forecast_load <= 0:
-            continue
-        features = historical_temperature_features[day]
-        ratio = actual_load / forecast_load
-        if ratio <= 0.0 or not math.isfinite(ratio):
-            continue
-        feature_rows.append(_temperature_feature_vector(features))
-        residual_targets.append(ratio - 1.0)
-        feature_objects.append(features)
-        training_days.append(day)
+    feature_rows, residual_targets, feature_objects, training_days = _temperature_training_samples(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        historical_temperature_features=historical_temperature_features,
+        correction_hours=correction_hours,
+        load_ratio=load_ratio,
+    )
 
     if len(feature_rows) < min_samples:
         effective_samples = _effective_temperature_sample_count(feature_objects, target_features)

@@ -25,6 +25,7 @@ from app.forecast_correction import (
     _paired_forecast_error_scenarios,
     _correct_hourly_pv,
     _target_weather_from_forecast,
+    _temperature_training_samples,
     _temperature_features_for_day,
     _temperature_hourly_multipliers,
     build_forecast_correction,
@@ -950,6 +951,30 @@ def test_build_forecast_correction_uses_comfort_model_when_applied(monkeypatch) 
     assert rationale["comfort_load_model"]["hourly_load_kwh"]["23"] == pytest.approx(0.98)
     assert "_residual_multipliers" not in rationale["comfort_load_model"]
     assert len(correction["load_scenarios"]) == 5
+
+
+def test_temperature_training_samples_excludes_missing_or_nonpositive_forecasts() -> None:
+    features = {"max_temp_c": 30.0}
+    rows, residuals, feature_objects, days = _temperature_training_samples(
+        forecast_history={
+            "2026-07-01": {17: {"load": 2.0}},
+            "2026-07-02": {17: {"load": 0.0}},
+            "2026-07-03": {17: {"load": 2.0}},
+        },
+        actual_history={
+            "2026-07-01": {17: {"load": 3.0}},
+            "2026-07-02": {17: {"load": 3.0}},
+            "2026-07-03": {17: {"load": 0.0}},
+        },
+        historical_temperature_features={"2026-07-01": features, "2026-07-02": features, "2026-07-03": features},
+        correction_hours=range(17, 18),
+        load_ratio=1.0,
+    )
+
+    assert len(rows) == 1
+    assert residuals == [0.5]
+    assert feature_objects == [features]
+    assert days == ["2026-07-01"]
 
 
 def test_nonlinear_temperature_residual_grows_for_unseen_heat(monkeypatch) -> None:
