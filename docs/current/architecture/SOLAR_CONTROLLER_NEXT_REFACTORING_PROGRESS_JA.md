@@ -119,3 +119,17 @@
 - 変更: Open-Meteo request parameterの許容値型、NumPy予測配列、欠損したcomfort featureの分岐を明示した。featureが構築不能な時刻は学習行に追加しないため、欠損値を数値へ偽装しない。
 - 変更後検証: 対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Open-Meteo API、DB、分析本体は実行していない。
+
+## 2026-08-01 — 補正: archive型抑制の除去
+
+- 検出理由: T2-6の対象mypy実行で、依存先 `app/backup/night_plan_archive.py` の未使用 `type: ignore` 2件が検査を妨げた。
+- 変更・検証: obsoleteな抑制とその説明を削除し、archive対象mypyは0エラー、`tests/test_night_plan_archive.py` は `2 passed`。コミットは `ac15e0f`。
+- 外部安全性: Cloud Storageの読書きは実行していない。
+
+## 2026-08-01 — T2-6: 物理PV履歴再計算型境界
+
+- 開始コミット: `ac15e0f`。
+- 変更前検証: 対象には5件の型エラーがあり、さらに依存archiveの未使用抑制2件を上記の独立コミットで解消した。
+- 変更: Firestore documentを実行時に辞書へ正規化し、forecast・気象行・既存最適化値の型を明示した。不正なdocumentや時刻は従来同様スキップする。Firestore/Storage clientのfakeだけで再計算行をSQLiteへ保存する個別テストを追加した。
+- 変更後検証: 対象mypyは0エラー。`tests/test_recompute_physical_pv_history.py tests/test_pv_physical_forecast.py` は `3 passed`。`compileall` と `git diff --check` は成功した。
+- 外部安全性: Firestore、Cloud Storage、本番DBへの接続・書込みは実行していない。

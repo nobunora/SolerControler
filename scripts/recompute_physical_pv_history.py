@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from google.cloud import storage
+from google.cloud.storage import Client as StorageClient
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,7 +33,8 @@ def monitoring_rows(conn: sqlite3.Connection, target_date: str) -> list[dict[str
 
 
 def existing_hourly(plan: dict[str, object]) -> dict[int, float]:
-    rows = (plan.get("pv_array_forecast") or {}).get("hourly", []) if isinstance(plan.get("pv_array_forecast"), dict) else []
+    pv_array_forecast = plan.get("pv_array_forecast")
+    rows = pv_array_forecast.get("hourly", []) if isinstance(pv_array_forecast, dict) else []
     output: dict[int, float] = {}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
@@ -63,22 +64,38 @@ def main() -> int:
     args = parser.parse_args()
     conn = sqlite3.connect(args.db_path)
     ensure_table(conn)
-    client, store = open_firestore(), storage.Client()
-    docs = {snap.id: snap.to_dict() or {} for snap in client.collection("night_charge_plans").stream()}
+    client, store = open_firestore(), StorageClient()
+    docs: dict[str, dict[str, object]] = {}
+    for snap in client.collection("night_charge_plans").stream():
+        raw_summary = snap.to_dict()
+        if isinstance(raw_summary, dict):
+            docs[str(snap.id)] = raw_summary
     recorded = 0
     for target_date in sorted(day for day in docs if args.start <= day <= args.end):
         summary = docs[target_date]
-        if (summary.get("result") or {}).get("final_pv_forecast_source") != "physical_pv_forecast":
+        result = summary.get("result")
+        if not isinstance(result, dict) or result.get("final_pv_forecast_source") != "physical_pv_forecast":
             continue
-        plan = load_night_plan_detail_from_firestore_doc(summary, storage_client=store) or {}
-        forecast = plan.get("forecast") if isinstance(plan.get("forecast"), dict) else {}
-        old = (plan.get("daytime_soc_optimization") or {}).get("hourly_pv_forecast_kwh", {}) if isinstance(plan.get("daytime_soc_optimization"), dict) else {}
+        raw_plan = load_night_plan_detail_from_firestore_doc(summary, storage_client=store)
+        plan: dict[str, object] = raw_plan if isinstance(raw_plan, dict) else {}
+        raw_forecast = plan.get("forecast")
+        forecast: dict[str, object] = raw_forecast if isinstance(raw_forecast, dict) else {}
+        daytime_optimization = plan.get("daytime_soc_optimization")
+        old = daytime_optimization.get("hourly_pv_forecast_kwh", {}) if isinstance(daytime_optimization, dict) else {}
         candidate = build_physical_pv_candidate(
             rows=monitoring_rows(conn, target_date), forecast_history=load_forecast_hourly_history_from_firestore(target_date=target_date),
             existing_hourly_pv=existing_hourly(plan), forecast=forecast, target_date=target_date,
             lat=35.67452, lon=139.48216, timezone="Asia/Tokyo",
         )
-        weather = {int(row.get("hour")): row for row in forecast.get("hourly_weather", []) if isinstance(row, dict) and row.get("hour") is not None}
+        weather: dict[int, dict[object, object]] = {}
+        raw_weather = forecast.get("hourly_weather", [])
+        for row in raw_weather if isinstance(raw_weather, list) else []:
+            if not isinstance(row, dict) or row.get("hour") is None:
+                continue
+            try:
+                weather[int(row["hour"])] = row
+            except (TypeError, ValueError):
+                continue
         now = datetime.now().isoformat(timespec="seconds")
         for hour, value in candidate.hourly_pv_kwh.items():
             row = weather.get(hour, {})
