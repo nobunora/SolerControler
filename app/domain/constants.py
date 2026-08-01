@@ -33,3 +33,7 @@ class FileConstants:
 class PercentConstants:
     MIN_PERCENT = 0.0
     MAX_PERCENT = 100.0
+
+
+def clamp_percent(value: float, *, min_val: float = 0.0, max_val: float = 100.0) -> float:
+    return max(min_val, min(max_val, float(value)))

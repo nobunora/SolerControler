@@ -687,6 +687,13 @@
 - 変更後検証: `tests/test_utils.py tests/test_consumption_forecast.py tests/test_pv_array_forecast.py tests/test_operations_db.py tests/test_parsing_numbers.py` は `56 passed in 5.23s`。初回の末尾空行を `git diff --check` で検出して除去後、`compileall` と差分検査は成功した。
 - 安全性: 入力変換の条件分岐・戻り値・例外処理は変更していない。外部サービスと本番環境は実行していない。
 
+## 2026-08-01 — モジュール再編 P6-14: パーセント境界のドメイン移動
+
+- 目的: `clamp_percent` の所有先を `app/domain/constants.py` に統一した。
+- 実装変更: 境界値処理をドメイン定数モジュールへ移動し、`app/utils.py` は明示的な互換再exportへ変更した。正規パスの境界テストと旧・新関数の同一性テストを追加した。
+- 変更後検証: `tests/test_utils.py tests/test_domain_primitives.py tests/test_domain_constants_compatibility.py` は `31 passed in 2.44s`。`compileall` と `git diff --check` は成功した。
+- 安全性: 下限・上限・float変換の式は変更していない。外部サービスと本番環境は実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。

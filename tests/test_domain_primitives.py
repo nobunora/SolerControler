@@ -8,6 +8,7 @@ import pytest
 from app.monitoring_csv import iter_monitoring_points
 from app.energy_plan.night_plan import parse_night_plan
 from app.domain.tariff import TieredTariff
+from app.domain.constants import clamp_percent
 from app.domain.time_windows import DailyWindow, parse_hhmm
 
 
@@ -20,6 +21,12 @@ def test_daily_window_uses_half_open_boundaries_and_supports_midnight() -> None:
     assert overnight.contains(time(23, 30)) is True
     assert overnight.contains(time(6, 59)) is True
     assert overnight.contains(time(7, 0)) is False
+
+
+def test_percent_boundary_keeps_legacy_helper_behavior() -> None:
+    assert clamp_percent(-1.0) == 0.0
+    assert clamp_percent(34.5) == 34.5
+    assert clamp_percent(101.0) == 100.0
 
 
 def test_tiered_tariff_increment_crosses_each_boundary() -> None:

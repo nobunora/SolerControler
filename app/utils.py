@@ -8,9 +8,5 @@ from app.configuration.environment import (
     env_int,
     load_dotenv_if_present,
 )
+from app.domain.constants import clamp_percent
 from app.parsing.numbers import parse_csv_float, to_float, to_int
-
-
-
-def clamp_percent(value: float, *, min_val: float = 0.0, max_val: float = 100.0) -> float:
-    return max(min_val, min(max_val, float(value)))
