@@ -247,3 +247,14 @@
 1. 同一プランを二回取り込む冪等性テストを追加し、DELETE後の再作成結果と行数が不変であることを固定する。
 2. 実績天候APIが成功した場合と例外の場合を分け、予報書込みがどちらでも完了することを固定する。
 3. その二つのテストが先に成功した場合だけ、日次UPSERTと実績UPSERTをそれぞれ小さな永続化ヘルパーへ抽出する。トランザクションの境界は呼出し側に残す。
+
+## 2026-08-01 — 温度補正の学習サンプル選別を分離
+
+- コミット: `53b1402 refactor: isolate temperature training samples`
+- 対象: `app/forecast_correction.py`、`tests/test_energy_model.py`
+- 目的: 温度補正の中にあった履歴日の積算、妥当性確認、残差作成を `_temperature_training_samples` として明示する。
+- 不変条件: 予報負荷が0以下の日、実績/予報比が0以下または有限値でない日は学習対象から除外する。補正係数、回帰、フォールバック、環境変数、返却データには変更を加えていない。
+- 追加テスト: `test_temperature_training_samples_excludes_missing_or_nonpositive_forecasts`。有効日の残差だけが学習データになることを確認。
+- 実行コマンド: `python -m pytest -q tests/test_energy_model.py -k 'temperature_training_samples or temperature_correction'`
+- 結果: `3 passed, 49 deselected in 2.53s`
+- 形式検査: `git diff --check` 成功。
