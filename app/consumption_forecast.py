@@ -12,6 +12,7 @@ from app.utils import parse_csv_float
 try:
     from sklearn.ensemble import HistGradientBoostingRegressor
 except Exception:  # pragma: no cover - sklearn unavailable in some environments
+    # readable-code-audit: skip TOOL-01 — sklearn is optional, and its absent type is handled by the runtime fallback below
     HistGradientBoostingRegressor = None  # type: ignore[misc, assignment]
 
 

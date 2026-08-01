@@ -1567,6 +1567,7 @@ def _plot_csvs(csv_paths: list[Path], output_path: Path) -> dict[str, Any]:
     ys_soc = [p[2] for p in all_points]
 
     fig, ax1 = plt.subplots(figsize=(14, 6))
+    # readable-code-audit: skip TOOL-01 — matplotlib stubs cannot express the datetime values collected from provider CSV files
     ax1.plot(xs, ys_gen, color="#1f77b4", linewidth=1.2, label="PV kWh/30min")  # type: ignore[arg-type]
     ax1.set_xlabel("Datetime")
     ax1.set_ylabel("Generation kWh/30min", color="#1f77b4")
@@ -1574,6 +1575,7 @@ def _plot_csvs(csv_paths: list[Path], output_path: Path) -> dict[str, Any]:
     ax1.grid(alpha=0.3)
 
     ax2 = ax1.twinx()
+    # readable-code-audit: skip TOOL-01 — matplotlib stubs cannot express the datetime values collected from provider CSV files
     ax2.plot(xs, ys_soc, color="#ff7f0e", linewidth=1.0, label="Battery SOC %")  # type: ignore[arg-type]
     ax2.set_ylabel("SOC %", color="#ff7f0e")
     ax2.tick_params(axis="y", labelcolor="#ff7f0e")

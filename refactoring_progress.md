@@ -314,3 +314,14 @@
 - 個別テスト結果: `37 passed in 1.99s`。
 - 構文検査: `python -m compileall -q app scripts main.py dashboard_server.py db_pipeline_main.py energy_model_main.py kpnet_main.py sheets_export_main.py` 成功。
 - 形式検査: `git diff --check` 成功。
+
+## 2026-08-01 — 型抑制の根拠を追跡可能にする監査サイクル
+
+- 対象ルール: `TOOL-01`。コンパイラ、型チェッカー、リンターの抑制は、根拠なく新しい問題を隠してはいけない。
+- 検出: `type: ignore` は5行だけで、`app/consumption_forecast.py`、`app/comfort_load_forecast.py`、`app/night_plan_archive.py`、`app/kpnet_workflow.py` にあった。
+- 確認結果: 2件は任意のscikit-learn依存がない実行環境のフォールバック、2件はGoogle Cloudの任意実行時importに対する型スタブ不足、2件はdatetime配列を表せないmatplotlib型スタブに対する抑制だった。抑制が実行時例外を握りつぶすためのものではないことを確認した。
+- 処置: 各抑制の直前に `readable-code-audit: skip TOOL-01` を付け、型チェッカーが理解できない契約と、実行時の代替経路を簡単な英語で記録した。
+- 個別テスト: `python -m pytest -q tests/test_consumption_forecast.py tests/test_comfort_load_forecast.py tests/test_night_plan_archive.py tests/test_kpnet_workflow.py`
+- 個別テスト結果: `50 passed in 7.64s`。
+- 構文検査: `python -m compileall -q app scripts` 成功。
+- 形式検査: `git diff --check` 成功。

@@ -9,6 +9,7 @@ import numpy as np
 try:
     from sklearn.ensemble import HistGradientBoostingRegressor
 except Exception:  # pragma: no cover - optional runtime dependency guard
+    # readable-code-audit: skip TOOL-01 — sklearn is optional, and its absent type is handled by the runtime fallback below
     HistGradientBoostingRegressor = None  # type: ignore[misc, assignment]
 
 
