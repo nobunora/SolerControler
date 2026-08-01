@@ -18,7 +18,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 from app.constants import FileConstants
-from app.db_sync import TABLE_SPECS
+from app.operations.sync import TABLE_SPECS
 from app.operations.firestore import open_firestore
 
 

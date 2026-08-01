@@ -458,3 +458,13 @@
 - 変更後検証: `python -m pytest -q tests/test_postgres_operations.py tests/test_operations_postgres_compatibility.py tests/test_operations_domain.py tests/test_db_pipeline_main.py` は `10 passed in 0.95s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: PostgreSQL、SQLite、Firestore、外部サービス、本番環境への接続・書込みは行っていない。
+
+## 2026-08-01 — モジュール再編 P1-4: バックエンド同期を運用パッケージへ移動
+
+- 目的: SQLiteとFirestoreの双方向同期は永続化アダプター間の運用責務であるため、実装を `app/operations/sync.py` へ移動した。
+- 事前確認: 計画に記された `tests/test_db_sync.py` はリポジトリに存在しなかった。ファイル名検索で同期専用テストがないことを確認し、直接利用する `tests/test_drive_backup.py` を変更前テストとして実行して `3 passed in 0.80s` を得た。
+- 実装変更: `app/db_sync.py` を正規実装へ移し、旧パスには `TABLE_SPECS` と二つの同期関数のみを明示的に再exportする互換モジュールを置いた。バックアップと同期用スクリプト、関連テストを正規モジュールへ更新した。
+- 互換性検証: `tests/test_operations_sync_compatibility.py` を追加し、定数オブジェクトと二つの関数が旧・新パスで同一であることを固定した。
+- 変更後検証: `python -m pytest -q tests/test_drive_backup.py tests/test_operations_sync_compatibility.py` は `4 passed in 0.88s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 同期関数はテストから実行せず、SQLite、Firestore、外部サービス、本番環境への接続・書込みは行っていない。
