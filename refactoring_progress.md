@@ -415,3 +415,13 @@
 - 変更前全回帰: `python -m pytest -q` を実行した。
 - 結果: `403 passed, 1 skipped in 21.12s`。失敗はなく、以降の各カードはこの結果を保持すべき動作の基準にする。
 - 安全性: このカードではアプリケーションコード、設定、外部サービス、本番環境を変更していない。記録ファイルだけを追加更新する。
+
+## 2026-08-01 — モジュール再編 P0-2: import・私的参照の移行台帳を固定
+
+- 実行計画: モジュール移動前に、`app`、`scripts`、`tests`、ルートPythonの `app.*` import、私的helper import、文字列指定モンキーパッチ、動的importを検索した。
+- 検査手順の訂正: 初回の検索は裸の `*.py` をPowerShellへ渡したため、ルートPythonのパス解釈エラーを出した。結果を採用せず、`Get-ChildItem -File -Filter '*.py'` で実在するルートPythonを明示列挙して再実行した。訂正後の検索は終了コード0で完了した。
+- 動的import: `import_module` と `__import__` の使用は検出0。移動時に動的解決先を変更する必要はない。
+- 私的import: `forecast_correction` の `_fetch_hourly_weather`、`_load_forecast_hourly_history_from_firestore`、`_add_thermal_states` と、`comfort_load_forecast` の `_feature_map` がテストまたは分析スクリプトから直接参照される。P2では、先に公開境界へ置換するか明示的な互換契約を作らない限り物理移動しない。
+- 文字列モンキーパッチ: `forecast_correction` は7件、`dashboard_data` は7件、`kpnet_workflow` は4件、`operations.domain` は1件を確認した。`forecast_correction`、`dashboard_data`、`kpnet_workflow` の移動はテスト境界の整理カードを先行させる必要がある。一方、`operations_db`、`firestore_ops`、`postgres_ops`、`db_sync` 自体への文字列モンキーパッチは検出されず、P1を最初の低リスク移行に選ぶ根拠を再確認した。
+- ルート入口依存: `cloud_job_runner.py`、`energy_model_main.py`、`db_pipeline_main.py`、`dashboard_server.py`、`main.py`、`kpnet_main.py`、`sheets_export_main.py` の import を列挙した。各入口を薄くするP3〜P7では、旧 `app.<module>` importを維持する互換モジュールを先に用意する。
+- 安全性: 調査だけでアプリケーションコード、外部サービス、本番環境は変更していない。
