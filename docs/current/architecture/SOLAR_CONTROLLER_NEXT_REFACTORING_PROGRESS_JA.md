@@ -66,3 +66,11 @@
 - 変更: forecast historyのweather codeが欠損時はdictキーを追加しないようにした。既存利用側は `.get("weather_code")` で欠損をunknownとして扱うため、従来の `None` と同じ分岐になる。PV、load、shortwave、補正比、provider呼出しは変更していない。
 - 変更後検証: 同じテストは `53 passed in 2.78s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: Open-Meteo等の実通信は行っていない。
+
+## 2026-08-01 — T1-6C: KP-NET configuration value
+
+- 開始コミット: `1717132eaef50968a6a2255a1e29a2a83361f422`
+- 変更前検証: KP-NET workflow・settings intentテストは `47 passed in 1.38s`。対象mypyは1エラーだった。
+- 変更: 夜間充電window契約を `TypedDict` として明示し、logical durationがintである不変条件を型に表した。window算出、時刻範囲、device schedule、payload、環境変数は変更していない。
+- 変更後検証: 同じテストは `47 passed in 1.35s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
+- 外部安全性: KP-NETへ接続していない。

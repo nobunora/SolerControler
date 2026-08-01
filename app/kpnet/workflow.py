@@ -13,7 +13,7 @@ from datetime import datetime
 from email.message import Message
 from email.utils import collapse_rfc2231_value
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import parse_qs, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -122,6 +122,13 @@ class NightChargePlan:
     csv_paths: list[Path]
 
 
+class NightWindowContract(TypedDict):
+    configured_window_start: str
+    configured_window_end: str
+    logical_window_duration_minutes: int
+    logical_window_crosses_midnight: bool
+
+
 def _parse_hhmm(value: str, *, name: str) -> tuple[int, int]:
     match = re.match(r"^\s*(\d{1,2}):(\d{2})\s*$", value)
     if not match:
@@ -146,7 +153,7 @@ def _in_time_window(minute_of_day: int, start_minute: int, end_minute: int) -> b
     return minute_of_day >= start_minute or minute_of_day < end_minute
 
 
-def _night_window_contract(start: str, end: str) -> dict[str, object]:
+def _night_window_contract(start: str, end: str) -> NightWindowContract:
     start_h, start_m = _parse_hhmm(start, name="KP_NIGHT_CHARGE_WINDOW_START")
     end_h, end_m = _parse_hhmm(end, name="KP_NIGHT_CHARGE_WINDOW_END")
     start_minute = start_h * 60 + start_m
