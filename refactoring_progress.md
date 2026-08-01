@@ -218,3 +218,32 @@
 - 実行コマンド: `python -m pytest -q tests/test_energy_model.py tests/test_dashboard_data.py tests/test_operations_db.py tests/test_cloud_job_runner.py`
 - 結果: `148 passed in 14.83s`
 - 確認した不変条件: ダッシュボード選択、SOC候補順位、予報日次・時間別保存、初期SOC欠損時の安全停止が同じテスト実行で全て成功した。
+
+## 2026-08-01 — 時間別予報の保存行を分離（高リスク領域・第2段階）
+
+- コミット: `93929f4 refactor: isolate hourly forecast persistence rows`
+- 対象: `app/operations_db.py`、`tests/test_operations_db.py`
+- 目的: 時間別予報の抽出結果に保存用の出所と更新時刻を付加する処理を、SQL実行部から分ける。
+
+変更前後と不変条件:
+
+- 変更前は、`executemany` の引数内包表記で、各行へ `source` と `updated_at` を加えていた。
+- 変更後は `_hourly_forecast_rows_from_plan` が同じ行リストを作り、SQL文にはその行リストを渡す。
+- `source` は全行で `night-charge-plan-hourly`、`updated_at` は呼出し側の取込時刻である契約を明示した。
+- `forecast_hourly` の対象日DELETE、同じ主キーへのUPSERT、SQL列、コミット、例外処理は変更していない。従って再実行時の置換方式も変わらない。
+
+個別テスト:
+
+- 追加: `test_hourly_forecast_rows_from_plan_adds_persistence_metadata`
+  - 時間別PV・負荷から導かれる充電量と、未指定の天候項目が既存どおりであることを確認。
+  - 全行へ固定出所と取込時刻が追加されることを確認。
+- 既存回帰: 日次値解析とSQLiteへの時間別保存を同時に実行。
+- 実行コマンド: `python -m pytest -q tests/test_operations_db.py -k 'hourly_forecast_rows or forecast_daily_values or ingest_sunshine_from_night_plan'`
+- 結果: `3 passed, 16 deselected in 0.40s`
+- 形式検査: `git diff --check` 成功。
+
+高リスク領域の残作業:
+
+1. 同一プランを二回取り込む冪等性テストを追加し、DELETE後の再作成結果と行数が不変であることを固定する。
+2. 実績天候APIが成功した場合と例外の場合を分け、予報書込みがどちらでも完了することを固定する。
+3. その二つのテストが先に成功した場合だけ、日次UPSERTと実績UPSERTをそれぞれ小さな永続化ヘルパーへ抽出する。トランザクションの境界は呼出し側に残す。
