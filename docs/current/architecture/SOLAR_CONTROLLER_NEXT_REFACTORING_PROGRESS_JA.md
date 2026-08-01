@@ -201,3 +201,8 @@
 
 - 変更: 実装を変えず、BOM付きCSV、欠損・不正行の除外、空充電量の0.0化、複数CSVの時刻順、最新run内の名前順CSV、CSV未発見時のEnergy Plan/Cloud Jobの異なる契約を固定するテストを追加した。
 - 検証: `tests/test_kpnet_monitoring_history.py` は `3 passed`。`git diff --check` は成功した。
+
+## 2026-08-01 — D-2: KP-NET監視履歴の共通境界
+
+- 変更: `app.kpnet.monitoring_history` に、CSVから有効な充電/SOC観測値を時刻順で返す関数と、最新run内のCSVを返す関数を追加した。CSV未発見時は共通関数では空listを返す。既存利用元はまだ変更していない。
+- 検証: 特性テストは `3 passed`。新モジュールのmypy、`compileall`、`git diff --check` は成功した。
