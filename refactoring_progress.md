@@ -722,6 +722,12 @@
 - 構文・形式検査: `python -m compileall -q app scripts` と `git diff --check` は成功した。PowerShell上のglob制約で一度失敗した検索は、明示的なファイル列挙に切り替えて再実行し、検査を完了した。
 - 判定: P6-10〜P6-17で決定した所有先への内部参照移行と互換入口縮小を確認した。外部契約とルートCLIファイル名は維持している。
 
+## 2026-08-01 — PF-1: 全回帰
+
+- `python -m pytest -q` を実行し、`428 passed, 1 skipped in 21.11s` だった。
+- 既存417件に対して、今回追加した互換性・ドメイン境界テストを含めて全件成功した。skipは既存の環境依存テストであり、今回の変更による失敗ではない。
+- 外部サービス、本番環境、Cloud Run、Firestore、Drive、KP-NETは実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
