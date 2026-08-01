@@ -8,7 +8,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from app.soc_cost_optimizer import SocCostModel
+from app.energy_plan.soc_cost import SocCostModel
 from app.utils import env_bool, env_float, parse_csv_float, to_float
 
 

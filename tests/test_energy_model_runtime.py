@@ -8,7 +8,7 @@ import pytest
 
 from app.forecasting.consumption import ConsumptionForecast
 from app.energy_plan.energy_model import EnergyModelCoefficients
-from app.soc_cost_optimizer import PvForecastUncertainty
+from app.energy_plan.soc_cost import PvForecastUncertainty
 from energy_model_main import (
     ConsumptionForecastBundle,
     EnergyModelConfig,

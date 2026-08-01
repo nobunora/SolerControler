@@ -47,7 +47,7 @@ from app.forecasting.occupancy import (
     load_occupancy_events_from_env,
 )
 from app.forecasting.pv_array import build_pv_array_forecast, load_pv_array_configs
-from app.soc_cost_optimizer import (
+from app.energy_plan.soc_cost import (
     DEFAULT_SIGMA_BUCKETS,
     ForecastScenario,
     PvForecastUncertainty,

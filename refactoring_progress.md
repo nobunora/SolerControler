@@ -572,3 +572,13 @@
 - 変更後検証: 影響範囲の3テストは `84 passed in 2.93s`。
 - 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
 - 安全性: SOC境界、最適化、料金・容量計算、予測入力、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P3-2: SOC費用モデルを計画パッケージへ移動
+
+- 目的: 不確実性シナリオ、SOC候補評価、期待費用最適化はエネルギー計画責務であるため、`app/energy_plan/soc_cost.py` へ移動した。
+- 変更前検証: `tests/test_soc_cost_optimizer.py tests/test_energy_model.py tests/test_energy_model_runtime.py` は `98 passed in 2.74s`。
+- 実装変更: 旧パスは公開データ型・評価・最適化関数を明示的に再exportする互換モジュールへ置き換えた。決定フィードバック、計画入口、関連テストは正規モジュールを使用する。
+- 互換性検証: `tests/test_energy_plan_soc_cost_compatibility.py` は互換モジュールの全公開記号が正規モジュールと同一であることを確認する。
+- 変更後検証: 影響範囲の4テストは `99 passed in 3.10s`。
+- 構文・形式検査: 計画指定の `compileall` は成功、`git diff --check` は成功。
+- 安全性: 費用計算、SOC候補、シナリオ重み、料金・外部入力、本番環境は変更していない。

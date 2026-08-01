@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.soc_cost_optimizer import (
+from app.energy_plan.soc_cost import (
     ForecastScenario,
     PvForecastUncertainty,
     SocCostModel,
