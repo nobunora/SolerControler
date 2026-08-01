@@ -26,7 +26,7 @@ if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript module tests failed" }
 node .\tests\test_dashboard_bootstrap.js
 if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript bootstrap test failed" }
 
-python -m mypy app/time_windows.py app/tariff.py app/monitoring_csv.py app/night_plan.py app/dashboard app/energy_plan app/forced_charge app/kpnet app/operations app/settings
+python -m mypy app/domain/time_windows.py app/domain/tariff.py app/domain/monitoring.py app/dashboard app/energy_plan app/forced_charge app/kpnet app/operations app/settings
 if ($LASTEXITCODE -ne 0) { throw "domain mypy failed" }
 
 python .\scripts\security_check.py

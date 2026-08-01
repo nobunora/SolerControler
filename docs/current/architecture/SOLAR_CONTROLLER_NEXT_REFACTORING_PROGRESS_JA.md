@@ -187,3 +187,8 @@
 
 - 変更: Firestore操作、Cloud Job、および3つの保守スクリプトの `app.night_plan_archive` importだけを `app.backup.night_plan_archive` に置換した。互換ラッパーと実行時の保存・復元契約は残している。
 - 検証: archive・Firestore・Cloud Job・KP-NETの指定回帰は `52 passed`。対象5ファイルのmypyと `git diff --check` は成功した。
+
+## 2026-08-01 — I-4: pre-release正規モジュール検査
+
+- 変更: release gateの明示mypy対象をdomain正規パスへ移した。`app/energy_plan` と `app/operations` は再帰対象であるため、同じファイルを二重指定するとmypyが重複モジュールとして停止することを実行で確認し、範囲を減らさず二重指定のみ除去した。
+- 検証: `tests/test_production_deploy_scripts.py` は `21 passed`。`pwsh -NoProfile -File scripts/pre_release_local.ps1 -SkipInstall` は `429 passed, 1 skipped`、mypy `40 source filesで0エラー`、security check成功で完走した。
