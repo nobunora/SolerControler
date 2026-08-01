@@ -11,7 +11,7 @@ import sys
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.csv_merge import discover_csv_files, merge_csv_files
+from app.operations.csv_merge import discover_csv_files, merge_csv_files
 
 
 def build_parser() -> argparse.ArgumentParser:

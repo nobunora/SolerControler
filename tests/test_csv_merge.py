@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from app.csv_merge import discover_csv_files, merge_csv_files
+from app.operations.csv_merge import discover_csv_files, merge_csv_files
 
 
 def _write_csv(path: Path, header: list[str], rows: list[list[str]]) -> None:

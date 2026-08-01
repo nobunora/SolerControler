@@ -708,6 +708,13 @@
 - 変更後検証: 指定されたドメイン・operations・DB境界と互換性テストは `31 passed in 3.84s`。`compileall` と `git diff --check` は成功した。
 - 安全性: CSVの文字コード、列名、時刻形式、欠損行の扱いは変更していない。外部サービスと本番環境は実行していない。
 
+## 2026-08-01 — モジュール再編 P6-17: CSV統合処理の移動
+
+- 目的: CSV探索・重複除去・統合の所有先を `app/operations/csv_merge.py` に統一した。
+- 実装変更: `DEFAULT_EXCLUDED_DIR_NAMES`、`CsvMergeResult`、`discover_csv_files`、`merge_csv_files` をoperationsへ移動した。旧 `app/csv_merge.py` は4公開記号だけの明示的互換層とし、CLIとテストは正規パスへ更新した。
+- 変更後検証: `tests/test_csv_merge.py tests/test_csv_merge_compatibility.py` は `4 passed in 0.16s`。`compileall` と `git diff --check` は成功した。
+- 安全性: CSVの並び順、ヘッダー検証、重複判定、出力形式、除外ディレクトリは変更していない。実ファイル統合の本番入力や外部サービスは実行していない。
+
 ## 2026-08-01 — 保留モジュールの所有先決定とLuna低レベル手順化
 
 - 対象: `config.py`、`models.py`、`monitoring_csv.py`、`csv_merge.py`、`utils.py`。実装は変更せず、責務、依存方向、全利用元、既存テストから所有先を決定した。
