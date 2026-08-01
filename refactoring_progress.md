@@ -610,3 +610,10 @@
 - テスト境界: 二つの既存テストと分析スクリプトはルート入口の私的helperを参照していた。入口を互換実装にしないため、これらを正規ワークフローモジュールへ向けた。Cloud Jobが実行する `energy_model_main.py` のファイル名・終了コード契約は薄いラッパーで維持する。
 - 変更後検証: 同じ対象テストは `85 passed in 3.06s`。計画指定の `compileall` と `git diff --check` も成功した。
 - 安全性: 計画値、SOC・料金計算、予測API条件、保存JSON、Cloud Job実行、本番環境は変更していない。
+
+## 2026-08-01 — モジュール再編 P4-1/P4-2: KP-NETワークフローをパッケージへ移動
+
+- 事前分類: KP-NETの私的payload生成とClientメソッドのモンキーパッチは、いずれもワークフロー実装のテストである。旧パスへ私的実装を再exportせず、正規モジュールをテスト対象にする。
+- 実装変更: `app/kpnet_workflow.py` を `app/kpnet/workflow.py` へ移動した。旧パスは公開設定・計画型・Client・実行関数だけを明示的に再exportする。`kpnet_main.py` のCLIファイル名と終了コードは維持する。
+- 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_cloud_job_runner.py tests/test_external_site_access.py` は `101 passed, 1 skipped in 13.06s`。`compileall` と `git diff --check` も成功。
+- 安全性: KP-NETログイン、設定変更、CSVダウンロード、Cloud Job、本番環境は実行していない。

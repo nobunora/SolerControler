@@ -1,6 +1,5 @@
-from app.kpnet_workflow import main
+from app.kpnet.workflow import main
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

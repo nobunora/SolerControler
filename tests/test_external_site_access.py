@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from app.forecasting.correction import fetch_hourly_weather
-from app.kpnet_workflow import KpNetClient
+from app.kpnet.workflow import KpNetClient
 from app.forecasting.pv_array import (
     PVArrayConfig,
     fetch_open_meteo_hourly,

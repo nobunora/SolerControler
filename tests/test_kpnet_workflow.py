@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import app.kpnet_workflow as kpnet_workflow
-from app.kpnet_workflow import (
+import app.kpnet.workflow as kpnet_workflow
+from app.kpnet.workflow import (
     FORCED_CHARGE_PROFILE,
     KpNetConfig,
     NightChargePlan,
@@ -333,7 +333,7 @@ def test_apply_settings_profile_dry_run_confirms_without_writing(
         }
     )
     monkeypatch.setattr(
-        "app.kpnet_workflow._build_payload",
+        "app.kpnet.workflow._build_payload",
         lambda **kwargs: ({"socChargeMode": "50"}, ["socChargeMode"]),
     )
     summary: dict[str, object] = {"setting_results": []}

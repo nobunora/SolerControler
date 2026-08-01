@@ -350,10 +350,10 @@ def test_latest_csv_soc_reading_skips_newer_invalid_row(tmp_path) -> None:
 def test_realtime_soc_returns_value_when_logout_fails(monkeypatch) -> None:
     monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
     monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
-    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.login", lambda self: None)
-    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.read_realtime_soc_percent", lambda self: 47.0)
+    monkeypatch.setattr("app.kpnet.workflow.KpNetClient.login", lambda self: None)
+    monkeypatch.setattr("app.kpnet.workflow.KpNetClient.read_realtime_soc_percent", lambda self: 47.0)
     monkeypatch.setattr(
-        "app.kpnet_workflow.KpNetClient.logout",
+        "app.kpnet.workflow.KpNetClient.logout",
         lambda self: (_ for _ in ()).throw(RuntimeError("logout failed")),
     )
 
@@ -363,13 +363,13 @@ def test_realtime_soc_returns_value_when_logout_fails(monkeypatch) -> None:
 def test_realtime_soc_preserves_read_failure_when_logout_also_fails(monkeypatch) -> None:
     monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
     monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
-    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.login", lambda self: None)
+    monkeypatch.setattr("app.kpnet.workflow.KpNetClient.login", lambda self: None)
     monkeypatch.setattr(
-        "app.kpnet_workflow.KpNetClient.read_realtime_soc_percent",
+        "app.kpnet.workflow.KpNetClient.read_realtime_soc_percent",
         lambda self: (_ for _ in ()).throw(ValueError("read failed")),
     )
     monkeypatch.setattr(
-        "app.kpnet_workflow.KpNetClient.logout",
+        "app.kpnet.workflow.KpNetClient.logout",
         lambda self: (_ for _ in ()).throw(RuntimeError("logout failed")),
     )
 
@@ -382,10 +382,10 @@ def test_realtime_soc_does_not_logout_after_login_failure(monkeypatch) -> None:
     monkeypatch.setenv("KP_MONITOR_USERNAME", "test-user")
     monkeypatch.setenv("KP_MONITOR_PASSWORD", "test-password")
     monkeypatch.setattr(
-        "app.kpnet_workflow.KpNetClient.login",
+        "app.kpnet.workflow.KpNetClient.login",
         lambda self: (_ for _ in ()).throw(RuntimeError("login failed")),
     )
-    monkeypatch.setattr("app.kpnet_workflow.KpNetClient.logout", lambda self: logout_calls.append(True))
+    monkeypatch.setattr("app.kpnet.workflow.KpNetClient.logout", lambda self: logout_calls.append(True))
 
     with pytest.raises(RuntimeError, match="login failed"):
         _latest_realtime_soc_percent()
