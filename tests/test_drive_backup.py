@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.drive_backup import collect_source_files, hash_source_tree, _row_sort_key
+from app.backup.drive import collect_source_files, hash_source_tree, _row_sort_key
 from app.operations.sync import TABLE_SPECS
 
 

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.drive_backup import (
+from app.backup.drive import (
     export_data_backup,
     export_source_backup,
     build_drive_service,

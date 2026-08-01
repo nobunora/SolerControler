@@ -654,3 +654,10 @@
 - 週次バックアップを `app/backup/weekly.py`、夜間計画アーカイブを `app/backup/night_plan_archive.py`、アーティファクト整理を `app/backup/artifacts.py` へ移動した。旧モジュールは公開APIだけを明示的に再exportする。
 - 個別検証: 週次・DBパイプラインは `6 passed`、夜間計画アーカイブ・Firestoreは `3 passed`、アーティファクト整理は `2 passed`。
 - 全回帰: これらの移動後に `417 passed, 1 skipped in 20.25s`。外部バックアップ、Firestore、Drive、本番環境は実行していない。
+
+## 2026-08-01 — モジュール再編 P5-1・P6: 残存機能の配置完了
+
+- Driveバックアップを `app/backup/drive.py`、Sheets出力を `app/exports/sheets.py`、ローカル制御（ブラウザ、CSV、判断、履歴、ワークフロー）を `app/local_control/`、共通定数・時間窓・料金を `app/domain/` へ移動した。
+- 旧 `app.<module>` パスは、外部・既存呼出しのため公開APIのみを明示的に再exportする互換層として維持している。ルートCLIファイル名と終了コードを変更していない。
+- 検証: Drive個別テストは `3 passed in 0.94s`、最終全回帰は `417 passed, 1 skipped in 20.31s`。`compileall` と `git diff --check` は成功。
+- 安全性: Drive、Sheets、Firestore、ブラウザ自動操作、KP-NET、Cloud Run、本番環境はいずれも実行していない。
