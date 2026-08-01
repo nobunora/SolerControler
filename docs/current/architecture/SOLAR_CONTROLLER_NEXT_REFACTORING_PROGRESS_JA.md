@@ -211,3 +211,8 @@
 
 - 変更: KP-NET workflowとCloud Jobから重複していたCSV読込関数を削除し、共通の `iter_charge_soc_points` を利用するようにした。KP-NETの現在設定向けmedianとCloud Jobの翌日停止時刻向け14日trend/EWMAは目的が異なるため、両方に具体的なDUP-01 skipコメントを残して統合していない。
 - 検証: `tests/test_kpnet_workflow.py tests/test_cloud_job_runner.py tests/test_kpnet_monitoring_history.py` は `90 passed`。対象mypyと `git diff --check` は成功した。
+
+## 2026-08-01 — D-4: 最新KP-NET CSV探索の利用元移行
+
+- 変更: Energy PlanとCloud Jobが共通の最新CSV探索を使うようにした。Energy Planは従来の日本語RuntimeErrorを薄い関数で維持し、Cloud Jobは既存テストのmonkeypatch境界を守るため同名の薄い委譲関数を残した。
+- 検証: `tests/test_cloud_job_runner.py tests/test_energy_model_runtime.py tests/test_energy_model.py tests/test_kpnet_monitoring_history.py` は `130 passed`。対象mypyと `git diff --check` は成功した。

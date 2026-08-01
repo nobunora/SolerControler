@@ -31,7 +31,7 @@ from app.forced_charge import (
 from app.settings.forced_charge import ForcedChargeSettings
 from app.energy_plan.decision_feedback import build_soc_decision_feedback
 from app.domain.constants import validate_soc_percent
-from app.kpnet.monitoring_history import iter_charge_soc_points
+from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths, iter_charge_soc_points
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -553,14 +553,8 @@ def _estimate_required_charge_kwh(
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
-    run_dirs = [p for p in artifacts_dir.glob("*") if p.is_dir() and p.name[:8].isdigit()]
-    run_dirs.sort(key=lambda p: p.name, reverse=True)
-    for run_dir in run_dirs:
-        csv_dir = run_dir / "csv"
-        csvs = sorted(csv_dir.glob("*.csv"))
-        if csvs:
-            return csvs
-    return []
+    """Keep this seam until Cloud Job tests stop monkeypatching the private name."""
+    return find_latest_kpnet_csv_paths(artifacts_dir)
 
 
 def _latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:

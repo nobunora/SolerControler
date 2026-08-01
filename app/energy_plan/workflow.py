@@ -66,6 +66,7 @@ from app.forecasting.correction import (
 )
 from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
+from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 
 
 @dataclass(frozen=True)
@@ -273,13 +274,9 @@ def _load_dotenv_if_present(path: Path = Path(".env")) -> None:
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
-    run_dirs = [p for p in artifacts_dir.glob("*") if p.is_dir() and p.name[:8].isdigit()]
-    run_dirs.sort(key=lambda p: p.name, reverse=True)
-    for run_dir in run_dirs:
-        csv_dir = run_dir / "csv"
-        csvs = sorted(csv_dir.glob("*.csv"))
-        if csvs:
-            return csvs
+    csv_paths = find_latest_kpnet_csv_paths(artifacts_dir)
+    if csv_paths:
+        return csv_paths
     raise RuntimeError("artifacts配下にCSVが見つかりませんでした")
 
 
