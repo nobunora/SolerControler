@@ -74,3 +74,10 @@
 - 変更: 夜間充電window契約を `TypedDict` として明示し、logical durationがintである不変条件を型に表した。window算出、時刻範囲、device schedule、payload、環境変数は変更していない。
 - 変更後検証: 同じテストは `47 passed in 1.35s`。対象mypyは0エラー。`compileall` と `git diff --check` は成功した。
 - 外部安全性: KP-NETへ接続していない。
+
+## 2026-08-01 — T1-7: リリース用mypyゲート確認
+
+- 開始コミット: `69571c0`。
+- 検証: 指示書のリリース対象mypyコマンドをそのまま実行し、`41 source files` が0エラーで成功した。
+- 構文・形式検査: `compileall` と `git diff --check` は成功した。
+- 判定: 作成時点の59エラーは0件になった。外部サービス、本番処理、設定値は変更・実行していない。
