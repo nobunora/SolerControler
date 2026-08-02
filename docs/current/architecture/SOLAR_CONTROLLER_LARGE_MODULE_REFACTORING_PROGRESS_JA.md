@@ -35,3 +35,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - R-2変更: 月次請求期間、対象日前のdaytime buy、残期間推計を `app/energy_plan/monthly_projection.py` へ移動。workflowには実行順と既存private名の薄い正規importだけを残した。
 - R-2検証: Energy Plan指定回帰 `108 passed`、Energy Plan mypy 0件、compileall、diff check成功。
+
+## R-3完了
+
+- R-3変更: KP-NETのNightWindowContract、HH:MM解析、時間窓判定、timezone now取得を `app/kpnet/rules.py` へ機械的に移動。workflowの既存private名と例外契約は正規importで維持した。
+- R-3検証: `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。初回の簡略化抽出は12件失敗したため破棄し、元実装の契約を保った再抽出のみを採用した。
