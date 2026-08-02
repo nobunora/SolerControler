@@ -8,7 +8,6 @@ from app.dashboard.data import (
     DashboardRawData,
     _billing_usage_summary,
     _build_energy_daily,
-    _build_dashboard_warnings,
     _merge_latest_plan_into_schedule,
     _build_dashboard_slice,
     _get_global_bounds_firestore,
@@ -20,6 +19,7 @@ from app.dashboard.data import (
     load_dashboard_slice,
 )
 from app.dashboard.schedule import _build_latest_schedule_from_events, _select_schedule_event
+from app.dashboard.warnings import build_dashboard_warnings as _build_dashboard_warnings
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
 
@@ -844,6 +844,7 @@ def test_dashboard_warnings_do_not_mix_previous_battery_day_with_latest_plan() -
         ],
         energy_daily=[],
         end_date_iso="2026-07-09",
+        today_jst_iso="2026-08-01",
     )
 
     assert {row["code"] for row in warnings}.isdisjoint(

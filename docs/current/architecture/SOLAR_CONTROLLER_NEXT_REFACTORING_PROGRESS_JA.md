@@ -304,3 +304,9 @@
 
 - 変更: realtime SOC取得、CSV SOC読込、retry後のCSV fallbackとunavailable理由を `app.runtime.soc_reading` へ移した。`cloud_job` のprivate関数名とテストのmonkeypatch境界は薄い委譲として維持し、retry回数・delay・SOC stale判定の既存安全下限は呼出側から同じ値で渡している。
 - 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed`。`mypy app/runtime app/forced_charge --no-incremental`、`compileall app/runtime`、`git diff --check` は成功した。KP-NET、Firestore、Cloud Job、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-2b: Dashboard warning組立ての分離
+
+- 変更: target SOC未達、03実行計画欠落、CSV実績鮮度、設定完了未確認の警告payloadと順序を `app.dashboard.warnings` の正規所有先へ移した。`data.py` はJST日付を注入する薄い委譲だけを残し、既存の環境依存テスト境界を維持した。repository/queryは変更していない。
+- テスト: 警告組立ての直接テストは新モジュールをimportし、JST日付を明示して外部時刻に依存しないようにした。
+- 検証: `tests/test_dashboard_data.py tests/test_dashboard_server.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` は `42 passed`。`mypy app/dashboard --no-incremental`、`compileall`、対象 `git diff --check` は成功した。外部サービスは実行していない。
