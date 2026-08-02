@@ -61,3 +61,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - 全体ゲート初回で、R-1移動後の `correction.py` 互換再export 5件がmypyの明示export検査に失敗した。
 - `correction.py` に公開互換名の `__all__` を追加し、全体mypy 0件、関連回帰 `63 passed, 1 skipped`、compileall、diff checkを確認した。
 - 旧34互換モジュールへのimport検索は0件。移動対象の実装定義は各正規モジュール側にのみ存在することを確認した。
+
+## 完了判定撤回
+
+- 独立再監査で、R-1〜R-6の各カードに未移動責務が残ることを確認した。
+- 指示書・進捗ログ・監査結果を `docs/current/architecture/` へ戻し、R-1から固定順で是正する。
