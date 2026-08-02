@@ -52,7 +52,8 @@ def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetim
 
 
 def latest_realtime_soc_percent() -> float | None:
-    from app.kpnet.workflow import KpNetClient, KpNetConfig
+    from app.kpnet.client import KpNetClient
+    from app.kpnet.workflow import KpNetConfig
 
     client = KpNetClient(KpNetConfig.from_env())
     client.login()

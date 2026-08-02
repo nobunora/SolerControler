@@ -439,3 +439,9 @@
 - 変更: plan/profilesに続き、`KpNetClient` のHTTP session、login/logout、HTML解析、CSRF処理、payload送信を `app.kpnet.client` へ移した。workflowにはCSV phase、settings phase、実行順、既存private exportを残した。
 - 不変条件: KP-NET URL、payload、timeout、status判定、外部site testのskip条件、認証情報の扱いは変更していない。
 - 検証: 指定KP-NET回帰は `59 passed, 1 skipped`、`python -m mypy app/kpnet --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部site testはskipのままで、実通信は行っていない。
+
+## 2026-08-02 — M-3補正: Cloud Jobのcanonical client import
+
+- 検出: M-4開始ゲートで `app/runtime/soc_reading.py` のmypyが、旧workflow経由のKpNetClient再exportを検出した。
+- 修正: KpNetClientを `app.kpnet.client` から直接importし、KpNetConfigのみworkflowから読むようにした。外部接続条件は変更していない。
+- 検証: M-4指定テストは `71 passed`、runtime/forced_charge mypy 0エラー、compileall、`git diff --check` 成功。
