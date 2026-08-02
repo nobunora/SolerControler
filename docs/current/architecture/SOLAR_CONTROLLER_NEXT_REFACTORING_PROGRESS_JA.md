@@ -316,6 +316,11 @@
 - 変更: 計画SOC差分、必要kWh、CSV由来の14日trend/EWMA充電速度、必要充電時間、確認時刻推定、開始時刻算出を `app.runtime.forced_charge_monitor` に移した。Cloud Jobにはprivate委譲関数とslot順序・retry・terminal transitionを残した。CSV実測速度の既存skipコメントも正規実装へ移した。
 - 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed`。`mypy app/runtime app/forced_charge --no-incremental`、`compileall app/runtime`、`git diff --check` は成功した。外部サービス、Cloud Job、蓄電池操作は実行していない。
 
+## 2026-08-02 — M-5a: 予報補正の純粋変換境界
+
+- 変更: hourly値の正規化、実績時間別集計、日別forecast/actual組、EWMA比率、weather class判定を `app.forecasting.correction_calculations` へ移した。`correction` にはSQLite/Firestore/Open-Meteo I/O、環境依存ポリシー、補正結果の組立てを残し、旧private名は同一関数のimport aliasで維持した。
+- 検証: `tests/test_forecasting_correction_compatibility.py tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_forecast.py` は `87 passed`。`mypy app/forecasting --no-incremental`、`compileall app/forecasting`、`git diff --check` は成功した。外部API、DB、Firestoreは実行していない。
+
 ## 2026-08-02 — M-2b: Dashboard warning組立ての分離
 
 - 変更: target SOC未達、03実行計画欠落、CSV実績鮮度、設定完了未確認の警告payloadと順序を `app.dashboard.warnings` の正規所有先へ移した。`data.py` はJST日付を注入する薄い委譲だけを残し、既存の環境依存テスト境界を維持した。repository/queryは変更していない。

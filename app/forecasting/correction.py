@@ -19,6 +19,14 @@ from typing import Any
 import requests
 
 from app.forecasting.comfort_load import ADAPTIVE_LOOKBACK_HOURS, predict_hourly_comfort_load
+from app.forecasting.correction_calculations import (
+    actual_hourly_totals_by_day as _actual_hourly_totals_by_day,
+    clip_float as _clip_float,
+    coerce_hourly_values as _coerce_hourly_values,
+    daily_pairs_for_ratio as _daily_pairs_for_ratio,
+    ewma_ratio_from_daily_pairs as _ewma_ratio_from_daily_pairs,
+    weather_class as _weather_class,
+)
 from app.configuration.environment import env_bool, env_float, env_float_clamped
 from app.parsing.numbers import to_float, to_int
 
@@ -69,75 +77,6 @@ class ForecastCorrectionPolicy:
             load_ratio_min=load_min,
             load_ratio_max=max(load_min, env_float("LOAD_RATIO_EWMA_MAX", default=1.8)),
         )
-
-
-def _clip_float(value: float, *, min_val: float, max_val: float) -> float:
-    return max(min_val, min(max_val, value))
-
-
-def _coerce_hourly_values(value: object) -> dict[int, float]:
-    if not isinstance(value, dict):
-        return {}
-    out: dict[int, float] = {}
-    for raw_hour, raw_value in value.items():
-        hour = to_int(raw_hour)
-        numeric = to_float(raw_value)
-        if hour is not None and 0 <= hour <= 23 and numeric is not None:
-            out[hour] = max(0.0, numeric)
-    return out
-
-
-def _ewma_ratio_from_daily_pairs(
-    pairs: list[tuple[str, float, float]],
-    *,
-    alpha: float,
-    initial_value: float = 1.0,
-) -> dict[str, object]:
-    """Summarize forecast/actual ratios without letting target-day data leak in."""
-
-    # EWMA gives recent forecast errors more influence while preserving a stable fallback for sparse history.
-    alpha = _clip_float(alpha, min_val=0.0, max_val=1.0)
-    current = max(0.0, initial_value)
-    used: list[dict[str, float | str]] = []
-    for day, forecast_total, actual_total in sorted(pairs, key=lambda item: item[0]):
-        if forecast_total <= 0:
-            continue
-        ratio = max(0.0, actual_total / forecast_total)
-        current = alpha * ratio + (1.0 - alpha) * current
-        used.append(
-            {
-                "date": day,
-                "forecast_kwh": round(forecast_total, 4),
-                "actual_kwh": round(actual_total, 4),
-                "ratio": round(ratio, 4),
-                "ewma_after_day": round(current, 4),
-            }
-        )
-    return {
-        "raw_ratio": current,
-        "sample_count": len(used),
-        "alpha": alpha,
-        "latest_days": used[-7:],
-    }
-
-
-def _actual_hourly_totals_by_day(
-    rows: list[dict[str, Any]],
-    *,
-    target_date: str,
-) -> dict[str, dict[int, dict[str, float]]]:
-    by_day: dict[str, dict[int, dict[str, float]]] = {}
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        day = dt.date().isoformat()
-        if day >= target_date:
-            continue
-        bucket = by_day.setdefault(day, {}).setdefault(dt.hour, {"pv": 0.0, "load": 0.0})
-        bucket["pv"] += max(0.0, to_float(row.get("pv")) or 0.0)
-        bucket["load"] += max(0.0, to_float(row.get("load")) or 0.0)
-    return by_day
 
 
 def _forecast_history_start_date(*, target_date: str) -> str:
@@ -240,36 +179,6 @@ def _load_forecast_hourly_history(*, target_date: str) -> tuple[dict[str, dict[i
     if firestore_history:
         return firestore_history, "firestore_forecast_hourly"
     return {}, "unavailable"
-
-
-def _daily_pairs_for_ratio(
-    *,
-    forecast_history: dict[str, dict[int, dict[str, float]]],
-    actual_history: dict[str, dict[int, dict[str, float]]],
-    key: str,
-) -> list[tuple[str, float, float]]:
-    pairs: list[tuple[str, float, float]] = []
-    for day in sorted(set(forecast_history) & set(actual_history)):
-        forecast_total = sum(max(0.0, values.get(key, 0.0)) for values in forecast_history[day].values())
-        actual_total = sum(max(0.0, values.get(key, 0.0)) for values in actual_history[day].values())
-        if forecast_total > 0:
-            pairs.append((day, forecast_total, actual_total))
-    return pairs
-
-
-def _weather_class(weather_code: object) -> str:
-    code = to_int(weather_code)
-    if code is None:
-        return "unknown"
-    if code <= 3:
-        return "clear"
-    if 45 <= code <= 48:
-        return "fog"
-    if 51 <= code <= 67:
-        return "rain"
-    if 80 <= code <= 99:
-        return "shower"
-    return "other"
 
 
 def _physical_vector_residual_correction(
