@@ -432,3 +432,10 @@
 - 変更: schedule、warnings、SQLite query readerに続き、PostgreSQL固有query/repositoryを `app.dashboard.postgres_repository` へ、Firestore固有read/repositoryを `app.dashboard.firestore_repository` へ移した。`data.py` には共通モデル変換、backend選択、公開loader、既存private patch境界の委譲を残した。
 - 不変条件: backend固有のSQL、Firestore collection/document読取、transaction/query契約、Dashboard JSON shape、cache key、公開loader名は変更していない。
 - 検証: 指定Dashboard回帰は `46 passed`、`python -m mypy app/dashboard --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-3完了: KP-NET workflow分離
+
+- 開始コミット: `59c8dbec9c71047d70fbf4f190e73d694c2528b8`。
+- 変更: plan/profilesに続き、`KpNetClient` のHTTP session、login/logout、HTML解析、CSRF処理、payload送信を `app.kpnet.client` へ移した。workflowにはCSV phase、settings phase、実行順、既存private exportを残した。
+- 不変条件: KP-NET URL、payload、timeout、status判定、外部site testのskip条件、認証情報の扱いは変更していない。
+- 検証: 指定KP-NET回帰は `59 passed, 1 skipped`、`python -m mypy app/kpnet --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部site testはskipのままで、実通信は行っていない。
