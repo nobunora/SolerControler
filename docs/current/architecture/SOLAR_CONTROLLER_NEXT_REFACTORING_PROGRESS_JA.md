@@ -321,3 +321,8 @@
 - 変更: target SOC未達、03実行計画欠落、CSV実績鮮度、設定完了未確認の警告payloadと順序を `app.dashboard.warnings` の正規所有先へ移した。`data.py` はJST日付を注入する薄い委譲だけを残し、既存の環境依存テスト境界を維持した。repository/queryは変更していない。
 - テスト: 警告組立ての直接テストは新モジュールをimportし、JST日付を明示して外部時刻に依存しないようにした。
 - 検証: `tests/test_dashboard_data.py tests/test_dashboard_server.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` は `42 passed`。`mypy app/dashboard --no-incremental`、`compileall`、対象 `git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-2c準備: SQLite dashboard slice特性テスト
+
+- 変更: 後続のSQLite adapter分離で維持すべきslice契約を、ローカルSQLite fixtureで固定した。window内外のPV行、空のcost/battery/hourly配列、default schedule、設定完了未確認warning、およびglobal dateとpagination metaのshapeを一つのテストで検証する。
+- 検証: `tests/test_dashboard_data.py tests/test_dashboard_server.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` は `43 passed`。`mypy app/dashboard --no-incremental`、`compileall`、対象 `git diff --check` は成功した。外部サービスは実行していない。

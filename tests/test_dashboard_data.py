@@ -85,6 +85,71 @@ def test_empty_dashboard_slice_preserves_requested_window_and_global_bounds() ->
         "has_more_before": False,
     }
 
+
+def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Freeze the adapter boundary before moving SQLite queries out of data.py."""
+    monkeypatch.setattr("app.dashboard.data._today_jst_iso", lambda: "2026-06-02")
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.executemany(
+            """
+            INSERT INTO sunshine_daily(date, forecast_pv_total_kwh, source, updated_at)
+            VALUES (?, ?, 'test', '2026-06-02T00:00:00')
+            """,
+            [("2026-06-01", 4.0), ("2026-06-02", 5.0)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sliced = load_dashboard_slice(db_path, end_date="2026-06-02", window_days=1, include_static=True)
+
+    assert sliced.data.pv_daily == [
+        {
+            "date": "2026-06-02",
+            "forecast_pv_total_kwh": 5.0,
+            "forecast_temp_c": None,
+            "actual_temp_c": None,
+            "forecast_pv_morning_kwh": None,
+            "forecast_pv_midday_kwh": None,
+            "forecast_pv_evening_kwh": None,
+            "forecast_pv_calibration_factor": None,
+        }
+    ]
+    assert sliced.data.cost_daily == []
+    assert sliced.data.battery_daily == []
+    assert sliced.data.forecast_hourly == []
+    assert sliced.data.latest_schedule["plan_date"] == "2026-06-02"
+    assert sliced.data.latest_schedule["status"] == "fallback-default"
+    assert sliced.data.dashboard_warnings == [
+        {
+            "code": "settings_completion_unconfirmed",
+            "severity": "warning",
+            "title": "設定完了未確認",
+            "message": "最新設定の正常完了イベントを確認できません。",
+            "detail": {
+                "plan_date": "2026-06-02",
+                "status": "fallback-default",
+                "schedule_source": None,
+            },
+        }
+    ]
+    assert sliced.meta == {
+        "window_days": 1,
+        "aggregation_close_day": 14,
+        "oldest_loaded_date": "2026-06-02",
+        "newest_loaded_date": "2026-06-02",
+        "global_oldest_date": "2026-06-01",
+        "global_newest_date": "2026-06-02",
+        "has_more_before": True,
+    }
+
+
 def test_energy_daily_prefers_saved_hourly_load_forecast() -> None:
     rows = _build_energy_daily(
         start_date="2026-05-02",
