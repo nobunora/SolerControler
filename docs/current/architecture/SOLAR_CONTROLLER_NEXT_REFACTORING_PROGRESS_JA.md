@@ -412,3 +412,9 @@
 - 開始コミット: `3ce03fe6ad5cefb5bc6d40cc950125b5f4f43cbb`。
 - 変更: legacy daytime optimizerの呼出しと既存decision payload整形を `optimization` へ移した。workflowはEnergy Plan bundleから同一値を渡す薄いstageにした。
 - 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1d-5: optimizer SOC上限の分離
+
+- 開始コミット: `91fb8edd1e772532ff841a3727e8392dd2bbc993`。
+- 変更: morning/daytime/history guardを選択PV方式に応じてcost optimizerの上限へ反映する純粋計算を `optimization` に移した。
+- 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。

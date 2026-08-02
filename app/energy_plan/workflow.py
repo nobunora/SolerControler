@@ -1638,17 +1638,15 @@ def _run_soc_optimization(
             ),
         )
         respect_guard = config.cost_respect_morning_headroom_cap
-        cost_max_soc = 100.0
-        if respect_guard and constraints.apply_pv_headroom_caps:
-            cost_max_soc = _soc_cap_or_unbounded(
-                constraints.morning_headroom.get("cap_target_soc_percent")
-            )
-        for guard in (constraints.daytime_net_surplus, constraints.historical_soc_gain):
-            if constraints.apply_pv_headroom_caps and guard.get("applied"):
-                cost_max_soc = min(
-                    cost_max_soc,
-                    _soc_cap_or_unbounded(guard.get("cap_target_soc_percent")),
-                )
+        from app.energy_plan.optimization import cost_max_target_soc
+
+        cost_max_soc = cost_max_target_soc(
+            respect_morning_headroom=respect_guard,
+            apply_pv_headroom_caps=constraints.apply_pv_headroom_caps,
+            morning_headroom=constraints.morning_headroom,
+            daytime_net_surplus=constraints.daytime_net_surplus,
+            historical_soc_gain=constraints.historical_soc_gain,
+        )
         load_scenarios = _load_scenarios_for_cost_optimizer(pv_forecast.correction)
         paired_scenarios = _paired_scenarios_for_cost_optimizer(pv_forecast.correction)
         weather_upside_probability = _weather_upside_probability_for_cost_optimizer(

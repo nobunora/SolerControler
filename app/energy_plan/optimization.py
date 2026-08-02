@@ -48,6 +48,21 @@ def run_legacy_optimizer(
     return LegacyOptimizationDecision(result, payload)
 
 
+def cost_max_target_soc(
+    *, respect_morning_headroom: bool, apply_pv_headroom_caps: bool,
+    morning_headroom: dict[str, object], daytime_net_surplus: dict[str, object],
+    historical_soc_gain: dict[str, object],
+) -> float:
+    """Return the optimizer's SOC ceiling after applicable safety guards."""
+    maximum = 100.0
+    if respect_morning_headroom and apply_pv_headroom_caps:
+        maximum = _cap_or_unbounded(morning_headroom.get("cap_target_soc_percent"))
+    for guard in (daytime_net_surplus, historical_soc_gain):
+        if apply_pv_headroom_caps and guard.get("applied"):
+            maximum = min(maximum, _cap_or_unbounded(guard.get("cap_target_soc_percent")))
+    return maximum
+
+
 def apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUncertainty:
     floor = max(0.0, _env_float("SOC_COST_PV_UNCERTAINTY_STD_FLOOR", 0.30))
     std = max(uncertainty.std_multiplier, floor)
@@ -142,3 +157,8 @@ def _optional_float(value: object) -> float | None:
     except ValueError:
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _cap_or_unbounded(value: object) -> float:
+    parsed = _optional_float(value)
+    return max(0.0, min(100.0, parsed)) if parsed is not None else 100.0
