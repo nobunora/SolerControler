@@ -19,6 +19,7 @@ from app.dashboard.data import (
     load_dashboard_slice,
 )
 from app.dashboard.schedule import _build_latest_schedule_from_events, _select_schedule_event
+from app.dashboard.repositories import DashboardQuerySnapshot
 from app.dashboard.warnings import build_dashboard_warnings as _build_dashboard_warnings
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
@@ -84,6 +85,28 @@ def test_empty_dashboard_slice_preserves_requested_window_and_global_bounds() ->
         "global_newest_date": "2026-06-14",
         "has_more_before": False,
     }
+
+
+def test_dashboard_query_snapshot_keeps_backend_rows_separate_from_derived_values() -> None:
+    snapshot = DashboardQuerySnapshot(
+        resolved_end_date="2026-06-02",
+        global_oldest_date="2026-06-01",
+        global_newest_date="2026-06-02",
+        pv_daily=[{"date": "2026-06-02"}],
+        cost_daily=[],
+        battery_daily=[],
+        forecast_hourly=[],
+        monitoring_daily=[],
+        battery_flow_daily=[],
+        all_cost_daily=[],
+        model_parameters=[],
+        settings_events=[],
+        latest_battery=None,
+    )
+
+    assert snapshot.resolved_end_date == "2026-06-02"
+    assert snapshot.pv_daily == [{"date": "2026-06-02"}]
+    assert snapshot.all_cost_daily == []
 
 
 def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_shape(

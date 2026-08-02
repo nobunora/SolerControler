@@ -331,3 +331,8 @@
 
 - 変更: 後続のSQLite adapter分離で維持すべきslice契約を、ローカルSQLite fixtureで固定した。window内外のPV行、空のcost/battery/hourly配列、default schedule、設定完了未確認warning、およびglobal dateとpagination metaのshapeを一つのテストで検証する。
 - 検証: `tests/test_dashboard_data.py tests/test_dashboard_server.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` は `43 passed`。`mypy app/dashboard --no-incremental`、`compileall`、対象 `git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-2c-2: Dashboard query snapshot契約
+
+- 変更: backendから取得した行だけを表す `DashboardQuerySnapshot` を追加した。共通のenergy/cost計算、schedule、warning、meta、`DashboardSlice`はsnapshotに含めず、後続も `data.py` の共通組立てで所有する。
+- 検証: Dashboard関連テストは `44 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
