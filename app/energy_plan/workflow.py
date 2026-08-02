@@ -7,7 +7,7 @@ import os
 import statistics
 import time
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, time as dt_time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo
@@ -769,28 +769,6 @@ def _estimate_midday_surplus_from_pv_forecast(
     estimated_midday_load = non_morning_load * midday_load_fraction
     net_surplus = max(0.0, midday_pv - estimated_midday_load)
     return float(net_surplus)
-
-
-def _parse_hhmm(value: str, *, default: str) -> dt_time:
-    text = (value or default).strip() or default
-    try:
-        hh, mm = text.split(":", 1)
-        return dt_time(hour=max(0, min(23, int(hh))), minute=max(0, min(59, int(mm))))
-    except (TypeError, ValueError):
-        hh, mm = default.split(":", 1)
-        return dt_time(hour=int(hh), minute=int(mm))
-
-
-def _clock_minutes(value: dt_time) -> int:
-    return value.hour * 60 + value.minute
-
-
-def _is_within_window(minute_of_day: int, *, start_minute: int, end_minute: int) -> bool:
-    if start_minute == end_minute:
-        return True
-    if start_minute < end_minute:
-        return start_minute <= minute_of_day < end_minute
-    return minute_of_day >= start_minute or minute_of_day < end_minute
 
 
 def _load_execution_context(

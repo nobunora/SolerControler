@@ -135,3 +135,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - Open-Meteo境界を `correction_weather.py` へ分離し、履歴I/Oから完全に除去した。
 - thermal stateとcorrection snapshot計算を `correction_model.py` へ移し、`correction.py` は公開policy、orchestration、既存monkeypatch互換portのみを保持した。
 - 検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-2追加是正完了
+
+- 月次投影で既に正規所有先となった `monthly_projection.py` と重複し、呼出しもないHH:MM/window helperを `workflow.py` から削除した。
+- 検証: Energy Plan回帰 `111 passed`、Energy Plan mypy 0件、compileall、diff check成功。
