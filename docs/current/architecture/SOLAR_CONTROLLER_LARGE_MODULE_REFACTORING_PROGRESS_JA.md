@@ -96,3 +96,10 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - 23時、03時、07時slot配線を `slot_orchestration.py` へ移動した。
 - monitor lifecycle、terminal transition、公開mainは `cloud_job.py` に保持し、既存monkeypatch境界は遅延callbackで維持した。
 - 検証: `71 passed`、runtime/forced_charge mypy 0件、compileall、diff check成功。
+
+## R-5再是正完了
+
+- Open-Meteoのrequest/payload mappingとForecast.SolarのURL、series正規化、provider結果組立てを `pv_array_adapters.py` へ移動した。
+- 時間帯別ensemble値、hourly map、最終ensemble組立てを `pv_array_selection.py` へ移動した。
+- `pv_array.py` は公開workflow、配列設定、Open-Meteo物理発電量計算、calibration/provider配線に限定し、公開互換名は明示importで維持した。
+- 検証: `19 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
