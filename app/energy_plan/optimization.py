@@ -251,7 +251,7 @@ def run_current_optimizer(
     prior_loader: Callable[..., dict[str, object] | None] | None = None,
     target_features_builder: Callable[..., dict[str, object]] | None = None,
 ) -> OptimizationDecision:
-    from app.energy_plan.workflow import (
+    from app.energy_plan.plan_quality import (
         _soc_cost_model_from_env,
         _to_optional_float,
         _soc_decision_target_features,

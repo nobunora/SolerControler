@@ -73,3 +73,11 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - correctionの永続dict構築を `correction_result.py` へ移動し、`correction.py` は入力取得、policy、実行順、公開wrapperを保持した。
 - 既存のweather monkeypatch境界は明示callbackで維持した。
 - 検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-2再是正完了
+
+- PV不確実性、plan quality、decision説明、環境値境界を `plan_quality.py` へ移動した。
+- hourly PV候補構築とphysical/correction選択を `pv_selection.py` へ移動した。
+- 最終PlanDocumentとEnergyModelOutput組立てを `result_builder.py` へ移動し、workflowはport配線と実行順を保持した。
+- optimizationの内部importを正規 `plan_quality` へ更新した。
+- 検証: Energy Plan回帰 `108 passed`、Energy Plan mypy 0件、compileall、diff check成功。
