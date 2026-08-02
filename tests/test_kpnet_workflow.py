@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 import app.kpnet.workflow as kpnet_workflow
+from app.kpnet.plan import NightChargePlan as CanonicalNightChargePlan
+from app.kpnet.plan import load_night_charge_plan
 from app.kpnet.workflow import (
     FORCED_CHARGE_PROFILE,
     KpNetConfig,
@@ -25,6 +27,11 @@ from app.kpnet.workflow import (
     _run_settings_phase,
     _validate_base_url,
 )
+
+
+def test_workflow_reexports_canonical_night_charge_plan_contract() -> None:
+    assert NightChargePlan is CanonicalNightChargePlan
+    assert _load_night_charge_plan is load_night_charge_plan
 
 
 def _build_cfg(*, plan_path: Path) -> KpNetConfig:

@@ -282,3 +282,9 @@
 
 - 変更: `workflow` に残っていたOpen-Meteo archive取得、cache、期間chunk、日別レスポンス正規化の重複本体を削除した。既存の実行時テストと依存性注入のpatch境界を保つため、同名のprivate関数は環境値の安全fallbackを渡す薄い委譲として残し、正規所有先を `weather_history.archive_weather_history` に一意化した。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py`、Energy Plan mypy、`git diff --check` を実行し、外部APIは実行していない。
+
+## 2026-08-02 — M-3a: KP-NET夜間充電計画読込の分離
+
+- 変更: `NightChargePlan`、夜間充電計画JSONの読込、必須数値の有限値・範囲検証を `app.kpnet.plan` の正規所有先へ移した。既存の `app.kpnet.workflow` からのimport契約を維持するため、旧private読込関数は同一関数への薄い再公開とした。
+- テスト: workflowの旧exportと正規モジュールが同一オブジェクトであることを追加で確認した。
+- 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_external_site_access.py` は `58 passed, 1 skipped`。`mypy app/kpnet --no-incremental`、`compileall`、`git diff --check` は成功した。外部siteテストはskipのままで、外部サービスへの通信・設定変更は行っていない。
