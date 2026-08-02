@@ -2,33 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
 from app.dashboard.models import DashboardSlice
 from app.dashboard.slice_assembler import build_slice_from_query_snapshot
-
-
-def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
-    return [dict(row) for row in rows]
-
-
-def _to_date_or_none(raw: str | None) -> date | None:
-    if not raw:
-        return None
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        return None
-
-
-def _pick_min_max_dates(values: list[str | None]) -> tuple[str | None, str | None]:
-    dates = [value for value in values if value]
-    if not dates:
-        return None, None
-    return min(dates), max(dates)
+from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
 
 
 def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:

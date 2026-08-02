@@ -20,13 +20,11 @@ from app.dashboard.aggregation import (
 from app.dashboard.slice_assembler import (
     build_dashboard_slice as _build_dashboard_slice,
     empty_dashboard_slice as _empty_dashboard_slice,
+    extract_pv_forecast_diagnostics,
+    merge_latest_plan_into_schedule as _merge_latest_plan_into_schedule,
     read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
 )
-from app.dashboard.data import (
-    _merge_latest_plan_into_schedule, _rows_to_dicts,
-    _to_date_or_none,
-    _pick_min_max_dates, _read_latest_pv_forecast_diagnostics_from_firestore,
-)
+from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.domain.tariff import tiered_day_cost
 from app.parsing.numbers import to_float
@@ -34,6 +32,14 @@ from app.parsing.numbers import to_float
 _FIRESTORE_CLIENTS: dict[tuple[str | None, str], Any] = {}
 _FIRESTORE_SLICE_CACHE: dict[tuple[str | None, str, str | None, int, bool], tuple[float, DashboardSlice]] = {}
 _FIRESTORE_DASHBOARD_CACHE_SECONDS = 120.0
+
+
+def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str, Any]:
+    try:
+        snapshot = client.collection("night_charge_plans").document("latest").get()
+    except Exception:
+        return {}
+    return extract_pv_forecast_diagnostics(snapshot.to_dict() or {}) if snapshot.exists else {}
 def _firestore_date_value(raw: Any) -> str | None:
     if isinstance(raw, datetime):
         return raw.date().isoformat()
@@ -61,7 +67,12 @@ def _firestore_bounds(
     return min_date, max_date
 
 
-def _get_global_bounds_firestore(client: Any) -> tuple[str | None, str | None]:
+def _get_global_bounds_firestore(
+    client: Any,
+    *,
+    bounds_reader: Callable[[Any, str, str], tuple[str | None, str | None]] | None = None,
+) -> tuple[str | None, str | None]:
+    read_bounds = bounds_reader or _firestore_bounds
     candidates: list[str | None] = []
     sources = [
         ("sunshine_daily", "date"),
@@ -72,7 +83,7 @@ def _get_global_bounds_firestore(client: Any) -> tuple[str | None, str | None]:
     ]
     for collection_name, field_name in sources:
         try:
-            candidates.extend(_firestore_bounds(client, collection_name, field_name))
+            candidates.extend(read_bounds(client, collection_name, field_name))
         except Exception:
             continue
     return _pick_min_max_dates(candidates)

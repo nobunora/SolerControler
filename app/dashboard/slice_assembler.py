@@ -14,6 +14,7 @@ from app.dashboard.repositories import DashboardQuerySnapshot
 from app.dashboard.schedule import _build_latest_schedule_from_events, _default_latest_schedule
 from app.dashboard.service import assemble_dashboard_slice
 from app.dashboard.warnings import build_dashboard_warnings
+from app.parsing.numbers import to_float
 
 
 def extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
@@ -36,6 +37,28 @@ def read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
     except Exception:
         return {}
     return extract_pv_forecast_diagnostics(data) if isinstance(data, dict) else {}
+
+
+def merge_latest_plan_into_schedule(schedule: dict[str, Any], plan: dict[str, Any] | None) -> dict[str, Any]:
+    """Attach matching persisted plan values to a schedule response."""
+    merged = dict(schedule)
+    if not plan:
+        return merged
+    forecast = plan.get("forecast")
+    plan_date = str(plan.get("date") or (forecast.get("date") if isinstance(forecast, dict) else "") or "").strip()
+    if merged.get("plan_date") and plan_date != str(merged["plan_date"]):
+        return merged
+    raw_result = plan.get("result")
+    result = raw_result if isinstance(raw_result, dict) else {}
+    target_soc = to_float(result.get("target_soc_7_percent"))
+    night_charge = to_float(result.get("required_night_charge_kwh"))
+    if target_soc is not None:
+        merged["planned_target_soc_percent"] = target_soc
+    if night_charge is not None:
+        merged["planned_night_charge_kwh"] = night_charge
+    if (updated_at := str(plan.get("updated_at") or "").strip()):
+        merged["plan_updated_at"] = updated_at
+    return merged
 
 
 def empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_oldest: str | None = None, global_newest: str | None = None) -> DashboardSlice:

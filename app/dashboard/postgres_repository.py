@@ -15,11 +15,7 @@ from app.dashboard.slice_assembler import (
     empty_dashboard_slice as _empty_dashboard_slice,
     read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
 )
-from app.dashboard.data import (
-    _pick_min_max_dates,
-    _rows_to_dicts,
-    _to_date_or_none,
-)
+from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
 
 
 def _get_global_bounds_postgres(cur: Any) -> tuple[str | None, str | None]:

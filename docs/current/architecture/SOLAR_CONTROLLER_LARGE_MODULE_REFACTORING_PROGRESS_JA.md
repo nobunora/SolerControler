@@ -146,3 +146,11 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - `KpNetConfig` とKP-NET loggerを `config.py` へ移し、HTTP clientがworkflowをimportしない一方向依存へ変更した。
 - `client.py` と `workflow.py` の単独import成功を確認し、workflow上の既存private互換名は正規moduleからのreexportで維持した。
 - 検証: KP-NET指定回帰 `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。
+
+## R-6追加是正完了
+
+- repository共通変換を `repository_support.py` へ集約し、SQLite/PostgreSQL/Firestoreのbounds実装を各backend repositoryの単一所有にした。
+- schedule mergeを `slice_assembler.py` へ移し、Firestore/PostgreSQL repositoryから `data.py` への逆importを除去した。
+- `backend_repositories.py` の循環wrapperを廃止し、`data.py` は公開loader、cache、既存test patch用の薄いportのみを保持した。
+- `app.dashboard.firestore_repository` と `app.dashboard.data` の単独import成功を確認した。
+- 検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。
