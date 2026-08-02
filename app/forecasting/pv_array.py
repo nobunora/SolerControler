@@ -22,6 +22,19 @@ from app.parsing.numbers import parse_csv_float, to_float, to_int
 
 HttpGet = Callable[..., Any]
 
+__all__ = [
+    "PVArrayConfig",
+    "PvCalibrationInput",
+    "PvCalibrationPolicy",
+    "build_pv_array_forecast",
+    "calibrate_performance_ratio",
+    "calibrate_performance_ratio_for",
+    "fetch_open_meteo_hourly",
+    "forecast_pv_arrays",
+    "forecast_pv_arrays_forecast_solar",
+    "load_pv_array_configs",
+]
+
 
 def _response_json_object(response: Any, *, provider: str) -> dict[str, Any]:
     """Compatibility wrapper for the provider adapter's JSON boundary."""
