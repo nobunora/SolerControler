@@ -70,6 +70,7 @@ from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.energy_plan.weather_history import (
     consecutive_date_chunks,
+    archive_weather_history,
     forecast_weather_row,
     hourly_weather_records_from_open_meteo,
     hourly_weather_summary,
@@ -1058,7 +1059,15 @@ def _archive_weather_rows(
     lon: float,
     timezone: str,
 ) -> list[dict[str, object]]:
-    return _archive_weather_history(rows, lat=lat, lon=lon, timezone=timezone).rows
+    return archive_weather_history(
+        rows,
+        lat=lat,
+        lon=lon,
+        timezone=timezone,
+        cache_path=weather_archive_cache_path(),
+        chunk_days=max(1, int(_env_float("WEATHER_ARCHIVE_CHUNK_DAYS", 14.0))),
+        timeout_seconds=max(1.0, _env_float("WEATHER_ARCHIVE_TIMEOUT_SECONDS", 30.0)),
+    ).rows
 
 
 def _load_rows_for_consumption_forecast(rows: list[dict[str, Any]]) -> list[dict[str, object]]:

@@ -7,6 +7,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import requests
+
+from app.energy_plan.weather import WeatherHistoryFetchResult
+
 
 def weather_class(weather_code: int | None) -> str:
     if weather_code is None:
@@ -196,3 +200,59 @@ def forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
         "sunshine_hours": _optional_float(forecast.get("sun_hours")) or 0.0,
         "precipitation": precipitation,
     }
+
+
+def archive_weather_history(
+    rows: list[dict[str, Any]], *, lat: float, lon: float, timezone: str,
+    cache_path: Path | None = None, chunk_days: int | None = None, timeout_seconds: float | None = None,
+) -> WeatherHistoryFetchResult:
+    if chunk_days is None:
+        try:
+            chunk_days = max(1, int(float(os.getenv("WEATHER_ARCHIVE_CHUNK_DAYS", "14").strip() or "14")))
+        except ValueError:
+            chunk_days = 14
+    if timeout_seconds is None:
+        try:
+            timeout_seconds = max(1.0, float(os.getenv("WEATHER_ARCHIVE_TIMEOUT_SECONDS", "30").strip() or "30"))
+        except ValueError:
+            timeout_seconds = 30.0
+    dates = sorted({row["dt"].date() for row in rows if hasattr(row.get("dt"), "date")})
+    if not dates:
+        return WeatherHistoryFetchResult([], [], [], [], [], [], [])
+    requested_days = [dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)]
+    requested_dates = [day.isoformat() for day in requested_days]
+    selected_cache_path = cache_path or weather_archive_cache_path()
+    cached_rows, errors = load_weather_archive_cache(selected_cache_path)
+    rows_by_date = {day: cached_rows[day] for day in requested_dates if day in cached_rows}
+    cache_hit_dates = sorted(rows_by_date)
+    missing_days = [day for day in requested_days if day.isoformat() not in rows_by_date]
+    requested_periods: list[dict[str, object]] = []
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    for chunk in consecutive_date_chunks(missing_days, chunk_days=chunk_days):
+        params: dict[str, str | float] = {
+            "latitude": lat, "longitude": lon, "start_date": chunk[0].isoformat(), "end_date": chunk[-1].isoformat(),
+            "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum", "timezone": timezone,
+        }
+        period: dict[str, object] = {"start_date": params["start_date"], "end_date": params["end_date"], "requested_day_count": len(chunk)}
+        response: object | None = None
+        try:
+            response = requests.get(url, params=params, timeout=timeout_seconds)
+            period["http_status"] = getattr(response, "status_code", None)
+            response.raise_for_status()
+            payload = response.json()
+            fetched_rows = weather_rows_from_daily(payload.get("daily") if isinstance(payload, dict) else None)
+            allowed_dates = {day.isoformat() for day in chunk}
+            for weather_row in fetched_rows:
+                weather_date = str(weather_row["date"])
+                if weather_date in allowed_dates:
+                    rows_by_date[weather_date] = weather_row
+            period["received_day_count"] = sum(1 for day in allowed_dates if day in rows_by_date)
+        except Exception as exc:
+            period["received_day_count"] = 0
+            errors.append({"stage": "http_fetch", "start_date": str(params["start_date"]), "end_date": str(params["end_date"]), "http_status": getattr(response, "status_code", None), "exception_type": type(exc).__name__, "message": str(exc)})
+        requested_periods.append(period)
+    received_dates = sorted(day for day in requested_dates if day in rows_by_date)
+    missing_dates = sorted(set(requested_dates) - set(received_dates))
+    if received_dates and set(received_dates) != set(cache_hit_dates):
+        errors.extend(save_weather_archive_cache(selected_cache_path, {**cached_rows, **rows_by_date}))
+    return WeatherHistoryFetchResult([rows_by_date[day] for day in received_dates], requested_dates, received_dates, missing_dates, errors, cache_hit_dates, requested_periods)

@@ -261,3 +261,9 @@
 
 - 変更: 予報から最適化入力用の天候行を作る純粋変換を `weather_history` へ移した。降水量がない予報で確率から弱い雨信号を作る既存fallbackは維持し、workflowは正規関数を利用する。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_historical.py` は `85 passed`。Energy Plan mypy、`compileall`、`git diff --check` は成功した。
+
+## 2026-08-02 — M-1d: 気象archive取得境界の分離
+
+- 変更: Open-Meteo archive取得、cache hit/miss、期間chunk、HTTP失敗の診断情報を `weather_history` へ移し、特性テストの通信patch先も正規モジュールへ変更した。workflowは環境設定を渡して結果を利用する。
+- 修正: 最初の移動後に、直接呼出し時のchunk設定が既存環境値を反映しないことを特性テストで検出した。新モジュールに同じ安全fallbackを実装し、期待値を変更せずに解消した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。
