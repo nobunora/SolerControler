@@ -406,3 +406,9 @@
 - 開始コミット: `ea2d2e5205e2d40bef4196d31912df31a9c734b1`。
 - 変更: legacy/current optimizerの返却契約である `LegacyOptimizationDecision` と `OptimizationDecision` を `optimization` の正規所有先へ移した。workflowの実行順・公開APIは変更していない。
 - 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1d-4: legacy optimizerの分離
+
+- 開始コミット: `3ce03fe6ad5cefb5bc6d40cc950125b5f4f43cbb`。
+- 変更: legacy daytime optimizerの呼出しと既存decision payload整形を `optimization` へ移した。workflowはEnergy Plan bundleから同一値を渡す薄いstageにした。
+- 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。
