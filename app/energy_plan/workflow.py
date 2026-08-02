@@ -1073,31 +1073,15 @@ def _historical_daytime_soc_gain_guard(
 
 
 def _apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUncertainty:
-    floor = max(0.0, _env_float("SOC_COST_PV_UNCERTAINTY_STD_FLOOR", 0.30))
-    std = max(uncertainty.std_multiplier, floor)
-    return PvForecastUncertainty(
-        mean_multiplier=uncertainty.mean_multiplier,
-        std_multiplier=std,
-        variance_multiplier=std * std,
-        sample_count=uncertainty.sample_count,
-        source=uncertainty.source if std == uncertainty.std_multiplier else f"{uncertainty.source}+std_floor",
-    )
+    from app.energy_plan.optimization import apply_uncertainty_floor
+
+    return apply_uncertainty_floor(uncertainty)
 
 
 def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
-    if not _env_bool("SOC_COST_UPSIDE_SCENARIO_ENABLED", False):
-        return DEFAULT_SIGMA_BUCKETS
-    upside_probability = _env_float_clamped("SOC_COST_UPSIDE_SCENARIO_PROBABILITY", 0.08, min_value=0.0, max_value=0.5)
-    upside_z = _env_float("SOC_COST_UPSIDE_SCENARIO_Z", 3.0)
-    if upside_probability <= 0:
-        return DEFAULT_SIGMA_BUCKETS
-    base_sum = sum(max(0.0, b.probability) for b in DEFAULT_SIGMA_BUCKETS) or 1.0
-    remaining = max(0.0, 1.0 - upside_probability)
-    base = tuple(
-        SigmaBucket(b.label, max(0.0, b.probability) / base_sum * remaining, b.z_value)
-        for b in DEFAULT_SIGMA_BUCKETS
-    )
-    return base + (SigmaBucket("pv_upside_guard", upside_probability, upside_z),)
+    from app.energy_plan.optimization import sigma_buckets
+
+    return sigma_buckets()
 
 
 def _load_scenarios_for_cost_optimizer(
@@ -1130,12 +1114,9 @@ def _load_scenarios_for_cost_optimizer(
 
 
 def _weather_upside_probability_for_cost_optimizer(forecast: dict[str, object]) -> float:
-    if not _env_bool("SOC_COST_WEATHER_UPSIDE_SCENARIO_ENABLED", True):
-        return 0.0
-    weather_class = str(forecast.get("weather_class") or "").strip().lower()
-    if weather_class not in {"cloudy", "rain", "rainy"}:
-        return 0.0
-    return _env_float_clamped("SOC_COST_WEATHER_UPSIDE_SCENARIO_PROBABILITY", 0.12, min_value=0.0, max_value=0.5)
+    from app.energy_plan.optimization import weather_upside_probability
+
+    return weather_upside_probability(forecast)
 
 
 def _estimate_midday_surplus_from_pv_forecast(

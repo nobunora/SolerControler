@@ -388,3 +388,9 @@
 - 開始コミット: `15257c04e2e244e58f7e1014cc6ab2109bdba81e`。
 - 変更: active constraint、PV方式に応じたtarget SOC上限、監査evidenceを含む `SocConstraintSet` 組立てを `soc_constraints` へ移した。workflowはguardの取得・PV方式別policy・実行順を保持する。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`、Energy Plan mypyは0エラー、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1d-1: 最適化シナリオ準備の分離
+
+- 開始コミット: `fcd9167209760b0822015c68d504849922f7911e`。
+- 変更: PV不確実性floor、upside sigma bucket、天候upside probabilityを `app.energy_plan.optimization` の正規所有先へ移した。workflowにはprivate patch互換の薄い委譲を残した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`、Energy Plan mypyは0エラー、`git diff --check` は成功した。外部サービスは実行していない。
