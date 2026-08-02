@@ -267,3 +267,8 @@
 - 変更: Open-Meteo archive取得、cache hit/miss、期間chunk、HTTP失敗の診断情報を `weather_history` へ移し、特性テストの通信patch先も正規モジュールへ変更した。workflowは環境設定を渡して結果を利用する。
 - 修正: 最初の移動後に、直接呼出し時のchunk設定が既存環境値を反映しないことを特性テストで検出した。新モジュールに同じ安全fallbackを実装し、期待値を変更せずに解消した。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。
+
+## 2026-08-02 — M-1e: workflow内archive実装の除去
+
+- 変更: `workflow` に残っていたOpen-Meteo archive取得、cache、期間chunk、日別レスポンス正規化の重複本体を削除した。既存の実行時テストと依存性注入のpatch境界を保つため、同名のprivate関数は環境値の安全fallbackを渡す薄い委譲として残し、正規所有先を `weather_history.archive_weather_history` に一意化した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py`、Energy Plan mypy、`git diff --check` を実行し、外部APIは実行していない。

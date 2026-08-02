@@ -69,16 +69,12 @@ from app.energy_plan.decision_feedback import load_soc_decision_prior_from_fires
 from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.energy_plan.weather_history import (
-    consecutive_date_chunks,
     archive_weather_history,
     forecast_weather_row,
     hourly_weather_records_from_open_meteo,
     hourly_weather_summary,
-    load_weather_archive_cache,
-    save_weather_archive_cache,
     weather_archive_cache_path,
     weather_class,
-    weather_rows_from_daily,
 )
 
 
@@ -966,7 +962,6 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
         }
 
 
-# readable-code-audit: skip STRUCT-04 — selected weather history and its persisted provenance must be written as one archive record
 def _archive_weather_history(
     rows: list[dict[str, Any]],
     *,
@@ -974,81 +969,15 @@ def _archive_weather_history(
     lon: float,
     timezone: str,
 ) -> WeatherHistoryFetchResult:
-    dates = sorted(
-        {
-            r["dt"].date()
-            for r in rows
-            if isinstance(r.get("dt"), datetime)
-        }
-    )
-    if not dates:
-        return WeatherHistoryFetchResult([], [], [], [], [], [], [])
-    requested_days = [dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)]
-    requested_dates = [day.isoformat() for day in requested_days]
-    cache_path = weather_archive_cache_path()
-    cached_rows, errors = load_weather_archive_cache(cache_path)
-    rows_by_date = {
-        day: cached_rows[day]
-        for day in requested_dates
-        if day in cached_rows
-    }
-    cache_hit_dates = sorted(rows_by_date)
-    missing_days = [day for day in requested_days if day.isoformat() not in rows_by_date]
-    chunk_days = max(1, int(_env_float("WEATHER_ARCHIVE_CHUNK_DAYS", 14.0)))
-    url = "https://archive-api.open-meteo.com/v1/archive"
-    requested_periods: list[dict[str, object]] = []
-    timeout_seconds = max(1.0, _env_float("WEATHER_ARCHIVE_TIMEOUT_SECONDS", 30.0))
-    for chunk in consecutive_date_chunks(missing_days, chunk_days=chunk_days):
-        params: dict[str, str | float] = {
-            "latitude": lat,
-            "longitude": lon,
-            "start_date": chunk[0].isoformat(),
-            "end_date": chunk[-1].isoformat(),
-            "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum",
-            "timezone": timezone,
-        }
-        period: dict[str, object] = {
-            "start_date": params["start_date"],
-            "end_date": params["end_date"],
-            "requested_day_count": len(chunk),
-        }
-        resp: object | None = None
-        try:
-            resp = requests.get(url, params=params, timeout=timeout_seconds)
-            period["http_status"] = getattr(resp, "status_code", None)
-            resp.raise_for_status()
-            payload = resp.json()
-            fetched_rows = weather_rows_from_daily(payload.get("daily") if isinstance(payload, dict) else None)
-            allowed_dates = {day.isoformat() for day in chunk}
-            for weather_row in fetched_rows:
-                weather_date = str(weather_row["date"])
-                if weather_date in allowed_dates:
-                    rows_by_date[weather_date] = weather_row
-            period["received_day_count"] = sum(1 for day in allowed_dates if day in rows_by_date)
-        except Exception as exc:
-            period["received_day_count"] = 0
-            errors.append({
-                "stage": "http_fetch",
-                "start_date": str(params["start_date"]),
-                "end_date": str(params["end_date"]),
-                "http_status": getattr(resp, "status_code", None),
-                "exception_type": type(exc).__name__,
-                "message": str(exc),
-            })
-        requested_periods.append(period)
-
-    received_dates = sorted(day for day in requested_dates if day in rows_by_date)
-    missing_dates = sorted(set(requested_dates) - set(received_dates))
-    if received_dates and set(received_dates) != set(cache_hit_dates):
-        errors.extend(save_weather_archive_cache(cache_path, {**cached_rows, **rows_by_date}))
-    return WeatherHistoryFetchResult(
-        rows=[rows_by_date[day] for day in received_dates],
-        requested_dates=requested_dates,
-        received_dates=received_dates,
-        missing_dates=missing_dates,
-        errors=errors,
-        cache_hit_dates=cache_hit_dates,
-        requested_periods=requested_periods,
+    # Preserve the workflow injection point while weather_history owns archive I/O and cache behavior.
+    return archive_weather_history(
+        rows,
+        lat=lat,
+        lon=lon,
+        timezone=timezone,
+        cache_path=weather_archive_cache_path(),
+        chunk_days=max(1, int(_env_float("WEATHER_ARCHIVE_CHUNK_DAYS", 14.0))),
+        timeout_seconds=max(1.0, _env_float("WEATHER_ARCHIVE_TIMEOUT_SECONDS", 30.0)),
     )
 
 
