@@ -15,6 +15,7 @@ Do not read all docs. Pick one category, then one file.
 - `current/product/`: product behavior, decision rules, forecasts, and public description.
 - `current/ops/`: Google Cloud and remote operation references.
 - `current/prompts/`: reusable prompts that still reference the current behavior.
+- `current/architecture/SOLAR_CONTROLLER_LARGE_MODULE_REFACTORING_EXECUTION_INSTRUCTIONS_JA.md`: staged large-module refactoring cards with ownership, evidence, and completion gates.
 
 ## Completed Work
 
