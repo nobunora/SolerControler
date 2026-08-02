@@ -1655,33 +1655,13 @@ def _build_soc_constraints(
         )
         for _, guard in raw_guards
     ]
-    active = [
-        SocConstraint(
-            name=name,
-            applied=bool(guard.get("applied")),
-            cap_target_soc_percent=_to_optional_float(guard.get("cap_target_soc_percent")),
-            reason=str(guard.get("reason") or ""),
-            evidence=dict(guard),
-        )
-        for (name, _), guard in zip(raw_guards, annotated)
-        if guard.get("applied")
-    ]
-    max_target_soc = 100.0
-    if apply_caps:
-        for guard in annotated:
-            if guard.get("applied") or guard is annotated[0]:
-                max_target_soc = min(
-                    max_target_soc,
-                    _soc_cap_or_unbounded(guard.get("cap_target_soc_percent")),
-                )
-    return SocConstraintSet(
+    from app.energy_plan.soc_constraints import assemble_constraint_set
+
+    return assemble_constraint_set(
         reserve_soc_percent=reserve_soc,
-        max_target_soc_percent=max_target_soc,
         apply_pv_headroom_caps=apply_caps,
-        active_constraints=active,
-        morning_headroom=annotated[0],
-        daytime_net_surplus=annotated[1],
-        historical_soc_gain=annotated[2],
+        raw_guards=raw_guards,
+        annotated_guards=annotated,
     )
 
 

@@ -33,6 +33,42 @@ class SocConstraintSet:
     historical_soc_gain: dict[str, object]
 
 
+def assemble_constraint_set(
+    *,
+    reserve_soc_percent: float,
+    apply_pv_headroom_caps: bool,
+    raw_guards: list[tuple[str, dict[str, object]]],
+    annotated_guards: list[dict[str, object]],
+) -> SocConstraintSet:
+    """Build the ordered, auditable set of SOC target caps."""
+    active = [
+        SocConstraint(
+            name=name,
+            applied=bool(guard.get("applied")),
+            cap_target_soc_percent=_optional_float(guard.get("cap_target_soc_percent")),
+            reason=str(guard.get("reason") or ""),
+            evidence=dict(guard),
+        )
+        for (name, _), guard in zip(raw_guards, annotated_guards)
+        if guard.get("applied")
+    ]
+    max_target_soc = 100.0
+    if apply_pv_headroom_caps:
+        for guard in annotated_guards:
+            if guard.get("applied") or guard is annotated_guards[0]:
+                cap = _optional_float(guard.get("cap_target_soc_percent"))
+                max_target_soc = min(max_target_soc, cap if cap is not None else 100.0)
+    return SocConstraintSet(
+        reserve_soc_percent=reserve_soc_percent,
+        max_target_soc_percent=max_target_soc,
+        apply_pv_headroom_caps=apply_pv_headroom_caps,
+        active_constraints=active,
+        morning_headroom=annotated_guards[0],
+        daytime_net_surplus=annotated_guards[1],
+        historical_soc_gain=annotated_guards[2],
+    )
+
+
 def active_constraint_names(
     *,
     morning_headroom_guard: dict[str, object],
