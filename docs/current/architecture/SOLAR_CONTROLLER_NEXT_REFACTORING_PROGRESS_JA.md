@@ -362,3 +362,9 @@
 - 境界: guardの数値計算・環境変数解釈・最終SOC上限の組立ては、後続の小カードで移す。今回の変更は、制約集合のデータ契約を先に固定し、既存のworkflow呼出しを壊さない範囲に限定した。
 - テスト: 直接テストは正規モジュールをimportするよう更新した。`workflow` は同一関数をprivate import aliasとして公開し続けるため、既存の呼出し契約を維持する。
 - 検証: `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。`python -m mypy app/energy_plan/soc_constraints.py app/energy_plan/workflow.py --no-incremental`、`python -m compileall -q app/energy_plan/soc_constraints.py app/energy_plan/workflow.py`、`git diff --check` は成功した。外部サービス、DB、Firestore、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-1c-2: 朝PV余力SOC guardの分離
+
+- 変更: 07–09時のPV・負荷、蓄電池容量、SOC下限、guard比率、最小余力からSOC上限を計算する処理を `soc_constraints.morning_pv_headroom_guard` へ移した。
+- 境界: `workflow._morning_pv_headroom_guard` は環境変数を既存と同じ既定値・範囲で解釈して正規関数へ渡す薄い委譲にした。既存テストのmonkeypatch対象と実行時設定契約は維持している。
+- 検証: `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。`mypy`、`compileall`、`git diff --check` は成功した。外部サービス、DB、Firestore、蓄電池操作は実行していない。

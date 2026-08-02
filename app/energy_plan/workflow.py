@@ -87,6 +87,7 @@ from app.energy_plan.soc_constraints import (
     SocConstraint,
     SocConstraintSet,
     active_constraint_names as _active_constraint_names,
+    morning_pv_headroom_guard,
 )
 
 
@@ -1022,40 +1023,17 @@ def _morning_pv_headroom_guard(
     effective_capacity_kwh_value: float,
     reserve_soc_percent: float,
 ) -> dict[str, object]:
-    enabled = _env_bool("MORNING_PV_HEADROOM_GUARD_ENABLED", True)
-    hours = [7, 8, 9]
-    morning_pv = sum(max(0.0, hourly_pv_kwh.get(hour, 0.0)) for hour in hours)
-    morning_load = sum(max(0.0, hourly_load_kwh.get(hour, 0.0)) for hour in hours)
-    morning_deficit = max(0.0, morning_load - morning_pv)
-    capacity = max(0.0, effective_capacity_kwh_value)
-    guard_ratio = max(
-        0.0,
-        min(1.0, float(os.getenv("MORNING_PV_HEADROOM_GUARD_RATIO", "0.50").strip() or "0.50")),
+    return morning_pv_headroom_guard(
+        hourly_load_kwh=hourly_load_kwh,
+        hourly_pv_kwh=hourly_pv_kwh,
+        effective_capacity_kwh=effective_capacity_kwh_value,
+        reserve_soc_percent=reserve_soc_percent,
+        enabled=_env_bool("MORNING_PV_HEADROOM_GUARD_ENABLED", True),
+        guard_ratio=_env_float_clamped(
+            "MORNING_PV_HEADROOM_GUARD_RATIO", 0.50, min_value=0.0, max_value=1.0
+        ),
+        min_guard_kwh=max(0.0, _env_float("MORNING_PV_HEADROOM_GUARD_MIN_KWH", 0.20)),
     )
-    min_guard_kwh = max(
-        0.0,
-        float(os.getenv("MORNING_PV_HEADROOM_GUARD_MIN_KWH", "0.20").strip() or "0.20"),
-    )
-    guard_headroom = max(0.0, morning_pv * guard_ratio - morning_deficit)
-    applied = enabled and capacity > 0 and guard_headroom >= min_guard_kwh
-    cap_target_soc = 100.0
-    if applied:
-        cap_target_soc = max(
-            reserve_soc_percent,
-            100.0 - (guard_headroom / capacity * 100.0),
-        )
-    return {
-        "enabled": enabled,
-        "applied": applied,
-        "hours": hours,
-        "guard_ratio": guard_ratio,
-        "min_guard_kwh": min_guard_kwh,
-        "morning_pv_kwh": morning_pv,
-        "morning_load_kwh": morning_load,
-        "morning_deficit_kwh": morning_deficit,
-        "guard_headroom_kwh": guard_headroom,
-        "cap_target_soc_percent": max(0.0, min(100.0, cap_target_soc)),
-    }
 
 
 # readable-code-audit: skip STRUCT-04 — historical selection and headroom decision must use the same daytime energy snapshot

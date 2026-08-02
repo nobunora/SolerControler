@@ -54,3 +54,42 @@ def active_constraint_names(
     if historical_enforced:
         active.append("historical_daytime_soc_gain_guard")
     return active
+
+
+def morning_pv_headroom_guard(
+    *,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    effective_capacity_kwh: float,
+    reserve_soc_percent: float,
+    enabled: bool,
+    guard_ratio: float,
+    min_guard_kwh: float,
+) -> dict[str, object]:
+    """Limit morning SOC only when forecast PV needs usable battery headroom."""
+    hours = [7, 8, 9]
+    morning_pv = sum(max(0.0, hourly_pv_kwh.get(hour, 0.0)) for hour in hours)
+    morning_load = sum(max(0.0, hourly_load_kwh.get(hour, 0.0)) for hour in hours)
+    morning_deficit = max(0.0, morning_load - morning_pv)
+    capacity = max(0.0, effective_capacity_kwh)
+    clamped_ratio = max(0.0, min(1.0, guard_ratio))
+    required_headroom = max(0.0, min_guard_kwh)
+    guard_headroom = max(0.0, morning_pv * clamped_ratio - morning_deficit)
+    applied = enabled and capacity > 0 and guard_headroom >= required_headroom
+    cap_target_soc = (
+        max(reserve_soc_percent, 100.0 - guard_headroom / capacity * 100.0)
+        if applied
+        else 100.0
+    )
+    return {
+        "enabled": enabled,
+        "applied": applied,
+        "hours": hours,
+        "guard_ratio": clamped_ratio,
+        "min_guard_kwh": required_headroom,
+        "morning_pv_kwh": morning_pv,
+        "morning_load_kwh": morning_load,
+        "morning_deficit_kwh": morning_deficit,
+        "guard_headroom_kwh": guard_headroom,
+        "cap_target_soc_percent": max(0.0, min(100.0, cap_target_soc)),
+    }
