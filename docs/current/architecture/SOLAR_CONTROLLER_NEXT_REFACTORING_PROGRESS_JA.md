@@ -355,3 +355,10 @@
 - 責務境界: 新モジュールは履歴行・予報payload・明示された `enabled` / `blend` 値だけを受ける純粋な変換とした。環境変数 `HOURLY_WEATHER_PV_SHAPE_*` の読取り、PV配列候補の選択、最終計画の組立ては `workflow` に残したため、設定解釈と入力データ整形が混在しない。
 - テスト: `test_energy_model.py` の直接テストは新モジュールをimportし、短波放射shapeの有効化とblend値を引数で明示した。これによりテストがプロセス環境に依存しない。完全30分ペア集計、夜間負荷の上書き、PV総量保存を既存期待値で継続検証している。
 - 検証: `python -m pytest -q tests/test_energy_model.py` は `52 passed`。`python -m mypy app/energy_plan/forecast_inputs.py app/energy_plan/workflow.py --no-incremental`、`python -m compileall -q app/energy_plan/forecast_inputs.py app/energy_plan/workflow.py`、`git diff --check` は成功した。外部API、DB、Firestore、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-1c-1: SOC制約契約・有効制約名の分離
+
+- 変更: `SocConstraint`、`SocConstraintSet`、およびPV予報方式ごとの実際に強制される制約名を返す `active_constraint_names` を `app.energy_plan.soc_constraints` の正規所有先へ移した。
+- 境界: guardの数値計算・環境変数解釈・最終SOC上限の組立ては、後続の小カードで移す。今回の変更は、制約集合のデータ契約を先に固定し、既存のworkflow呼出しを壊さない範囲に限定した。
+- テスト: 直接テストは正規モジュールをimportするよう更新した。`workflow` は同一関数をprivate import aliasとして公開し続けるため、既存の呼出し契約を維持する。
+- 検証: `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。`python -m mypy app/energy_plan/soc_constraints.py app/energy_plan/workflow.py --no-incremental`、`python -m compileall -q app/energy_plan/soc_constraints.py app/energy_plan/workflow.py`、`git diff --check` は成功した。外部サービス、DB、Firestore、蓄電池操作は実行していない。

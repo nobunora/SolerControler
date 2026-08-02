@@ -83,6 +83,11 @@ from app.energy_plan.forecast_inputs import (
     pv_forecast_totals,
     reshape_hourly_pv_by_weather,
 )
+from app.energy_plan.soc_constraints import (
+    SocConstraint,
+    SocConstraintSet,
+    active_constraint_names as _active_constraint_names,
+)
 
 
 @dataclass(frozen=True)
@@ -236,26 +241,6 @@ class PvForecastBundle:
     source: str
     uncertainty: PvForecastUncertainty
     sunset_hour: int
-
-
-@dataclass(frozen=True)
-class SocConstraint:
-    name: str
-    applied: bool
-    cap_target_soc_percent: float | None
-    reason: str
-    evidence: dict[str, object]
-
-
-@dataclass
-class SocConstraintSet:
-    reserve_soc_percent: float
-    max_target_soc_percent: float
-    apply_pv_headroom_caps: bool
-    active_constraints: list[SocConstraint]
-    morning_headroom: dict[str, object]
-    daytime_net_surplus: dict[str, object]
-    historical_soc_gain: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -635,32 +620,6 @@ def _build_plan_quality(
         "source": source or "unknown",
         "reasons": reasons or ["all_required_inputs_available"],
     }
-
-
-def _active_constraint_names(
-    *,
-    morning_headroom_guard: dict[str, object],
-    daytime_net_surplus_headroom_guard: dict[str, object],
-    historical_soc_gain_guard: dict[str, object],
-    respect_morning_headroom_guard: bool,
-) -> list[str]:
-    active = ["reserve_soc"]
-    morning_enforced = morning_headroom_guard.get("enforced_as_target_cap", morning_headroom_guard.get("applied"))
-    daytime_enforced = daytime_net_surplus_headroom_guard.get(
-        "enforced_as_target_cap",
-        daytime_net_surplus_headroom_guard.get("applied"),
-    )
-    historical_enforced = historical_soc_gain_guard.get(
-        "enforced_as_target_cap",
-        historical_soc_gain_guard.get("applied"),
-    )
-    if respect_morning_headroom_guard and morning_enforced:
-        active.append("morning_pv_headroom_guard")
-    if daytime_enforced:
-        active.append("daytime_net_surplus_headroom_guard")
-    if historical_enforced:
-        active.append("historical_daytime_soc_gain_guard")
-    return active
 
 
 def _uses_physical_pv_forecast(physical_pv_diagnostics: dict[str, object]) -> bool:

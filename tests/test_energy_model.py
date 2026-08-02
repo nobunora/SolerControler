@@ -37,8 +37,8 @@ from app.energy_plan.forecast_inputs import (
     historical_hourly_profile,
     reshape_hourly_pv_by_weather,
 )
+from app.energy_plan.soc_constraints import active_constraint_names
 from app.energy_plan.workflow import (
-    _active_constraint_names,
     _annotate_pv_headroom_guard_policy,
     _build_forecast_correction,
     _daytime_net_surplus_headroom_guard,
@@ -629,7 +629,7 @@ def test_physical_pv_selection_marks_headroom_cap_not_enforced() -> None:
         apply_caps=False,
         selected_method="physical_global",
     )
-    active = _active_constraint_names(
+    active = active_constraint_names(
         morning_headroom_guard={"applied": False},
         daytime_net_surplus_headroom_guard={"applied": False},
         historical_soc_gain_guard=annotated,
