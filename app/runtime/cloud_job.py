@@ -38,6 +38,27 @@ from app.runtime.schedule import (
     _parse_hhmm_minutes,
     _seconds_until_cutoff,
 )
+from app.runtime.command_adapter import (
+    _env_float,
+    _env_int,
+    _mask_env_updates,
+    _run,
+    _run_operation_with_retry,
+    _run_optional,
+)
+from app.runtime.adjust03_plan import (
+    _attempt_03_fail_safe_standby,
+    _ensure_night_plan_available,
+    _night_plan_file_date,
+    _run_03_settings_profile_with_db,
+    _run_db_pipeline_slot,
+)
+from app.runtime.slot_orchestration import (
+    _run_adjust_03,
+    _run_day_07,
+    _run_night_23,
+    _run_optional_04_exports_and_backups,
+)
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -84,40 +105,6 @@ class _RunnerMonitorStatusPort:
 
     def persist_no_charge(self, **values: Any) -> bool:
         return _persist_03_no_charge_decision_to_firestore(**values)
-
-
-def _mask_env_updates(env_updates: dict[str, str] | None) -> dict[str, str]:
-    if not env_updates:
-        return {}
-    masked: dict[str, str] = {}
-    for key, value in env_updates.items():
-        lower_key = key.lower()
-        if any(word in lower_key for word in _SECRET_KEYWORDS):
-            masked[key] = "***"
-        else:
-            masked[key] = value
-    return masked
-
-
-def _run(command: Iterable[str], env_updates: dict[str, str] | None = None) -> None:
-    env = os.environ.copy()
-    if env_updates:
-        env.update(env_updates)
-    cmd = list(command)
-    print(
-        f"[cloud_job_runner] run: {' '.join(cmd)} env_updates={_mask_env_updates(env_updates)}",
-        flush=True,
-    )
-    completed = subprocess.run(cmd, env=env, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Command failed (rc={completed.returncode}): {' '.join(cmd)}")
-
-
-def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = None, *, label: str) -> None:
-    try:
-        _run(command, env_updates)
-    except Exception as exc:
-        print(f"[cloud_job_runner] optional step failed ({label}): {exc}", flush=True)
 
 
 def _to_float_or_none(value: object) -> float | None:
@@ -387,52 +374,6 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
 
 
 # readable-code-audit: skip DUP-01 — Cloud Job must clamp retry and delay values to safe minima after malformed input fallback.
-def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
-    try:
-        value = int(os.getenv(name, str(default)).strip() or str(default))
-    except ValueError:
-        value = default
-    return max(min_value, value)
-
-
-# readable-code-audit: skip DUP-01 — Cloud Job must clamp retry and delay values to safe minima after malformed input fallback.
-def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
-    try:
-        value = float(os.getenv(name, str(default)).strip() or str(default))
-    except ValueError:
-        value = default
-    return max(min_value, value)
-
-
-def _run_operation_with_retry(
-    operation: Callable[[], _T],
-    *,
-    label: str,
-    attempts_env: str = "KP_COMMAND_RETRY_ATTEMPTS",
-    delay_env: str = "KP_COMMAND_RETRY_DELAY_SECONDS",
-    default_attempts: int = 3,
-    default_delay_seconds: float = 20.0,
-) -> _T:
-    attempts = _env_int(attempts_env, default_attempts, min_value=1)
-    delay_seconds = _env_float(delay_env, default_delay_seconds, min_value=0.0)
-    last_exc: Exception | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return operation()
-        except Exception as exc:
-            last_exc = exc
-            if attempt >= attempts:
-                break
-            print(
-                f"[cloud_job_runner] retry {label} attempt={attempt}/{attempts} failed: {exc}; "
-                f"sleep={delay_seconds}s",
-                flush=True,
-            )
-            if delay_seconds > 0:
-                time.sleep(delay_seconds)
-    raise RuntimeError(f"{label} failed after {attempts} attempts: {last_exc}") from last_exc
-
-
 def _run_with_retry(
     command: Iterable[str],
     env_updates: dict[str, str] | None = None,
@@ -482,126 +423,6 @@ def _run_csv_with_retry(*, label: str = "kpnet-csv") -> None:
 
 
 # readable-code-audit: skip DUP-01 — Cloud Job clamps or defaults invalid schedule input so an automated job always has a safe execution time, unlike Dashboard display parsing.
-def _ensure_night_plan_available(plan_path: Path) -> bool:
-    target_date = _adjust03_target_date()
-    regenerate = os.getenv("ADJUST03_REGENERATE_PLAN", "true").strip().lower() in {"1", "true", "yes", "on"}
-    if regenerate:
-        print(
-            f"[cloud_job_runner] 03-plan regenerating target_date={target_date} path={plan_path}",
-            flush=True,
-        )
-        try:
-            _run_with_retry(
-                [sys.executable, "energy_model_main.py"],
-                {"FORECAST_DATE_OVERRIDE": target_date},
-                label="03-regenerate-night-plan",
-                attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
-                delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
-                default_attempts=2,
-                default_delay_seconds=30.0,
-            )
-            _persist_night_plan_to_firestore(plan_path, source="adjust03-regenerated")
-            if plan_path.exists() and _night_plan_file_date(plan_path) == target_date:
-                return True
-        except Exception as exc:
-            print(f"[cloud_job_runner] 03-plan regeneration failed; trying fallback plan: {exc}", flush=True)
-
-    if plan_path.exists() and _night_plan_file_date(plan_path) == target_date:
-        return True
-
-    if _restore_night_plan_from_firestore(plan_path, target_date=target_date):
-        return True
-
-    print(
-        f"[cloud_job_runner] 03-plan missing; regenerating target_date={target_date} path={plan_path}",
-        flush=True,
-    )
-    _run_with_retry(
-        [sys.executable, "energy_model_main.py"],
-        {"FORECAST_DATE_OVERRIDE": target_date},
-        label="03-regenerate-night-plan",
-        attempts_env="ADJUST03_PLAN_RETRY_ATTEMPTS",
-        delay_env="ADJUST03_PLAN_RETRY_DELAY_SECONDS",
-        default_attempts=2,
-        default_delay_seconds=30.0,
-    )
-    _persist_night_plan_to_firestore(plan_path, source="adjust03-regenerated")
-    return plan_path.exists() and _night_plan_file_date(plan_path) == target_date
-
-
-def _night_plan_file_date(plan_path: Path) -> str:
-    try:
-        obj = json.loads(plan_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    forecast = obj.get("forecast", {})
-    if not isinstance(forecast, dict):
-        return ""
-    return str(forecast.get("date", "")).strip()
-
-
-def _run_db_pipeline_slot(
-    slot: str,
-    *,
-    include_csv: bool = True,
-    include_settings: bool = True,
-    extra_env: dict[str, str] | None = None,
-) -> None:
-    env = {
-        "CLOUD_JOB_SLOT": slot,
-        "DATA_PIPELINE_INCLUDE_CSV": "true" if include_csv else "false",
-        "DATA_PIPELINE_INCLUDE_SETTINGS": "true" if include_settings else "false",
-    }
-    if extra_env:
-        env.update(extra_env)
-    _run(
-        [sys.executable, "db_pipeline_main.py"],
-        env,
-    )
-
-
-def _run_03_settings_profile_with_db(
-    *,
-    profile: str,
-    dynamic_forced_profile: bool,
-    label: str,
-) -> None:
-    _run_settings_profile_with_retry(
-        profile=profile,
-        dynamic_forced_profile=dynamic_forced_profile,
-        label=label,
-    )
-    _run_db_pipeline_slot(
-        "03",
-        include_csv=False,
-        include_settings=True,
-        extra_env={
-            "DATA_DB_WRITE_ONLY_23": "false",
-            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-        },
-    )
-
-
-def _attempt_03_fail_safe_standby(
-    plan_meta: dict[str, Any],
-    *,
-    label: str,
-    reason: str,
-    device_port: MonitorDevicePort | None = None,
-    status_port: MonitorStatusPort | None = None,
-) -> None:
-    device = device_port or _RunnerMonitorDevicePort()
-    status = status_port or _RunnerMonitorStatusPort()
-    try:
-        device.apply_profile(
-            profile="standby",
-            dynamic_forced_profile=False,
-            label=label,
-        )
-    finally:
-        status.persist_stop_reason(plan_meta, reason)
-
-
 def _execute_monitor_terminal_transition(
     plan_meta: dict[str, Any],
     transition: ChargeTransition,
@@ -938,73 +759,6 @@ def _monitor_partial_forced_and_stop(
             flush=True,
         )
         monitor_clock.sleep(next_check_seconds)
-
-def _run_night_23() -> None:
-    # 23:00 is only a mode-control guard. Forecast/data work is centralized in
-    # the 03:00 controller, which still has enough time to reach 100% if needed.
-    profile = os.getenv("NIGHT23_SETTINGS_PROFILE", "standby").strip() or "standby"
-    _run_settings_profile_with_retry(
-        profile=profile,
-        dynamic_forced_profile=False,
-        label=f"23-settings-{profile}",
-    )
-
-
-def _run_optional_04_exports_and_backups() -> None:
-    _run_optional(
-        [sys.executable, "sheets_export_main.py"],
-        {
-            "CLOUD_JOB_SLOT": "03",
-        },
-        label="sheets-export",
-    )
-    if os.getenv("DRIVE_BACKUP_FOLDER_ID", "").strip():
-        _run_optional(
-            [sys.executable, "scripts/backup_drive.py", "--mode", os.getenv("DRIVE_BACKUP_MODE", "data").strip() or "data"],
-            {
-                "CLOUD_JOB_SLOT": "03",
-            },
-            label="drive-backup",
-        )
-    else:
-        print("[cloud_job_runner] drive-backup skipped: DRIVE_BACKUP_FOLDER_ID is empty", flush=True)
-
-
-def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
-    # 夜間コントローラ:
-    # 1) 03:00にCSVを取得して現在SOCを把握
-    # 2) 当日分の最新予報を03:00時点で再生成
-    # 3) すぐ強制充電を開始し、目標到達または7時まで監視
-    _run_csv_with_retry(label="03-initial-csv")
-    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-    _persist_previous_day_soc_feedback(
-        target_date=_adjust03_target_date(),
-        csv_paths=_latest_kpnet_csv_paths(artifacts_dir),
-    )
-    plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    if not _ensure_night_plan_available(plan_path):
-        raise RuntimeError(f"night charge plan not found: {plan_path}")
-    _run_db_pipeline_slot(
-        "03",
-        include_csv=True,
-        include_settings=False,
-        extra_env={
-            "DATA_DB_WRITE_ONLY_23": "false",
-            "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-        },
-    )
-    if plan_refresh_only:
-        print("[cloud_job_runner] 03-plan refresh completed without device control", flush=True)
-        return
-    _monitor_partial_forced_and_stop(plan_path)
-    _run_optional_04_exports_and_backups()
-
-
-def _run_day_07() -> None:
-    # 07:00 実行:
-    # 日中運用向けにグリーンモード設定のみ登録
-    _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="07-green")
-
 
 def main() -> int:
     slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()

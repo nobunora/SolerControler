@@ -88,3 +88,11 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - CSV月選択、CSV点解析、plot生成を `csv_visualization.py` へ移動した。
 - KpNetConfig、KpNetClient、CSV/settings phase、workflow実行順は `workflow.py` に保持し、clientの内部importを正規profile builderへ更新した。
 - 検証: `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。
+
+## R-4再是正完了
+
+- command実行、secret mask、retry設定とretry loopを `command_adapter.py` へ移動した。
+- 03時plan再生成、DB/settings配線、fail-safe standbyを `adjust03_plan.py` へ移動した。
+- 23時、03時、07時slot配線を `slot_orchestration.py` へ移動した。
+- monitor lifecycle、terminal transition、公開mainは `cloud_job.py` に保持し、既存monkeypatch境界は遅延callbackで維持した。
+- 検証: `71 passed`、runtime/forced_charge mypy 0件、compileall、diff check成功。
