@@ -376,3 +376,9 @@
 - 不変条件: 環境変数名、guardのreason/evidence payload、SOC上限の丸め、計画出力、外部I/Oは変更していない。
 - 検証: 指定Energy Plan回帰は `108 passed`。`python -m mypy app/energy_plan --no-incremental` は `16 source files` で成功、`compileall` と `git diff --check` も成功した。
 - 外部安全性: Open-Meteo、Firestore、DB、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-1c-4: 履歴SOC gain guardの分離
+
+- 開始コミット: `8f137d8f10608c8ef4d251befa33179056823ea9`。
+- 変更: 履歴日の選別、SOC gain percentile、除外理由、SOC上限の算出を `app.energy_plan.soc_constraints` の正規所有先へ移した。workflowには既存のprivate patch境界を維持する委譲だけを残した。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`、Energy Plan mypyは0エラー、`git diff --check` は成功した。外部サービスは実行していない。

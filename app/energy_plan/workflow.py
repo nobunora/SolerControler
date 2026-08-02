@@ -1056,18 +1056,6 @@ def _daytime_net_surplus_headroom_guard(
     )
 
 
-def _percentile(values: list[float], percentile: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    p = max(0.0, min(100.0, percentile)) / 100.0
-    pos = (len(ordered) - 1) * p
-    lo = int(pos)
-    hi = min(len(ordered) - 1, lo + 1)
-    frac = pos - lo
-    return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
-
-
 # readable-code-audit: skip STRUCT-04 — history selection and the resulting guard must use one model-input snapshot to avoid approving a plan from mismatched dates
 def _historical_daytime_soc_gain_guard(
     rows: list[dict[str, Any]],
@@ -1075,154 +1063,13 @@ def _historical_daytime_soc_gain_guard(
     reserve_soc_percent: float,
     target_date: str,
 ) -> dict[str, object]:
-    """Cap morning SOC using observed PV-driven SOC gain.
+    from app.energy_plan.soc_constraints import historical_daytime_soc_gain_guard
 
-    This is a guardrail, not the main optimizer. It prevents low PV forecasts
-    from selecting a near-full morning SOC while the historical record still
-    says some daytime charging headroom should be preserved.
-    """
-
-    enabled = _env_bool("HISTORICAL_DAYTIME_SOC_GAIN_GUARD_ENABLED", True)
-    percentile = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_PERCENTILE", 25.0, min_value=0.0, max_value=100.0)
-    floor_percent = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_FLOOR_PERCENT", 15.0, min_value=0.0, max_value=100.0)
-    min_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_DAYS", 5.0)))
-    long_term_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_LONG_TERM_DAYS", 180.0)))
-    recent_days = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_RECENT_DAYS", 30.0)))
-    max_morning_soc = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_MAX_MORNING_SOC", 70.0, min_value=0.0, max_value=100.0)
-    full_soc_threshold = _env_float_clamped("HISTORICAL_DAYTIME_SOC_GAIN_FULL_SOC_THRESHOLD", 98.0, min_value=0.0, max_value=100.0)
-    min_pv_kwh = max(0.0, _env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_PV_KWH", 0.1))
-    min_samples = max(1, int(_env_float("HISTORICAL_DAYTIME_SOC_GAIN_MIN_SAMPLES", 30.0)))
-
-    by_day: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        by_day.setdefault(dt.date().isoformat(), []).append(row)
-
-    candidates: list[dict[str, object]] = []
-    excluded = {
-        "incomplete": 0,
-        "low_pv": 0,
-        "missing_morning_soc": 0,
-        "full_soc_clipped": 0,
-        "high_morning_soc": 0,
-        "future_or_target_day": 0,
-    }
-
-    for day, day_rows in sorted(by_day.items()):
-        if day >= target_date:
-            excluded["future_or_target_day"] += 1
-            continue
-        day_rows = sorted(
-            day_rows,
-            key=lambda x: x["dt"] if isinstance(x.get("dt"), datetime) else datetime.min,
-        )
-        if len(day_rows) < min_samples:
-            excluded["incomplete"] += 1
-            continue
-        last_dt = day_rows[-1]["dt"]
-        if not isinstance(last_dt, datetime) or last_dt.hour < 18:
-            excluded["incomplete"] += 1
-            continue
-
-        total_pv = sum(float(r.get("pv", 0.0) or 0.0) for r in day_rows)
-        if total_pv < min_pv_kwh:
-            excluded["low_pv"] += 1
-            continue
-
-        morning_rows = [
-            r for r in day_rows
-            if isinstance(r.get("dt"), datetime) and 6 <= r["dt"].hour <= 8
-        ]
-        if not morning_rows:
-            excluded["missing_morning_soc"] += 1
-            continue
-        morning = min(
-            morning_rows,
-            key=lambda r: abs(
-                ((r["dt"].hour * 60 + r["dt"].minute) - 420)
-                if isinstance(r.get("dt"), datetime)
-                else 10_000
-            ),
-        )
-        morning_soc = _to_optional_float(morning.get("soc"))
-        if morning_soc is None or morning_soc != morning_soc:
-            excluded["missing_morning_soc"] += 1
-            continue
-
-        day_soc_values: list[float] = []
-        for row in day_rows:
-            row_dt = row.get("dt")
-            if not isinstance(row_dt, datetime) or not 5 <= row_dt.hour <= 18:
-                continue
-            soc_value = _to_optional_float(row.get("soc"))
-            if soc_value is not None and soc_value == soc_value:
-                day_soc_values.append(soc_value)
-        if not day_soc_values:
-            excluded["incomplete"] += 1
-            continue
-        max_soc = max(day_soc_values)
-        if max_soc >= full_soc_threshold:
-            excluded["full_soc_clipped"] += 1
-            continue
-        if morning_soc > max_morning_soc:
-            excluded["high_morning_soc"] += 1
-            continue
-
-        gain = max(0.0, max_soc - morning_soc)
-        candidates.append(
-            {
-                "date": day,
-                "morning_soc_percent": round(morning_soc, 3),
-                "max_daytime_soc_percent": round(max_soc, 3),
-                "daytime_soc_gain_percent": round(gain, 3),
-                "pv_kwh": round(total_pv, 4),
-            }
-        )
-
-    if len(candidates) >= long_term_days:
-        selected = candidates[-recent_days:]
-        source_window = f"recent_{recent_days}_days"
-    else:
-        selected = candidates
-        source_window = "all_available_until_180_days"
-
-    gains = [_to_optional_float(x.get("daytime_soc_gain_percent")) or 0.0 for x in selected]
-    percentile_gain = _percentile(gains, percentile)
-    applied = bool(enabled and percentile_gain is not None and len(gains) >= min_days)
-    guard_gain = max(floor_percent, percentile_gain or 0.0) if applied else 0.0
-    cap_target_soc = 100.0
-    if applied:
-        cap_target_soc = max(0.0, min(100.0, 100.0 - guard_gain))
-        cap_target_soc = max(reserve_soc_percent, cap_target_soc)
-
-    return {
-        "enabled": enabled,
-        "applied": applied,
-        "reason": "ok" if applied else ("disabled" if not enabled else "insufficient_history"),
-        "target_date": target_date,
-        "source_window": source_window,
-        "sample_count": len(gains),
-        "total_candidate_days": len(candidates),
-        "percentile": percentile,
-        "percentile_gain_percent": round(percentile_gain, 3) if percentile_gain is not None else None,
-        "floor_percent": floor_percent,
-        "guard_gain_percent": round(guard_gain, 3),
-        "cap_target_soc_percent": round(cap_target_soc, 3),
-        "reserve_soc_percent": reserve_soc_percent,
-        "selection_rules": {
-            "max_morning_soc_percent": max_morning_soc,
-            "full_soc_threshold_percent": full_soc_threshold,
-            "min_pv_kwh": min_pv_kwh,
-            "min_samples_per_day": min_samples,
-        },
-        "excluded_counts": excluded,
-        "lowest_days": sorted(
-            selected,
-            key=lambda x: _to_optional_float(x.get("daytime_soc_gain_percent")) or 0.0,
-        )[:8],
-    }
+    return historical_daytime_soc_gain_guard(
+        rows,
+        reserve_soc_percent=reserve_soc_percent,
+        target_date=target_date,
+    )
 
 
 def _apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUncertainty:
