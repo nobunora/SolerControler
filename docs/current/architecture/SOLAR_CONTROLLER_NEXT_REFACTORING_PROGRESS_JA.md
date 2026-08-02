@@ -251,3 +251,8 @@
 
 - 変更: 気象アーカイブcacheのpath、読込、保存、日付chunk、および日別Open-Meteoレスポンス正規化を `app.energy_plan.weather_history` の正規関数へ移し、実行workflowは正規関数を呼び出すようにした。HTTP通信、再試行、archive recordの組立てはworkflowに残した。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。外部APIは実行していない。
+
+## 2026-08-02 — M-1b補正: 旧気象cache helperの除去
+
+- 変更: workflowから、正規 `weather_history` 関数へ切替済みだった旧cache helper、日付chunk helper、日別response正規化helperを削除した。重複した実装は残していない。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。
