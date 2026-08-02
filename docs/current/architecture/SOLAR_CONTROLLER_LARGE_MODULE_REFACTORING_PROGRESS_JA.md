@@ -45,3 +45,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - R-4変更: Cloud Jobのdelay時刻、cutoff秒数、HH:MM正規化、03時target date調整を `app/runtime/schedule.py` へ機械的に移動。slot実行順、retry、terminal transitionはcloud_job.pyに保持した。
 - R-4検証: `71 passed`、runtime/forced_charge mypy 0件、compileall、diff check成功。
+
+## R-5完了
+
+- R-5変更: PV performance calibrationの履歴集計、weather class、archive weather読込、calibration本体を `app/forecasting/pv_array_calibration.py` の正規所有へ移動。provider I/Oは `pv_array_adapters.py`、候補選択は `pv_array_selection.py` に保持し、`pv_array.py` は公開workflowと互換再exportを担当する。
+- R-5検証: `19 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
