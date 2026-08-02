@@ -81,3 +81,10 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - 最終PlanDocumentとEnergyModelOutput組立てを `result_builder.py` へ移動し、workflowはport配線と実行順を保持した。
 - optimizationの内部importを正規 `plan_quality` へ更新した。
 - 検証: Energy Plan回帰 `108 passed`、Energy Plan mypy 0件、compileall、diff check成功。
+
+## R-3再是正完了
+
+- 時間ルールに続き、運用条件、SOC/充電推定、動的forced/green profile、payload組立てを `profile_builder.py` へ移動した。
+- CSV月選択、CSV点解析、plot生成を `csv_visualization.py` へ移動した。
+- KpNetConfig、KpNetClient、CSV/settings phase、workflow実行順は `workflow.py` に保持し、clientの内部importを正規profile builderへ更新した。
+- 検証: `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。

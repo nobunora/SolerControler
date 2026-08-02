@@ -18,9 +18,9 @@ from app.kpnet.workflow import (
     _extract_alert_message,
     _extract_csrf,
     _extract_title,
-    _extract_simple_visualization_soc_percent,
     _validate_base_url,
 )
+from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 class KpNetClient:
     def __init__(self, cfg: KpNetConfig) -> None:
         self.cfg = cfg
