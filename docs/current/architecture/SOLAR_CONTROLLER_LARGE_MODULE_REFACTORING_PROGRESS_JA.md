@@ -66,3 +66,10 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - 独立再監査で、R-1〜R-6の各カードに未移動責務が残ることを確認した。
 - 指示書・進捗ログ・監査結果を `docs/current/architecture/` へ戻し、R-1から固定順で是正する。
+
+## R-1再是正完了
+
+- 温度特徴量、ridge regression、temperature correction、hourly multiplier、PV補正を `correction_model.py` へ移動した。
+- correctionの永続dict構築を `correction_result.py` へ移動し、`correction.py` は入力取得、policy、実行順、公開wrapperを保持した。
+- 既存のweather monkeypatch境界は明示callbackで維持した。
+- 検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
