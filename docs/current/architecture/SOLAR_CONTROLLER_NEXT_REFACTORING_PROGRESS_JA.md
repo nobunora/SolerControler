@@ -368,3 +368,11 @@
 - 変更: 07–09時のPV・負荷、蓄電池容量、SOC下限、guard比率、最小余力からSOC上限を計算する処理を `soc_constraints.morning_pv_headroom_guard` へ移した。
 - 境界: `workflow._morning_pv_headroom_guard` は環境変数を既存と同じ既定値・範囲で解釈して正規関数へ渡す薄い委譲にした。既存テストのmonkeypatch対象と実行時設定契約は維持している。
 - 検証: `python -m pytest -q tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。`mypy`、`compileall`、`git diff --check` は成功した。外部サービス、DB、Firestore、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-1c-3: 昼間余剰SOC guardの分離
+
+- 開始コミット: `07b7a291fe545d939991479373389cc28f3c9d01`。
+- 変更: 昼間のnet surplus、日射時間帯比率、雨天・低短波緩和、およびSOC上限の算出を `app.energy_plan.soc_constraints` の正規所有先へ移した。`workflow._daytime_net_surplus_headroom_guard` は既存のprivate monkeypatch・呼出し契約を保つ薄い委譲とした。
+- 不変条件: 環境変数名、guardのreason/evidence payload、SOC上限の丸め、計画出力、外部I/Oは変更していない。
+- 検証: 指定Energy Plan回帰は `108 passed`。`python -m mypy app/energy_plan --no-incremental` は `16 source files` で成功、`compileall` と `git diff --check` も成功した。
+- 外部安全性: Open-Meteo、Firestore、DB、蓄電池操作は実行していない。
