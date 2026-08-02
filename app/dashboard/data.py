@@ -52,6 +52,9 @@ _FIRESTORE_DASHBOARD_CACHE_SECONDS = 120.0
 __all__ = [
     "DashboardData",
     "DashboardSlice",
+    "FirestoreDashboardRepository",
+    "PostgresDashboardRepository",
+    "SQLiteDashboardRepository",
     "clear_dashboard_cache",
     "load_dashboard_data",
     "load_dashboard_slice",

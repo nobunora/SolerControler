@@ -117,3 +117,10 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - 旧 `workflow.py` に残っていたCSRF/HTML解析、HAR資格情報解析、URL検証、download filename正規化を未移動責務として検出した。
 - これらを `client_support.py` へ移し、`client.py` は正規support moduleを直接参照、`workflow.py` は公開互換importだけを保持する形へ修正した。
 - 検証: KP-NET指定回帰 `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。
+
+## R-7完了
+
+- 初回全体ゲートでDashboard repository互換名3件の明示export不足を検出し、`data.py.__all__` を是正した。
+- その後の独立構造監査でR-3のHTML/auth helper残存を検出・是正し、R-7を最初から再実行した。
+- `pre_release_local.ps1 -SkipInstall` 成功、全回帰 `438 passed, 1 skipped`、全体mypy 0件（156 source files）、security check、compileall、diff check成功。
+- R-0所有表と旧モジュールAST定義・呼出し経路の照合で、未移動実装と実装二重保持は0件。完了判定を確定した。
