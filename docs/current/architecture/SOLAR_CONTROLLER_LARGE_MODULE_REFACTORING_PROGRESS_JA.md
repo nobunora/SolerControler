@@ -140,3 +140,9 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - 月次投影で既に正規所有先となった `monthly_projection.py` と重複し、呼出しもないHH:MM/window helperを `workflow.py` から削除した。
 - 検証: Energy Plan回帰 `111 passed`、Energy Plan mypy 0件、compileall、diff check成功。
+
+## R-3追加是正完了
+
+- `KpNetConfig` とKP-NET loggerを `config.py` へ移し、HTTP clientがworkflowをimportしない一方向依存へ変更した。
+- `client.py` と `workflow.py` の単独import成功を確認し、workflow上の既存private互換名は正規moduleからのreexportで維持した。
+- 検証: KP-NET指定回帰 `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。

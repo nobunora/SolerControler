@@ -23,7 +23,7 @@ from app.parsing.numbers import parse_csv_float, to_float
 from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
-    from app.kpnet.workflow import KpNetConfig
+    from app.kpnet.config import KpNetConfig
 
 LOGGER = logging.getLogger(__name__)
 def _load_operation_conditions(path: Path) -> dict[str, Any]:

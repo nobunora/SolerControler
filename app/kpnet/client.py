@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from app.kpnet.workflow import LOGGER, KpNetConfig
+from app.kpnet.config import LOGGER, KpNetConfig
 from app.kpnet.client_support import (
     clean_filename as _clean_filename,
     extract_alert_message as _extract_alert_message,
