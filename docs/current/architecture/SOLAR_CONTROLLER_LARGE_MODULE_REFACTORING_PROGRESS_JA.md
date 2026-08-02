@@ -40,3 +40,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - R-3変更: KP-NETのNightWindowContract、HH:MM解析、時間窓判定、timezone now取得を `app/kpnet/rules.py` へ機械的に移動。workflowの既存private名と例外契約は正規importで維持した。
 - R-3検証: `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。初回の簡略化抽出は12件失敗したため破棄し、元実装の契約を保った再抽出のみを採用した。
+
+## R-4完了
+
+- R-4変更: Cloud Jobのdelay時刻、cutoff秒数、HH:MM正規化、03時target date調整を `app/runtime/schedule.py` へ機械的に移動。slot実行順、retry、terminal transitionはcloud_job.pyに保持した。
+- R-4検証: `71 passed`、runtime/forced_charge mypy 0件、compileall、diff check成功。

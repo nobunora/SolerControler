@@ -32,6 +32,12 @@ from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator
 from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
+from app.runtime.schedule import (
+    _adjust03_target_date,
+    _hhmm_after_delay,
+    _parse_hhmm_minutes,
+    _seconds_until_cutoff,
+)
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -223,8 +229,6 @@ def _persist_previous_day_soc_feedback(*, target_date: str, csv_paths: list[Path
     )
 
 
-def _hhmm_after_delay(*, timezone_name: str, delay_seconds: int) -> str:
-    return forced_charge_monitor.hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
 
 
 def _persist_03_monitor_schedule_to_firestore(
@@ -370,18 +374,6 @@ def _estimate_forced_charge_minutes(
     )
 
 
-def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
-    hhmm = cutoff_hhmm.strip()
-    if not hhmm or ":" not in hhmm:
-        return 0
-    hh_text, mm_text = hhmm.split(":", 1)
-    hh = int(hh_text)
-    mm = int(mm_text)
-    now = datetime.now(ZoneInfo(timezone_name))
-    cutoff = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return max(0, int((cutoff - now).total_seconds()))
-
-
 def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None:
     _run(
         [sys.executable, "kpnet_main.py"],
@@ -490,34 +482,6 @@ def _run_csv_with_retry(*, label: str = "kpnet-csv") -> None:
 
 
 # readable-code-audit: skip DUP-01 — Cloud Job clamps or defaults invalid schedule input so an automated job always has a safe execution time, unlike Dashboard display parsing.
-def _parse_hhmm_minutes(value: str, *, default: str) -> int:
-    text = value.strip() or default
-    if ":" not in text:
-        text = default
-    hh_text, mm_text = text.split(":", 1)
-    try:
-        hh = max(0, min(23, int(hh_text)))
-        mm = max(0, min(59, int(mm_text)))
-    except ValueError:
-        hh_text, mm_text = default.split(":", 1)
-        hh = max(0, min(23, int(hh_text)))
-        mm = max(0, min(59, int(mm_text)))
-    return hh * 60 + mm
-
-
-def _adjust03_target_date(*, now: datetime | None = None) -> str:
-    explicit = os.getenv("FORECAST_DATE_OVERRIDE", "").strip()
-    if explicit:
-        return explicit
-    timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
-    current = now or datetime.now(ZoneInfo(timezone_name))
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=ZoneInfo(timezone_name))
-    else:
-        current = current.astimezone(ZoneInfo(timezone_name))
-    return current.date().isoformat()
-
-
 def _ensure_night_plan_available(plan_path: Path) -> bool:
     target_date = _adjust03_target_date()
     regenerate = os.getenv("ADJUST03_REGENERATE_PLAN", "true").strip().lower() in {"1", "true", "yes", "on"}
