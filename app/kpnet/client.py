@@ -11,14 +11,13 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
-from app.kpnet.workflow import (
-    LOGGER,
-    KpNetConfig,
-    _clean_filename,
-    _extract_alert_message,
-    _extract_csrf,
-    _extract_title,
-    _validate_base_url,
+from app.kpnet.workflow import LOGGER, KpNetConfig
+from app.kpnet.client_support import (
+    clean_filename as _clean_filename,
+    extract_alert_message as _extract_alert_message,
+    extract_csrf as _extract_csrf,
+    extract_title as _extract_title,
+    validate_base_url as _validate_base_url,
 )
 from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 class KpNetClient:

@@ -111,3 +111,9 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - PostgreSQL/Firestoreの互換repository objectを `backend_repositories.py` へ移し、各provider moduleの共通assembler importを正規化した。
 - `data.py` はbackend選択、cache、Firestore互換portと公開loaderを保持し、既存monkeypatch境界は薄い互換関数で維持した。
 - 検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。
+
+## R-7独立監査によるR-3追加是正
+
+- 旧 `workflow.py` に残っていたCSRF/HTML解析、HAR資格情報解析、URL検証、download filename正規化を未移動責務として検出した。
+- これらを `client_support.py` へ移し、`client.py` は正規support moduleを直接参照、`workflow.py` は公開互換importだけを保持する形へ修正した。
+- 検証: KP-NET指定回帰 `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。

@@ -5,21 +5,15 @@ import json
 import logging
 import math
 import os
-import re
 import statistics
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
-from email.message import Message
-from email.utils import collapse_rfc2231_value
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import parse_qs, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import matplotlib
-import requests
-from bs4 import BeautifulSoup
 
 from app.domain.constants import SOCBounds, validate_soc_percent
 from app.kpnet import build_settings_intent
@@ -39,6 +33,14 @@ from app.kpnet.csv_visualization import (
     _parse_csv_points,
     _plot_csvs,
     _resolve_months,
+)
+from app.kpnet.client_support import (
+    clean_filename as _clean_filename,
+    extract_alert_message as _extract_alert_message,
+    extract_csrf as _extract_csrf,
+    extract_title as _extract_title,
+    parse_har_credentials as _parse_har_credentials,
+    validate_base_url as _validate_base_url,
 )
 from app.kpnet.profile_builder import (
     _apply_fixed_time_rules,
@@ -78,74 +80,6 @@ def _setup_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
-
-def _clean_filename(name: str) -> str:
-    return re.sub(r"[\\/:*?\"<>|]", "_", name).strip() or "download.csv"
-
-
-def _extract_csrf(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    meta = soup.select_one("meta[name='_csrf']")
-    if meta and meta.get("content"):
-        return str(meta["content"])
-    hidden = soup.select_one("input[name='_csrf']")
-    if hidden and hidden.get("value"):
-        return str(hidden["value"])
-    raise RuntimeError("_csrf をページから取得できませんでした")
-
-
-def _extract_alert_message(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    node = soup.select_one("div.alert.alert-danger")
-    if not node:
-        return ""
-    return node.get_text(" ", strip=True)
-
-
-def _extract_title(html: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-    if soup.title and soup.title.string:
-        return soup.title.string.strip()
-    return ""
-
-
-def _parse_har_credentials(har_path: Path) -> tuple[str, str]:
-    har = json.loads(har_path.read_text(encoding="utf-8"))
-    entries = har.get("log", {}).get("entries", [])
-    for entry in entries:
-        req = entry.get("request", {})
-        if req.get("method") != "POST":
-            continue
-        if not str(req.get("url", "")).endswith("/processLogin"):
-            continue
-        post_text = req.get("postData", {}).get("text", "")
-        parsed = parse_qs(post_text, keep_blank_values=True)
-        login_id = parsed.get("loginid", [""])[0]
-        login_password = parsed.get("loginpassword", [""])[0]
-        if login_id and login_password:
-            return login_id, login_password
-    raise RuntimeError("HARから loginid / loginpassword を取得できませんでした")
-
-
-def _validate_base_url(
-    *,
-    base_url: str,
-    enforce_https: bool,
-    allowed_hosts: list[str],
-) -> None:
-    parsed = urlparse(base_url)
-    host = (parsed.hostname or "").lower()
-    if not parsed.scheme or not host:
-        raise RuntimeError(f"KP_BASE_URL が不正です: {base_url}")
-    if enforce_https and parsed.scheme.lower() != "https":
-        raise RuntimeError("KP_BASE_URL は https URL を指定してください")
-    normalized_allowed = {h.strip().lower() for h in allowed_hosts if h.strip()}
-    if normalized_allowed and host not in normalized_allowed:
-        raise RuntimeError(
-            "KP_BASE_URL のホストが許可リスト外です "
-            f"(host={host}, allowed={sorted(normalized_allowed)})"
-        )
-
 
 @dataclass(frozen=True)
 class KpNetConfig:
