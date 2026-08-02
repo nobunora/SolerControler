@@ -394,3 +394,9 @@
 - 開始コミット: `fcd9167209760b0822015c68d504849922f7911e`。
 - 変更: PV不確実性floor、upside sigma bucket、天候upside probabilityを `app.energy_plan.optimization` の正規所有先へ移した。workflowにはprivate patch互換の薄い委譲を残した。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`、Energy Plan mypyは0エラー、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1d-2: load/paired scenario準備の分離
+
+- 開始コミット: `6e149c1b43bb8048707628940b97f8160da4b787`。
+- 変更: adaptive load scenario、既定load scenario、paired PV/load scenarioの入力正規化を `optimization` へ移した。workflowはprivate呼出し名の薄い委譲を保持する。
+- 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。

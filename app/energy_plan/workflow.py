@@ -1087,30 +1087,9 @@ def _sigma_buckets_for_cost_optimizer() -> tuple[SigmaBucket, ...]:
 def _load_scenarios_for_cost_optimizer(
     forecast_correction: dict[str, object] | None = None,
 ) -> tuple[ForecastScenario, ...] | None:
-    if not _env_bool("SOC_COST_LOAD_SCENARIOS_ENABLED", True):
-        return None
-    adaptive = (forecast_correction or {}).get("load_scenarios")
-    if isinstance(adaptive, list):
-        scenarios: list[ForecastScenario] = []
-        for item in adaptive:
-            if not isinstance(item, dict):
-                continue
-            label = str(item.get("label") or "").strip()
-            probability = _to_optional_float(item.get("probability"))
-            multiplier = _to_optional_float(item.get("multiplier"))
-            if not label or probability is None or probability <= 0.0 or multiplier is None or multiplier <= 0.0:
-                continue
-            scenarios.append(ForecastScenario(label, probability, 1.0, multiplier))
-        if scenarios:
-            return tuple(scenarios)
-    low_probability = _env_float_clamped("SOC_COST_LOAD_LOW_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
-    high_probability = _env_float_clamped("SOC_COST_LOAD_HIGH_PROBABILITY", 0.20, min_value=0.0, max_value=1.0)
-    mid_probability = max(0.0, 1.0 - low_probability - high_probability)
-    return (
-        ForecastScenario("load_low", low_probability, 1.0, _env_float("SOC_COST_LOAD_LOW_MULTIPLIER", 0.82)),
-        ForecastScenario("load_mid", mid_probability, 1.0, _env_float("SOC_COST_LOAD_MID_MULTIPLIER", 1.00)),
-        ForecastScenario("load_high", high_probability, 1.0, _env_float("SOC_COST_LOAD_HIGH_MULTIPLIER", 1.18)),
-    )
+    from app.energy_plan.optimization import load_scenarios
+
+    return load_scenarios(forecast_correction)
 
 
 def _weather_upside_probability_for_cost_optimizer(forecast: dict[str, object]) -> float:
@@ -1476,31 +1455,9 @@ def _prepare_night_charge(
 def _paired_scenarios_for_cost_optimizer(
     forecast_correction: dict[str, object] | None = None,
 ) -> tuple[ForecastScenario, ...] | None:
-    if not _env_bool("SOC_COST_PAIRED_SCENARIOS_ENABLED", True):
-        return None
-    paired = (forecast_correction or {}).get("paired_scenarios")
-    if not isinstance(paired, list):
-        return None
-    scenarios: list[ForecastScenario] = []
-    for item in paired:
-        if not isinstance(item, dict):
-            continue
-        label = str(item.get("label") or "").strip()
-        probability = _to_optional_float(item.get("probability"))
-        pv_multiplier = _to_optional_float(item.get("pv_multiplier"))
-        load_multiplier = _to_optional_float(item.get("load_multiplier"))
-        if (
-            not label
-            or probability is None
-            or probability <= 0.0
-            or pv_multiplier is None
-            or pv_multiplier <= 0.0
-            or load_multiplier is None
-            or load_multiplier <= 0.0
-        ):
-            continue
-        scenarios.append(ForecastScenario(label, probability, pv_multiplier, load_multiplier))
-    return tuple(scenarios) if len(scenarios) >= 3 else None
+    from app.energy_plan.optimization import paired_scenarios
+
+    return paired_scenarios(forecast_correction)
 
 
 # readable-code-audit: skip STRUCT-04 — candidate selection and PV provenance must remain coupled in the generated plan
