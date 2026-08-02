@@ -299,3 +299,8 @@
 
 - 変更: 夜間計画のFirestore保存・復元、前日SOC feedback、03時monitor schedule/no-charge/stop reasonのFirestore書込を `app.runtime.plan_persistence` へ移した。`cloud_job` には既存のprivate関数名を薄い委譲として残し、slot順序、retry、既存テストのFirestore monkeypatch境界を維持した。
 - 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed`。`mypy app/runtime app/forced_charge --no-incremental`、`compileall app/runtime`、`git diff --check` は成功した。Firestore、GCS、Cloud Job、蓄電池操作は実行していない。
+
+## 2026-08-02 — M-4b: Cloud Job SOC取得・fallback境界
+
+- 変更: realtime SOC取得、CSV SOC読込、retry後のCSV fallbackとunavailable理由を `app.runtime.soc_reading` へ移した。`cloud_job` のprivate関数名とテストのmonkeypatch境界は薄い委譲として維持し、retry回数・delay・SOC stale判定の既存安全下限は呼出側から同じ値で渡している。
+- 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed`。`mypy app/runtime app/forced_charge --no-incremental`、`compileall app/runtime`、`git diff --check` は成功した。KP-NET、Firestore、Cloud Job、蓄電池操作は実行していない。

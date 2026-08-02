@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import math
 import os
@@ -8,7 +7,6 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar, cast
@@ -29,21 +27,14 @@ from app.forced_charge import (
     requires_forced_charge,
 )
 from app.runtime import plan_persistence
+from app.runtime import soc_reading
+from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
-from app.domain.constants import validate_soc_percent
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths, iter_charge_soc_points
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
 _T = TypeVar("_T")
-
-
-@dataclass(frozen=True)
-class SocReading:
-    value_percent: float | None
-    source: str
-    error: str | None
-    observed_at: datetime | None
 
 
 class _SystemMonitorClock:
@@ -349,76 +340,21 @@ def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
 
 
 def _latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:
-    latest_dt: datetime | None = None
-    latest_soc: float | None = None
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
-                if not date_text or not time_text or not soc_text:
-                    continue
-                try:
-                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    soc = validate_soc_percent(float(soc_text), raw=soc_text)
-                except (TypeError, ValueError):
-                    print(
-                        f"[cloud_job_runner] invalid CSV SOC skipped: value={soc_text!r} "
-                        f"date={date_text} time={time_text}",
-                        flush=True,
-                    )
-                    continue
-                if latest_dt is None or dt > latest_dt:
-                    latest_dt = dt
-                    latest_soc = soc
-    return latest_soc, latest_dt
+    return soc_reading.latest_csv_soc_reading(csv_paths)
 
 
 def _latest_realtime_soc_percent() -> float | None:
-    from app.kpnet.workflow import KpNetClient, KpNetConfig
-
-    client = KpNetClient(KpNetConfig.from_env())
-    client.login()
-    try:
-        return client.read_realtime_soc_percent()
-    finally:
-        try:
-            client.logout()
-        except Exception as exc:
-            print(f"[cloud_job_runner] KP-NET logout failed: {exc}", flush=True)
+    return soc_reading.latest_realtime_soc_percent()
 
 
 def _read_soc_with_fallback(csv_paths: list[Path]) -> SocReading:
-    attempts = _env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3, min_value=1)
-    delay_seconds = _env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 2.0, min_value=0.0)
-    errors: list[str] = []
-    for attempt in range(1, attempts + 1):
-        try:
-            value = _latest_realtime_soc_percent()
-            if value is not None:
-                return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
-            errors.append("realtime returned no SOC")
-        except Exception as exc:
-            errors.append(str(exc))
-        if attempt < attempts and delay_seconds > 0:
-            time.sleep(delay_seconds)
-
-    csv_value, csv_observed_at = _latest_csv_soc_reading(csv_paths)
-    if csv_value is not None and csv_observed_at is not None:
-        timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
-        observed_local = csv_observed_at.replace(tzinfo=ZoneInfo(timezone_name))
-        max_age_minutes = _env_int("ADJUST03_CSV_SOC_MAX_AGE_MINUTES", 120, min_value=0)
-        age = datetime.now(ZoneInfo(timezone_name)) - observed_local
-        if timedelta(0) <= age <= timedelta(minutes=max_age_minutes):
-            return SocReading(csv_value, "csv", "; ".join(errors) or None, observed_local)
-        errors.append(f"CSV SOC is stale: observed_at={csv_observed_at.isoformat()}")
-    else:
-        errors.append("CSV SOC unavailable")
-    return SocReading(None, "unavailable", "; ".join(errors), csv_observed_at)
+    return soc_reading.read_soc_with_fallback(
+        csv_paths,
+        latest_realtime=_latest_realtime_soc_percent,
+        latest_csv=_latest_csv_soc_reading,
+        env_int=lambda name, default: _env_int(name, default, min_value=1 if "ATTEMPTS" in name else 0),
+        env_float=lambda name, default: _env_float(name, default, min_value=0.0),
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — CSV filtering, robust rate estimation, and diagnostic counts must use the same source rows
