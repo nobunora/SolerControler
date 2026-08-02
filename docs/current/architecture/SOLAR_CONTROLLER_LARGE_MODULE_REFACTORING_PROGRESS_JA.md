@@ -30,3 +30,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - R-0完了コミット: `59be414`
 - R-1変更: correctionのforecast history I/O、weather取得、thermal state生成を `app/forecasting/correction_history_io.py` へ移動。`correction.py` は補正計算と公開workflowを保持し、既存patch境界はimportで維持した。
 - R-1検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-2完了
+
+- R-2変更: 月次請求期間、対象日前のdaytime buy、残期間推計を `app/energy_plan/monthly_projection.py` へ移動。workflowには実行順と既存private名の薄い正規importだけを残した。
+- R-2検証: Energy Plan指定回帰 `108 passed`、Energy Plan mypy 0件、compileall、diff check成功。

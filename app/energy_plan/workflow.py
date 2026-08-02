@@ -61,9 +61,9 @@ from app.forecasting.correction import (
     ForecastCorrectionInput,
     ForecastCorrectionPolicy,
     _build_forecast_correction,
-    _load_forecast_hourly_history,
     build_forecast_correction,
 )
+from app.forecasting.correction_history_io import _load_forecast_hourly_history
 from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
 from app.configuration.environment import load_dotenv_if_present
@@ -88,6 +88,11 @@ from app.energy_plan.soc_constraints import (
     SocConstraintSet,
     active_constraint_names as _active_constraint_names,
     morning_pv_headroom_guard,
+)
+from app.energy_plan.monthly_projection import (
+    billing_period_for_target as _billing_period_for_target,
+    expected_rest_of_month_day_buy_kwh as _expected_rest_of_month_day_buy_kwh,
+    monthly_day_buy_kwh_before_target as _monthly_day_buy_kwh_before_target,
 )
 from app.energy_plan.optimization import LegacyOptimizationDecision, OptimizationDecision
 
@@ -1043,118 +1048,6 @@ def _is_within_window(minute_of_day: int, *, start_minute: int, end_minute: int)
     if start_minute < end_minute:
         return start_minute <= minute_of_day < end_minute
     return minute_of_day >= start_minute or minute_of_day < end_minute
-
-
-def _billing_period_for_target(target_day: date) -> tuple[date, date, int]:
-    raw = os.getenv(
-        "SOC_MONTHLY_TIER_CLOSE_DAY",
-        os.getenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14"),
-    ).strip()
-    try:
-        close_day = max(1, min(28, int(raw)))
-    except ValueError:
-        close_day = 14
-
-    if target_day.day <= close_day:
-        period_end = target_day.replace(day=close_day)
-        previous_month_end = period_end.replace(day=1) - timedelta(days=1)
-        period_start = previous_month_end.replace(day=close_day + 1)
-    else:
-        next_month = (target_day.replace(day=28) + timedelta(days=4)).replace(day=1)
-        period_start = target_day.replace(day=close_day + 1)
-        period_end = next_month.replace(day=close_day)
-    return period_start, period_end, close_day
-
-
-def _monthly_day_buy_kwh_before_target(
-    rows: list[dict[str, Any]],
-    *,
-    target_date: str,
-) -> dict[str, object]:
-    try:
-        target_day = date.fromisoformat(target_date)
-    except ValueError:
-        return {"kwh": 0.0, "source": "invalid_target_date", "target_date": target_date}
-    day_start = _parse_hhmm(os.getenv("NIGHT8_DAY_START_HHMM", "07:00"), default="07:00")
-    day_end = _parse_hhmm(os.getenv("NIGHT8_DAY_END_HHMM", "23:00"), default="23:00")
-    start_minute = _clock_minutes(day_start)
-    end_minute = _clock_minutes(day_end)
-    period_start, period_end, close_day = _billing_period_for_target(target_day)
-    total = 0.0
-    sample_days: set[str] = set()
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        row_day = dt.date()
-        if row_day < period_start or row_day >= target_day or row_day > period_end:
-            continue
-        minute = dt.hour * 60 + dt.minute
-        if not _is_within_window(minute, start_minute=start_minute, end_minute=end_minute):
-            continue
-        total += max(0.0, float(row.get("buy", 0.0) or 0.0))
-        sample_days.add(row_day.isoformat())
-    return {
-        "kwh": round(total, 4),
-        "source": "csv_month_to_target_daytime_buy",
-        "target_date": target_date,
-        "billing_period_start": period_start.isoformat(),
-        "billing_period_end": period_end.isoformat(),
-        "billing_close_day": close_day,
-        "day_window": f"{day_start.strftime('%H:%M')}-{day_end.strftime('%H:%M')}",
-        "sample_day_count": len(sample_days),
-        "sample_days": sorted(sample_days)[-10:],
-    }
-
-
-def _expected_rest_of_month_day_buy_kwh(
-    rows: list[dict[str, Any]],
-    *,
-    target_date: str,
-) -> dict[str, object]:
-    try:
-        target_day = date.fromisoformat(target_date)
-    except ValueError:
-        return {"kwh": 0.0, "source": "invalid_target_date", "target_date": target_date}
-
-    lookback_days = max(1, int(_env_float("SOC_MONTHLY_TIER_RECENT_DAYS", 7.0)))
-    day_start = _parse_hhmm(os.getenv("NIGHT8_DAY_START_HHMM", "07:00"), default="07:00")
-    day_end = _parse_hhmm(os.getenv("NIGHT8_DAY_END_HHMM", "23:00"), default="23:00")
-    start_minute = _clock_minutes(day_start)
-    end_minute = _clock_minutes(day_end)
-    period_start, period_end, close_day = _billing_period_for_target(target_day)
-    daily: dict[date, float] = {}
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        row_day = dt.date()
-        if row_day < period_start or row_day >= target_day:
-            continue
-        minute = dt.hour * 60 + dt.minute
-        if not _is_within_window(minute, start_minute=start_minute, end_minute=end_minute):
-            continue
-        daily[row_day] = daily.get(row_day, 0.0) + max(0.0, float(row.get("buy", 0.0) or 0.0))
-
-    recent_days = sorted(daily)[-lookback_days:]
-    recent_values = [daily[day] for day in recent_days]
-    avg = statistics.mean(recent_values) if recent_values else 0.0
-    remaining_days_after_target = max(0, (period_end - target_day).days)
-    expected = avg * remaining_days_after_target
-    return {
-        "kwh": round(expected, 4),
-        "source": "recent_daytime_buy_average",
-        "target_date": target_date,
-        "billing_period_start": period_start.isoformat(),
-        "billing_period_end": period_end.isoformat(),
-        "billing_close_day": close_day,
-        "day_window": f"{day_start.strftime('%H:%M')}-{day_end.strftime('%H:%M')}",
-        "lookback_days": lookback_days,
-        "sample_day_count": len(recent_days),
-        "recent_daily_avg_kwh": round(avg, 4),
-        "remaining_days_after_target": remaining_days_after_target,
-        "sample_days": [day.isoformat() for day in recent_days],
-    }
 
 
 def _load_execution_context(
