@@ -12,12 +12,19 @@ from typing import Any, Callable
 from app.dashboard.models import DashboardRawData, DashboardSlice
 from app.dashboard.repositories import DashboardLoadRequest
 from app.dashboard.schedule import _build_latest_schedule_from_events, _default_latest_schedule
+from app.dashboard.aggregation import (
+    _build_cost_monthly, _build_energy_daily, _aggregation_close_day,
+    _accounting_month_label, _accounting_period_bounds, _date_add_iso,
+    _rolling_load_forecast, _today_jst_iso,
+)
+from app.dashboard.slice_assembler import (
+    build_dashboard_slice as _build_dashboard_slice,
+    empty_dashboard_slice as _empty_dashboard_slice,
+    read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
+)
 from app.dashboard.data import (
-    _build_cost_monthly, _build_dashboard_slice, _build_dashboard_warnings, _build_energy_daily,
-    _aggregation_close_day, _accounting_month_label, _accounting_period_bounds,
-    _date_add_iso, _empty_dashboard_slice, _merge_latest_plan_into_schedule,
-    _read_latest_pv_forecast_diagnostics, _rolling_load_forecast, _rows_to_dicts,
-    _to_date_or_none, _today_jst_iso,
+    _merge_latest_plan_into_schedule, _rows_to_dicts,
+    _to_date_or_none,
     _pick_min_max_dates, _read_latest_pv_forecast_diagnostics_from_firestore,
 )
 from app.dashboard.service import merge_forecast_hourly_actuals

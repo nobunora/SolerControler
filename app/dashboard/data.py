@@ -18,8 +18,16 @@ from app.dashboard.schedule import (
     _default_latest_schedule,
     _select_schedule_event,
 )
-from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourly_actuals
-from app.dashboard.warnings import build_dashboard_warnings
+from app.dashboard.service import merge_forecast_hourly_actuals
+from app.dashboard.slice_assembler import (
+    build_dashboard_slice as _build_dashboard_slice,
+    build_slice_from_query_snapshot as _assemble_query_snapshot,
+    empty_dashboard_slice as _empty_dashboard_slice,
+    extract_pv_forecast_diagnostics as _extract_pv_forecast_diagnostics,
+    read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
+)
+from app.dashboard.sqlite_repository import SQLiteDashboardRepository, load_sqlite_query_snapshot
+from app.dashboard.backend_repositories import FirestoreDashboardRepository, PostgresDashboardRepository
 from app.domain.tariff import tiered_day_cost
 from app.parsing.numbers import to_float
 from app.dashboard.aggregation import (
@@ -58,6 +66,27 @@ __all__ = [
 ]
 
 
+def _build_slice_from_query_snapshot(
+    snapshot: DashboardQuerySnapshot,
+    *,
+    window_days: int,
+    include_static: bool,
+    pv_forecast_diagnostics: dict[str, Any] | None = None,
+    today_jst_iso: str | None = None,
+) -> DashboardSlice:
+    """Compatibility boundary for tests and callers that patch data-module ports."""
+    diagnostics = pv_forecast_diagnostics
+    if diagnostics is None:
+        diagnostics = _read_latest_pv_forecast_diagnostics() if include_static else {}
+    return _assemble_query_snapshot(
+        snapshot,
+        window_days=window_days,
+        include_static=include_static,
+        pv_forecast_diagnostics=diagnostics,
+        today_jst_iso=today_jst_iso or _today_jst_iso(),
+    )
+
+
 def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -90,37 +119,6 @@ def _pick_min_max_dates(values: list[str | None]) -> tuple[str | None, str | Non
     return min(dates), max(dates)
 
 
-def _extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(data, dict):
-        return {}
-    rationale = data.get("decision_rationale")
-    optimization = data.get("daytime_soc_optimization")
-    source = rationale if isinstance(rationale, dict) else optimization if isinstance(optimization, dict) else {}
-    physical = source.get("pv_physical_forecast") if isinstance(source, dict) else None
-    correction = source.get("forecast_correction") if isinstance(source, dict) else None
-    hourly_shape = source.get("hourly_weather_pv_shape") if isinstance(source, dict) else None
-    overnight = source.get("overnight_discharge_guard") if isinstance(source, dict) else None
-    forecast = data.get("forecast")
-    return {
-        "plan_date": forecast.get("date") if isinstance(forecast, dict) else None,
-        "physical": physical if isinstance(physical, dict) else {},
-        "forecast_correction": correction if isinstance(correction, dict) else {},
-        "hourly_weather_pv_shape": hourly_shape if isinstance(hourly_shape, dict) else {},
-        "overnight_load_forecast": overnight if isinstance(overnight, dict) else {},
-    }
-
-
-def _read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
-    path = Path(os.getenv("NIGHT_CHARGE_PLAN_PATH", "artifacts/night_charge_plan.json"))
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return _extract_pv_forecast_diagnostics(data)
-
-
 def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str, Any]:
     try:
         snap = client.collection("night_charge_plans").document("latest").get()
@@ -130,21 +128,6 @@ def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str
         return {}
     row = snap.to_dict() or {}
     return _extract_pv_forecast_diagnostics(row)
-
-
-def _empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_oldest: str | None = None, global_newest: str | None = None) -> DashboardSlice:
-    """Build the consistent empty response used when a backend has no usable rows."""
-    return DashboardSlice(
-        data=DashboardData([], [], [], [], [], latest_schedule=schedule),
-        meta={
-            "window_days": window_days,
-            "oldest_loaded_date": None,
-            "newest_loaded_date": None,
-            "global_oldest_date": global_oldest,
-            "global_newest_date": global_newest,
-            "has_more_before": False,
-        },
-    )
 
 
 def _merge_latest_plan_into_schedule(
@@ -169,22 +152,6 @@ def _merge_latest_plan_into_schedule(
     if updated_at:
         merged["plan_updated_at"] = updated_at
     return merged
-
-
-def _build_dashboard_warnings(
-    *,
-    latest_schedule: dict[str, Any],
-    battery_daily: list[dict[str, Any]],
-    energy_daily: list[dict[str, Any]],
-    end_date_iso: str,
-) -> list[dict[str, Any]]:
-    return build_dashboard_warnings(
-        latest_schedule=latest_schedule,
-        battery_daily=battery_daily,
-        energy_daily=energy_daily,
-        end_date_iso=end_date_iso,
-        today_jst_iso=_today_jst_iso(),
-    )
 
 
 def _get_global_bounds_sqlite(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
@@ -223,370 +190,16 @@ def _get_global_bounds_postgres(cur: Any) -> tuple[str | None, str | None]:
     return _pick_min_max_dates(candidates)
 
 
-def _meta_from_data(
-    *,
-    window_days: int,
-    global_oldest_date: str | None,
-    global_newest_date: str | None,
-    pv_daily: list[dict[str, Any]],
-    cost_daily: list[dict[str, Any]],
-    battery_daily: list[dict[str, Any]],
-    energy_daily: list[dict[str, Any]] | None = None,
-    forecast_hourly: list[dict[str, Any]] | None = None,
-    battery_flow_daily: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    all_dates: list[str] = []
-    all_dates.extend([str(x.get("date", "")) for x in pv_daily if x.get("date")])
-    all_dates.extend([str(x.get("date", "")) for x in cost_daily if x.get("date")])
-    all_dates.extend([str(x.get("date", "")) for x in battery_daily if x.get("date")])
-    all_dates.extend([str(x.get("date", "")) for x in energy_daily or [] if x.get("date")])
-    all_dates.extend([str(x.get("date", "")) for x in forecast_hourly or [] if x.get("date")])
-    all_dates.extend([str(x.get("date", "")) for x in battery_flow_daily or [] if x.get("date")])
-    oldest_loaded = min(all_dates) if all_dates else None
-    newest_loaded = max(all_dates) if all_dates else None
-    has_more_before = False
-    if global_oldest_date and oldest_loaded:
-        has_more_before = global_oldest_date < oldest_loaded
-    return {
-        "window_days": window_days,
-        "aggregation_close_day": _aggregation_close_day(),
-        "oldest_loaded_date": oldest_loaded,
-        "newest_loaded_date": newest_loaded,
-        "global_oldest_date": global_oldest_date,
-        "global_newest_date": global_newest_date,
-        "has_more_before": has_more_before,
-    }
-
-
-def _build_dashboard_slice(
-    raw: DashboardRawData,
-    *,
-    end_date_iso: str,
-    window_days: int,
-    pv_forecast_diagnostics: dict[str, Any] | None = None,
-    daily_review: dict[str, Any] | None = None,
-    daily_reviews: list[dict[str, Any]] | None = None,
-) -> DashboardSlice:
-    meta = _meta_from_data(
-        window_days=window_days,
-        global_oldest_date=raw.global_oldest,
-        global_newest_date=raw.global_newest,
-        pv_daily=raw.pv_daily,
-        cost_daily=raw.cost_daily,
-        battery_daily=raw.battery_daily,
-        energy_daily=raw.energy_daily,
-        forecast_hourly=raw.forecast_hourly,
-        battery_flow_daily=raw.battery_flow_daily,
-    )
-    return assemble_dashboard_slice(
-        raw,
-        meta=meta,
-        warnings=_build_dashboard_warnings(
-            latest_schedule=raw.latest_schedule,
-            battery_daily=raw.battery_daily,
-            energy_daily=raw.energy_daily,
-            end_date_iso=end_date_iso,
-        ),
-        pv_forecast_diagnostics=pv_forecast_diagnostics,
-        daily_review=daily_review,
-        daily_reviews=daily_reviews,
-    )
-
-
-def _build_slice_from_query_snapshot(
-    snapshot: DashboardQuerySnapshot,
-    *,
-    window_days: int,
-    include_static: bool,
-    pv_forecast_diagnostics: dict[str, Any] | None = None,
-) -> DashboardSlice:
-    """Apply dashboard-wide calculations and API assembly to backend query rows."""
-    end_date_iso = snapshot.resolved_end_date
-    if end_date_iso is None:
-        return _empty_dashboard_slice(
-            window_days=window_days,
-            schedule=_default_latest_schedule(),
-            global_oldest=snapshot.global_oldest_date,
-            global_newest=snapshot.global_newest_date,
-        )
-    end_obj = _to_date_or_none(end_date_iso)
-    if end_obj is None:
-        return _empty_dashboard_slice(
-            window_days=window_days,
-            schedule=_default_latest_schedule(),
-            global_oldest=snapshot.global_oldest_date,
-            global_newest=snapshot.global_newest_date,
-        )
-
-    start_date = (end_obj - timedelta(days=max(1, window_days) - 1)).isoformat()
-    energy_daily = _build_energy_daily(
-        start_date=start_date,
-        end_date_iso=end_date_iso,
-        pv_daily=snapshot.pv_daily,
-        monitoring_daily=snapshot.monitoring_daily,
-        forecast_hourly=snapshot.forecast_hourly,
-    )
-    cost_monthly = _build_cost_monthly(snapshot.all_cost_daily) if include_static else []
-    latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
-    if include_static:
-        latest_schedule = _build_latest_schedule_from_events(
-            event_rows=snapshot.settings_events,
-            battery_row=snapshot.latest_battery,
-            plan_date=end_date_iso,
-        )
-    raw = DashboardRawData(
-        pv_daily=snapshot.pv_daily,
-        cost_daily=snapshot.cost_daily,
-        cost_monthly=cost_monthly,
-        battery_daily=snapshot.battery_daily,
-        model_parameters=snapshot.model_parameters,
-        battery_flow_daily=snapshot.battery_flow_daily,
-        energy_daily=energy_daily,
-        forecast_hourly=snapshot.forecast_hourly,
-        latest_schedule=latest_schedule,
-        global_oldest=snapshot.global_oldest_date,
-        global_newest=snapshot.global_newest_date,
-    )
-    diagnostics = pv_forecast_diagnostics
-    if diagnostics is None:
-        diagnostics = _read_latest_pv_forecast_diagnostics() if include_static else {}
-    return _build_dashboard_slice(
-        raw,
-        end_date_iso=end_date_iso,
-        window_days=window_days,
-        pv_forecast_diagnostics=diagnostics,
-    )
-
-
-# readable-code-audit: skip STRUCT-04 — this adapter assembles one complete dashboard snapshot and must keep SQLite queries transactionally consistent
 def _load_sqlite_slice(
-    db_path: Path,
-    *,
-    end_date: str | None,
-    window_days: int,
-    include_static: bool,
+    db_path: Path, *, end_date: str | None, window_days: int, include_static: bool
 ) -> DashboardSlice:
-    empty_schedule = _default_latest_schedule()
-    if not db_path.exists():
-        return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        global_oldest, global_newest = _get_global_bounds_sqlite(conn)
-        if not global_newest:
-            return _empty_dashboard_slice(window_days=window_days, schedule=empty_schedule)
-
-        end_obj = _to_date_or_none(end_date) or _to_date_or_none(global_newest)
-        if end_obj is None:
-            return _empty_dashboard_slice(
-                window_days=window_days,
-                schedule=empty_schedule,
-                global_oldest=global_oldest,
-                global_newest=global_newest,
-            )
-        start_obj = end_obj - timedelta(days=max(1, window_days) - 1)
-        start_date = start_obj.isoformat()
-        end_date_iso = end_obj.isoformat()
-
-        pv_daily = []
-        if _sqlite_table_exists(conn, "sunshine_daily"):
-            pv_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT date, forecast_temp_c, actual_temp_c,
-                           forecast_pv_total_kwh, forecast_pv_morning_kwh,
-                           forecast_pv_midday_kwh, forecast_pv_evening_kwh,
-                           forecast_pv_calibration_factor
-                    FROM sunshine_daily
-                    WHERE date >= ? AND date <= ?
-                    ORDER BY date
-                    """,
-                    (start_date, end_date_iso),
-                ).fetchall()
-            )
-        cost_daily = []
-        if _sqlite_table_exists(conn, "cost_daily"):
-            cost_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen
-                    FROM cost_daily
-                    WHERE date >= ? AND date <= ?
-                    ORDER BY date
-                    """,
-                    (start_date, end_date_iso),
-                ).fetchall()
-            )
-        battery_daily = []
-        if _sqlite_table_exists(conn, "battery_daily_metrics"):
-            battery_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT date, setting_soc_target_percent, night_charge_kwh,
-                           pv_charge_end_soc_percent, pv_charge_end_at,
-                           end_of_day_soc_percent, settings_run_id, source_doc_id,
-                           source_status, source_profile, plan_quality_status,
-                           plan_should_apply, updated_at
-                    FROM battery_daily_metrics
-                    WHERE date >= ? AND date <= ?
-                    ORDER BY date
-                    """,
-                    (start_date, end_date_iso),
-                ).fetchall()
-            )
-        forecast_hourly = []
-        if _sqlite_table_exists(conn, "forecast_hourly"):
-            forecast_hourly = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                           fh.forecast_charge_kwh, ah.actual_load_kwh, ah.latest_sample_at,
-                           fh.source, fh.updated_at
-                    FROM forecast_hourly fh
-                    LEFT JOIN (
-                        SELECT substr(ts,1,10) AS date,
-                               CAST(strftime('%H', ts) AS INTEGER) AS hour,
-                               COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
-                               MAX(ts) AS latest_sample_at
-                        FROM monitoring_samples
-                        WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-                        GROUP BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
-                    ) ah ON ah.date = fh.date AND ah.hour = fh.hour
-                    WHERE fh.date >= ? AND fh.date <= ?
-                    ORDER BY fh.date, fh.hour
-                    """,
-                    (start_date, end_date_iso, start_date, end_date_iso),
-                ).fetchall()
-            )
-        history_start = (start_obj - timedelta(days=14)).isoformat()
-        monitoring_daily = []
-        battery_flow_daily = []
-        if _sqlite_table_exists(conn, "monitoring_samples"):
-            monitoring_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT substr(ts,1,10) AS date,
-                           COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
-                           COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
-                    FROM monitoring_samples
-                    WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-                    GROUP BY substr(ts,1,10)
-                    ORDER BY date
-                    """,
-                    (history_start, end_date_iso),
-                ).fetchall()
-            )
-            battery_flow_daily = _rows_to_dicts(
-                conn.execute(
-                    """
-                    SELECT substr(ts,1,10) AS date,
-                           COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
-                           COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
-                    FROM monitoring_samples
-                    WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-                    GROUP BY substr(ts,1,10)
-                    ORDER BY date
-                    """,
-                    (start_date, end_date_iso),
-                ).fetchall()
-            )
-        energy_daily = _build_energy_daily(
-            start_date=start_date,
-            end_date_iso=end_date_iso,
-            pv_daily=pv_daily,
-            monitoring_daily=monitoring_daily,
-            forecast_hourly=forecast_hourly,
-        )
-
-        cost_monthly: list[dict[str, Any]] = []
-        params: list[dict[str, Any]] = []
-        latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
-        if include_static:
-            all_cost_daily = []
-            if _sqlite_table_exists(conn, "cost_daily"):
-                all_cost_daily = _rows_to_dicts(
-                    conn.execute(
-                        """
-                        SELECT date, self_consumption_kwh, savings_yen
-                        FROM cost_daily
-                        ORDER BY date
-                        """
-                    ).fetchall()
-                )
-            cost_monthly = _build_cost_monthly(all_cost_daily)
-            params = []
-            if _sqlite_table_exists(conn, "model_parameters"):
-                params = _rows_to_dicts(
-                    conn.execute(
-                        """
-                        SELECT name, mean_value, variance, sample_count
-                        FROM model_parameters
-                        ORDER BY name
-                        """
-                    ).fetchall()
-                )
-            latest_events = []
-            if _sqlite_table_exists(conn, "settings_events"):
-                latest_events = _rows_to_dicts(
-                    conn.execute(
-                        """
-                        SELECT event_id, run_id, slot, profile, status, detail_json, source_doc_id, recorded_at
-                        FROM settings_events
-                        ORDER BY recorded_at DESC, event_id DESC
-                        LIMIT 40
-                        """
-                    ).fetchall()
-                )
-            latest_battery = None
-            if _sqlite_table_exists(conn, "battery_daily_metrics"):
-                latest_battery = conn.execute(
-                    """
-                    SELECT *
-                    FROM battery_daily_metrics
-                    ORDER BY date DESC
-                    LIMIT 1
-                    """
-                ).fetchone()
-            latest_schedule = _build_latest_schedule_from_events(
-                event_rows=latest_events,
-                battery_row=dict(latest_battery) if latest_battery is not None else None,
-                plan_date=end_date_iso,
-            )
-
-        raw = DashboardRawData(
-            pv_daily=pv_daily,
-            cost_daily=cost_daily,
-            cost_monthly=cost_monthly,
-            battery_daily=battery_daily,
-            model_parameters=params,
-            battery_flow_daily=battery_flow_daily,
-            energy_daily=energy_daily,
-            forecast_hourly=forecast_hourly,
-            latest_schedule=latest_schedule,
-            global_oldest=global_oldest,
-            global_newest=global_newest,
-        )
-        return _build_dashboard_slice(
-            raw,
-            end_date_iso=end_date_iso,
-            window_days=window_days,
-            pv_forecast_diagnostics=_read_latest_pv_forecast_diagnostics() if include_static else {},
-        )
-    finally:
-        conn.close()
-
-
-@dataclass(frozen=True)
-class SQLiteDashboardRepository:
-    db_path: Path
-
-    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
-        return _load_sqlite_slice(
-            self.db_path,
-            end_date=request.end_date,
-            window_days=request.window_days,
-            include_static=request.include_static,
-        )
+    request = DashboardLoadRequest(end_date=end_date, window_days=window_days, include_static=include_static)
+    return _build_slice_from_query_snapshot(
+        load_sqlite_query_snapshot(db_path, request),
+        window_days=window_days,
+        include_static=include_static,
+        today_jst_iso=_today_jst_iso(),
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — this adapter delegates PostgreSQL-specific queries without changing the shared slice assembler
@@ -605,15 +218,6 @@ def _load_postgres_slice(
         include_static=include_static,
     )
 
-
-@dataclass(frozen=True)
-class PostgresDashboardRepository:
-    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
-        return _load_postgres_slice(
-            end_date=request.end_date,
-            window_days=request.window_days,
-            include_static=request.include_static,
-        )
 
 def _load_firestore_slice(
     *,
@@ -634,10 +238,6 @@ def _load_firestore_slice(
         hourly_reader=_firestore_forecast_hourly_between,
     )
 
-
-class FirestoreDashboardRepository:
-    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
-        return _load_firestore_slice(end_date=request.end_date, window_days=request.window_days, include_static=request.include_static)
 
 def load_dashboard_slice(
     db_path: Path,
@@ -664,9 +264,7 @@ def load_dashboard_slice(
         )
         _FIRESTORE_SLICE_CACHE[key] = (time.monotonic(), sliced)
         return sliced
-    return SQLiteDashboardRepository(db_path).load_dashboard(
-        DashboardLoadRequest(end_date=end_date, window_days=days, include_static=include_static)
-    )
+    return _load_sqlite_slice(db_path, end_date=end_date, window_days=days, include_static=include_static)
 
 
 def load_dashboard_data(db_path: Path) -> DashboardData:

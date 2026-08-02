@@ -9,13 +9,14 @@ from typing import Any
 from app.dashboard.models import DashboardRawData, DashboardSlice
 from app.dashboard.repositories import DashboardLoadRequest
 from app.dashboard.schedule import _build_latest_schedule_from_events, _default_latest_schedule
+from app.dashboard.aggregation import _build_cost_monthly, _build_energy_daily
+from app.dashboard.slice_assembler import (
+    build_dashboard_slice as _build_dashboard_slice,
+    empty_dashboard_slice as _empty_dashboard_slice,
+    read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
+)
 from app.dashboard.data import (
-    _build_cost_monthly,
-    _build_dashboard_slice,
-    _build_energy_daily,
-    _empty_dashboard_slice,
     _pick_min_max_dates,
-    _read_latest_pv_forecast_diagnostics,
     _rows_to_dicts,
     _to_date_or_none,
 )

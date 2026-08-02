@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
+from app.dashboard.models import DashboardSlice
+from app.dashboard.slice_assembler import build_slice_from_query_snapshot
 
 
 def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
@@ -193,3 +196,16 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
         )
     finally:
         conn.close()
+
+
+def load_sqlite_slice(db_path: Path, *, end_date: str | None, window_days: int, include_static: bool) -> DashboardSlice:
+    request = DashboardLoadRequest(end_date=end_date, window_days=window_days, include_static=include_static)
+    return build_slice_from_query_snapshot(load_sqlite_query_snapshot(db_path, request), window_days=window_days, include_static=include_static)
+
+
+@dataclass(frozen=True)
+class SQLiteDashboardRepository:
+    db_path: Path
+
+    def load_dashboard(self, request: DashboardLoadRequest) -> DashboardSlice:
+        return load_sqlite_slice(self.db_path, end_date=request.end_date, window_days=request.window_days, include_static=request.include_static)

@@ -103,3 +103,11 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - 時間帯別ensemble値、hourly map、最終ensemble組立てを `pv_array_selection.py` へ移動した。
 - `pv_array.py` は公開workflow、配列設定、Open-Meteo物理発電量計算、calibration/provider配線に限定し、公開互換名は明示importで維持した。
 - 検証: `19 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-6再是正完了
+
+- backend非依存のempty response、meta、warning、snapshot-to-slice組立てを `slice_assembler.py` へ移動した。
+- SQLite query snapshotからsliceを構築するloaderとrepository実装を `sqlite_repository.py` へ移動した。
+- PostgreSQL/Firestoreの互換repository objectを `backend_repositories.py` へ移し、各provider moduleの共通assembler importを正規化した。
+- `data.py` はbackend選択、cache、Firestore互換portと公開loaderを保持し、既存monkeypatch境界は薄い互換関数で維持した。
+- 検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。
