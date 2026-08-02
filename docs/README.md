@@ -15,11 +15,11 @@ Do not read all docs. Pick one category, then one file.
 - `current/product/`: product behavior, decision rules, forecasts, and public description.
 - `current/ops/`: Google Cloud and remote operation references.
 - `current/prompts/`: reusable prompts that still reference the current behavior.
-- `current/architecture/SOLAR_CONTROLLER_NEXT_REFACTORING_EXECUTION_INSTRUCTIONS_JA.md`: active low-risk execution cards for type safety, canonical imports, duplication removal, module boundaries, and CI.
 
 ## Completed Work
 
 - `completed/refactor/architecture_hardening/`: completed architecture-hardening implementation, evidence, ownership map, and handoff log.
+- `completed/refactor/2026-08-next-refactoring/`: completed next-refactoring execution instructions, progress log, and final audit.
 - `completed/refactor/2026-07-code-structure-refactoring-review.md`: code-structure review that informed the completed hardening work.
 - `completed/reports/`: finished reports and milestone notes.
 - `completed/SOC_OPTIMIZER_REFACTOR_TASK_JA.md`: completed SOC optimizer refactor task note.

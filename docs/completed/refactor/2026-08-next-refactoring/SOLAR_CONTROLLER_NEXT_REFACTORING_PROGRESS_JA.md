@@ -451,3 +451,13 @@
 - 検出: 全体pre-releaseで互換KP-NET export 6件と気象解析scriptの旧Energy Plan import 3件がmypyにより検出された。
 - 修正: `app.kpnet_workflow` と `scripts/analyze_hourly_weather_vectors.py` を正規所有先からimportするよう更新した。CLI名・関数名・出力契約は変更していない。
 - 検証: `scripts/pre_release_local.ps1 -SkipInstall` は `438 passed, 1 skipped`、全体mypy 0件、security check成功で完走した。
+
+## 2026-08-02 — M-4/M-5完了、C-2/C-3、PF-1/PF-2完了
+
+- M-4: Cloud Jobのplan persistence、SOC読込、forced-charge monitor計算を正規モジュールへ分離済み。指定回帰は `71 passed`、対象mypy 0件。
+- M-5: forecast correctionの純粋計算を `app.forecasting.correction_calculations` へ分離済み。PV array adapterは `app.forecasting.pv_array` の公開契約を維持し、provider、calibration、candidate選択の境界を保持している。指定回帰は `72 passed, 1 skipped`、forecasting mypy 0件。
+- C-2: `.github/workflows/quality.yml` を追加済み。外部site test・credential・secretをworkflowへ設定していない。
+- C-3: 指示書、進捗ログ、最終監査結果を完了フォルダへ移送した。
+- PF-1: compileall、Python `438 passed, 1 skipped`、Dashboard JavaScript 3本、全体mypy 0件、security check、diff checkを成功させた。
+- PF-2: readable-code-auditチェックリストをapp/scripts/tests/PowerShell/YAMLへ再適用。意図的skipには具体的理由があり、wildcard importは0件、旧互換モジュールへの内部import残件は0件、未処置の監査指摘はない。
+- 外部安全性: 実サービス接続、認証情報、Cloud Run/DB/Firestore操作は実行していない。
