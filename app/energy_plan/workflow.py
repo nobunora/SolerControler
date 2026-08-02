@@ -89,6 +89,7 @@ from app.energy_plan.soc_constraints import (
     active_constraint_names as _active_constraint_names,
     morning_pv_headroom_guard,
 )
+from app.energy_plan.optimization import LegacyOptimizationDecision, OptimizationDecision
 
 
 @dataclass(frozen=True)
@@ -242,19 +243,6 @@ class PvForecastBundle:
     source: str
     uncertainty: PvForecastUncertainty
     sunset_hour: int
-
-
-@dataclass(frozen=True)
-class LegacyOptimizationDecision:
-    result: DaytimeSocOptimizationResult | None
-    payload: dict[str, object] | None
-
-
-@dataclass
-class OptimizationDecision:
-    result_payload: dict[str, Any]
-    optimization_payload: dict[str, object] | None
-    cost_optimization_payload: dict[str, object] | None
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:

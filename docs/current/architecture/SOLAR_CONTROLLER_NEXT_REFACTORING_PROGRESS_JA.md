@@ -400,3 +400,9 @@
 - 開始コミット: `6e149c1b43bb8048707628940b97f8160da4b787`。
 - 変更: adaptive load scenario、既定load scenario、paired PV/load scenarioの入力正規化を `optimization` へ移した。workflowはprivate呼出し名の薄い委譲を保持する。
 - 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1d-3: 最適化decision契約の分離
+
+- 開始コミット: `ea2d2e5205e2d40bef4196d31912df31a9c734b1`。
+- 変更: legacy/current optimizerの返却契約である `LegacyOptimizationDecision` と `OptimizationDecision` を `optimization` の正規所有先へ移した。workflowの実行順・公開APIは変更していない。
+- 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。

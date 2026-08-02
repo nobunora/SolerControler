@@ -4,8 +4,24 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import dataclass
+from typing import Any
 
+from app.energy_plan.energy_model import DaytimeSocOptimizationResult
 from app.energy_plan.soc_cost import DEFAULT_SIGMA_BUCKETS, ForecastScenario, PvForecastUncertainty, SigmaBucket
+
+
+@dataclass(frozen=True)
+class LegacyOptimizationDecision:
+    result: DaytimeSocOptimizationResult | None
+    payload: dict[str, object] | None
+
+
+@dataclass
+class OptimizationDecision:
+    result_payload: dict[str, Any]
+    optimization_payload: dict[str, object] | None
+    cost_optimization_payload: dict[str, object] | None
 
 
 def apply_uncertainty_floor(uncertainty: PvForecastUncertainty) -> PvForecastUncertainty:
