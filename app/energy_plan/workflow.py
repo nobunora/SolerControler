@@ -70,6 +70,7 @@ from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.energy_plan.weather_history import (
     consecutive_date_chunks,
+    forecast_weather_row,
     hourly_weather_records_from_open_meteo,
     hourly_weather_summary,
     load_weather_archive_cache,
@@ -1060,22 +1061,6 @@ def _archive_weather_rows(
     return _archive_weather_history(rows, lat=lat, lon=lon, timezone=timezone).rows
 
 
-def _forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
-    precip = _to_optional_float(forecast.get("precipitation_sum_mm"))
-    if precip is None:
-        # Probability is not the same unit as precipitation, but this keeps a weak rain signal
-        # for fallback forecast APIs that do not return a daily precipitation sum.
-        probability = _to_optional_float(forecast.get("precipitation_probability_mean"))
-        precip = (probability / 100.0) if probability is not None else 0.0
-    return {
-        "date": forecast["date"],
-        "temp": _to_optional_float(forecast.get("temp_c")) or 0.0,
-        "weather_code": forecast.get("weather_code") if forecast.get("weather_code") is not None else "unknown",
-        "sunshine_hours": _to_optional_float(forecast.get("sun_hours")) or 0.0,
-        "precipitation": precip,
-    }
-
-
 def _load_rows_for_consumption_forecast(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
     out: list[dict[str, object]] = []
     for row in rows:
@@ -1885,7 +1870,7 @@ def _build_consumption_forecasts(
         training_rows,
         weather_history.rows,
         context.target_date,
-        weather_row=_forecast_weather_row(context.forecast),
+        weather_row=forecast_weather_row(context.forecast),
         min_training_days=config.consumption_min_training_days,
         fallback_window=config.consumption_fallback_window_days,
     )

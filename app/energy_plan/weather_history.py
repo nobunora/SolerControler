@@ -181,3 +181,18 @@ def weather_rows_from_daily(daily: object) -> list[dict[str, object]]:
             "shortwave_radiation_sum_mj_m2": _optional_float(_list_value(daily.get("shortwave_radiation_sum"), index)) or 0.0,
         })
     return rows
+
+
+def forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
+    precipitation = _optional_float(forecast.get("precipitation_sum_mm"))
+    if precipitation is None:
+        # Fallback APIs can provide only probability; retain the existing weak rain signal.
+        probability = _optional_float(forecast.get("precipitation_probability_mean"))
+        precipitation = probability / 100.0 if probability is not None else 0.0
+    return {
+        "date": forecast["date"],
+        "temp": _optional_float(forecast.get("temp_c")) or 0.0,
+        "weather_code": forecast.get("weather_code") if forecast.get("weather_code") is not None else "unknown",
+        "sunshine_hours": _optional_float(forecast.get("sun_hours")) or 0.0,
+        "precipitation": precipitation,
+    }

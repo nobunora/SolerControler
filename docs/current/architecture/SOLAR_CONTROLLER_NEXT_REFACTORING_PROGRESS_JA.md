@@ -256,3 +256,8 @@
 
 - 変更: workflowから、正規 `weather_history` 関数へ切替済みだった旧cache helper、日付chunk helper、日別response正規化helperを削除した。重複した実装は残していない。
 - 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py` は `83 passed`。Energy Plan mypyと `git diff --check` は成功した。
+
+## 2026-08-02 — M-1c: 最適化入力用予報気象行の分離
+
+- 変更: 予報から最適化入力用の天候行を作る純粋変換を `weather_history` へ移した。降水量がない予報で確率から弱い雨信号を作る既存fallbackは維持し、workflowは正規関数を利用する。
+- 検証: `tests/test_energy_model.py tests/test_energy_model_runtime.py tests/test_energy_plan_historical.py` は `85 passed`。Energy Plan mypy、`compileall`、`git diff --check` は成功した。
