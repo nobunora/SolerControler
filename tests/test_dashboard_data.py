@@ -19,7 +19,8 @@ from app.dashboard.data import (
     load_dashboard_slice,
 )
 from app.dashboard.schedule import _build_latest_schedule_from_events, _select_schedule_event
-from app.dashboard.repositories import DashboardQuerySnapshot
+from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
+from app.dashboard.sqlite_repository import load_sqlite_query_snapshot
 from app.dashboard.warnings import build_dashboard_warnings as _build_dashboard_warnings
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
@@ -107,6 +108,46 @@ def test_dashboard_query_snapshot_keeps_backend_rows_separate_from_derived_value
     assert snapshot.resolved_end_date == "2026-06-02"
     assert snapshot.pv_daily == [{"date": "2026-06-02"}]
     assert snapshot.all_cost_daily == []
+
+
+def test_sqlite_query_snapshot_keeps_backend_rows_before_dashboard_assembly(tmp_path: Path) -> None:
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.executemany(
+            """
+            INSERT INTO sunshine_daily(date, forecast_pv_total_kwh, source, updated_at)
+            VALUES (?, ?, 'test', '2026-06-02T00:00:00')
+            """,
+            [("2026-06-01", 4.0), ("2026-06-02", 5.0)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    snapshot = load_sqlite_query_snapshot(
+        db_path,
+        DashboardLoadRequest(end_date="2026-06-02", window_days=1, include_static=False),
+    )
+
+    assert snapshot.resolved_end_date == "2026-06-02"
+    assert snapshot.pv_daily == [
+        {
+            "date": "2026-06-02",
+            "forecast_temp_c": None,
+            "actual_temp_c": None,
+            "forecast_pv_total_kwh": 5.0,
+            "forecast_pv_morning_kwh": None,
+            "forecast_pv_midday_kwh": None,
+            "forecast_pv_evening_kwh": None,
+            "forecast_pv_calibration_factor": None,
+        }
+    ]
+    assert snapshot.all_cost_daily == []
+    assert snapshot.model_parameters == []
+    assert snapshot.settings_events == []
+    assert snapshot.latest_battery is None
 
 
 def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_shape(

@@ -336,3 +336,9 @@
 
 - 変更: backendから取得した行だけを表す `DashboardQuerySnapshot` を追加した。共通のenergy/cost計算、schedule、warning、meta、`DashboardSlice`はsnapshotに含めず、後続も `data.py` の共通組立てで所有する。
 - 検証: Dashboard関連テストは `44 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-2c-3: SQLite query reader
+
+- 変更: SQLite接続、table存在確認、global date bounds、SQLite固有SQL、SQLite Rowからdictへの正規化を `app.dashboard.sqlite_repository` に移し、計算前の `DashboardQuerySnapshot` を返すreaderにした。共通のenergy/cost計算、schedule、warning、meta、`DashboardSlice`組立て、公開APIはまだ `data.py` に残している。
+- 互換性: このカードでは既存の `SQLiteDashboardRepository` と `_load_sqlite_slice` の呼出し経路を切り替えていない。DBファイル不在・日付解決不能時は空snapshotを返し、global boundsだけが得られる場合はその値を保持する。
+- 検証: 新しいreaderのローカルSQLite特性テストを含むDashboard関連テストは `45 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
