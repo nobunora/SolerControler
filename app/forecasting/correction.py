@@ -39,6 +39,15 @@ from app.forecasting.correction_history_io import (
 from app.configuration.environment import env_bool, env_float, env_float_clamped
 from app.parsing.numbers import to_float, to_int
 
+__all__ = [
+    "ForecastCorrectionInput",
+    "ForecastCorrectionPolicy",
+    "add_thermal_states",
+    "build_forecast_correction",
+    "fetch_hourly_weather",
+    "load_forecast_hourly_history_from_firestore",
+]
+
 
 @dataclass(frozen=True)
 class ForecastCorrectionInput:

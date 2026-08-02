@@ -55,3 +55,9 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - R-6変更: Dashboardの会計期間、月次cost、PV/負荷の日次集計を `app/dashboard/aggregation.py` へ移動。`data.py` は共通slice組立て、backend選択、公開loader、互換再exportを保持した。
 - R-6検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。
+
+## R-7監査是正
+
+- 全体ゲート初回で、R-1移動後の `correction.py` 互換再export 5件がmypyの明示export検査に失敗した。
+- `correction.py` に公開互換名の `__all__` を追加し、全体mypy 0件、関連回帰 `63 passed, 1 skipped`、compileall、diff checkを確認した。
+- 旧34互換モジュールへのimport検索は0件。移動対象の実装定義は各正規モジュール側にのみ存在することを確認した。
