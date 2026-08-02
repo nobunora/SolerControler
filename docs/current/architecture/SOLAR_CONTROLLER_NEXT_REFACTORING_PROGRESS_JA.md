@@ -425,3 +425,10 @@
 - 変更: current SOC optimizerの実行・decision payload整形、および料金モデル生成を `app.energy_plan.optimization` へ移した。workflowには実行順、入力port、最終output組立て、公開 `build_energy_plan` / `main` と、既存テストのpatch境界を保つ薄い委譲を残した。
 - 不変条件: SOC最適化の入力、料金・契約状態の例外、JSONキー、計画出力、外部サービス呼出し条件は変更していない。
 - 検証: 指定Energy Plan回帰は `108 passed`、`python -m mypy app/energy_plan --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-2完了: Dashboard data backend分離
+
+- 開始コミット: `b6bcdcc7c21b391bddc3018a71b9c714cd3919eb`。
+- 変更: schedule、warnings、SQLite query readerに続き、PostgreSQL固有query/repositoryを `app.dashboard.postgres_repository` へ、Firestore固有read/repositoryを `app.dashboard.firestore_repository` へ移した。`data.py` には共通モデル変換、backend選択、公開loader、既存private patch境界の委譲を残した。
+- 不変条件: backend固有のSQL、Firestore collection/document読取、transaction/query契約、Dashboard JSON shape、cache key、公開loader名は変更していない。
+- 検証: 指定Dashboard回帰は `46 passed`、`python -m mypy app/dashboard --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。
