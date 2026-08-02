@@ -50,3 +50,8 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 
 - R-5変更: PV performance calibrationの履歴集計、weather class、archive weather読込、calibration本体を `app/forecasting/pv_array_calibration.py` の正規所有へ移動。provider I/Oは `pv_array_adapters.py`、候補選択は `pv_array_selection.py` に保持し、`pv_array.py` は公開workflowと互換再exportを担当する。
 - R-5検証: `19 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-6完了
+
+- R-6変更: Dashboardの会計期間、月次cost、PV/負荷の日次集計を `app/dashboard/aggregation.py` へ移動。`data.py` は共通slice組立て、backend選択、公開loader、互換再exportを保持した。
+- R-6検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。

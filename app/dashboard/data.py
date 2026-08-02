@@ -22,6 +22,17 @@ from app.dashboard.service import assemble_dashboard_slice, merge_forecast_hourl
 from app.dashboard.warnings import build_dashboard_warnings
 from app.domain.tariff import tiered_day_cost
 from app.parsing.numbers import to_float
+from app.dashboard.aggregation import (
+    _accounting_month_label,
+    _accounting_period_bounds,
+    _aggregation_close_day,
+    _build_cost_monthly,
+    _date_add_iso,
+    _forecast_pv_kwh,
+    _rolling_load_forecast,
+    _today_jst_iso,
+    _build_energy_daily,
+)
 
 
 _FIRESTORE_CLIENTS: dict[tuple[str | None, str], Any] = {}
@@ -29,6 +40,22 @@ _FIRESTORE_SLICE_CACHE: dict[
     tuple[str | None, str, str | None, int, bool], tuple[float, "DashboardSlice"]
 ] = {}
 _FIRESTORE_DASHBOARD_CACHE_SECONDS = 120.0
+
+__all__ = [
+    "DashboardData",
+    "DashboardSlice",
+    "clear_dashboard_cache",
+    "load_dashboard_data",
+    "load_dashboard_slice",
+    "_accounting_month_label",
+    "_accounting_period_bounds",
+    "_aggregation_close_day",
+    "_build_cost_monthly",
+    "_build_energy_daily",
+    "_date_add_iso",
+    "_rolling_load_forecast",
+    "_today_jst_iso",
+]
 
 
 def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
@@ -103,176 +130,6 @@ def _read_latest_pv_forecast_diagnostics_from_firestore(client: Any) -> dict[str
         return {}
     row = snap.to_dict() or {}
     return _extract_pv_forecast_diagnostics(row)
-
-
-def _date_add_iso(date_text: str, delta_days: int) -> str | None:
-    d = _to_date_or_none(date_text)
-    if d is None:
-        return None
-    return (d + timedelta(days=delta_days)).isoformat()
-
-
-def _today_jst_iso() -> str:
-    return datetime.now(timezone(timedelta(hours=9))).date().isoformat()
-
-
-def _aggregation_close_day() -> int:
-    # 契約月の締め日を既定14日とし、暦月ではなく料金請求期間で集計をそろえる。
-    raw = os.getenv("DASHBOARD_AGGREGATION_CLOSE_DAY", "14").strip()
-    try:
-        value = int(raw)
-    except ValueError:
-        value = 14
-    return max(1, min(31, value))
-
-
-def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
-    index = (year * 12) + (month - 1) + delta
-    return index // 12, (index % 12) + 1
-
-
-def _month_end_day(year: int, month: int, close_day: int) -> int:
-    return min(close_day, monthrange(year, month)[1])
-
-
-def _accounting_month_label(day_text: str, *, close_day: int) -> str | None:
-    day = _to_date_or_none(day_text)
-    if day is None:
-        return None
-    effective_close = _month_end_day(day.year, day.month, close_day)
-    year = day.year
-    month = day.month
-    if day.day > effective_close:
-        year, month = _add_months(year, month, 1)
-    return f"{year:04d}-{month:02d}"
-
-
-def _accounting_period_bounds(month_label: str, *, close_day: int) -> tuple[str, str] | None:
-    try:
-        year_text, month_text = month_label.split("-", 1)
-        year = int(year_text)
-        month = int(month_text)
-    except Exception:
-        return None
-    if month < 1 or month > 12:
-        return None
-    end_day = _month_end_day(year, month, close_day)
-    end = date(year, month, end_day)
-    prev_year, prev_month = _add_months(year, month, -1)
-    prev_end_day = _month_end_day(prev_year, prev_month, close_day)
-    start = date(prev_year, prev_month, prev_end_day) + timedelta(days=1)
-    return start.isoformat(), end.isoformat()
-
-
-def _build_cost_monthly(cost_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    close_day = _aggregation_close_day()
-    by_month: dict[str, dict[str, float]] = {}
-    for row in cost_rows:
-        label = _accounting_month_label(str(row.get("date", "")), close_day=close_day)
-        if label is None:
-            continue
-        acc = by_month.setdefault(label, {"self_consumption_kwh": 0.0, "savings_yen": 0.0})
-        acc["self_consumption_kwh"] += float(row.get("self_consumption_kwh") or 0.0)
-        acc["savings_yen"] += float(row.get("savings_yen") or 0.0)
-
-    out: list[dict[str, Any]] = []
-    for month, values in sorted(by_month.items()):
-        bounds = _accounting_period_bounds(month, close_day=close_day)
-        period_start, period_end = bounds if bounds is not None else (None, None)
-        out.append(
-            {
-                "month": month,
-                "period_start": period_start,
-                "period_end": period_end,
-                "self_consumption_kwh": values["self_consumption_kwh"],
-                "savings_yen": values["savings_yen"],
-            }
-        )
-    return out
-
-
-def _forecast_pv_kwh(
-    sunshine_row: dict[str, Any] | None,
-) -> float | None:
-    if not sunshine_row:
-        return None
-    array_forecast = to_float(sunshine_row.get("forecast_pv_total_kwh"))
-    if array_forecast is not None:
-        return max(0.0, array_forecast)
-    return None
-
-
-def _rolling_load_forecast(
-    day: str,
-    actual_by_day: dict[str, dict[str, Any]],
-    *,
-    lookback_days: int = 14,
-) -> float | None:
-    day_obj = _to_date_or_none(day)
-    if day_obj is None:
-        return None
-    values: list[float] = []
-    for prev_day in sorted(actual_by_day):
-        prev_obj = _to_date_or_none(prev_day)
-        if prev_obj is None or prev_obj >= day_obj:
-            continue
-        if (day_obj - prev_obj).days > lookback_days:
-            continue
-        value = to_float(actual_by_day[prev_day].get("actual_load_kwh"))
-        if value is not None:
-            values.append(value)
-    if not values:
-        return None
-    return sum(values) / len(values)
-
-
-def _build_energy_daily(
-    *,
-    start_date: str,
-    end_date_iso: str,
-    pv_daily: list[dict[str, Any]],
-    monitoring_daily: list[dict[str, Any]],
-    forecast_hourly: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
-    pv_by_day = {str(row.get("date")): row for row in pv_daily if row.get("date")}
-    actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
-    hourly_load_by_day: dict[str, float] = {}
-    for row in forecast_hourly or []:
-        day = str(row.get("date") or "")
-        value = to_float(row.get("forecast_load_kwh"))
-        if day and value is not None:
-            hourly_load_by_day[day] = hourly_load_by_day.get(day, 0.0) + max(0.0, value)
-    dates = {
-        d
-        for d in set(pv_by_day) | set(actual_by_day)
-        if start_date <= d <= end_date_iso
-    }
-    out: list[dict[str, Any]] = []
-    for day in sorted(dates):
-        actual = actual_by_day.get(day, {})
-        pv = pv_by_day.get(day)
-        forecast_pv = _forecast_pv_kwh(pv)
-        out.append(
-            {
-                "date": day,
-                "forecast_pv_kwh": forecast_pv,
-                "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
-                "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
-                "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),
-                "forecast_pv_calibration_factor": (pv or {}).get("forecast_pv_calibration_factor"),
-                "actual_pv_kwh": actual.get("actual_pv_kwh"),
-                "forecast_load_kwh": (
-                    hourly_load_by_day[day]
-                    if day in hourly_load_by_day
-                    else _rolling_load_forecast(day, actual_by_day)
-                ),
-                "forecast_load_source": (
-                    "forecast_hourly" if day in hourly_load_by_day else "rolling_14d_fallback"
-                ),
-                "actual_load_kwh": actual.get("actual_load_kwh"),
-            }
-        )
-    return out
 
 
 def _empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_oldest: str | None = None, global_newest: str | None = None) -> DashboardSlice:
