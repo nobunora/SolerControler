@@ -273,6 +273,11 @@
 - 変更: pre-release scriptのmypy対象を `app scripts --no-incremental` へ更新した。compileall、pytest、JavaScript test、security checkの順序は維持している。
 - 検証: `tests/test_production_deploy_scripts.py` は `21 passed`。更新したlocal pre-release gateは `432 passed, 1 skipped`、全体mypy `120 source filesで0エラー`、security check成功で完走した。
 
+## 2026-08-02 — C-2: 品質CI
+
+- 変更: Windows runner上でPython 3.12、Node 22、development dependencies、local quality gateだけを実行するGitHub Actions workflowを追加した。secret、`.env`、GCP/Drive/KP-NET認証、外部site testの有効化は追加していない。
+- 検証: workflow YAMLをローカルで構文読込し、Windows runnerと外部site testフラグ非含有を確認した。GitHub上の実行は外部状態のため、このローカル検証までとする。
+
 ## 2026-08-02 — M-1e: workflow内archive実装の除去
 
 - 変更: `workflow` に残っていたOpen-Meteo archive取得、cache、期間chunk、日別レスポンス正規化の重複本体を削除した。既存の実行時テストと依存性注入のpatch境界を保つため、同名のprivate関数は環境値の安全fallbackを渡す薄い委譲として残し、正規所有先を `weather_history.archive_weather_history` に一意化した。
