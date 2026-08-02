@@ -32,21 +32,23 @@ from app.forecasting.correction import (
 )
 from app.energy_plan.weather_history import hourly_weather_summary as _hourly_weather_summary
 from app.energy_plan.weather_history import archive_weather_history as _archive_weather_history
+from app.energy_plan.forecast_inputs import (
+    build_hourly_load_forecast,
+    historical_hourly_profile,
+    reshape_hourly_pv_by_weather,
+)
 from app.energy_plan.workflow import (
     _active_constraint_names,
     _annotate_pv_headroom_guard_policy,
-    _build_hourly_load_forecast,
     _build_forecast_correction,
     _daytime_net_surplus_headroom_guard,
     _decision_cost_breakdown,
     _historical_daytime_soc_gain_guard,
-    _historical_hourly_profile,
     _monthly_day_buy_kwh_before_target,
     _load_scenarios_for_cost_optimizer,
     _paired_scenarios_for_cost_optimizer,
     _expected_rest_of_month_day_buy_kwh,
     _read_rows,
-    _reshape_hourly_pv_by_weather,
     _selected_pv_uncertainty,
     _soc_cost_model_from_env,
 )
@@ -665,9 +667,7 @@ def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:
     assert summary["dominant_weather_class_7_17"] == "cloudy"
 
 
-def test_reshape_hourly_pv_by_weather_preserves_total_and_moves_shape(monkeypatch) -> None:
-    monkeypatch.setenv("HOURLY_WEATHER_PV_SHAPE_ENABLED", "true")
-    monkeypatch.setenv("HOURLY_WEATHER_PV_SHAPE_BLEND", "1.0")
+def test_reshape_hourly_pv_by_weather_preserves_total_and_moves_shape() -> None:
     hourly_pv = {hour: 1.0 for hour in range(7, 23)}
     forecast = {
         "source": "test",
@@ -677,7 +677,12 @@ def test_reshape_hourly_pv_by_weather_preserves_total_and_moves_shape(monkeypatc
         ],
     }
 
-    reshaped, rationale = _reshape_hourly_pv_by_weather(hourly_pv, forecast)
+    reshaped, rationale = reshape_hourly_pv_by_weather(
+        hourly_pv,
+        forecast,
+        enabled=True,
+        blend=1.0,
+    )
 
     assert rationale["enabled"] is True
     assert sum(reshaped.values()) == pytest.approx(sum(hourly_pv.values()))
@@ -756,7 +761,7 @@ def test_historical_hourly_profile_sums_complete_intervals_and_ignores_incomplet
         {"dt": datetime.fromisoformat("2026-06-12T02:30:00"), "load": 0.0},
     ]
 
-    profile = _historical_hourly_profile(rows, key="load", start_hour=0, end_hour_exclusive=3)
+    profile = historical_hourly_profile(rows, key="load", start_hour=0, end_hour_exclusive=3)
 
     assert profile[0] == pytest.approx(2.6)
     assert profile[1] == pytest.approx(0.0)
@@ -777,7 +782,7 @@ def test_build_hourly_load_forecast_fills_overnight_hours_from_history() -> None
         {"dt": datetime.fromisoformat("2026-06-10T10:00:00"), "load": 1.0},
     ]
 
-    forecast = _build_hourly_load_forecast(
+    forecast = build_hourly_load_forecast(
         rows,
         daytime_load_kwh=4.0,
         morning_load_kwh=1.0,

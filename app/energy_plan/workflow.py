@@ -76,6 +76,13 @@ from app.energy_plan.weather_history import (
     weather_archive_cache_path,
     weather_class,
 )
+from app.energy_plan.forecast_inputs import (
+    build_hourly_load_forecast,
+    build_hourly_pv_forecast,
+    load_rows_for_consumption_forecast,
+    pv_forecast_totals,
+    reshape_hourly_pv_by_weather,
+)
 
 
 @dataclass(frozen=True)
@@ -999,16 +1006,6 @@ def _archive_weather_rows(
     ).rows
 
 
-def _load_rows_for_consumption_forecast(rows: list[dict[str, Any]]) -> list[dict[str, object]]:
-    out: list[dict[str, object]] = []
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        out.append({"dt": dt, "load": float(row.get("load", 0.0) or 0.0)})
-    return out
-
-
 def _consumption_forecast_to_dict(forecast: ConsumptionForecast) -> dict[str, object]:
     return {
         "target_date": forecast.target_date.isoformat(),
@@ -1057,183 +1054,6 @@ def _build_pv_forecast_or_disabled(
         return dict(result) if result is not None else {"enabled": False, "source": "pv_array_forecast_empty"}
     except Exception as exc:
         return {"enabled": False, "source": "pv_array_forecast_failed", "error": str(exc)}
-
-
-def _pv_forecast_totals(pv_forecast: dict[str, object] | None) -> dict[str, object]:
-    if not pv_forecast or not pv_forecast.get("enabled"):
-        return {}
-    totals = pv_forecast.get("totals", {})
-    return totals if isinstance(totals, dict) else {}
-
-
-def _hourly_pv_kwh_from_forecast(
-    pv_forecast: dict[str, object] | None,
-    *,
-    target_date: str,
-) -> dict[int, float]:
-    out: dict[int, float] = {}
-    if not isinstance(pv_forecast, dict) or not pv_forecast.get("enabled"):
-        return out
-    hourly = pv_forecast.get("hourly", [])
-    if not isinstance(hourly, list):
-        return out
-    for row in hourly:
-        if not isinstance(row, dict):
-            continue
-        raw_time = str(row.get("time") or "").strip()
-        if not raw_time:
-            continue
-        try:
-            dt = datetime.fromisoformat(raw_time)
-        except ValueError:
-            continue
-        if dt.date().isoformat() != target_date:
-            continue
-        if dt.hour < 7 or dt.hour >= 23:
-            continue
-        kwh = _to_optional_float(row.get("total_kwh")) or 0.0
-        out[dt.hour] = out.get(dt.hour, 0.0) + max(0.0, kwh)
-    return out
-
-
-def _historical_hourly_profile(
-    rows: list[dict[str, Any]],
-    *,
-    key: str,
-    start_hour: int,
-    end_hour_exclusive: int,
-) -> dict[int, float]:
-    values_by_day_hour: dict[tuple[date, int], dict[int, float]] = {}
-    for row in rows:
-        dt = row.get("dt")
-        if not isinstance(dt, datetime):
-            continue
-        if dt.hour < start_hour or dt.hour >= end_hour_exclusive:
-            continue
-        if dt.minute not in {0, 30}:
-            continue
-        val = max(0.0, float(row.get(key, 0.0) or 0.0))
-        values_by_day_hour.setdefault((dt.date(), dt.hour), {})[dt.minute] = val
-
-    complete_values_by_hour: dict[int, list[float]] = {}
-    for (_, hour), interval_values in values_by_day_hour.items():
-        if set(interval_values) != {0, 30}:
-            continue
-        complete_values_by_hour.setdefault(hour, []).append(sum(interval_values.values()))
-
-    out: dict[int, float] = {}
-    for hour in range(start_hour, end_hour_exclusive):
-        values = complete_values_by_hour.get(hour, [])
-        out[hour] = statistics.mean(values) if values else 0.0
-    return out
-
-
-def _normalize_profile(profile: dict[int, float], *, hours: list[int]) -> dict[int, float]:
-    values = {h: max(0.0, profile.get(h, 0.0)) for h in hours}
-    total = sum(values.values())
-    if total <= 0:
-        uniform = 1.0 / len(hours) if hours else 0.0
-        return {h: uniform for h in hours}
-    return {h: values[h] / total for h in hours}
-
-
-def _build_hourly_load_forecast(
-    rows: list[dict[str, Any]],
-    *,
-    daytime_load_kwh: float,
-    morning_load_kwh: float,
-    overnight_load_by_hour: dict[int, float] | None = None,
-) -> dict[int, float]:
-    overnight_hours = [0, 1, 2, 3, 4, 5, 6, 23]
-    morning_hours = [7, 8, 9]
-    daytime_rest_hours = list(range(10, 23))
-    early_overnight_profile = _historical_hourly_profile(rows, key="load", start_hour=0, end_hour_exclusive=7)
-    late_overnight_profile = _historical_hourly_profile(rows, key="load", start_hour=23, end_hour_exclusive=24)
-    morning_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=7, end_hour_exclusive=10)
-    rest_profile_raw = _historical_hourly_profile(rows, key="load", start_hour=10, end_hour_exclusive=23)
-    morning_profile = _normalize_profile(morning_profile_raw, hours=morning_hours)
-    rest_profile = _normalize_profile(rest_profile_raw, hours=daytime_rest_hours)
-
-    morning_total = max(0.0, morning_load_kwh)
-    daytime_total = max(0.0, daytime_load_kwh)
-    rest_total = max(0.0, daytime_total - morning_total)
-
-    out: dict[int, float] = {}
-    for h in overnight_hours:
-        out[h] = early_overnight_profile.get(h, late_overnight_profile.get(h, 0.0))
-    for h in morning_hours:
-        out[h] = morning_total * morning_profile[h]
-    for h in daytime_rest_hours:
-        out[h] = rest_total * rest_profile[h]
-    if overnight_load_by_hour:
-        for h, value in overnight_load_by_hour.items():
-            if 0 <= int(h) <= 23:
-                out[int(h)] = max(0.0, float(value or 0.0))
-    return out
-
-
-def _build_hourly_pv_forecast(
-    rows: list[dict[str, Any]],
-    *,
-    pv_forecast: dict[str, object] | None,
-    target_date: str,
-    fallback_total_kwh: float,
-) -> dict[int, float]:
-    from_forecast = _hourly_pv_kwh_from_forecast(pv_forecast, target_date=target_date)
-    if from_forecast and sum(max(0.0, value) for value in from_forecast.values()) > 0:
-        return from_forecast
-
-    hours = list(range(7, 23))
-    pv_profile_raw = _historical_hourly_profile(rows, key="pv", start_hour=7, end_hour_exclusive=23)
-    pv_profile = _normalize_profile(pv_profile_raw, hours=hours)
-    total = max(0.0, fallback_total_kwh)
-    return {h: total * pv_profile[h] for h in hours}
-
-
-def _reshape_hourly_pv_by_weather(
-    hourly_pv_kwh: dict[int, float],
-    forecast: dict[str, object],
-) -> tuple[dict[int, float], dict[str, object]]:
-    if not _env_bool("HOURLY_WEATHER_PV_SHAPE_ENABLED", True):
-        return hourly_pv_kwh, {"enabled": False, "reason": "disabled"}
-    hourly_weather = forecast.get("hourly_weather")
-    if not isinstance(hourly_weather, list):
-        return hourly_pv_kwh, {"enabled": False, "reason": "no_hourly_weather"}
-
-    weights: dict[int, float] = {}
-    for row in hourly_weather:
-        if not isinstance(row, dict):
-            continue
-        hour = _to_optional_int(row.get("hour"))
-        if hour is None or hour < 7 or hour >= 23:
-            continue
-        shortwave = _to_optional_float(row.get("shortwave_radiation_w_m2"))
-        if shortwave is None:
-            continue
-        weights[hour] = max(0.0, shortwave)
-    if not weights or sum(weights.values()) <= 0:
-        return hourly_pv_kwh, {"enabled": False, "reason": "no_positive_shortwave"}
-
-    original_total = sum(max(0.0, value) for value in hourly_pv_kwh.values())
-    if original_total <= 0:
-        return hourly_pv_kwh, {"enabled": False, "reason": "no_hourly_pv_total"}
-
-    total_weight = sum(weights.values())
-    reshaped = {hour: original_total * (weights.get(hour, 0.0) / total_weight) for hour in range(7, 23)}
-    blend = _env_float_clamped("HOURLY_WEATHER_PV_SHAPE_BLEND", 0.75, min_value=0.0, max_value=1.0)
-    out: dict[int, float] = {}
-    for hour in range(7, 23):
-        original = max(0.0, hourly_pv_kwh.get(hour, 0.0))
-        out[hour] = original * (1.0 - blend) + reshaped.get(hour, 0.0) * blend
-    return out, {
-        "enabled": True,
-        "method": "blend_existing_pv_shape_with_hourly_shortwave",
-        "blend": blend,
-        "source": forecast.get("source"),
-        "original_total_kwh": round(original_total, 4),
-        "reshaped_total_kwh": round(sum(out.values()), 4),
-        "shortwave_hours": sorted(weights),
-    }
 
 
 def _morning_pv_headroom_guard(
@@ -1600,7 +1420,7 @@ def _estimate_midday_surplus_from_pv_forecast(
     pv_forecast: dict[str, object] | None,
     consumption_forecast: ConsumptionForecast,
 ) -> float | None:
-    totals = _pv_forecast_totals(pv_forecast)
+    totals = pv_forecast_totals(pv_forecast)
     midday_pv = _to_optional_float(totals.get("midday_kwh"))
     if midday_pv is None:
         return None
@@ -1796,7 +1616,7 @@ def _build_consumption_forecasts(
 ) -> ConsumptionForecastBundle:
     config = context.config
     weather_source = weather_history_port or _DefaultWeatherHistoryPort()
-    load_rows = _load_rows_for_consumption_forecast(context.rows)
+    load_rows = load_rows_for_consumption_forecast(context.rows)
     training_rows = filter_training_load_rows(load_rows, context.occupancy_events)
     weather_history = weather_source.load_history(
         context.rows,
@@ -1877,7 +1697,7 @@ def _prepare_night_charge(
             forecast.get("precipitation_sum_mm")
         ),
     )
-    pv_totals = _pv_forecast_totals(pv_array_forecast)
+    pv_totals = pv_forecast_totals(pv_array_forecast)
     predicted_pv_total_raw = _to_optional_float(pv_totals.get("total_kwh"))
     predicted_pv_override = predicted_pv_total_raw
     if predicted_pv_override is not None and (
@@ -1987,21 +1807,28 @@ def _build_selected_pv_forecast(
 ) -> PvForecastBundle:
     config = context.config
     pv_array_forecast = night_charge.pv_array_forecast
-    raw_hourly_load = _build_hourly_load_forecast(
+    raw_hourly_load = build_hourly_load_forecast(
         context.rows,
         daytime_load_kwh=consumption.daily.daytime_load_kwh,
         morning_load_kwh=consumption.daily.morning_load_kwh,
         overnight_load_by_hour=None,
     )
-    raw_hourly_pv = _build_hourly_pv_forecast(
+    raw_hourly_pv = build_hourly_pv_forecast(
         context.rows,
         pv_forecast=pv_array_forecast,
         target_date=context.target_date,
         fallback_total_kwh=night_charge.result.predicted_pv_kwh,
     )
-    raw_hourly_pv, hourly_weather_shape = _reshape_hourly_pv_by_weather(
+    raw_hourly_pv, hourly_weather_shape = reshape_hourly_pv_by_weather(
         raw_hourly_pv,
         context.forecast,
+        enabled=_env_bool("HOURLY_WEATHER_PV_SHAPE_ENABLED", True),
+        blend=_env_float_clamped(
+            "HOURLY_WEATHER_PV_SHAPE_BLEND",
+            0.75,
+            min_value=0.0,
+            max_value=1.0,
+        ),
     )
     physical_history, history_source = _load_forecast_hourly_history(
         target_date=context.target_date

@@ -348,3 +348,10 @@
 - 変更: `DashboardQuerySnapshot` から共通のenergy日次計算、月次料金計算、latest schedule、warning、meta、`DashboardSlice`を組み立てる `_build_slice_from_query_snapshot` を `data.py` に追加した。SQLite固有のSQLや接続には依存せず、diagnosticsは呼出し側から注入可能で、未指定時だけ既存のローカル読込を使用する。
 - 互換性: このカードでは `_load_sqlite_slice` と `SQLiteDashboardRepository` の既存経路を切り替えていない。日付を解決できないsnapshotは従来と同じempty sliceとなり、global boundsは保持する。
 - 検証: ローカルSQLiteからreaderで得たsnapshotをassemblerへ渡した結果が既存sliceと一致する特性テストを追加した。Dashboard関連テストは `46 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1b: Energy plan予測入力・時間帯プロファイルの分離
+
+- 変更: 消費電力学習用の行抽出、PV予報値の集計・時間別抽出、完全な30分ペアだけを使う履歴時間帯プロファイル、ゼロ実績時の一様配分、負荷/PVの時間別予報、および短波放射によるPV形状の再配分を `app.energy_plan.forecast_inputs` の正規所有先へ移した。
+- 責務境界: 新モジュールは履歴行・予報payload・明示された `enabled` / `blend` 値だけを受ける純粋な変換とした。環境変数 `HOURLY_WEATHER_PV_SHAPE_*` の読取り、PV配列候補の選択、最終計画の組立ては `workflow` に残したため、設定解釈と入力データ整形が混在しない。
+- テスト: `test_energy_model.py` の直接テストは新モジュールをimportし、短波放射shapeの有効化とblend値を引数で明示した。これによりテストがプロセス環境に依存しない。完全30分ペア集計、夜間負荷の上書き、PV総量保存を既存期待値で継続検証している。
+- 検証: `python -m pytest -q tests/test_energy_model.py` は `52 passed`。`python -m mypy app/energy_plan/forecast_inputs.py app/energy_plan/workflow.py --no-incremental`、`python -m compileall -q app/energy_plan/forecast_inputs.py app/energy_plan/workflow.py`、`git diff --check` は成功した。外部API、DB、Firestore、蓄電池操作は実行していない。
