@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import math
 import os
-import statistics
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, TypeVar, cast
 from zoneinfo import ZoneInfo
@@ -28,9 +27,11 @@ from app.forced_charge import (
 )
 from app.runtime import plan_persistence
 from app.runtime import soc_reading
+from app.runtime import forced_charge_monitor
+from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator
 from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
-from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths, iter_charge_soc_points
+from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
@@ -223,9 +224,7 @@ def _persist_previous_day_soc_feedback(*, target_date: str, csv_paths: list[Path
 
 
 def _hhmm_after_delay(*, timezone_name: str, delay_seconds: int) -> str:
-    now = datetime.now(ZoneInfo(timezone_name))
-    scheduled = now + timedelta(seconds=max(0, delay_seconds))
-    return scheduled.strftime("%H:%M")
+    return forced_charge_monitor.hhmm_after_delay(timezone_name=timezone_name, delay_seconds=delay_seconds)
 
 
 def _persist_03_monitor_schedule_to_firestore(
@@ -294,17 +293,7 @@ def _persist_03_monitor_stop_reason(
 
 
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
-    target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
-    soc_now_raw = plan_meta.get("soc_now_percent", None)
-    if isinstance(soc_now_raw, (int, float)):
-        soc_now = max(0.0, min(100.0, float(soc_now_raw)))
-        return max(0.0, target_soc - soc_now)
-
-    cap_raw = plan_meta.get("effective_capacity_kwh", None)
-    required_raw = plan_meta.get("required_night_charge_kwh", 0.0)
-    if isinstance(cap_raw, (int, float)) and isinstance(required_raw, (int, float)) and cap_raw > 0 and required_raw > 0:
-        return max(0.0, 100.0 * float(required_raw) / float(cap_raw))
-    return target_soc
+    return forced_charge_monitor.required_charge_percent_from_plan(plan_meta)
 
 
 def _should_keep_standby_without_charge(
@@ -325,13 +314,9 @@ def _estimate_required_charge_kwh(
     plan_meta: dict[str, float | str | None],
     latest_soc_percent: float | None,
 ) -> float:
-    target_soc = max(0.0, min(100.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0)))
-    cap_raw = plan_meta.get("effective_capacity_kwh")
-    if latest_soc_percent is not None and isinstance(cap_raw, (int, float)) and cap_raw > 0:
-        soc_now = max(0.0, min(100.0, latest_soc_percent))
-        eta = max(0.7, float(os.getenv("KP_NIGHT_CHARGE_EFFICIENCY", "0.93").strip() or "0.93"))
-        return max(0.0, ((target_soc - soc_now) / 100.0 * float(cap_raw)) / eta)
-    return max(0.0, float(plan_meta.get("required_night_charge_kwh", 0.0) or 0.0))
+    return forced_charge_monitor.estimate_required_charge_kwh(
+        plan_meta=plan_meta, latest_soc_percent=latest_soc_percent
+    )
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -357,86 +342,8 @@ def _read_soc_with_fallback(csv_paths: list[Path]) -> SocReading:
     )
 
 
-# readable-code-audit: skip STRUCT-04 — CSV filtering, robust rate estimation, and diagnostic counts must use the same source rows
-# readable-code-audit: skip DUP-01 — this 14-day trend and EWMA forecast the next forced-charge stop time, unlike KP-NET's current-setting median.
 def _estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
-    """Estimate forced charging by observed SOC gain, not nominal kW.
-
-    Forced mode starts charging immediately, so a slow estimate over-waits and
-    misses the 07:00 target. We only use high charge-energy intervals to avoid
-    mixing in green-mode/PV trickle charging.
-    """
-    fallback = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "35").strip() or "35")
-    min_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25").strip() or "25")
-    max_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50").strip() or "50")
-    min_charge_kwh = float(os.getenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2").strip() or "1.2")
-    if max_rate < min_rate:
-        max_rate = min_rate
-
-    samples_by_day: dict[date, list[float]] = {}
-    previous: tuple[datetime, float, float] | None = None
-    for point in iter_charge_soc_points(csv_paths):
-        if previous is None:
-            previous = point
-            continue
-        prev_dt, prev_soc, _prev_charge = previous
-        dt, soc, charge_kwh = point
-        hours = (dt - prev_dt).total_seconds() / 3600.0
-        delta_soc = soc - prev_soc
-        if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
-            samples_by_day.setdefault(dt.date(), []).append(delta_soc / hours)
-        previous = point
-
-    daily_rates = [
-        (day, statistics.median(values))
-        for day, values in sorted(samples_by_day.items())
-        if values
-    ]
-    if daily_rates:
-        latest_day = daily_rates[-1][0]
-        cutoff = latest_day - timedelta(days=13)
-        recent = [(day, rate) for day, rate in daily_rates if day >= cutoff]
-        ewma_alpha = 0.45
-        ewma_rate = recent[0][1]
-        for _, daily_rate in recent[1:]:
-            ewma_rate = ewma_alpha * daily_rate + (1.0 - ewma_alpha) * ewma_rate
-
-        origin = recent[0][0]
-        x_values = [(day - origin).days for day, _ in recent]
-        y_values = [rate for _, rate in recent]
-        slopes = [
-            (y_values[j] - y_values[i]) / (x_values[j] - x_values[i])
-            for i in range(len(recent))
-            for j in range(i + 1, len(recent))
-            if x_values[j] != x_values[i]
-        ]
-        degradation_slope = min(0.0, statistics.median(slopes)) if slopes else 0.0
-        intercept = statistics.median(
-            rate - degradation_slope * x
-            for x, (_, rate) in zip(x_values, recent)
-        )
-        projected_x = (latest_day + timedelta(days=1) - origin).days
-        trend_rate = intercept + degradation_slope * projected_x
-        ordered_rates = sorted(y_values)
-        lower_index = max(0, round((len(ordered_rates) - 1) * 0.15))
-        trend_rate = max(ordered_rates[lower_index], min(statistics.median(y_values), trend_rate))
-        raw_rate = 0.60 * trend_rate + 0.40 * ewma_rate
-        source = "csv-14d-degradation-trend-ewma-soc-rate"
-    else:
-        raw_rate = fallback
-        source = "fallback-forced-charge-soc-rate"
-    rate = max(min_rate, min(max_rate, raw_rate))
-    return {
-        "percent_per_hour": rate,
-        "raw_percent_per_hour": raw_rate,
-        "sample_count": len(daily_rates),
-        "interval_sample_count": sum(len(values) for values in samples_by_day.values()),
-        "lookback_days": 14,
-        "degradation_trend_weight": 0.60,
-        "ewma_weight": 0.40,
-        "sample_min_charge_kwh": min_charge_kwh,
-        "source": source,
-    }
+    return forced_charge_monitor.estimate_forced_charge_rate_percent_per_hour(csv_paths)
 
 
 def _estimate_required_charge_percent_for_schedule(
@@ -444,11 +351,9 @@ def _estimate_required_charge_percent_for_schedule(
     plan_meta: dict[str, float | str | None],
     latest_soc_percent: float | None,
 ) -> float:
-    target_soc = max(0.0, min(100.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0)))
-    if latest_soc_percent is not None:
-        soc_now = max(0.0, min(100.0, latest_soc_percent))
-        return max(0.0, target_soc - soc_now)
-    return _required_charge_percent_from_plan(plan_meta)
+    return forced_charge_monitor.estimate_required_charge_percent_for_schedule(
+        plan_meta=plan_meta, latest_soc_percent=latest_soc_percent
+    )
 
 
 def _estimate_forced_charge_minutes(
@@ -457,49 +362,12 @@ def _estimate_forced_charge_minutes(
     latest_soc_percent: float | None,
     csv_paths: list[Path],
 ) -> tuple[int, dict[str, float | int | str]]:
-    charge_rate_info = _estimate_forced_charge_rate_percent_per_hour(csv_paths)
-    required_percent = _estimate_required_charge_percent_for_schedule(
+    return forced_charge_monitor.estimate_forced_charge_minutes(
         plan_meta=plan_meta,
         latest_soc_percent=latest_soc_percent,
+        csv_paths=csv_paths,
+        rate_estimator=_estimate_forced_charge_rate_percent_per_hour,
     )
-    rate = max(1.0, float(charge_rate_info["percent_per_hour"]))
-    minutes = int(math.ceil((required_percent / rate) * 60.0)) if required_percent > 0 else 0
-    charge_rate_info["required_charge_percent"] = required_percent
-    return minutes, charge_rate_info
-
-
-class ForcedChargeCompletionEstimator:
-    """Estimate the next SOC confirmation time while forced charging is active."""
-
-    def __init__(self, *, rate_percent_per_hour: float, confirm_before_minutes: int = 5) -> None:
-        self.rate_percent_per_hour = max(1.0, float(rate_percent_per_hour))
-        self.confirm_before_minutes = max(0, int(confirm_before_minutes))
-
-    def remaining_minutes(self, *, target_soc: float, latest_soc: float) -> int:
-        required_percent = max(0.0, min(100.0, target_soc) - max(0.0, min(100.0, latest_soc)))
-        if required_percent <= 0:
-            return 0
-        return int(math.ceil((required_percent / self.rate_percent_per_hour) * 60.0))
-
-    def next_check_seconds(
-        self,
-        *,
-        target_soc: float,
-        latest_soc: float | None,
-        fallback_poll_seconds: int,
-        cutoff_seconds: int,
-    ) -> int:
-        fallback = max(60, int(fallback_poll_seconds))
-        cutoff = max(0, int(cutoff_seconds))
-        if cutoff <= 0:
-            return 0
-        if latest_soc is None:
-            return min(fallback, cutoff)
-        remaining = self.remaining_minutes(target_soc=target_soc, latest_soc=latest_soc)
-        if remaining <= 0:
-            return 0
-        check_seconds = max(60, (remaining - self.confirm_before_minutes) * 60)
-        return min(check_seconds, fallback, cutoff)
 
 
 def _seconds_until_cutoff(*, timezone_name: str, cutoff_hhmm: str) -> int:
