@@ -461,3 +461,9 @@
 - PF-1: compileall、Python `438 passed, 1 skipped`、Dashboard JavaScript 3本、全体mypy 0件、security check、diff checkを成功させた。
 - PF-2: readable-code-auditチェックリストをapp/scripts/tests/PowerShell/YAMLへ再適用。意図的skipには具体的理由があり、wildcard importは0件、旧互換モジュールへの内部import残件は0件、未処置の監査指摘はない。
 - 外部安全性: 実サービス接続、認証情報、Cloud Run/DB/Firestore操作は実行していない。
+
+## 2026-08-02 — 監査是正: PV分割と互換import
+
+- 検出: 最終監査で、PV arrayのprovider I/O・候補選択が同居し、shell smoke testに旧`app.soc_cost_optimizer` importが1件残ることを確認した。
+- 修正: provider I/Oを`pv_array_adapters`、calibration入力/policyを`pv_array_calibration`、候補選択を`pv_array_selection`へ分離し、smoke testは`app.energy_plan.soc_cost`を直接importするよう変更した。
+- 検証: M-5指定回帰は`72 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。外部サービスへの接続は行っていない。
