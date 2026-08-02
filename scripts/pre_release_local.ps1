@@ -26,8 +26,8 @@ if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript module tests failed" }
 node .\tests\test_dashboard_bootstrap.js
 if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript bootstrap test failed" }
 
-python -m mypy app/domain/time_windows.py app/domain/tariff.py app/domain/monitoring.py app/dashboard app/energy_plan app/forced_charge app/kpnet app/operations app/settings
-if ($LASTEXITCODE -ne 0) { throw "domain mypy failed" }
+python -m mypy app scripts --no-incremental
+if ($LASTEXITCODE -ne 0) { throw "full project mypy failed" }
 
 python .\scripts\security_check.py
 if ($LASTEXITCODE -ne 0) { throw "security_check failed" }
