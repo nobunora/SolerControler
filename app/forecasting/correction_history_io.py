@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import math
 import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import requests
 
 from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float, to_int
@@ -115,90 +113,3 @@ def _load_forecast_hourly_history(*, target_date: str) -> tuple[dict[str, dict[i
     if firestore_history:
         return firestore_history, "firestore_forecast_hourly"
     return {}, "unavailable"
-
-
-def fetch_hourly_weather(
-    *,
-    lat: float,
-    lon: float,
-    timezone: str,
-    start_date: str,
-    end_date: str,
-    archive: bool,
-) -> dict[str, dict[int, dict[str, float]]]:
-    """Fetch hourly weather data in the normalized correction input shape."""
-    url = "https://archive-api.open-meteo.com/v1/archive" if archive else "https://api.open-meteo.com/v1/forecast"
-    params: dict[str, str | float] = {
-        "latitude": lat,
-        "longitude": lon,
-        "start_date": start_date,
-        "end_date": end_date,
-        "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m",
-        "timezone": timezone,
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=20)
-        resp.raise_for_status()
-        hourly = resp.json().get("hourly", {})
-    except Exception:
-        return {}
-    times = hourly.get("time", [])
-    temps = hourly.get("temperature_2m", [])
-    humidity = hourly.get("relative_humidity_2m", [])
-    dew_points = hourly.get("dew_point_2m", [])
-    raw_winds = hourly.get("wind_speed_10m", [])
-    winds = raw_winds if isinstance(raw_winds, list) and len(raw_winds) == len(times) else [0.0] * len(times)
-    out: dict[str, dict[int, dict[str, float]]] = {}
-    values = zip(
-        times if isinstance(times, list) else [],
-        temps if isinstance(temps, list) else [],
-        humidity if isinstance(humidity, list) else [],
-        dew_points if isinstance(dew_points, list) else [],
-        winds,
-    )
-    for raw_time, raw_temp, raw_humidity, raw_dew_point, raw_wind in values:
-        try:
-            dt = datetime.fromisoformat(str(raw_time))
-            temp_c = float(raw_temp)
-            humidity_percent = float(raw_humidity)
-            dew_point_c = float(raw_dew_point)
-            wind_speed_10m = max(0.0, float(raw_wind))
-        except Exception:
-            continue
-        out.setdefault(dt.date().isoformat(), {})[dt.hour] = {
-            "temp_c": temp_c,
-            "relative_humidity_percent": humidity_percent,
-            "dew_point_c": dew_point_c,
-            "wind_speed_10m": wind_speed_10m,
-        }
-    return out
-
-
-def _moist_air_enthalpy(temp_c: float, relative_humidity_percent: float) -> float:
-    saturation_hpa = 6.112 * math.exp((17.67 * temp_c) / (temp_c + 243.5))
-    vapor_hpa = saturation_hpa * _clip_float(relative_humidity_percent, min_val=0.0, max_val=100.0) / 100.0
-    humidity_ratio = 0.622 * vapor_hpa / max(1.0, 1013.25 - vapor_hpa)
-    return 1.006 * temp_c + humidity_ratio * (2501.0 + 1.86 * temp_c)
-
-
-def add_thermal_states(weather: dict[str, dict[int, dict[str, float]]]) -> None:
-    """Add thermal-history fields required by the comfort-load correction model."""
-    states = {"thermal_6h": 0.0, "thermal_24h": 0.0, "thermal_72h": 0.0, "latent_24h": 0.0, "latent_72h": 0.0}
-    half_lives = {"thermal_6h": 6.0, "thermal_24h": 24.0, "thermal_72h": 72.0, "latent_24h": 24.0, "latent_72h": 72.0}
-    for day in sorted(weather):
-        for hour in sorted(weather[day]):
-            row = weather[day][hour]
-            temp_c = float(row.get("temp_c", 24.0))
-            humidity = float(row.get("relative_humidity_percent", 60.0))
-            dew_point = float(row.get("dew_point_c", 16.0))
-            enthalpy = _moist_air_enthalpy(temp_c, humidity)
-            row["enthalpy_kj_kg"] = enthalpy
-            thermal_input = max(0.0, temp_c - 24.0) + 0.12 * max(0.0, enthalpy - 55.0)
-            latent_input = max(0.0, dew_point - 16.0)
-            for name, half_life in half_lives.items():
-                alpha = 1.0 - math.exp(-math.log(2.0) / half_life)
-                value = latent_input if name.startswith("latent") else thermal_input
-                states[name] = alpha * value + (1.0 - alpha) * states[name]
-                row[name] = states[name]
-
-

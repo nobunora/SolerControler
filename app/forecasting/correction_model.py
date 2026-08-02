@@ -2,14 +2,51 @@ from __future__ import annotations
 
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from app.forecasting.comfort_load import predict_hourly_comfort_load
-from app.forecasting.correction_calculations import clip_float as _clip_float, weather_class as _weather_class
-from app.forecasting.correction_history_io import _moist_air_enthalpy, fetch_hourly_weather
+from app.forecasting.comfort_load import ADAPTIVE_LOOKBACK_HOURS, predict_hourly_comfort_load
+from app.forecasting.correction_calculations import (
+    actual_hourly_totals_by_day,
+    clip_float as _clip_float,
+    coerce_hourly_values,
+    daily_pairs_for_ratio,
+    ewma_ratio_from_daily_pairs,
+    weather_class as _weather_class,
+)
+from app.forecasting.correction_history_io import _load_forecast_hourly_history
+from app.forecasting.correction_result import assemble_forecast_correction_result
+from app.forecasting.correction_weather import fetch_hourly_weather
 from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float, to_int
+
+
+def _moist_air_enthalpy(temp_c: float, relative_humidity_percent: float) -> float:
+    saturation_hpa = 6.112 * math.exp((17.67 * temp_c) / (temp_c + 243.5))
+    vapor_hpa = saturation_hpa * _clip_float(relative_humidity_percent, min_val=0.0, max_val=100.0) / 100.0
+    humidity_ratio = 0.622 * vapor_hpa / max(1.0, 1013.25 - vapor_hpa)
+    return 1.006 * temp_c + humidity_ratio * (2501.0 + 1.86 * temp_c)
+
+
+def add_thermal_states(weather: dict[str, dict[int, dict[str, float]]]) -> None:
+    """Add thermal-history fields required by the comfort-load correction model."""
+    states = {"thermal_6h": 0.0, "thermal_24h": 0.0, "thermal_72h": 0.0, "latent_24h": 0.0, "latent_72h": 0.0}
+    half_lives = {"thermal_6h": 6.0, "thermal_24h": 24.0, "thermal_72h": 72.0, "latent_24h": 24.0, "latent_72h": 72.0}
+    for day in sorted(weather):
+        for hour in sorted(weather[day]):
+            row = weather[day][hour]
+            temp_c = float(row.get("temp_c", 24.0))
+            humidity = float(row.get("relative_humidity_percent", 60.0))
+            dew_point = float(row.get("dew_point_c", 16.0))
+            enthalpy = _moist_air_enthalpy(temp_c, humidity)
+            row["enthalpy_kj_kg"] = enthalpy
+            thermal_input = max(0.0, temp_c - 24.0) + 0.12 * max(0.0, enthalpy - 55.0)
+            latent_input = max(0.0, dew_point - 16.0)
+            for name, half_life in half_lives.items():
+                alpha = 1.0 - math.exp(-math.log(2.0) / half_life)
+                value = latent_input if name.startswith("latent") else thermal_input
+                states[name] = alpha * value + (1.0 - alpha) * states[name]
+                row[name] = states[name]
 def _physical_vector_residual_correction(
     *, forecast_history: dict[str, dict[int, dict[str, float]]], actual_history: dict[str, dict[int, dict[str, float]]], forecast: dict[str, object], hourly_pv: dict[int, float]
 ) -> tuple[dict[int, float], dict[str, object]]:
@@ -599,6 +636,7 @@ def _correct_hourly_pv(
     forecast_history: dict[str, dict[int, dict[str, float]]],
     actual_history: dict[str, dict[int, dict[str, float]]],
     forecast: dict[str, object],
+    physical_corrector: Callable[..., tuple[dict[int, float], dict[str, object]]] = _physical_vector_residual_correction,
 ) -> tuple[dict[int, float], dict[str, object], float]:
     """Apply the ratio correction or physical-model residual correction to hourly PV."""
     pv_multiplier = 1.0 if skip_pv_correction else pv_ratio
@@ -608,13 +646,162 @@ def _correct_hourly_pv(
     }
     vector_residual: dict[str, object] = {"enabled": False, "reason": "not_physical"}
     if skip_pv_correction:
-        corrected_pv, vector_residual = _physical_vector_residual_correction(
+        corrected_pv, vector_residual = physical_corrector(
             forecast_history=forecast_history,
             actual_history=actual_history,
             forecast=forecast,
             hourly_pv=corrected_pv,
         )
     return corrected_pv, vector_residual, pv_multiplier
+
+
+def calculate_forecast_correction(
+    *,
+    rows: list[dict[str, Any]],
+    hourly_load_forecast: dict[int, float],
+    hourly_pv_forecast: dict[int, float],
+    target_date: str,
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    forecast: dict[str, object],
+    skip_pv_correction: bool,
+    pv_ewma_alpha: float,
+    pv_ratio_min: float,
+    pv_ratio_max: float,
+    load_ewma_alpha: float,
+    load_ratio_min: float,
+    load_ratio_max: float,
+    weather_fetch: Callable[..., dict[str, dict[int, dict[str, float]]]],
+    history_loader: Callable[..., tuple[dict[str, dict[int, dict[str, float]]], str]] = _load_forecast_hourly_history,
+    temperature_corrector: Callable[..., dict[str, object]] = _evening_temperature_correction,
+    physical_corrector: Callable[..., tuple[dict[int, float], dict[str, object]]] = _physical_vector_residual_correction,
+    comfort_predictor: Callable[..., dict[str, object]] = predict_hourly_comfort_load,
+) -> dict[str, object]:
+    """Calculate one correction snapshot from I/O-free inputs and weather port."""
+    forecast_history, history_source = history_loader(target_date=target_date)
+    actual_history = actual_hourly_totals_by_day(rows, target_date=target_date)
+    pv_summary = ewma_ratio_from_daily_pairs(
+        daily_pairs_for_ratio(forecast_history=forecast_history, actual_history=actual_history, key="pv"),
+        alpha=pv_ewma_alpha,
+    )
+    load_summary = ewma_ratio_from_daily_pairs(
+        daily_pairs_for_ratio(forecast_history=forecast_history, actual_history=actual_history, key="load"),
+        alpha=load_ewma_alpha,
+    )
+    pv_ratio_raw = to_float(pv_summary.get("raw_ratio")) or 1.0
+    load_ratio_raw = to_float(load_summary.get("raw_ratio")) or 1.0
+    pv_ratio = _clip_float(pv_ratio_raw, min_val=pv_ratio_min, max_val=pv_ratio_max)
+    load_ratio = _clip_float(load_ratio_raw, min_val=load_ratio_min, max_val=load_ratio_max)
+
+    history_dates = sorted(set(forecast_history) & set(actual_history))
+    weather_by_day: dict[str, dict[int, dict[str, float]]] = {}
+    if history_dates:
+        history_start = (datetime.fromisoformat(history_dates[0]) - timedelta(hours=ADAPTIVE_LOOKBACK_HOURS)).date().isoformat()
+        weather_by_day = weather_fetch(
+            lat=latitude, lon=longitude, timezone=timezone,
+            start_date=history_start, end_date=history_dates[-1], archive=True,
+        )
+    weather_by_day[target_date] = _target_weather_from_forecast(
+        forecast, target_date=target_date, latitude=latitude, longitude=longitude,
+        timezone=timezone, weather_fetch=weather_fetch,
+    )
+    add_thermal_states(weather_by_day)
+    historical_features = {
+        day: _temperature_features_for_day(day, hourly)
+        for day, hourly in weather_by_day.items() if day < target_date
+    }
+    target_weather = weather_by_day.get(target_date, {})
+    target_temperatures = {hour: float(item.get("temp_c", 24.0)) for hour, item in target_weather.items()}
+    temperature_correction = temperature_corrector(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        historical_temperature_features=historical_features,
+        target_features=_temperature_features_for_day(target_date, target_weather),
+        load_ratio=load_ratio,
+    )
+    temperature_multiplier = to_float(temperature_correction.get("multiplier"))
+    if temperature_multiplier is None:
+        temperature_multiplier = 1.0 + (to_float(temperature_correction.get("multiplier_delta")) or 0.0)
+    load_scenarios = temperature_correction.get("load_scenarios")
+    if not isinstance(load_scenarios, list):
+        load_scenarios = _adaptive_load_scenarios([], confidence=0.0)
+
+    corrected_pv, vector_residual, pv_multiplier = _correct_hourly_pv(
+        hourly_pv_forecast=hourly_pv_forecast,
+        pv_ratio=pv_ratio,
+        skip_pv_correction=skip_pv_correction,
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        forecast=forecast,
+        physical_corrector=physical_corrector,
+    )
+    hourly_multipliers = _temperature_hourly_multipliers(
+        hourly_load_forecast=hourly_load_forecast,
+        hourly_temperatures=target_temperatures,
+        hourly_weather=target_weather,
+        correction_hours=set(_temperature_correction_hours()),
+        total_multiplier=temperature_multiplier,
+    )
+    temperature_correction["hourly_multipliers"] = {str(hour): round(multiplier, 6) for hour, multiplier in hourly_multipliers.items()}
+    temperature_correction["hourly_shape_method"] = (
+        "load_weighted_cooling_degree_distribution_preserving_total"
+        if temperature_multiplier > 1.0 and target_temperatures else "uniform_temperature_multiplier"
+    )
+    corrected_load = {
+        hour: max(0.0, value) * max(0.0, load_ratio * hourly_multipliers.get(hour, 1.0))
+        for hour, value in hourly_load_forecast.items()
+    }
+    comfort_model = (
+        comfort_predictor(
+            actual_history=actual_history, weather_by_day=weather_by_day, target_date=target_date,
+            min_samples=max(24, int(env_float("LOAD_COMFORT_MODEL_MIN_SAMPLES", default=336.0))),
+        )
+        if env_bool("LOAD_COMFORT_MODEL_ENABLED", default=True)
+        else {"enabled": False, "applied": False, "reason": "disabled"}
+    )
+    residual_multipliers = comfort_model.pop("_residual_multipliers", [])
+    comfort_hourly = coerce_hourly_values(comfort_model.get("hourly_load_kwh"))
+    if comfort_model.get("applied") is True and len(comfort_hourly) == 24:
+        corrected_load = comfort_hourly
+        load_scenarios = _adaptive_load_scenarios(
+            residual_multipliers if isinstance(residual_multipliers, list) else [],
+            confidence=to_float(comfort_model.get("confidence")) or 0.0,
+        )
+    comfort_model["hourly_load_kwh"] = {str(hour): round(value, 4) for hour, value in sorted(comfort_hourly.items())}
+    raw_pv_total = sum(max(0.0, value) for value in hourly_pv_forecast.values())
+    raw_load_total = sum(max(0.0, value) for value in hourly_load_forecast.values())
+    paired_scenarios = _paired_forecast_error_scenarios(
+        forecast_history=forecast_history,
+        actual_history=actual_history,
+        current_pv_correction=sum(corrected_pv.values()) / raw_pv_total if raw_pv_total > 0.0 else 1.0,
+        current_load_correction=sum(corrected_load.values()) / raw_load_total if raw_load_total > 0.0 else 1.0,
+    )
+    return assemble_forecast_correction_result(
+        corrected_load=corrected_load,
+        corrected_pv=corrected_pv,
+        raw_load=hourly_load_forecast,
+        raw_pv=hourly_pv_forecast,
+        load_scenarios=load_scenarios,
+        paired_scenarios=paired_scenarios,
+        peak_penalty={"enabled": False, "applied_factor": 0.0, "reason": "removed"},
+        rationale_details={
+            "enabled": True, "method": "adaptive_comfort_thermal_inertia_hgb_with_existing_fallback",
+            "history_source": history_source, "history_days": history_dates[-14:],
+            "pv_ratio_ewma_raw": round(pv_ratio_raw, 6), "pv_ratio_ewma_applied": round(pv_multiplier, 6),
+            "pv_ratio_ewma_skipped": bool(skip_pv_correction), "pv_ratio_floor": pv_ratio_min,
+            "pv_ratio_cap": pv_ratio_max, "pv_ewma_alpha": pv_ewma_alpha,
+            "pv_sample_count": pv_summary["sample_count"], "pv_latest_days": pv_summary["latest_days"],
+            "physical_pv_vector_residual": vector_residual, "load_ratio_ewma_raw": round(load_ratio_raw, 6),
+            "load_ratio_ewma_applied": round(load_ratio, 6), "load_ratio_floor": load_ratio_min,
+            "load_ratio_cap": load_ratio_max, "load_ewma_alpha": load_ewma_alpha,
+            "load_sample_count": load_summary["sample_count"], "load_latest_days": load_summary["latest_days"],
+            "evening_load_temperature": temperature_correction, "comfort_load_model": comfort_model,
+            "recent_and_analog_hourly_floor": {"enabled": False, "applied": False, "reason": "removed", "hourly_floor_kwh": {}, "applied_hours": []},
+            "load_scenarios": load_scenarios, "paired_scenarios": paired_scenarios,
+            "soc_peak_unmet_penalty": {"enabled": False, "applied_factor": 0.0, "reason": "removed"},
+        },
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — the correction result must include all diagnostics from the same source snapshot, so calculation and provenance stay together
