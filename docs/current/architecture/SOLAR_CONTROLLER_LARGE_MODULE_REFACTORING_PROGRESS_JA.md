@@ -24,3 +24,9 @@
 ## 固定順記録
 
 R-0完了後はR-1のみ開始する。各カードの開始コミット、変更ファイル、固有テスト、mypy、compileall、diff check、完了コミットをこのログへ追記する。
+
+## R-0完了 / R-1完了
+
+- R-0完了コミット: `59be414`
+- R-1変更: correctionのforecast history I/O、weather取得、thermal state生成を `app/forecasting/correction_history_io.py` へ移動。`correction.py` は補正計算と公開workflowを保持し、既存patch境界はimportで維持した。
+- R-1検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
