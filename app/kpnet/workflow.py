@@ -25,6 +25,7 @@ from app.domain.constants import SOCBounds, validate_soc_percent
 from app.kpnet import build_settings_intent
 from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.kpnet.plan import NightChargePlan, load_night_charge_plan
+from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
 from app.configuration.environment import env, env_bool, load_dotenv_if_present
 from app.parsing.numbers import parse_csv_float, to_float
 
@@ -532,74 +533,6 @@ def _pick_night_mode_preference(
         or required_charge_percent >= green_mode_max_charge_percent
     )
     return ("forced" if force_charge else "green"), required_charge_percent, force_charge
-
-
-@dataclass(frozen=True)
-class ProfileOverrides:
-    name: str
-    battery_operating_mode: str
-    soc_safety_mode: str
-    soc_economy_mode: str
-    soc_contact_input: str
-    soc_charge_mode: str
-    charge_start_h: str
-    charge_start_m: str
-    charge_end_h: str
-    charge_end_m: str
-    discharge_start_h: str
-    discharge_start_m: str
-    discharge_end_h: str
-    discharge_end_m: str
-    agreement_ampere: str
-    on_power_outage_mode: str = "0"
-    on_power_outage_charge_power_w: str = "65535"
-
-
-FORCED_CHARGE_PROFILE = ProfileOverrides(
-    # 充電は夜間単価の時間帯内に完了させ、07:00以降はPVを優先できるようにする。
-    name="night-green",
-    battery_operating_mode="1",
-    soc_safety_mode="50",
-    soc_economy_mode="0",
-    soc_contact_input="100",
-    soc_charge_mode="50",
-    charge_start_h="4",
-    charge_start_m="30",
-    charge_end_h="6",
-    charge_end_m="30",
-    discharge_start_h="7",
-    discharge_start_m="0",
-    discharge_end_h="23",
-    discharge_end_m="0",
-    agreement_ampere="50",
-)
-
-GREEN_MODE_PROFILE = ProfileOverrides(
-    # 日中は買電充電を行わず、PV余剰を蓄電池に受ける通常運転プロファイル。
-    name="green-mode",
-    battery_operating_mode="1",
-    soc_safety_mode="0",
-    soc_economy_mode="0",
-    soc_contact_input="0",
-    soc_charge_mode="0",
-    charge_start_h="23",
-    charge_start_m="0",
-    charge_end_h="7",
-    charge_end_m="0",
-    discharge_start_h="7",
-    discharge_start_m="0",
-    discharge_end_h="23",
-    discharge_end_m="0",
-    agreement_ampere="50",
-)
-
-STANDBY_PROFILE = replace(
-    GREEN_MODE_PROFILE,
-    name="standby-mode",
-    battery_operating_mode="0",
-    soc_contact_input="0",
-    soc_charge_mode="0",
-)
 
 
 @dataclass(frozen=True)

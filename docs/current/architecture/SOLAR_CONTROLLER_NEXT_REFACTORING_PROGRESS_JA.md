@@ -289,6 +289,12 @@
 - テスト: workflowの旧exportと正規モジュールが同一オブジェクトであることを追加で確認した。
 - 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_external_site_access.py` は `58 passed, 1 skipped`。`mypy app/kpnet --no-incremental`、`compileall`、`git diff --check` は成功した。外部siteテストはskipのままで、外部サービスへの通信・設定変更は行っていない。
 
+## 2026-08-02 — M-3b準備: KP-NET profile境界の分離
+
+- 変更: `ProfileOverrides` と不変のforced/green/standby profile値を `app.kpnet.profiles` の正規所有先へ移した。後続の動的profile構築がworkflowへ循環依存しないよう、必要な設定属性だけを表す `ProfileConfig` Protocolを追加した。
+- 互換性: `app.kpnet.workflow` は従来のprofile exportを再公開するため、既存の呼出し側とテストのimport契約は変えていない。CSV実測推定、動的構築、端末設定実行は本カードの対象外として移動していない。
+- 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_external_site_access.py` は `59 passed, 1 skipped`。`mypy app/kpnet --no-incremental`、`compileall`、`git diff --check` は成功した。外部siteテストはskipのままで、外部サービスへの通信・設定変更は行っていない。
+
 ## 2026-08-02 — M-2a: Dashboard schedule組立ての分離
 
 - 変更: schedule event候補抽出、source優先順位、同一runの完了判定、battery provenanceを含む最新schedule組立てを `app.dashboard.schedule` の正規所有先へ移した。`data.py` は正規関数を利用し、SQLite・PostgreSQL・Firestoreのquery/read実装には変更を加えていない。
