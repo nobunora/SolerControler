@@ -23,7 +23,9 @@ if str(ROOT) not in sys.path:
 from app.forecasting.comfort_load import build_comfort_feature_map as comfort_feature_map
 from app.forecasting.comfort_load import predict_hourly_comfort_load
 from app.energy_plan.energy_model import forecast_pv_energy_kwh, fit_coefficients_from_csv
-from app.energy_plan.workflow import _build_hourly_load_forecast, _build_hourly_pv_forecast, _reshape_hourly_pv_by_weather
+from app.energy_plan.forecast_inputs import build_hourly_load_forecast as _build_hourly_load_forecast
+from app.energy_plan.forecast_inputs import build_hourly_pv_forecast as _build_hourly_pv_forecast
+from app.energy_plan.forecast_inputs import reshape_hourly_pv_by_weather as _reshape_hourly_pv_by_weather
 
 # These trailing windows capture both immediate weather and one-day persistence without mixing future data.
 WINDOWS = (1, 3, 6, 12, 24)

@@ -445,3 +445,9 @@
 - 検出: M-4開始ゲートで `app/runtime/soc_reading.py` のmypyが、旧workflow経由のKpNetClient再exportを検出した。
 - 修正: KpNetClientを `app.kpnet.client` から直接importし、KpNetConfigのみworkflowから読むようにした。外部接続条件は変更していない。
 - 検証: M-4指定テストは `71 passed`、runtime/forced_charge mypy 0エラー、compileall、`git diff --check` 成功。
+
+## 2026-08-02 — C-1補正: canonical import gateの残件解消
+
+- 検出: 全体pre-releaseで互換KP-NET export 6件と気象解析scriptの旧Energy Plan import 3件がmypyにより検出された。
+- 修正: `app.kpnet_workflow` と `scripts/analyze_hourly_weather_vectors.py` を正規所有先からimportするよう更新した。CLI名・関数名・出力契約は変更していない。
+- 検証: `scripts/pre_release_local.ps1 -SkipInstall` は `438 passed, 1 skipped`、全体mypy 0件、security check成功で完走した。
