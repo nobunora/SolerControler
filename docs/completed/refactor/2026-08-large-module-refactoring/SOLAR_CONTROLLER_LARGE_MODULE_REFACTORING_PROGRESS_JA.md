@@ -124,3 +124,40 @@ R-0完了後はR-1のみ開始する。各カードの開始コミット、変�
 - その後の独立構造監査でR-3のHTML/auth helper残存を検出・是正し、R-7を最初から再実行した。
 - `pre_release_local.ps1 -SkipInstall` 成功、全回帰 `438 passed, 1 skipped`、全体mypy 0件（156 source files）、security check、compileall、diff check成功。
 - R-0所有表と旧モジュールAST定義・呼出し経路の照合で、未移動実装と実装二重保持は0件。完了判定を確定した。
+
+## 完了判定再撤回
+
+- completed移送後の独立監査で、R-1の気象I/O未分離、R-2の未使用重複、R-3/R-6の単独import失敗、R-6のrepository重複を確認した。
+- 文書をcurrentへ戻し、R-1、R-2、R-3、R-6を是正してR-7を再実行する。
+
+## R-1追加是正完了
+
+- Open-Meteo境界を `correction_weather.py` へ分離し、履歴I/Oから完全に除去した。
+- thermal stateとcorrection snapshot計算を `correction_model.py` へ移し、`correction.py` は公開policy、orchestration、既存monkeypatch互換portのみを保持した。
+- 検証: `63 passed, 1 skipped`、forecasting mypy 0件、compileall、diff check成功。
+
+## R-2追加是正完了
+
+- 月次投影で既に正規所有先となった `monthly_projection.py` と重複し、呼出しもないHH:MM/window helperを `workflow.py` から削除した。
+- 検証: Energy Plan回帰 `111 passed`、Energy Plan mypy 0件、compileall、diff check成功。
+
+## R-3追加是正完了
+
+- `KpNetConfig` とKP-NET loggerを `config.py` へ移し、HTTP clientがworkflowをimportしない一方向依存へ変更した。
+- `client.py` と `workflow.py` の単独import成功を確認し、workflow上の既存private互換名は正規moduleからのreexportで維持した。
+- 検証: KP-NET指定回帰 `59 passed, 1 skipped`、KP-NET mypy 0件、compileall、diff check成功。
+
+## R-6追加是正完了
+
+- repository共通変換を `repository_support.py` へ集約し、SQLite/PostgreSQL/Firestoreのbounds実装を各backend repositoryの単一所有にした。
+- schedule mergeを `slice_assembler.py` へ移し、Firestore/PostgreSQL repositoryから `data.py` への逆importを除去した。
+- `backend_repositories.py` の循環wrapperを廃止し、`data.py` は公開loader、cache、既存test patch用の薄いportのみを保持した。
+- `app.dashboard.firestore_repository` と `app.dashboard.data` の単独import成功を確認した。
+- 検証: Dashboard指定回帰 `46 passed`、Dashboard mypy 0件、compileall、diff check成功。
+
+## R-7再完了
+
+- 再監査条件として、対象12モジュールの単独import、旧モジュールの禁止定義AST検査、legacy互換import検索を実行し、失敗・禁止定義・legacy importは0件だった。
+- 初回pre-releaseでKpNetConfig再exportの `__all__` 不足を検出し、公開互換契約を是正してR-7を最初から再実行した。
+- `pre_release_local.ps1 -SkipInstall` 成功、全回帰 `438 passed, 1 skipped`、全体mypy 0件（158 source files）、security check、compileall、diff check成功。
+- 前回監査で指摘されたR-1、R-2、R-3、R-6の未完了はすべて解消した。

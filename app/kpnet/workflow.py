@@ -63,6 +63,8 @@ from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDB
 from app.configuration.environment import load_dotenv_if_present
 from app.parsing.numbers import parse_csv_float, to_float
 
+__all__ = ["KpNetConfig", "run_kpnet_workflow", "main"]
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
