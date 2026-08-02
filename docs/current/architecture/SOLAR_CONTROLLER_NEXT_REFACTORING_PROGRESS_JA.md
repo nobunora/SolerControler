@@ -288,3 +288,14 @@
 - 変更: `NightChargePlan`、夜間充電計画JSONの読込、必須数値の有限値・範囲検証を `app.kpnet.plan` の正規所有先へ移した。既存の `app.kpnet.workflow` からのimport契約を維持するため、旧private読込関数は同一関数への薄い再公開とした。
 - テスト: workflowの旧exportと正規モジュールが同一オブジェクトであることを追加で確認した。
 - 検証: `tests/test_kpnet_workflow.py tests/test_kpnet_settings_intent.py tests/test_external_site_access.py` は `58 passed, 1 skipped`。`mypy app/kpnet --no-incremental`、`compileall`、`git diff --check` は成功した。外部siteテストはskipのままで、外部サービスへの通信・設定変更は行っていない。
+
+## 2026-08-02 — M-2a: Dashboard schedule組立ての分離
+
+- 変更: schedule event候補抽出、source優先順位、同一runの完了判定、battery provenanceを含む最新schedule組立てを `app.dashboard.schedule` の正規所有先へ移した。`data.py` は正規関数を利用し、SQLite・PostgreSQL・Firestoreのquery/read実装には変更を加えていない。
+- テスト: scheduleの直接検証は新モジュールをimportするように変更し、既存のケースでevent順序、source優先順位、同一run完了、battery日付の境界を維持した。
+- 検証: `tests/test_dashboard_data.py tests/test_dashboard_server.py tests/test_dashboard_backend_parity.py tests/test_firestore_dashboard_metrics.py` は `42 passed`。`mypy app/dashboard --no-incremental`、`compileall`、対象 `git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-4a: Cloud Job計画・監視結果のFirestore永続化境界
+
+- 変更: 夜間計画のFirestore保存・復元、前日SOC feedback、03時monitor schedule/no-charge/stop reasonのFirestore書込を `app.runtime.plan_persistence` へ移した。`cloud_job` には既存のprivate関数名を薄い委譲として残し、slot順序、retry、既存テストのFirestore monkeypatch境界を維持した。
+- 検証: `tests/test_cloud_job_runner.py tests/test_forced_charge_state_machine.py tests/test_forced_charge_settings.py` は `71 passed`。`mypy app/runtime app/forced_charge --no-incremental`、`compileall app/runtime`、`git diff --check` は成功した。Firestore、GCS、Cloud Job、蓄電池操作は実行していない。

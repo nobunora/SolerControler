@@ -9,7 +9,6 @@ from app.dashboard.data import (
     _billing_usage_summary,
     _build_energy_daily,
     _build_dashboard_warnings,
-    _build_latest_schedule_from_events,
     _merge_latest_plan_into_schedule,
     _build_dashboard_slice,
     _get_global_bounds_firestore,
@@ -17,10 +16,10 @@ from app.dashboard.data import (
     _daily_metric_is_complete,
     _empty_dashboard_slice,
     _review_candidate_dates,
-    _select_schedule_event,
     clear_dashboard_cache,
     load_dashboard_slice,
 )
+from app.dashboard.schedule import _build_latest_schedule_from_events, _select_schedule_event
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.operations_db import ensure_schema, open_db
 
