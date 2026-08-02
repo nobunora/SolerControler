@@ -10,6 +10,7 @@ from app.dashboard.data import (
     _build_energy_daily,
     _merge_latest_plan_into_schedule,
     _build_dashboard_slice,
+    _build_slice_from_query_snapshot,
     _get_global_bounds_firestore,
     _load_firestore_slice,
     _daily_metric_is_complete,
@@ -148,6 +149,38 @@ def test_sqlite_query_snapshot_keeps_backend_rows_before_dashboard_assembly(tmp_
     assert snapshot.model_parameters == []
     assert snapshot.settings_events == []
     assert snapshot.latest_battery is None
+
+
+def test_query_snapshot_assembler_matches_characterized_sqlite_slice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.dashboard.data._today_jst_iso", lambda: "2026-06-02")
+    monkeypatch.setattr("app.dashboard.data._read_latest_pv_forecast_diagnostics", lambda: {})
+    db_path = tmp_path / "solar.db"
+    conn = open_db(db_path)
+    try:
+        ensure_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO sunshine_daily(date, forecast_pv_total_kwh, source, updated_at)
+            VALUES ('2026-06-02', 5.0, 'test', '2026-06-02T00:00:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    request = DashboardLoadRequest(end_date="2026-06-02", window_days=1, include_static=True)
+    snapshot = load_sqlite_query_snapshot(db_path, request)
+    assembled = _build_slice_from_query_snapshot(
+        snapshot,
+        window_days=request.window_days,
+        include_static=request.include_static,
+    )
+    existing = load_dashboard_slice(db_path, end_date=request.end_date, window_days=1, include_static=True)
+
+    assert assembled == existing
 
 
 def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_shape(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
-from app.dashboard.repositories import DashboardLoadRequest
+from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
 from app.dashboard.schedule import (
     _build_latest_schedule_from_events,
     _default_latest_schedule,
@@ -433,6 +433,71 @@ def _build_dashboard_slice(
         pv_forecast_diagnostics=pv_forecast_diagnostics,
         daily_review=daily_review,
         daily_reviews=daily_reviews,
+    )
+
+
+def _build_slice_from_query_snapshot(
+    snapshot: DashboardQuerySnapshot,
+    *,
+    window_days: int,
+    include_static: bool,
+    pv_forecast_diagnostics: dict[str, Any] | None = None,
+) -> DashboardSlice:
+    """Apply dashboard-wide calculations and API assembly to backend query rows."""
+    end_date_iso = snapshot.resolved_end_date
+    if end_date_iso is None:
+        return _empty_dashboard_slice(
+            window_days=window_days,
+            schedule=_default_latest_schedule(),
+            global_oldest=snapshot.global_oldest_date,
+            global_newest=snapshot.global_newest_date,
+        )
+    end_obj = _to_date_or_none(end_date_iso)
+    if end_obj is None:
+        return _empty_dashboard_slice(
+            window_days=window_days,
+            schedule=_default_latest_schedule(),
+            global_oldest=snapshot.global_oldest_date,
+            global_newest=snapshot.global_newest_date,
+        )
+
+    start_date = (end_obj - timedelta(days=max(1, window_days) - 1)).isoformat()
+    energy_daily = _build_energy_daily(
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+        pv_daily=snapshot.pv_daily,
+        monitoring_daily=snapshot.monitoring_daily,
+        forecast_hourly=snapshot.forecast_hourly,
+    )
+    cost_monthly = _build_cost_monthly(snapshot.all_cost_daily) if include_static else []
+    latest_schedule = _default_latest_schedule(plan_date=end_date_iso)
+    if include_static:
+        latest_schedule = _build_latest_schedule_from_events(
+            event_rows=snapshot.settings_events,
+            battery_row=snapshot.latest_battery,
+            plan_date=end_date_iso,
+        )
+    raw = DashboardRawData(
+        pv_daily=snapshot.pv_daily,
+        cost_daily=snapshot.cost_daily,
+        cost_monthly=cost_monthly,
+        battery_daily=snapshot.battery_daily,
+        model_parameters=snapshot.model_parameters,
+        battery_flow_daily=snapshot.battery_flow_daily,
+        energy_daily=energy_daily,
+        forecast_hourly=snapshot.forecast_hourly,
+        latest_schedule=latest_schedule,
+        global_oldest=snapshot.global_oldest_date,
+        global_newest=snapshot.global_newest_date,
+    )
+    diagnostics = pv_forecast_diagnostics
+    if diagnostics is None:
+        diagnostics = _read_latest_pv_forecast_diagnostics() if include_static else {}
+    return _build_dashboard_slice(
+        raw,
+        end_date_iso=end_date_iso,
+        window_days=window_days,
+        pv_forecast_diagnostics=diagnostics,
     )
 
 

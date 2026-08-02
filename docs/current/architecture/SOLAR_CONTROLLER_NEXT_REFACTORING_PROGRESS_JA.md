@@ -342,3 +342,9 @@
 - 変更: SQLite接続、table存在確認、global date bounds、SQLite固有SQL、SQLite Rowからdictへの正規化を `app.dashboard.sqlite_repository` に移し、計算前の `DashboardQuerySnapshot` を返すreaderにした。共通のenergy/cost計算、schedule、warning、meta、`DashboardSlice`組立て、公開APIはまだ `data.py` に残している。
 - 互換性: このカードでは既存の `SQLiteDashboardRepository` と `_load_sqlite_slice` の呼出し経路を切り替えていない。DBファイル不在・日付解決不能時は空snapshotを返し、global boundsだけが得られる場合はその値を保持する。
 - 検証: 新しいreaderのローカルSQLite特性テストを含むDashboard関連テストは `45 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-2c-4: Dashboard query snapshot共通assembler
+
+- 変更: `DashboardQuerySnapshot` から共通のenergy日次計算、月次料金計算、latest schedule、warning、meta、`DashboardSlice`を組み立てる `_build_slice_from_query_snapshot` を `data.py` に追加した。SQLite固有のSQLや接続には依存せず、diagnosticsは呼出し側から注入可能で、未指定時だけ既存のローカル読込を使用する。
+- 互換性: このカードでは `_load_sqlite_slice` と `SQLiteDashboardRepository` の既存経路を切り替えていない。日付を解決できないsnapshotは従来と同じempty sliceとなり、global boundsは保持する。
+- 検証: ローカルSQLiteからreaderで得たsnapshotをassemblerへ渡した結果が既存sliceと一致する特性テストを追加した。Dashboard関連テストは `46 passed`。`mypy app/dashboard --no-incremental`、`compileall`、`git diff --check` は成功した。外部サービスは実行していない。
