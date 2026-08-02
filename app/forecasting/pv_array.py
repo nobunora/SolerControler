@@ -14,6 +14,9 @@ import numpy as np
 import requests
 
 from app.configuration.environment import env_bool, env_float_clamped
+from app.forecasting.pv_array_adapters import http_get_with_retry, response_json_object
+from app.forecasting.pv_array_calibration import PvCalibrationInput, PvCalibrationPolicy
+from app.forecasting.pv_array_selection import provider_order_from_env, select_provider_forecasts
 from app.parsing.numbers import parse_csv_float, to_float, to_int
 
 
@@ -21,13 +24,8 @@ HttpGet = Callable[..., Any]
 
 
 def _response_json_object(response: Any, *, provider: str) -> dict[str, Any]:
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError(f"{provider} returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{provider} returned a non-object JSON payload")
-    return payload
+    """Compatibility wrapper for the provider adapter's JSON boundary."""
+    return response_json_object(response, provider=provider)
 
 
 def _http_get_with_retry(
@@ -37,24 +35,8 @@ def _http_get_with_retry(
     provider: str,
     **kwargs: Any,
 ) -> Any:
-    max_attempts = max(1, int(os.getenv("PV_HTTP_MAX_ATTEMPTS", "2")))
-    # A short retry handles transient provider errors without delaying the control job for long.
-    retry_delay_seconds = max(0.0, float(os.getenv("PV_HTTP_RETRY_DELAY_SECONDS", "0.5")))
-    for attempt in range(1, max_attempts + 1):
-        try:
-            response = http_get(url, **kwargs)
-            response.raise_for_status()
-            return response
-        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
-            status_code = getattr(getattr(exc, "response", None), "status_code", None)
-            retryable = status_code is None or 500 <= int(status_code) < 600
-            if attempt >= max_attempts or not retryable:
-                raise RuntimeError(
-                    f"{provider} request failed after {attempt} attempt(s)"
-                ) from exc
-            if retry_delay_seconds > 0:
-                time.sleep(retry_delay_seconds)
-    raise AssertionError("unreachable")
+    """Compatibility wrapper for the provider adapter retry boundary."""
+    return http_get_with_retry(http_get, url, provider=provider, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -67,36 +49,6 @@ class PVArrayConfig:
     performance_ratio: float = 0.82
     shading_factor: float = 1.0
     temp_coeff_per_deg: float = -0.0035
-
-
-@dataclass(frozen=True)
-class PvCalibrationInput:
-    arrays: list[PVArrayConfig]
-    rows: list[dict[str, Any]]
-    target_date: str
-    latitude: float
-    longitude: float
-    timezone: str
-
-
-@dataclass(frozen=True)
-class PvCalibrationPolicy:
-    # おおむね一季節内の実績だけで補正し、季節差のある古い実績による偏りを避ける。
-    lookback_days: int = 45
-    # 少数の観測日で補正係数が決まらないよう、補正の適用には最低3日を必要とする。
-    min_days: int = 3
-    # 欠損や異常日に追随して予測が極端にならないよう、補正係数を安全な範囲に制限する。
-    min_factor: float = 0.2
-    max_factor: float = 5.0
-
-    @classmethod
-    def from_env(cls) -> "PvCalibrationPolicy":
-        return cls(
-            lookback_days=int(os.getenv("PV_ARRAY_CALIBRATION_LOOKBACK_DAYS", "45")),
-            min_days=int(os.getenv("PV_ARRAY_CALIBRATION_MIN_DAYS", "3")),
-            min_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MIN_FACTOR", "0.2")),
-            max_factor=float(os.getenv("PV_ARRAY_CALIBRATION_MAX_FACTOR", "5.0")),
-        )
 
 
 def _parse_time(raw: Any) -> datetime | None:
@@ -889,23 +841,8 @@ def forecast_pv_arrays_forecast_solar(
 
 
 def _provider_order_from_env() -> list[str]:
-    raw = os.getenv("PV_ARRAY_PROVIDER", "forecast_solar,open_meteo").strip()
-    if not raw:
-        raw = "forecast_solar,open_meteo"
-    aliases = {
-        "forecast.solar": "forecast_solar",
-        "forecast-solar": "forecast_solar",
-        "forecast_solar": "forecast_solar",
-        "open-meteo": "open_meteo",
-        "open_meteo": "open_meteo",
-        "openmeteo": "open_meteo",
-    }
-    providers: list[str] = []
-    for part in raw.split(","):
-        key = aliases.get(part.strip().lower())
-        if key and key not in providers:
-            providers.append(key)
-    return providers or ["forecast_solar", "open_meteo"]
+    """Compatibility wrapper for configured provider precedence."""
+    return provider_order_from_env()
 
 
 def _forecast_hourly_map(forecast: dict[str, Any]) -> dict[datetime, float]:
@@ -1069,39 +1006,14 @@ def build_pv_array_forecast(
             weather_multiplier = (effective_factor / base_factor) if base_factor > 0 else 1.0
             adjustment_strategy = "regression_blend"
 
-    provider_attempts: list[dict[str, Any]] = []
-    successful_forecasts: list[dict[str, Any]] = []
     provider_mode = os.getenv("PV_ARRAY_PROVIDER_MODE", "ensemble").strip().lower() or "ensemble"
-    for provider in _provider_order_from_env():
-        try:
-            if provider == "forecast_solar":
-                current_forecast = forecast_pv_arrays_forecast_solar(
-                    arrays=arrays,
-                    target_date=target_date,
-                    lat=lat,
-                    lon=lon,
-                    timezone=timezone,
-                    calibration_factor=effective_factor,
-                    http_get=http_get,
-                )
-            elif provider == "open_meteo":
-                current_forecast = forecast_pv_arrays(
-                    arrays=arrays,
-                    target_date=target_date,
-                    lat=lat,
-                    lon=lon,
-                    timezone=timezone,
-                    calibration_factor=effective_factor,
-                    http_get=http_get,
-                )
-            else:
-                continue
-            provider_attempts.append({"provider": provider, "ok": True})
-            successful_forecasts.append(current_forecast)
-            if provider_mode in {"first", "first_success", "fallback"}:
-                break
-        except Exception as exc:
-            provider_attempts.append({"provider": provider, "ok": False, "error": str(exc)})
+    successful_forecasts, provider_attempts = select_provider_forecasts(
+        {
+            "forecast_solar": lambda: forecast_pv_arrays_forecast_solar(arrays=arrays, target_date=target_date, lat=lat, lon=lon, timezone=timezone, calibration_factor=effective_factor, http_get=http_get),
+            "open_meteo": lambda: forecast_pv_arrays(arrays=arrays, target_date=target_date, lat=lat, lon=lon, timezone=timezone, calibration_factor=effective_factor, http_get=http_get),
+        },
+        mode=provider_mode,
+    )
 
     if not successful_forecasts:
         raise RuntimeError(f"PV array forecast failed for providers: {provider_attempts}")
