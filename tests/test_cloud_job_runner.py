@@ -394,7 +394,8 @@ def test_realtime_soc_does_not_logout_after_login_failure(monkeypatch) -> None:
 
 
 def test_read_soc_with_fallback_uses_fresh_csv(monkeypatch) -> None:
-    now = datetime.now()
+    # CSV timestamps are naive Asia/Tokyo wall-clock values, independent of the test runner timezone.
+    now = datetime.now(ZoneInfo("Asia/Tokyo")).replace(tzinfo=None)
     monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
     monkeypatch.setattr(
         "app.runtime.cloud_job._latest_realtime_soc_percent",
