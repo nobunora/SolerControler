@@ -12,7 +12,7 @@ python --version
 
 echo "[remote-codex-smoke] import check"
 python - <<'PY'
-from app.soc_cost_optimizer import ForecastScenario, SocCostModel, optimize_soc_by_expected_cost
+from app.energy_plan.soc_cost import ForecastScenario, SocCostModel, optimize_soc_by_expected_cost
 from app.forecasting.correction import add_thermal_states
 
 print("imports ok")
