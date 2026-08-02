@@ -418,3 +418,10 @@
 - 開始コミット: `91fb8edd1e772532ff841a3727e8392dd2bbc993`。
 - 変更: morning/daytime/history guardを選択PV方式に応じてcost optimizerの上限へ反映する純粋計算を `optimization` に移した。
 - 検証: 関連テストは `99 passed`、Energy Plan mypy 0エラー、`git diff --check` は成功した。外部サービスは実行していない。
+
+## 2026-08-02 — M-1完了: Energy Plan optimization群の分離
+
+- 開始コミット: `e2a0b4e3004807b7557f4dd9c17a94348b2f52ef`。
+- 変更: current SOC optimizerの実行・decision payload整形、および料金モデル生成を `app.energy_plan.optimization` へ移した。workflowには実行順、入力port、最終output組立て、公開 `build_energy_plan` / `main` と、既存テストのpatch境界を保つ薄い委譲を残した。
+- 不変条件: SOC最適化の入力、料金・契約状態の例外、JSONキー、計画出力、外部サービス呼出し条件は変更していない。
+- 検証: 指定Energy Plan回帰は `108 passed`、`python -m mypy app/energy_plan --no-incremental` は0エラー、compileall、`git diff --check` は成功した。外部サービスは実行していない。

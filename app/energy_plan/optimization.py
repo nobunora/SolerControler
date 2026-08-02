@@ -5,11 +5,17 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, TYPE_CHECKING
 
 from app.energy_plan.energy_model import DaytimeSocOptimizationResult
 from app.energy_plan.energy_model import optimize_target_soc_for_daytime, to_dict
+from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
+from app.energy_plan.soc_cost import SocCostModel, SocOptimizationRequest, optimize_soc_request, to_plain_dict
 from app.energy_plan.soc_cost import DEFAULT_SIGMA_BUCKETS, ForecastScenario, PvForecastUncertainty, SigmaBucket
+
+if TYPE_CHECKING:
+    from app.energy_plan.soc_constraints import SocConstraintSet
+    from app.energy_plan.workflow import EnergyModelContext, NightChargePreparation, PvForecastBundle
 
 
 @dataclass(frozen=True)
@@ -130,6 +136,344 @@ def paired_scenarios(forecast_correction: dict[str, object] | None = None) -> tu
         if label and probability is not None and probability > 0 and pv_multiplier is not None and pv_multiplier > 0 and load_multiplier is not None and load_multiplier > 0:
             scenarios.append(ForecastScenario(label, probability, pv_multiplier, load_multiplier))
     return tuple(scenarios) if len(scenarios) >= 3 else None
+
+
+
+
+def soc_cost_model_from_env(
+    *,
+    battery_round_trip_efficiency: float,
+    monthly_day_buy_kwh_before_target: float = 0.0,
+    expected_rest_of_month_day_buy_kwh: float = 0.0,
+) -> SocCostModel:
+    """Prices intentionally live in one place so the objective is easy to audit."""
+
+    day_rate = _env_float(
+        "SOC_COST_DAY_BUY_RATE_YEN_PER_KWH",
+        _env_float("NIGHT8_DAY_RATE_TIER2_YEN", _env_float("DAY_RATE_YEN_PER_KWH", 39.10)),
+    )
+    night_rate = _env_float("SOC_COST_NIGHT_RATE_YEN_PER_KWH", _env_float("NIGHT8_NIGHT_RATE_YEN", 31.0))
+    sell_value_ratio = _env_float_clamped("SOC_COST_SELL_VALUE_RATIO", 0.0, min_value=0.0, max_value=1.0)
+    day_buy_penalty = max(0.0, _env_float("SOC_COST_DAY_BUY_PENALTY_FACTOR", 1.0))
+    export_value_mode = os.getenv("SOC_EXPORT_VALUE_MODE", "penalty").strip().lower() or "penalty"
+    sell_revenue = max(0.0, _env_float("SOC_SELL_REVENUE_YEN_PER_KWH", 0.0))
+    export_contract_status = os.getenv("SOC_EXPORT_CONTRACT_STATUS", "").strip().lower()
+    valid_contract_statuses = {"active", "inactive", "unknown"}
+    if export_contract_status not in valid_contract_statuses:
+        raise RuntimeError(
+            "SOC_EXPORT_CONTRACT_STATUS must be active, inactive, or unknown"
+        )
+    if export_contract_status == "active" and export_value_mode != "revenue":
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be revenue when SOC_EXPORT_CONTRACT_STATUS is active"
+        )
+    if export_contract_status == "inactive" and export_value_mode not in {"penalty", "neutral"}:
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be penalty or neutral when SOC_EXPORT_CONTRACT_STATUS is inactive"
+        )
+    if export_contract_status == "unknown" and export_value_mode != "neutral":
+        raise RuntimeError(
+            "SOC_EXPORT_VALUE_MODE must be neutral when SOC_EXPORT_CONTRACT_STATUS is unknown"
+        )
+    if export_value_mode == "revenue" and sell_revenue <= 0:
+        raise RuntimeError(
+            "SOC_SELL_REVENUE_YEN_PER_KWH must be positive when SOC_EXPORT_VALUE_MODE is revenue"
+        )
+    charge_efficiency = _env_float(
+        "SOC_COST_USABLE_CHARGE_EFFICIENCY",
+        _env_float("SOC_COST_CHARGE_EFFICIENCY", battery_round_trip_efficiency),
+    )
+    sell_loss_raw = os.getenv("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", "").strip()
+    sell_loss_override = (
+        _env_float("SOC_COST_SELL_OPPORTUNITY_LOSS_YEN_PER_KWH", 0.0)
+        if sell_loss_raw
+        else _env_float("SOC_EXPORT_PENALTY_YEN_PER_KWH", max(0.0, day_rate))
+        if export_value_mode == "penalty"
+        else None
+    )
+    tariff_mode = os.getenv("COST_TARIFF_MODE", "night8_tiered").strip().lower() or "night8_tiered"
+    if not _env_bool("SOC_TIERED_DAY_BUY_COST_ENABLED", True):
+        tariff_mode = "flat"
+    return SocCostModel(
+        day_buy_rate_yen_per_kwh=max(0.0, day_rate),
+        night_buy_rate_yen_per_kwh=max(0.0, night_rate),
+        charge_efficiency=max(0.01, charge_efficiency),
+        sell_value_ratio=sell_value_ratio,
+        day_buy_penalty_factor=day_buy_penalty,
+        sell_opportunity_loss_yen_per_kwh_override=(
+            max(0.0, sell_loss_override) if sell_loss_override is not None else None
+        ),
+        export_value_mode=export_value_mode,
+        sell_revenue_yen_per_kwh=sell_revenue,
+        tariff_mode=tariff_mode,
+        monthly_day_buy_kwh_before_target=max(
+            0.0,
+            _env_float("SOC_MONTHLY_DAY_BUY_KWH_BEFORE_TARGET", monthly_day_buy_kwh_before_target),
+        ),
+        day_tier1_upper_kwh=_env_float("NIGHT8_DAY_TIER1_UPPER_KWH", 90.0),
+        day_tier2_upper_kwh=_env_float("NIGHT8_DAY_TIER2_UPPER_KWH", 230.0),
+        day_tier1_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER1_YEN", 31.80),
+        day_tier2_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER2_YEN", 39.10),
+        day_tier3_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER3_YEN", 43.62),
+        monthly_tier_landing_enabled=_env_bool("SOC_MONTHLY_TIER_LANDING_ENABLED", False),
+        expected_rest_of_month_day_buy_kwh=max(
+            0.0,
+            _env_float("SOC_EXPECTED_REST_OF_MONTH_DAY_BUY_KWH", expected_rest_of_month_day_buy_kwh),
+        ),
+        tier1_underuse_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER1_UNDERUSE_PENALTY_YEN_PER_KWH", 0.2),
+        ),
+        tier1_crossing_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH", 30.0),
+        ),
+        tier2_extra_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH", 8.0),
+        ),
+        tier3_extra_penalty_yen_per_kwh=max(
+            0.0,
+            _env_float("SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH", 20.0),
+        ),
+    )
+
+
+
+def run_current_optimizer(
+    context: EnergyModelContext,
+    night_charge: NightChargePreparation,
+    pv_forecast: PvForecastBundle,
+    constraints: SocConstraintSet,
+    legacy: LegacyOptimizationDecision,
+    *,
+    optimize_request: Callable[[SocOptimizationRequest], Any] = optimize_soc_request,
+    prior_loader: Callable[..., dict[str, object] | None] | None = None,
+    target_features_builder: Callable[..., dict[str, object]] | None = None,
+) -> OptimizationDecision:
+    from app.energy_plan.workflow import (
+        _soc_cost_model_from_env,
+        _to_optional_float,
+        _soc_decision_target_features,
+    )
+    config = context.config
+    result_payload = dict(night_charge.result_payload)
+    optimization_payload: dict[str, object] | None = None
+    cost_payload: dict[str, object] | None = None
+    if config.cost_optimization_enabled:
+        uncertainty = apply_uncertainty_floor(pv_forecast.uncertainty)
+        cost_model = _soc_cost_model_from_env(
+            battery_round_trip_efficiency=context.coefficients.battery_round_trip_efficiency,
+            monthly_day_buy_kwh_before_target=(
+                _to_optional_float(night_charge.monthly_day_buy_before_target.get("kwh"))
+                or 0.0
+            ),
+            expected_rest_of_month_day_buy_kwh=(
+                _to_optional_float(night_charge.expected_rest_of_month_day_buy.get("kwh"))
+                or 0.0
+            ),
+        )
+        respect_guard = config.cost_respect_morning_headroom_cap
+        from app.energy_plan.optimization import cost_max_target_soc
+
+        cost_max_soc = cost_max_target_soc(
+            respect_morning_headroom=respect_guard,
+            apply_pv_headroom_caps=constraints.apply_pv_headroom_caps,
+            morning_headroom=constraints.morning_headroom,
+            daytime_net_surplus=constraints.daytime_net_surplus,
+            historical_soc_gain=constraints.historical_soc_gain,
+        )
+        load_scenario_values = load_scenarios(pv_forecast.correction)
+        paired_scenario_values = paired_scenarios(pv_forecast.correction)
+        weather_upside_probability_value = weather_upside_probability(
+            context.forecast
+        )
+        peak_penalty = pv_forecast.correction.get("peak_penalty", {})
+        peak_target_soc = _to_optional_float(
+            peak_penalty.get("target_peak_soc_percent")
+            if isinstance(peak_penalty, dict)
+            else None
+        )
+        peak_penalty_factor = (
+            _to_optional_float(
+                peak_penalty.get("applied_factor")
+                if isinstance(peak_penalty, dict)
+                else None
+            )
+            or 0.0
+        )
+        prior_reader = prior_loader or load_soc_decision_prior_from_firestore
+        target_builder = target_features_builder or _soc_decision_target_features
+        prior = prior_reader(
+            target_date=context.target_date,
+            target_features=target_builder(
+                forecast=context.forecast,
+                hourly_load_forecast=pv_forecast.hourly_load_kwh,
+                hourly_pv_forecast=pv_forecast.hourly_pv_kwh,
+                final_pv_forecast_source=pv_forecast.source,
+            ),
+        )
+        prior_regret_curve: dict[float | str, float] | None = None
+        raw_prior_curve = prior.get("regret_yen_by_soc") if isinstance(prior, dict) else None
+        if isinstance(prior, dict) and prior.get("applied") and isinstance(raw_prior_curve, dict):
+            prior_regret_curve = {
+                key: float(value)
+                for key, value in raw_prior_curve.items()
+                if isinstance(key, (str, int, float)) and isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+        prior_weight = (
+            _to_optional_float(prior.get("weight") if isinstance(prior, dict) else None)
+            or 0.0
+        )
+        prior_max_penalty = (
+            _to_optional_float(
+                prior.get("max_penalty_yen") if isinstance(prior, dict) else None
+            )
+            or 0.0
+        )
+        optimized = optimize_request(SocOptimizationRequest(
+            capacity_kwh=night_charge.result.effective_capacity_kwh,
+            soc_now_percent=context.latest_soc_percent,
+            reserve_soc_percent=night_charge.inputs.reserve_soc_percent,
+            hourly_load_kwh=pv_forecast.hourly_load_kwh,
+            hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+            uncertainty=uncertainty,
+            cost_model=cost_model,
+            soc_step_percent=config.cost_soc_step_percent,
+            max_target_soc_percent=cost_max_soc,
+            sigma_buckets=sigma_buckets(),
+            min_pv_multiplier=config.cost_min_pv_multiplier,
+            max_pv_multiplier=config.cost_max_pv_multiplier,
+            load_scenarios=load_scenario_values,
+            joint_scenarios=paired_scenario_values,
+            weather_upside_probability=weather_upside_probability_value,
+            weather_upside_z=config.cost_weather_upside_z,
+            peak_soc_target_percent=peak_target_soc,
+            peak_soc_unmet_penalty_yen_per_kwh=(
+                cost_model.day_buy_rate_yen_per_kwh * max(0.0, peak_penalty_factor)
+            ),
+            expected_overnight_discharge_kwh=night_charge.expected_overnight_discharge_kwh,
+            decision_prior_regret_yen_by_soc=prior_regret_curve,
+            decision_prior_weight=prior_weight,
+            decision_prior_max_penalty_yen=prior_max_penalty,
+        ))
+        if optimized is not None:
+            cost_payload = {
+                **to_plain_dict(optimized),
+                "objective": "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
+                "morning_pv_headroom_guard": constraints.morning_headroom,
+                "daytime_net_surplus_headroom_guard": constraints.daytime_net_surplus,
+                "historical_daytime_soc_gain_guard": constraints.historical_soc_gain,
+                "respect_morning_headroom_guard": bool(
+                    respect_guard and constraints.apply_pv_headroom_caps
+                ),
+                "pv_headroom_cap_policy": {
+                    "apply_caps": constraints.apply_pv_headroom_caps,
+                    "reason": (
+                        "existing_forecast_selected"
+                        if constraints.apply_pv_headroom_caps
+                        else "physical_pv_selected"
+                    ),
+                    "selected_method": pv_forecast.selected_method,
+                },
+                "max_target_soc_percent_after_guards": cost_max_soc,
+                "forecast_correction": pv_forecast.correction.get("rationale", {}),
+                "pv_physical_forecast": pv_forecast.physical_diagnostics,
+                "hourly_weather_pv_shape": pv_forecast.hourly_weather_shape,
+                "soc_decision_feedback_prior": prior,
+                "monthly_day_buy_before_target": night_charge.monthly_day_buy_before_target,
+                "expected_rest_of_month_day_buy": night_charge.expected_rest_of_month_day_buy,
+                "soc_cost_risk": {
+                    "expected_day_buy_kwh": optimized.expected_day_buy_kwh_risk,
+                    "expected_sell_kwh": optimized.expected_sell_kwh_risk,
+                    "worst_case_day_buy_kwh": optimized.worst_case_day_buy_kwh,
+                    "worst_case_sell_kwh": optimized.worst_case_sell_kwh,
+                    "buy_risk": optimized.buy_risk,
+                    "sell_risk": optimized.sell_risk,
+                    "peak_unmet_penalty_factor": peak_penalty_factor,
+                    "export_value_mode": cost_model.export_value_mode,
+                    "sell_revenue_yen_per_kwh": cost_model.sell_revenue_yen_per_kwh,
+                    "sell_opportunity_loss_yen_per_kwh": cost_model.sell_opportunity_loss_yen_per_kwh,
+                    "tariff_mode": cost_model.tariff_mode,
+                    "monthly_day_buy_kwh_before_target": cost_model.monthly_day_buy_kwh_before_target,
+                    "expected_rest_of_month_day_buy_kwh": cost_model.expected_rest_of_month_day_buy_kwh,
+                    "monthly_tier_landing_enabled": cost_model.monthly_tier_landing_enabled,
+                    "monthly_tier_landing_penalty_yen": optimized.expected_monthly_tier_landing_penalty_yen,
+                    "projected_monthly_day_buy_kwh": round(
+                        cost_model.monthly_day_buy_kwh_before_target
+                        + cost_model.expected_rest_of_month_day_buy_kwh
+                        + optimized.expected_day_buy_kwh,
+                        4,
+                    ),
+                    "monthly_tier_landing_penalties": {
+                        "tier1_underuse_yen_per_kwh": cost_model.tier1_underuse_penalty_yen_per_kwh,
+                        "tier1_crossing_yen_per_kwh": cost_model.tier1_crossing_penalty_yen_per_kwh,
+                        "tier2_extra_yen_per_kwh": cost_model.tier2_extra_penalty_yen_per_kwh,
+                        "tier3_extra_yen_per_kwh": cost_model.tier3_extra_penalty_yen_per_kwh,
+                    },
+                    "day_buy_tiers": {
+                        "tier1_upper_kwh": cost_model.day_tier1_upper_kwh,
+                        "tier2_upper_kwh": cost_model.day_tier2_upper_kwh,
+                        "tier1_rate_yen_per_kwh": cost_model.day_tier1_rate_yen_per_kwh,
+                        "tier2_rate_yen_per_kwh": cost_model.day_tier2_rate_yen_per_kwh,
+                        "tier3_rate_yen_per_kwh": cost_model.day_tier3_rate_yen_per_kwh,
+                    },
+                    "scenario_count": len(optimized.forecast_scenarios),
+                    "scenario_method": (
+                        "smoothed_paired_pv_load_residuals"
+                        if paired_scenario_values
+                        else "pv_sigma_x_load_scenarios_with_weather_upside"
+                    ),
+                    "weather_upside_probability": weather_upside_probability_value,
+                    "weather_upside_z": config.cost_weather_upside_z,
+                },
+                "hourly_load_forecast_kwh": {
+                    str(k): round(v, 4)
+                    for k, v in sorted(pv_forecast.hourly_load_kwh.items())
+                },
+                "hourly_pv_forecast_kwh": {
+                    str(k): round(v, 4)
+                    for k, v in sorted(pv_forecast.hourly_pv_kwh.items())
+                },
+                "legacy_peak_objective": legacy.payload,
+            }
+            result_payload["target_soc_7_percent_base"] = result_payload.get(
+                "target_soc_7_percent"
+            )
+            result_payload["required_night_charge_kwh_base"] = result_payload.get(
+                "required_night_charge_kwh"
+            )
+            result_payload.update(
+                {
+                    "target_soc_7_percent": optimized.target_soc_7_percent,
+                    "required_night_charge_kwh": optimized.required_night_charge_kwh,
+                    "target_soc_7_percent_cost_optimized": optimized.target_soc_7_percent,
+                    "required_night_charge_kwh_cost_optimized": optimized.required_night_charge_kwh,
+                    "soc_expected_total_cost_yen": optimized.total_expected_cost_yen,
+                    "soc_expected_day_buy_kwh": optimized.expected_day_buy_kwh,
+                    "soc_expected_sell_kwh": optimized.expected_sell_kwh,
+                    "soc_expected_peak_unmet_kwh": optimized.expected_peak_unmet_kwh,
+                    "soc_expected_peak_unmet_cost_yen": optimized.expected_peak_unmet_cost_yen,
+                }
+            )
+            optimization_payload = cost_payload
+
+    if optimization_payload is None and legacy.payload is not None and legacy.result is not None:
+        result_payload["target_soc_7_percent_base"] = result_payload.get(
+            "target_soc_7_percent"
+        )
+        result_payload["required_night_charge_kwh_base"] = result_payload.get(
+            "required_night_charge_kwh"
+        )
+        result_payload["target_soc_7_percent"] = legacy.result.target_soc_7_percent
+        result_payload["required_night_charge_kwh"] = legacy.result.required_night_charge_kwh
+        optimization_payload = legacy.payload
+    return OptimizationDecision(
+        result_payload=result_payload,
+        optimization_payload=optimization_payload,
+        cost_optimization_payload=cost_payload,
+    )
+
 
 
 def _env_bool(name: str, default: bool) -> bool:
