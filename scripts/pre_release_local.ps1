@@ -1,11 +1,36 @@
 param(
     [switch]$SkipInstall,
-    [switch]$EnforceQualityAudit
+    [switch]$EnforceQualityAudit,
+    [switch]$CheckPrerequisites
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
+
+function Assert-RequiredCommand {
+    param([string]$Name)
+
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "Required command was not found: $Name"
+    }
+}
+
+function Get-TrackedJavaScriptFiles {
+    $files = @(git ls-files -- "*.js")
+    if ($LASTEXITCODE -ne 0) { throw "git ls-files failed" }
+    return $files
+}
+
+foreach ($commandName in @("python", "git", "node", "npx")) {
+    Assert-RequiredCommand -Name $commandName
+}
+
+if ($CheckPrerequisites) {
+    $null = @(Get-TrackedJavaScriptFiles)
+    Write-Host "Quality gate prerequisites passed."
+    exit 0
+}
 
 if (-not $SkipInstall) {
     python -m pip install -r .\requirements-dev.txt uv
@@ -38,6 +63,12 @@ Write-Host "Running code-quality audit before tests."
 python -m ruff check .
 if ($LASTEXITCODE -ne 0) { throw "ruff failed" }
 
+$pythonScriptsDirectory = python -c "import sysconfig; print(sysconfig.get_path('scripts'))"
+$importLinter = Join-Path $pythonScriptsDirectory "lint-imports.exe"
+if (-not (Test-Path $importLinter)) { throw "Import Linter executable was not found: $importLinter" }
+& $importLinter
+if ($LASTEXITCODE -ne 0) { throw "import-linter failed" }
+
 $pythonExecutable = python -c "import sys; print(sys.executable)"
 Invoke-AdvisoryQualityCheck -Name "ty" -Command {
     python -m uv tool run ty check . --python $pythonExecutable --output-format concise
@@ -46,7 +77,7 @@ Invoke-AdvisoryQualityCheck -Name "deptry" -Command {
     python -m uv tool run deptry .
 }
 
-$javaScriptFiles = @(rg --files -g "*.js")
+$javaScriptFiles = @(Get-TrackedJavaScriptFiles)
 if ($javaScriptFiles.Count -gt 0) {
     npx --yes oxlint @javaScriptFiles
     if ($LASTEXITCODE -ne 0) { throw "oxlint failed" }

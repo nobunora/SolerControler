@@ -9,6 +9,48 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["F401", "F821", "F841"]
 
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Domain stays independent of upper layers"
+type = "forbidden"
+source_modules = ["app.domain"]
+forbidden_modules = [
+    "app.runtime",
+    "app.dashboard",
+    "app.operations",
+    "app.kpnet",
+    "app.forecasting",
+    "app.energy_plan",
+]
+
+[[tool.importlinter.contracts]]
+name = "Configuration stays independent of upper layers"
+type = "forbidden"
+source_modules = ["app.configuration"]
+forbidden_modules = [
+    "app.runtime",
+    "app.dashboard",
+    "app.operations",
+    "app.kpnet",
+    "app.forecasting",
+    "app.energy_plan",
+]
+
+[[tool.importlinter.contracts]]
+name = "Parsing stays independent of upper layers"
+type = "forbidden"
+source_modules = ["app.parsing"]
+forbidden_modules = [
+    "app.runtime",
+    "app.dashboard",
+    "app.operations",
+    "app.kpnet",
+    "app.forecasting",
+    "app.energy_plan",
+]
+
 [[tool.mypy.overrides]]
 module = [
     "google.auth.*",
