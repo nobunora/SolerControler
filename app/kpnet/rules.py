@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 LOGGER = logging.getLogger(__name__)

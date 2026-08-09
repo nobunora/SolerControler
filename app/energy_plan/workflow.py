@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import csv
-import json
 import math
 import os
-import statistics
 import time
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -21,22 +19,16 @@ from app.energy_plan import (
     ForecastSettings,
     HistoricalInputPort,
     HistoricalInputSettings,
-    PlanDocumentV1,
     WeatherHistoryFetchResult,
     WeatherHistoryPort,
     build_historical_profile as _historical_profile,
-    coerce_hourly_energy as _coerce_hourly_float_dict,
-    estimate_sunset_hour as _estimate_sunset_hour,
-    summarize_hourly_pv as _hourly_pv_totals,
 )
 from app.energy_plan.energy_model import (
-    DaytimeSocOptimizationResult,
     EnergyModelCoefficients,
     NightChargeInputs,
     NightChargeResult,
     compute_night_charge_target,
     fit_coefficients_from_csv,
-    optimize_target_soc_for_daytime,
     to_dict,
 )
 from app.forecasting.occupancy import (
@@ -47,24 +39,13 @@ from app.forecasting.occupancy import (
     load_occupancy_events_from_env,
 )
 from app.forecasting.pv_array import build_pv_array_forecast, load_pv_array_configs
+from app.forecasting.correction import _build_forecast_correction as _build_forecast_correction
 from app.energy_plan.soc_cost import (
-    DEFAULT_SIGMA_BUCKETS,
     ForecastScenario,
     PvForecastUncertainty,
-    SocOptimizationRequest,
-    SocCostModel,
     SigmaBucket,
     optimize_soc_request,
-    to_plain_dict,
 )
-from app.forecasting.correction import (
-    ForecastCorrectionInput,
-    ForecastCorrectionPolicy,
-    _build_forecast_correction,
-    build_forecast_correction,
-)
-from app.forecasting.correction_history_io import _load_forecast_hourly_history
-from app.forecasting.pv_physical import build_physical_pv_candidate
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
 from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
@@ -77,37 +58,27 @@ from app.energy_plan.weather_history import (
     weather_class,
 )
 from app.energy_plan.forecast_inputs import (
-    build_hourly_load_forecast,
-    build_hourly_pv_forecast,
     load_rows_for_consumption_forecast,
     pv_forecast_totals,
-    reshape_hourly_pv_by_weather,
 )
 from app.energy_plan.soc_constraints import (
-    SocConstraint,
     SocConstraintSet,
-    active_constraint_names as _active_constraint_names,
     morning_pv_headroom_guard,
 )
 from app.energy_plan.monthly_projection import (
-    billing_period_for_target as _billing_period_for_target,
     expected_rest_of_month_day_buy_kwh as _expected_rest_of_month_day_buy_kwh,
     monthly_day_buy_kwh_before_target as _monthly_day_buy_kwh_before_target,
 )
 from app.energy_plan.plan_quality import (
     _annotate_pv_headroom_guard_policy,
-    _build_plan_quality,
-    _candidate_reason_summary,
-    _decision_cost_breakdown,
+    _decision_cost_breakdown as _decision_cost_breakdown,
     _env_bool,
     _env_float,
     _env_float_clamped,
     _list_value,
-    _physical_pv_uncertainty_from_diagnostics,
-    _pv_uncertainty_from_forecast,
-    _selected_pv_uncertainty,
-    _soc_cap_or_unbounded,
-    _soc_cost_model_from_env,
+    _selected_pv_uncertainty as _selected_pv_uncertainty,
+    _soc_cap_or_unbounded as _soc_cap_or_unbounded,
+    _soc_cost_model_from_env as _soc_cost_model_from_env,
     _soc_decision_target_features,
     _to_optional_float,
     _to_optional_int,

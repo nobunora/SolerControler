@@ -62,7 +62,7 @@
 
 1. 作業開始時チェックを行う。
    - `git status --short`
-   - 既存の `docs/current/product/CURRENT_DECISION_TREE_JA.md`
+   - 既存の [意思決定フロー](../architecture/06-decision-flow.md)
    - 既存の `docs/current/product/OPERATION_CONDITIONS_GUIDE.md`
    - 直近の関連レポート
    - ここで既存文書が十分なら、それを土台にして差分だけ調べる。

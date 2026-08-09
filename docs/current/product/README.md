@@ -1,0 +1,17 @@
+# プロダクト仕様
+
+ここには、現在の利用者向け機能、予測、運用条件の仕様を置きます。全体構造は先に[アーキテクチャ概要](../architecture/00-overview-ja.md)を確認してください。
+
+| 知りたいこと | 文書 |
+| --- | --- |
+| 利用者・公開向けの説明 | [PUBLIC_DESCRIPTION_JA.md](PUBLIC_DESCRIPTION_JA.md) |
+| 時刻別の判断順・責務 | [意思決定フロー](../architecture/06-decision-flow.md) |
+| `operation_conditions.json` の編集・反映 | [OPERATION_CONDITIONS_GUIDE.md](OPERATION_CONDITIONS_GUIDE.md) |
+| 消費電力量の予測 | [CONSUMPTION_FORECAST_MODEL_JA.md](CONSUMPTION_FORECAST_MODEL_JA.md) |
+| 東・南・西アレイのPV予測 | [PV_ARRAY_FORECAST_JA.md](PV_ARRAY_FORECAST_JA.md) |
+| 不在予定入力シート | [OCCUPANCY_SCHEDULE_JA.md](OCCUPANCY_SCHEDULE_JA.md) |
+| 将来のSOCシミュレーション表示構想 | [dashboard_soc_simulation_vision_ja.md](dashboard_soc_simulation_vision_ja.md)（未実装） |
+
+`CURRENT_DECISION_TREE_JA.md` は旧リンク互換用の移転案内です。新しい参照は上表の意思決定フローを使用してください。
+
+戻る: [文書索引](../../README.md)

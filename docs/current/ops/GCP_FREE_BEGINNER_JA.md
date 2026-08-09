@@ -54,7 +54,7 @@ pwsh -NoProfile -File .\scripts\deploy_production_from_env.ps1
 これで以下の3つのCloud Schedulerジョブが作成されます。
 
 - `solar-battery-run-23`（23:00 JST）
-- `solar-battery-run-03`（04:00 JST）
+- `solar-battery-run-03`（03:00 JST）
 - `solar-battery-run-07`（07:00 JST）
 
 ## 4. ダッシュボード（任意）

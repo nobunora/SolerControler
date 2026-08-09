@@ -1,7 +1,7 @@
 # Solar Controller Automation（説明文・日本語）
 
 太陽光発電＋蓄電池の運用を自動化するPythonプロジェクトです。  
-毎日 **23:00 / 04:00 / 07:00（JST）** に、翌日の予報情報と稼働CSVをもとに蓄電池設定を調整します。
+毎日 **23:00 / 03:00 / 07:00（JST）** に、翌日の予報情報と稼働CSVをもとに蓄電池設定を調整します。
 
 ## できること
 
@@ -38,3 +38,4 @@
 ## Google Cloud運用前提の説明
 
 - [docs/current/ops/GCP_OPERATION_JA.md](../ops/GCP_OPERATION_JA.md)
+- [アーキテクチャ地図](../architecture/00-overview-ja.md)

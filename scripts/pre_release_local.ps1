@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$EnforceQualityAudit
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,8 +8,51 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
 if (-not $SkipInstall) {
-    python -m pip install -r .\requirements-dev.txt
+    python -m pip install -r .\requirements-dev.txt uv
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+}
+
+function Invoke-AdvisoryQualityCheck {
+    param(
+        [string]$Name,
+        [scriptblock]$Command
+    )
+
+    $output = @(& $Command 2>&1)
+    $exitCode = $LASTEXITCODE
+    $output | Select-Object -First 40
+    if ($exitCode -eq 0) {
+        Write-Host "$Name passed."
+        return
+    }
+
+    $message = "$Name reported diagnostics (exit code $exitCode)."
+    if ($EnforceQualityAudit) {
+        throw $message
+    }
+    Write-Warning "$message Run with -EnforceQualityAudit after the findings are resolved."
+}
+
+Write-Host "Running code-quality audit before tests."
+
+python -m ruff check .
+if ($LASTEXITCODE -ne 0) { throw "ruff failed" }
+
+$pythonExecutable = python -c "import sys; print(sys.executable)"
+Invoke-AdvisoryQualityCheck -Name "ty" -Command {
+    python -m uv tool run ty check . --python $pythonExecutable --output-format concise
+}
+Invoke-AdvisoryQualityCheck -Name "deptry" -Command {
+    python -m uv tool run deptry .
+}
+
+$javaScriptFiles = @(rg --files -g "*.js")
+if ($javaScriptFiles.Count -gt 0) {
+    npx --yes oxlint @javaScriptFiles
+    if ($LASTEXITCODE -ne 0) { throw "oxlint failed" }
+    Invoke-AdvisoryQualityCheck -Name "tsc" -Command {
+        npx --yes --package typescript tsc --allowJs --checkJs --noEmit --target ES2022 --lib ES2022,DOM @javaScriptFiles
+    }
 }
 
 python -m compileall app main.py kpnet_main.py energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py

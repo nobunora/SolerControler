@@ -8,14 +8,13 @@ forecasts and return corrected hourly forecasts plus a human-readable rationale
 that can be persisted for later validation.
 """
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
 import requests
 
 from app.forecasting.comfort_load import predict_hourly_comfort_load
-from app.forecasting.correction_calculations import actual_hourly_totals_by_day as _actual_hourly_totals_by_day
+from app.forecasting.correction_calculations import actual_hourly_totals_by_day as _actual_hourly_totals_by_day  # noqa: F401
 from app.forecasting.correction_history_io import (
     _load_forecast_hourly_history,
     load_forecast_hourly_history_from_firestore,
@@ -25,14 +24,14 @@ from app.configuration.environment import env_bool, env_float, env_float_clamped
 from app.forecasting.correction_model import (
     add_thermal_states,
     calculate_forecast_correction,
-    _correct_hourly_pv,
+    _correct_hourly_pv as _correct_hourly_pv,
     _evening_temperature_correction,
-    _paired_forecast_error_scenarios,
+    _paired_forecast_error_scenarios as _paired_forecast_error_scenarios,
     _physical_vector_residual_correction,
     _target_weather_from_forecast as _model_target_weather_from_forecast,
-    _temperature_features_for_day,
-    _temperature_hourly_multipliers,
-    _temperature_training_samples,
+    _temperature_features_for_day as _temperature_features_for_day,
+    _temperature_hourly_multipliers as _temperature_hourly_multipliers,
+    _temperature_training_samples as _temperature_training_samples,
 )
 
 

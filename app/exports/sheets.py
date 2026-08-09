@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -816,7 +816,7 @@ def run_export(*, slot: str) -> int:
     if cfg.slot_only and slot != cfg.slot_only:
         print(f"[sheets_export] skip: slot={slot} target={cfg.slot_only}")
         return 0
-    now_utc = datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    now_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     today_jst = _today_jst_str(cfg.timezone)
     sheets, drive = _google_services()
     spreadsheet_id = _ensure_spreadsheet(

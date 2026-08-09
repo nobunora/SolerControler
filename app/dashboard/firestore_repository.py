@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
 import math
 import os
-import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from app.dashboard.models import DashboardRawData, DashboardSlice
@@ -15,16 +12,15 @@ from app.dashboard.schedule import _build_latest_schedule_from_events, _default_
 from app.dashboard.aggregation import (
     _build_cost_monthly, _build_energy_daily, _aggregation_close_day,
     _accounting_month_label, _accounting_period_bounds, _date_add_iso,
-    _rolling_load_forecast, _today_jst_iso,
+    _today_jst_iso,
 )
 from app.dashboard.slice_assembler import (
     build_dashboard_slice as _build_dashboard_slice,
     empty_dashboard_slice as _empty_dashboard_slice,
     extract_pv_forecast_diagnostics,
     merge_latest_plan_into_schedule as _merge_latest_plan_into_schedule,
-    read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
 )
-from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
+from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, to_date_or_none as _to_date_or_none
 from app.dashboard.service import merge_forecast_hourly_actuals
 from app.domain.tariff import tiered_day_cost
 from app.parsing.numbers import to_float

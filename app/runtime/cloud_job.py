@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import math
 import os
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, TypeVar, cast
+from typing import Any, Iterable, Mapping, TypeVar, cast
 from zoneinfo import ZoneInfo
 
 from app.forced_charge import (
@@ -33,31 +32,29 @@ from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.runtime.schedule import (
-    _adjust03_target_date,
+    _adjust03_target_date as _adjust03_target_date,
     _hhmm_after_delay,
-    _parse_hhmm_minutes,
     _seconds_until_cutoff,
 )
 from app.runtime.command_adapter import (
     _env_float,
     _env_int,
-    _mask_env_updates,
+    _mask_env_updates as _mask_env_updates,
     _run,
     _run_operation_with_retry,
-    _run_optional,
+    _run_optional as _run_optional,  # noqa: F401
 )
 from app.runtime.adjust03_plan import (
     _attempt_03_fail_safe_standby,
-    _ensure_night_plan_available,
-    _night_plan_file_date,
+    _ensure_night_plan_available,  # noqa: F401
+    _run_db_pipeline_slot,  # noqa: F401
     _run_03_settings_profile_with_db,
-    _run_db_pipeline_slot,
 )
 from app.runtime.slot_orchestration import (
     _run_adjust_03,
     _run_day_07,
     _run_night_23,
-    _run_optional_04_exports_and_backups,
+    _run_optional_04_exports_and_backups as _run_optional_04_exports_and_backups,  # noqa: F401
 )
 
 

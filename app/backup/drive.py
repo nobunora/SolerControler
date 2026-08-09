@@ -4,7 +4,6 @@ import gzip
 import hashlib
 import io
 import json
-import os
 import tempfile
 import zipfile
 from dataclasses import dataclass

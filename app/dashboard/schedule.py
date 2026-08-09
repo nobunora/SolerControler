@@ -143,7 +143,12 @@ def _select_schedule_event(event_rows: list[dict[str, Any]], plan_date: str | No
     best_priority = min((_schedule_event_priority(candidate) for candidate in candidates), default=None)
     if best_priority is None:
         return None
-    return max((candidate for candidate in candidates if _schedule_event_priority(candidate) == best_priority), key=lambda candidate: _event_recency_key(candidate[0]), default=None)
+    matching_candidates = [
+        candidate for candidate in candidates if _schedule_event_priority(candidate) == best_priority
+    ]
+    if not matching_candidates:
+        return None
+    return max(matching_candidates, key=lambda candidate: _event_recency_key(candidate[0]))
 
 
 # readable-code-audit: skip STRUCT-04 — event selection, same-run completion, and battery provenance must be assembled into one internally consistent display schedule

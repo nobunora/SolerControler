@@ -11,10 +11,11 @@ Do not read all docs. Pick one category, then one file.
 
 ## Current References
 
-- `current/agent/`: agent, review, report, and command-generation rules.
-- `current/product/`: product behavior, decision rules, forecasts, and public description.
-- `current/ops/`: Google Cloud and remote operation references.
-- `current/prompts/`: reusable prompts that still reference the current behavior.
+- [current/agent/](current/agent/README.md): agent, review, report, and command-generation rules.
+- [current/architecture/](current/architecture/00-overview-ja.md): C4の視点で読む現行アーキテクチャ、入口、データフロー、ADR。
+- [current/product/](current/product/README.md): product behavior, decision rules, forecasts, and public description.
+- [current/ops/](current/ops/README.md): Google Cloud and remote operation references.
+- [current/prompts/](current/prompts/README.md): reusable prompts that still reference the current behavior.
 
 ## Completed Work
 

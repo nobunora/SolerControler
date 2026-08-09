@@ -293,4 +293,4 @@ sigma bucket に分けて期待値計算します。履歴が不足する場合�
    - `daytime_mode_plan`
 5. 問題なければ Cloud Run Jobs を再デプロイ
 
-関連する全体条件木は [CURRENT_DECISION_TREE_JA.md](CURRENT_DECISION_TREE_JA.md) を参照してください。
+関連する全体判断フローは [アーキテクチャの意思決定フロー](../architecture/06-decision-flow.md) を参照してください。

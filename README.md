@@ -28,13 +28,14 @@
 ## 公開向け説明文と画面イメージ
 
 - Docs整理索引: [docs/README.md](docs/README.md)
+- アーキテクチャ地図（最初に読む）: [docs/current/architecture/00-overview-ja.md](docs/current/architecture/00-overview-ja.md)
 - 説明文（日本語）: [docs/current/product/PUBLIC_DESCRIPTION_JA.md](docs/current/product/PUBLIC_DESCRIPTION_JA.md)
 - Codexトークン節約運用ルール: [docs/current/agent/codex_token_usage_rules.md](docs/current/agent/codex_token_usage_rules.md)
 - リモートCodex安全運用セットアップ: [docs/current/ops/REMOTE_CODEX_SETUP_JA.md](docs/current/ops/REMOTE_CODEX_SETUP_JA.md)
 - Google Cloud運用前提: [docs/current/ops/GCP_OPERATION_JA.md](docs/current/ops/GCP_OPERATION_JA.md)
 - Google Cloud無料運用（初心者向け手順）: [docs/current/ops/GCP_FREE_BEGINNER_JA.md](docs/current/ops/GCP_FREE_BEGINNER_JA.md)
 - 運用条件ファイルガイド: [docs/current/product/OPERATION_CONDITIONS_GUIDE.md](docs/current/product/OPERATION_CONDITIONS_GUIDE.md)
-- 現在の判定ルール（条件木）: [docs/current/product/CURRENT_DECISION_TREE_JA.md](docs/current/product/CURRENT_DECISION_TREE_JA.md)
+- 現在の判定フロー: [docs/current/architecture/06-decision-flow.md](docs/current/architecture/06-decision-flow.md)
 - 東・南・西アレイ発電予測: [docs/current/product/PV_ARRAY_FORECAST_JA.md](docs/current/product/PV_ARRAY_FORECAST_JA.md)
 - 消費電力量予測モデル仕様: [docs/current/product/CONSUMPTION_FORECAST_MODEL_JA.md](docs/current/product/CONSUMPTION_FORECAST_MODEL_JA.md)
 - 不在予定入力シート仕様: [docs/current/product/OCCUPANCY_SCHEDULE_JA.md](docs/current/product/OCCUPANCY_SCHEDULE_JA.md)

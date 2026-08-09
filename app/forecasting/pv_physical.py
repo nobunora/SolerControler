@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
-from app.configuration.environment import env_bool, env_float, env_float_clamped
+from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float
 
 

@@ -17,13 +17,13 @@ from app.operations.domain import (
     extract_final_pv_totals_from_plan as _extract_final_pv_totals_from_plan,
     extract_hourly_forecast_from_plan as _extract_hourly_forecast_from_plan,
     fetch_open_meteo_today_actual as _fetch_open_meteo_today_actual,
-    is_within_window as _is_within_window,
+    is_within_window as _is_within_window,  # noqa: F401
     iter_monitoring_rows as _iter_monitoring_rows,
-    parse_hhmm_to_minute as _parse_hhmm_to_minute,
+    parse_hhmm_to_minute as _parse_hhmm_to_minute,  # noqa: F401
     read_json_if_exists as _read_json_if_exists,
     read_summary as _read_summary,
     safe_json as _safe_json,
-    tiered_increment_cost as _tiered_day_increment_cost,
+    tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
 )
 from app.configuration.environment import env
 from app.parsing.numbers import to_float

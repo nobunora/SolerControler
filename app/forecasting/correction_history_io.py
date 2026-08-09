@@ -4,10 +4,9 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 
-from app.configuration.environment import env_bool, env_float
+from app.configuration.environment import env_float
 from app.parsing.numbers import to_float, to_int
 
 

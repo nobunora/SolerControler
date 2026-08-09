@@ -9,7 +9,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from app.parsing.numbers import parse_csv_float
 from app.kpnet.rules import _now_in_timezone
 
 

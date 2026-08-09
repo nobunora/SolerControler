@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-import numpy as np
 import requests
 
 from app.forecasting.pv_array_adapters import (
@@ -31,7 +30,7 @@ from app.forecasting.pv_array_selection import (
     provider_order_from_env,
     select_provider_forecasts,
 )
-from app.parsing.numbers import parse_csv_float, to_float, to_int
+from app.parsing.numbers import parse_csv_float
 
 
 HttpGet = Callable[..., Any]

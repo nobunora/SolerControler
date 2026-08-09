@@ -5,33 +5,24 @@ import time
 from pathlib import Path
 from typing import Any
 
-from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
+from app.dashboard.models import DashboardData, DashboardRawData as DashboardRawData, DashboardSlice
 from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
-from app.dashboard.schedule import (
-    _build_latest_schedule_from_events,
-    _default_latest_schedule,
-    _select_schedule_event,
-)
-from app.dashboard.service import merge_forecast_hourly_actuals
 from app.dashboard.slice_assembler import (
-    build_dashboard_slice as _build_dashboard_slice,
+    build_dashboard_slice as _build_dashboard_slice,  # noqa: F401
     build_slice_from_query_snapshot as _assemble_query_snapshot,
-    empty_dashboard_slice as _empty_dashboard_slice,
-    extract_pv_forecast_diagnostics as _extract_pv_forecast_diagnostics,
-    merge_latest_plan_into_schedule as _merge_latest_plan_into_schedule,
+    empty_dashboard_slice as _empty_dashboard_slice,  # noqa: F401
+    merge_latest_plan_into_schedule as _merge_latest_plan_into_schedule,  # noqa: F401
     read_latest_pv_forecast_diagnostics as _read_latest_pv_forecast_diagnostics,
 )
-from app.dashboard.sqlite_repository import SQLiteDashboardRepository, _get_global_bounds_sqlite, _sqlite_table_exists, load_sqlite_query_snapshot
-from app.dashboard.postgres_repository import PostgresDashboardRepository, _get_global_bounds_postgres
+from app.dashboard.sqlite_repository import SQLiteDashboardRepository, load_sqlite_query_snapshot
+from app.dashboard.postgres_repository import PostgresDashboardRepository
 from app.dashboard.firestore_repository import FirestoreDashboardRepository
-from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
 from app.dashboard.aggregation import (
     _accounting_month_label,
     _accounting_period_bounds,
     _aggregation_close_day,
     _build_cost_monthly,
     _date_add_iso,
-    _forecast_pv_kwh,
     _rolling_load_forecast,
     _today_jst_iso,
     _build_energy_daily,
@@ -165,18 +156,16 @@ def load_dashboard_data(db_path: Path) -> DashboardData:
 
 # Keep the historical private test/import boundary while Firestore ownership lives in its adapter.
 from app.dashboard.firestore_repository import (
-    _billing_usage_summary,
+    _billing_usage_summary as _billing_usage_summary,
     _dashboard_firestore_config,
-    _daily_metric_is_complete,
+    _daily_metric_is_complete as _daily_metric_is_complete,
     _firestore_bounds,
     _firestore_forecast_hourly_between,
     _firestore_monitoring_daily,
     _firestore_rows_between,
     _get_global_bounds_firestore as _repository_global_bounds_firestore,
-    _nested_dict,
     _open_dashboard_firestore_client,
-    _review_candidate_dates,
-    _read_latest_pv_forecast_diagnostics_from_firestore,
+    _review_candidate_dates as _review_candidate_dates,
 )
 
 

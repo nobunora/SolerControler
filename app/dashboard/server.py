@@ -345,8 +345,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_security_headers()
         self.end_headers()
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        _ = (fmt, args)
+    def log_message(self, format: str, *args: object) -> None:
+        _ = (format, args)
 
 
 def main() -> int:

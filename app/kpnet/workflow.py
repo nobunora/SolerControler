@@ -1,72 +1,45 @@
 from __future__ import annotations
 
-import csv
 import json
 import logging
-import math
-import os
-import statistics
-import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TypedDict
-from zoneinfo import ZoneInfo
+from typing import Any
 
 import matplotlib
 
-from app.domain.constants import SOCBounds, validate_soc_percent
 from app.kpnet import build_settings_intent
-from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.kpnet.rules import (
-    NightWindowContract,
-    _in_time_window,
+    _in_time_window as _in_time_window,  # noqa: F401
+    _night_window_contract as _night_window_contract,  # noqa: F401
     _is_night_window_now,
-    _minutes_to_hm,
-    _night_window_contract,
-    _now_in_timezone,
     _parse_hhmm,
 )
 from app.kpnet.csv_visualization import (
-    _default_csv_target_months,
-    _month_key,
-    _parse_csv_points,
+    _default_csv_target_months as _default_csv_target_months,
     _plot_csvs,
     _resolve_months,
 )
-from app.kpnet.client_support import validate_base_url as _validate_base_url
+from app.kpnet.client_support import validate_base_url as _validate_base_url  # noqa: F401
 from app.kpnet.config import LOGGER, KpNetConfig
 from app.kpnet.profile_builder import (
-    _apply_fixed_time_rules,
     _build_dynamic_forced_profile,
     _build_dynamic_green_profile,
     _build_payload,
-    _candidate_int_values,
     _enabled_sorted_rules,
-    _estimate_charge_power_kw,
-    _estimate_charge_soc_rate_percent_per_hour,
-    _extract_simple_visualization_soc_percent,
+    _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
     _pick_battery_operating_mode_code,
-    _pick_ceil_code,
-    _pick_max_code,
-    _pick_min_code,
     _pick_night_mode_preference,
-    _required_charge_percent,
-    _resolve_day_discharge_start_hhmm,
-    _resolve_hhmm,
-    _resolve_night_charge_end_hhmm,
-    _variable_rule,
 )
-from app.kpnet.plan import NightChargePlan, load_night_charge_plan
+from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
-from app.parsing.numbers import parse_csv_float, to_float
 
 __all__ = ["KpNetConfig", "run_kpnet_workflow", "main"]
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 
 def _setup_logging() -> None:

@@ -9,6 +9,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Open only the files and line ranges needed for the task.
 - Do not scan all docs, all source, generated files, caches, logs, or artifacts.
 - Prefer focused tests near the changed code.
+- Before running any tests, invoke the `code-quality-audit` Skill and complete its applicable Ruff, ty, deptry, Oxlint, and tsc checks. Triage findings before test execution; fix only verified issues and report configuration gaps separately.
 
 ## Change Style
 

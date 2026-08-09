@@ -6,10 +6,10 @@
 
 - **Cloud Run Jobs**
   - `solar-battery-23`（毎日 23:00 JST）
-  - `solar-battery-03`（毎日 04:00 JST、夜間充電コントローラ）
+  - `solar-battery-03`（毎日 03:00 JST、夜間充電コントローラ）
   - `solar-battery-07`（毎日 07:00 JST）
 - **Cloud Scheduler**
-  - 23時ジョブ、04:00ジョブ、7時ジョブを定期起動
+  - 23時ジョブ、03:00ジョブ、7時ジョブを定期起動
 - **Artifact Registry**
   - コンテナイメージ管理
 - **Cloud Run Service（Dashboard）**
@@ -17,8 +17,8 @@
 
 ## 処理フロー
 
-1. 23:00 ジョブで外部取得を行わず、04:00判断まで蓄電池を待機モードへ変更
-2. 04:00 ジョブで予報・CSV取得、当日計画・DB反映・Sheets/Drive退避を行い、必要時に強制充電へ切替
+1. 23:00 ジョブで外部取得を行わず、03:00判断まで蓄電池を待機モードへ変更
+2. 03:00 ジョブで予報・CSV取得、当日計画・DB反映・Sheets/Drive退避を行い、必要時に強制充電へ切替
 3. 07:00 ジョブで日中運用設定へ切替（グリーンモード等）
 4. 日次データはDBへ蓄積し、ダッシュボードで可視化
 
@@ -67,3 +67,4 @@ pwsh -NoProfile -File .\scripts\check_gcp_free_tier_capacity.ps1 `
 
 - [docs/current/ops/GCP_FREE_BEGINNER_JA.md](GCP_FREE_BEGINNER_JA.md)
 - [docs/current/product/OPERATION_CONDITIONS_GUIDE.md](../product/OPERATION_CONDITIONS_GUIDE.md)
+- [アーキテクチャ地図](../architecture/02-runtime-and-deployment.md)

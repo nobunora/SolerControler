@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import time
 from email.message import Message
 from email.utils import collapse_rfc2231_value
@@ -17,7 +16,6 @@ from app.kpnet.client_support import (
     extract_alert_message as _extract_alert_message,
     extract_csrf as _extract_csrf,
     extract_title as _extract_title,
-    validate_base_url as _validate_base_url,
 )
 from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 class KpNetClient:

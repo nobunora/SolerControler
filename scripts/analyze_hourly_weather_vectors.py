@@ -23,9 +23,7 @@ if str(ROOT) not in sys.path:
 from app.forecasting.comfort_load import build_comfort_feature_map as comfort_feature_map
 from app.forecasting.comfort_load import predict_hourly_comfort_load
 from app.energy_plan.energy_model import forecast_pv_energy_kwh, fit_coefficients_from_csv
-from app.energy_plan.forecast_inputs import build_hourly_load_forecast as _build_hourly_load_forecast
 from app.energy_plan.forecast_inputs import build_hourly_pv_forecast as _build_hourly_pv_forecast
-from app.energy_plan.forecast_inputs import reshape_hourly_pv_by_weather as _reshape_hourly_pv_by_weather
 
 # These trailing windows capture both immediate weather and one-day persistence without mixing future data.
 WINDOWS = (1, 3, 6, 12, 24)
@@ -479,7 +477,6 @@ def main() -> int:
     target_rows = _parse_kpnet_csv_rows(_load_latest_target_rows(target_date))
     combined_rows = monitoring_rows + target_rows
     hourly_history = _aggregate_hourly(combined_rows)
-    actual_daily = _daily_from_hourly(hourly_history)
 
     hourly_weather_by_day, daily_weather_by_day = _fetch_archive(
         lat=lat,
@@ -489,11 +486,8 @@ def main() -> int:
         end_date=target_date,
     )
     hourly_weather = _hourly_weather_map(hourly_weather_by_day)
-    daily_weather = daily_weather_by_day
 
     target_hourly_actual = hourly_history.get(date.fromisoformat(target_date), {})
-    target_hours = sorted(hour for hour in target_hourly_actual if hour in TARGET_HOURS)
-    target_load_by_hour = {date.fromisoformat(target_date).replace(day=date.fromisoformat(target_date).day): 0}
 
     target_load_actual = {datetime.fromisoformat(f"{target_date}T{hour:02d}:00:00"): values["load"] for hour, values in target_hourly_actual.items()}
     target_pv_actual = {datetime.fromisoformat(f"{target_date}T{hour:02d}:00:00"): values["pv"] for hour, values in target_hourly_actual.items()}

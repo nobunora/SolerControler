@@ -167,15 +167,6 @@
       return { start: start.start, end: end.end };
     }
 
-    function qs(params) {
-      const p = new URLSearchParams();
-      for (const [k, v] of Object.entries(params)) {
-        if (v === undefined || v === null || v === "") continue;
-        p.set(k, String(v));
-      }
-      return p.toString();
-    }
-
     function todayIsoJst() {
       return dashboardDates.todayIsoJst();
     }
@@ -655,7 +646,7 @@
           const payload = await fetchSlice({ window_days: CHUNK_DAYS, end_date: endDate, include_static: false });
           absorbSlice(payload, false);
           if (!store.meta || !store.meta.oldest_loaded_date || store.meta.oldest_loaded_date >= prevOldest) break;
-        } catch (_err) {
+        } catch {
           setStatus("過去データの読込に失敗しました", "#e6504f");
           break;
         } finally {
@@ -1302,9 +1293,7 @@
         ...batteryTarget.filter((v) => v != null),
         ...batteryPvChargeEndSoc.filter((v) => v != null),
       ];
-      const batteryKwh = [
-        ...batteryNight.filter((v) => v != null),
-      ];
+      const batteryKwh = batteryNight.filter((v) => v != null);
       const batteryDual = dualScales(batteryKwh, batterySoc, { leftUnit: "kWh", rightUnit: "%"});
       charts.battery.options.scales.y = {
         ...batteryDual.y,
@@ -1439,7 +1428,7 @@
       try {
         const bootstrap = await fetchSlice({ window_days: WINDOW_DAYS, include_static: true });
         absorbSlice(bootstrap, true);
-      } catch (_err) {
+      } catch {
         if (!store.dates.length) {
           setStatus("データ読込に失敗しました（認証の再確認をお願いします）", "#e6504f");
           return;
