@@ -30,6 +30,7 @@ from app.forecasting.correction import (
     _temperature_hourly_multipliers,
     build_forecast_correction,
 )
+from app.energy_plan.weather_history import hourly_weather_records_from_open_meteo
 from app.energy_plan.weather_history import hourly_weather_summary as _hourly_weather_summary
 from app.energy_plan.weather_history import archive_weather_history as _archive_weather_history
 from app.energy_plan.forecast_inputs import (
@@ -665,6 +666,28 @@ def test_hourly_weather_summary_counts_rain_and_low_radiation() -> None:
     assert summary["rain_hours_7_17"] == 2
     assert summary["low_shortwave_hours_9_15"] == 2
     assert summary["dominant_weather_class_7_17"] == "cloudy"
+
+
+def test_hourly_weather_records_preserve_all_24_hours_for_target_date() -> None:
+    target_date = "2026-06-25"
+    hourly: dict[str, object] = {
+        "time": [f"{target_date}T{hour:02d}:00" for hour in range(24)],
+        "weather_code": [0] * 24,
+        "precipitation": [0.0] * 24,
+        "precipitation_probability": [0] * 24,
+        "cloud_cover": [0] * 24,
+        "shortwave_radiation": [float(hour) for hour in range(24)],
+        "temperature_2m": [20.0] * 24,
+        "relative_humidity_2m": [50] * 24,
+        "dew_point_2m": [10.0] * 24,
+        "wind_speed_10m": [1.0] * 24,
+    }
+
+    records = hourly_weather_records_from_open_meteo(hourly, target_date=target_date)
+
+    assert [record["hour"] for record in records] == list(range(24))
+    assert records[5]["shortwave_radiation_w_m2"] == 5.0
+    assert records[6]["shortwave_radiation_w_m2"] == 6.0
 
 
 def test_reshape_hourly_pv_by_weather_preserves_total_and_moves_shape() -> None:

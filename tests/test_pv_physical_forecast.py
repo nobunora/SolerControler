@@ -17,6 +17,16 @@ def _forecast(shortwave: float | None) -> dict[str, object]:
     return {"date": "2026-06-25", "hourly_weather": hourly}
 
 
+def _forecast_with_sunrise(shortwave: float) -> dict[str, object]:
+    return {
+        "date": "2026-06-25",
+        "hourly_weather": [
+            {"hour": hour, "shortwave_radiation_w_m2": shortwave}
+            for hour in range(5, 23)
+        ],
+    }
+
+
 def test_physical_pv_falls_back_without_shortwave(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PHYSICAL_PV_FORECAST_ENABLED", "true")
     existing = {hour: 0.1 for hour in range(7, 23)}
@@ -66,3 +76,33 @@ def test_physical_pv_blends_bin_scale_when_history_is_ready(monkeypatch: pytest.
     assert "selected_physical_altitude_shortwave" in candidate.diagnostics["decision_path"]
     assert candidate.diagnostics["data_quality"]["bin_hours_blended_below_min"] > 0
     assert sum(candidate.hourly_pv_kwh.values()) > 0
+
+
+def test_physical_pv_adds_sunrise_output_without_changing_planning_hours(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PHYSICAL_PV_FORECAST_ENABLED", "true")
+    monkeypatch.setenv("PHYSICAL_PV_GLOBAL_MIN_DAYS", "2")
+    monkeypatch.setenv("PHYSICAL_PV_DAYPART_MIN_SAMPLES", "999")
+    monkeypatch.setenv("PHYSICAL_PV_BIN_MIN_SAMPLES", "999")
+    monkeypatch.setenv("PHYSICAL_PV_RADIATION_SCALE", "1.0")
+    rows = []
+    history = {}
+    for day in ["2026-06-21", "2026-06-22"]:
+        history[day] = {hour: {"shortwave": 800.0, "pv": 0.5, "load": 0.2} for hour in range(7, 23)}
+        for hour in range(7, 23):
+            rows.append({"dt": datetime.fromisoformat(f"{day}T{hour:02d}:00:00"), "pv": 0.5})
+
+    existing = {hour: 0.1 for hour in range(7, 23)}
+    baseline = build_physical_pv_candidate(
+        rows=rows, forecast_history=history, existing_hourly_pv=existing,
+        forecast=_forecast(800.0), target_date="2026-06-25", lat=35.67452, lon=139.48216, timezone="Asia/Tokyo",
+    )
+    sunrise = build_physical_pv_candidate(
+        rows=rows, forecast_history=history, existing_hourly_pv=existing,
+        forecast=_forecast_with_sunrise(800.0), target_date="2026-06-25", lat=35.67452, lon=139.48216, timezone="Asia/Tokyo",
+    )
+
+    assert sunrise.hourly_pv_kwh[5] > 0.0
+    assert sunrise.hourly_pv_kwh[6] > 0.0
+    assert {hour: sunrise.hourly_pv_kwh[hour] for hour in range(7, 23)} == {
+        hour: baseline.hourly_pv_kwh[hour] for hour in range(7, 23)
+    }

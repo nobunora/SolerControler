@@ -19,8 +19,11 @@ from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float
 
 
-# 夜間の放射量ノイズを物理モデルへ入れず、蓄電池の昼間運用窓とも揃える。
+# Calibration and SOC planning deliberately retain the established 07:00 window.
+# The physical forecast additionally exposes sunrise production from 05:00 without
+# changing the scales that determine the existing planning-hour values.
 HOURS = range(7, 23)
+OUTPUT_HOURS = range(5, 23)
 DAYPARTS = {
     "morning": range(7, 11),
     "midday": range(11, 15),
@@ -136,7 +139,7 @@ def _hourly_weather_map(forecast: dict[str, object]) -> dict[int, dict[str, floa
         if hour is None or shortwave is None:
             continue
         h = int(hour)
-        if h in HOURS:
+        if h in OUTPUT_HOURS:
             out[h] = {"shortwave": max(0.0, shortwave)}
     return out
 
@@ -231,7 +234,7 @@ def _candidate_shape(
     shape: dict[int, float] = {}
     features: dict[int, dict[str, float]] = {}
     max_shortwave_ratio = env_float("PHYSICAL_PV_MAX_SHORTWAVE_RATIO", default=1.2)
-    for hour in HOURS:
+    for hour in OUTPUT_HOURS:
         geom = _geometry_weight(day=day, hour=hour, lat=lat, lon=lon, timezone=timezone, roof_pitch_deg=roof_pitch_deg)
         clear_horizontal = _clear_horizontal_w_m2(float(geom["altitude_deg"]))
         shortwave = shortwave_by_hour.get(hour, {}).get("shortwave")
@@ -467,34 +470,35 @@ def build_physical_pv_candidate(
     bin_used = 0
     bin_blended = 0
     daypart_used = 0
-    for hour in HOURS:
+    for hour in OUTPUT_HOURS:
         scale = global_scale
-        part = _daypart(hour)
-        daypart_stats = scales.get("dayparts")
-        part_stats = daypart_stats.get(part, {}) if isinstance(daypart_stats, dict) else {}
-        if float(part_stats.get("count", 0.0)) >= daypart_min:
-            scale = float(part_stats.get("scale", scale))
-            daypart_used += 1
-            selected_method = "physical_daypart"
-        f = features[hour]
-        key = f"alt:{_bin(f['altitude_deg'], ALTITUDE_BINS)}|sw:{_bin(f['shortwave_ratio'], SHORTWAVE_RATIO_BINS)}"
-        bin_scales = scales.get("bins")
-        bin_stats = bin_scales.get(key, {}) if isinstance(bin_scales, dict) else {}
-        bin_count = float(bin_stats.get("count", 0.0))
-        if bin_count > 0.0:
-            bin_scale = float(bin_stats.get("scale", scale))
-            if bin_count >= bin_min:
-                scale = bin_scale
-                bin_used += 1
-            else:
-                scale = _blend_scale_by_sample_count(
-                    base_scale=scale,
-                    candidate_scale=bin_scale,
-                    count=bin_count,
-                    full_weight_count=bin_min,
-                )
-                bin_blended += 1
-            selected_method = "physical_altitude_shortwave"
+        if hour in HOURS:
+            part = _daypart(hour)
+            daypart_stats = scales.get("dayparts")
+            part_stats = daypart_stats.get(part, {}) if isinstance(daypart_stats, dict) else {}
+            if float(part_stats.get("count", 0.0)) >= daypart_min:
+                scale = float(part_stats.get("scale", scale))
+                daypart_used += 1
+                selected_method = "physical_daypart"
+            f = features[hour]
+            key = f"alt:{_bin(f['altitude_deg'], ALTITUDE_BINS)}|sw:{_bin(f['shortwave_ratio'], SHORTWAVE_RATIO_BINS)}"
+            bin_scales = scales.get("bins")
+            bin_stats = bin_scales.get(key, {}) if isinstance(bin_scales, dict) else {}
+            bin_count = float(bin_stats.get("count", 0.0))
+            if bin_count > 0.0:
+                bin_scale = float(bin_stats.get("scale", scale))
+                if bin_count >= bin_min:
+                    scale = bin_scale
+                    bin_used += 1
+                else:
+                    scale = _blend_scale_by_sample_count(
+                        base_scale=scale,
+                        candidate_scale=bin_scale,
+                        count=bin_count,
+                        full_weight_count=bin_min,
+                    )
+                    bin_blended += 1
+                selected_method = "physical_altitude_shortwave"
         hourly[hour] = max(0.0, shape[hour] * base_scale * scale)
 
     decision_path.append("selected_" + selected_method)
@@ -546,7 +550,7 @@ def build_physical_pv_candidate(
         "developer": {
             "altitude_bins": ALTITUDE_BINS,
             "shortwave_ratio_bins": SHORTWAVE_RATIO_BINS,
-            "hour_features": {str(h): {k: round(v, 4) for k, v in features[h].items()} for h in HOURS},
+            "hour_features": {str(h): {k: round(v, 4) for k, v in features[h].items()} for h in OUTPUT_HOURS},
         },
         "retirement_recommendation": _retirement_recommendation(global_count=global_count, selected_method=selected_method),
     }

@@ -126,6 +126,35 @@ def test_cost_optimizer_charges_more_when_daytime_power_is_expensive() -> None:
     assert expensive_day.target_soc_7_percent > cheap_day.target_soc_7_percent
 
 
+def test_cost_optimizer_ignores_sunrise_pv_before_its_7am_start() -> None:
+    uncertainty = PvForecastUncertainty(
+        mean_multiplier=1.0,
+        std_multiplier=0.0,
+        variance_multiplier=0.0,
+        sample_count=10,
+        source="deterministic",
+    )
+    common = {
+        "capacity_kwh": 10.0,
+        "soc_now_percent": 20.0,
+        "reserve_soc_percent": 10.0,
+        "hourly_load_kwh": {7: 2.0, 10: 1.0, 18: 2.0},
+        "uncertainty": uncertainty,
+        "cost_model": SocCostModel(
+            day_buy_rate_yen_per_kwh=40.0,
+            night_buy_rate_yen_per_kwh=28.85,
+            charge_efficiency=0.93,
+            sell_value_ratio=0.75,
+        ),
+        "soc_step_percent": 1.0,
+    }
+
+    baseline = optimize_soc_by_expected_cost(hourly_pv_kwh={10: 4.0}, **common)
+    with_sunrise = optimize_soc_by_expected_cost(hourly_pv_kwh={5: 2.0, 6: 2.0, 10: 4.0}, **common)
+
+    assert with_sunrise == baseline
+
+
 def test_cost_optimizer_charges_more_for_higher_forecast_load() -> None:
     uncertainty = PvForecastUncertainty(
         mean_multiplier=1.0,
