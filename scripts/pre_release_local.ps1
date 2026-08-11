@@ -69,6 +69,10 @@ if (-not (Test-Path $importLinter)) { throw "Import Linter executable was not fo
 & $importLinter
 if ($LASTEXITCODE -ne 0) { throw "import-linter failed" }
 
+Invoke-AdvisoryQualityCheck -Name "Import Linter (energy plan boundary)" -Command {
+    & $importLinter --config .\config\importlinter_advisory.ini
+}
+
 $pythonExecutable = python -c "import sys; print(sys.executable)"
 Invoke-AdvisoryQualityCheck -Name "ty" -Command {
     python -m uv tool run ty check . --python $pythonExecutable --output-format concise

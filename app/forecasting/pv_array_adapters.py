@@ -57,7 +57,7 @@ def aggregate_hourly(rows: list[dict[str, Any]]) -> dict[str, float]:
         totals["peak_kw"] = max(totals["peak_kw"], kwh)
         if 7 <= dt.hour < 23:
             totals["daytime_kwh"] += kwh
-        if 7 <= dt.hour < 10:
+        if 5 <= dt.hour < 10:
             totals["morning_kwh"] += kwh
         if 10 <= dt.hour < 16:
             totals["midday_kwh"] += kwh

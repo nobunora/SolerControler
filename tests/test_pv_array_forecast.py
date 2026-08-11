@@ -14,6 +14,7 @@ from app.forecasting.pv_array import (
     forecast_pv_arrays,
     forecast_pv_arrays_forecast_solar,
 )
+from app.forecasting.pv_array_adapters import aggregate_hourly
 
 
 class _FakeResponse:
@@ -25,6 +26,21 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+def test_pv_array_morning_total_includes_sunrise_without_expanding_daytime_window() -> None:
+    totals = aggregate_hourly(
+        [
+            {"time": datetime(2026, 8, 5, 5), "kwh": 0.1},
+            {"time": datetime(2026, 8, 5, 6), "kwh": 0.3},
+            {"time": datetime(2026, 8, 5, 7), "kwh": 0.6},
+            {"time": datetime(2026, 8, 5, 10), "kwh": 1.0},
+        ]
+    )
+
+    assert totals["morning_kwh"] == pytest.approx(1.0)
+    assert totals["daytime_kwh"] == pytest.approx(1.6)
+    assert totals["total_kwh"] == pytest.approx(2.0)
 
 
 def test_typed_calibration_boundary_returns_insufficient_history_without_fetching() -> None:

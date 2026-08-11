@@ -24,6 +24,10 @@ runtime / dashboard / energy_plan / kpnet
 | `configuration/` | 環境変数の型変換 | `environment.py` |
 | `parsing/` | 数値・CSVの低レベル変換 | `numbers.py` |
 
+## 依存境界の検査
+
+`pyproject.toml` の Import Linter 契約は、`domain/`、`configuration/`、`parsing/` が上位層へ依存しないことを必須で検査します。`energy_plan/` が `runtime/`、`dashboard/`、`operations/`、`kpnet/` へ依存しない契約は、既存のKP-NET監視CSV参照を可視化するため、当面は助言チェックです。例外で抑制せず、アダプタへ責務を移せた時点で必須契約へ昇格します。
+
 ## 互換モジュール
 
 `app/` 直下の薄いモジュールは旧import経路との互換性を保つための再公開です。新しいコードは、表に示した所有パッケージから直接importしてください。互換モジュールを削除する前には、リポジトリ内・外部利用者・テストの参照を確認します。
