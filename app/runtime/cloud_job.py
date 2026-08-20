@@ -27,6 +27,7 @@ from app.forced_charge import (
 from app.runtime import plan_persistence
 from app.runtime import soc_reading
 from app.runtime import forced_charge_monitor
+from app.runtime import night_soc_controller
 from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator
 from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
@@ -74,6 +75,9 @@ class _SystemMonitorClock:
 
 
 class _RunnerMonitorDevicePort:
+    def __init__(self) -> None:
+        self.plan_meta: dict[str, Any] | None = None
+
     def read_soc(self, csv_paths: list[Path]) -> SocReading:
         return _read_soc_with_fallback(csv_paths)
 
@@ -83,6 +87,17 @@ class _RunnerMonitorDevicePort:
             dynamic_forced_profile=dynamic_forced_profile,
             label=label,
         )
+        if self.plan_meta is not None:
+            values: dict[str, Any] = {
+                "readback_match": True,
+                "writer": label,
+                "competing_writes": 0,
+            }
+            if profile == "standby":
+                values["standby_confirmed_at_utc"] = (
+                    datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
+                )
+            _persist_night_soc_execution(self.plan_meta, "SETTINGS_ACKED", **values)
 
 
 class _RunnerMonitorStatusPort:
@@ -148,6 +163,7 @@ def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
         min_value=0.0,
         plan_path=plan_path,
     )
+    snapshot = night_soc_controller.make_plan_snapshot(obj)
     return {
         "date": forecast_date,
         "sun_hours": _to_float_or_none(forecast.get("sun_hours", 0.0)) or 0.0,
@@ -156,6 +172,10 @@ def _read_plan_meta(plan_path: Path) -> dict[str, float | str | None]:
         "required_night_charge_kwh": required_kwh,
         "soc_now_percent": _to_float_or_none(inputs.get("soc_now_percent")),
         "effective_capacity_kwh": _to_float_or_none(result.get("effective_capacity_kwh")),
+        "plan_id": snapshot.plan_id,
+        "plan_revision": snapshot.revision,
+        "plan_hash": snapshot.content_hash,
+        "generated_at_utc": snapshot.generated_at_utc,
     }
 
 
@@ -280,6 +300,62 @@ def _persist_03_monitor_stop_reason(
     )
 
 
+def _persist_night_soc_execution(
+    plan_meta: dict[str, Any], state: str, **values: Any
+) -> bool:
+    return plan_persistence.persist_night_soc_execution(
+        plan_meta=plan_meta,
+        state=state,
+        open_firestore=_open_firestore_for_plan,
+        **values,
+    )
+
+
+def _acquire_night_soc_lease(plan_meta: dict[str, Any]) -> bool:
+    return plan_persistence.acquire_night_soc_lease(
+        plan_meta=plan_meta,
+        owner="03-monitor",
+        lease_seconds=_env_int("NIGHT_SOC_LEASE_SECONDS", 18000, min_value=60),
+        open_firestore=_open_firestore_for_plan,
+    )
+
+
+def _assert_day_transition_allowed() -> None:
+    if os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() != "enforce":
+        return
+    if os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    target_date = _adjust03_target_date()
+    if not plan_persistence.can_apply_day_transition(
+        plan_date=target_date,
+        open_firestore=_open_firestore_for_plan,
+    ):
+        raise RuntimeError(
+            f"07:00 day transition blocked: night SOC owner has not completed plan_date={target_date}"
+        )
+
+
+def _quality_gated_soc_value(reading: SocReading, *, now: datetime) -> float | None:
+    if os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() != "enforce":
+        return reading.value_percent
+    max_age_seconds = _env_float(
+        "NIGHT_SOC_MAX_SOC_AGE_SECONDS", 360.0, min_value=0.0
+    )
+    valid, reason = night_soc_controller.validate_soc_observation(
+        reading.value_percent,
+        reading.observed_at,
+        now=now,
+        max_age_seconds=max_age_seconds,
+    )
+    if not valid:
+        print(
+            f"[cloud_job_runner] night SOC observation rejected by quality gate: {reason}",
+            flush=True,
+        )
+        return None
+    return reading.value_percent
+
+
 def _required_charge_percent_from_plan(plan_meta: dict[str, float | str | None]) -> float:
     return forced_charge_monitor.required_charge_percent_from_plan(plan_meta)
 
@@ -366,6 +442,7 @@ def _run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None
             "KP_FORCE_SETTINGS_PROFILE": profile,
             "KP_DYNAMIC_FORCED_PROFILE": "true" if dynamic_forced_profile else "false",
             "KP_DYNAMIC_MODE_SWITCH_BY_TIME": "false",
+            "NIGHT_SOC_WRITER": f"{os.getenv('CLOUD_JOB_SLOT', 'unknown')}:{profile}",
         },
     )
 
@@ -454,6 +531,12 @@ def _execute_monitor_terminal_transition(
         )
     finally:
         status.persist_stop_reason(plan_meta, persisted_reason)
+        _persist_night_soc_execution(
+            plan_meta,
+            "STANDBY_ACKED",
+            terminal_state=terminal.value,
+            stop_reason=persisted_reason,
+        )
     return True
 
 
@@ -473,6 +556,12 @@ def _keep_standby_when_initial_soc_is_unavailable(
         )
     finally:
         status.persist_stop_reason(plan_meta, "initial_soc_unavailable", soc_reading=soc_reading)
+        _persist_night_soc_execution(
+            plan_meta,
+            "SAFE_TERMINATED",
+            stop_reason="initial_soc_unavailable",
+            soc_source=soc_reading.source,
+        )
 
 
 # readable-code-audit: skip STRUCT-04 — this job owns the complete forced-charge monitor lifecycle, including the final standby command and durable stop result
@@ -484,7 +573,10 @@ def _monitor_partial_forced_and_stop(
     status_port: MonitorStatusPort | None = None,
 ) -> None:
     monitor_clock = clock or _SystemMonitorClock()
-    device = device_port or _RunnerMonitorDevicePort()
+    runner_device = None if device_port is not None else _RunnerMonitorDevicePort()
+    device = device_port or runner_device
+    if device is None:
+        raise RuntimeError("night SOC monitor device is unavailable")
     status = status_port or _RunnerMonitorStatusPort()
     forced_charge_settings = ForcedChargeSettings.from_env()
     if not plan_path.exists():
@@ -492,8 +584,16 @@ def _monitor_partial_forced_and_stop(
         return
 
     plan_meta = _read_plan_meta(plan_path)
+    if runner_device is not None:
+        runner_device.plan_meta = plan_meta
+    enforce_single_owner = os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() == "enforce"
+    if enforce_single_owner and not _acquire_night_soc_lease(plan_meta):
+        raise RuntimeError(f"03:00 night SOC lease could not be acquired: {plan_meta['plan_id']}")
+    _persist_night_soc_execution(plan_meta, "PLAN_FROZEN")
     planned_target_soc = max(0.0, float(plan_meta.get("target_soc_7_percent", 0.0) or 0.0))
-    target_soc = max(planned_target_soc, forced_charge_settings.min_target_soc_percent)
+    target_soc = night_soc_controller.effective_target_soc(
+        planned_target_soc, forced_charge_settings.min_target_soc_percent
+    )
     if target_soc > planned_target_soc:
         plan_meta = {
             **plan_meta,
@@ -509,7 +609,10 @@ def _monitor_partial_forced_and_stop(
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     csv_paths = _latest_kpnet_csv_paths(artifacts_dir)
     soc_reading = device.read_soc(csv_paths)
-    latest_soc = soc_reading.value_percent
+    latest_soc = _quality_gated_soc_value(
+        soc_reading,
+        now=monitor_clock.now(ZoneInfo(os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo")),
+    )
     print(
         f"[cloud_job_runner] 03-monitor SOC source={soc_reading.source} "
         f"error={soc_reading.error or 'none'}",
@@ -539,6 +642,12 @@ def _monitor_partial_forced_and_stop(
             soc_source=soc_reading.source,
             required_kwh=required_kwh,
         )
+        _persist_night_soc_execution(
+            plan_meta,
+            "COMPLETED_NO_CHARGE",
+            latest_soc_percent=latest_soc,
+            required_charge_percent=required_charge_percent,
+        )
         print(
             "[cloud_job_runner] 03-monitor charge not needed; keep standby until 07:00 green transition. "
             f"required={required_charge_percent:.2f}% required_kwh={required_kwh:.3f} "
@@ -567,6 +676,7 @@ def _monitor_partial_forced_and_stop(
             label="03-cutoff-standby",
         )
         status.persist_stop_reason(plan_meta, "cutoff_reached")
+        _persist_night_soc_execution(plan_meta, "STANDBY_ACKED", stop_reason="cutoff_reached")
         return
 
     charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=0)
@@ -594,6 +704,14 @@ def _monitor_partial_forced_and_stop(
         default_power_kw=default_power_kw,
         charge_rate_info=charge_rate_info,
     )
+    _persist_night_soc_execution(
+        plan_meta,
+        "CHARGING",
+        latest_soc_percent=latest_soc,
+        effective_target_soc_percent=target_soc,
+        required_charge_percent=required_charge_percent,
+        required_kwh=required_kwh,
+    )
 
     try:
         device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
@@ -605,6 +723,7 @@ def _monitor_partial_forced_and_stop(
             device_port=device,
             status_port=status,
         )
+        _persist_night_soc_execution(plan_meta, "SAFE_TERMINATED", stop_reason="forced_start_failed_fail_safe")
         raise
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
@@ -615,6 +734,7 @@ def _monitor_partial_forced_and_stop(
             dynamic_forced_profile=False,
             label="03-no-window-standby",
         )
+        _persist_night_soc_execution(plan_meta, "STANDBY_ACKED", stop_reason="no_monitor_window")
         return
 
     print(
@@ -667,7 +787,10 @@ def _monitor_partial_forced_and_stop(
                 status_port=status,
             )
             raise
-        latest_soc = soc_reading.value_percent
+        latest_soc = _quality_gated_soc_value(
+            soc_reading,
+            now=monitor_clock.now(ZoneInfo(timezone_name)),
+        )
         if soc_reading.error:
             print(
                 f"[cloud_job_runner] 03-monitor SOC source={soc_reading.source} error={soc_reading.error}",

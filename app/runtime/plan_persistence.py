@@ -17,6 +17,110 @@ FirestoreOpener = Callable[[], Any | None]
 PlanMeta = dict[str, float | str | None]
 
 
+def persist_night_soc_execution(
+    *,
+    plan_meta: Mapping[str, Any],
+    state: str,
+    owner: str = "03-monitor",
+    open_firestore: FirestoreOpener,
+    **values: Any,
+) -> bool:
+    """Persist the immutable plan identity and the current single-owner state."""
+    client = open_firestore()
+    plan_date = str(plan_meta.get("date") or "").strip()
+    plan_id = str(plan_meta.get("plan_id") or "").strip()
+    if client is None or not plan_date or not plan_id:
+        return False
+    now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
+    payload: dict[str, Any] = {
+        "plan_id": plan_id,
+        "plan_date": plan_date,
+        "plan_revision": plan_meta.get("plan_revision"),
+        "plan_hash": plan_meta.get("plan_hash"),
+        "raw_target_soc_percent": plan_meta.get("target_soc_7_percent"),
+        "required_night_charge_kwh": plan_meta.get("required_night_charge_kwh"),
+        "state": state,
+        "owner": owner,
+        "updated_at_utc": now_utc,
+    }
+    payload.update(values)
+    try:
+        client.collection("night_soc_execution").document(plan_date).set(payload, merge=True)
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] night SOC execution persistence failed: {exc}", flush=True)
+        return False
+
+
+def acquire_night_soc_lease(
+    *,
+    plan_meta: Mapping[str, Any],
+    owner: str,
+    lease_seconds: int,
+    open_firestore: FirestoreOpener,
+) -> bool:
+    """Acquire the 03:00 owner lease using a Firestore transaction when available."""
+    client = open_firestore()
+    plan_date = str(plan_meta.get("date") or "").strip()
+    plan_id = str(plan_meta.get("plan_id") or "").strip()
+    if client is None or not plan_date or not plan_id or lease_seconds <= 0:
+        return False
+    now = datetime.now(ZoneInfo("UTC"))
+    expiry = now + timedelta(seconds=lease_seconds)
+    ref = client.collection("night_soc_execution").document(plan_date)
+    payload = {
+        "plan_id": plan_id,
+        "plan_date": plan_date,
+        "owner": owner,
+        "lease_id": f"{plan_id}:{owner}",
+        "lease_acquired_at_utc": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "lease_expires_at_utc": expiry.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "state": "LEASE_ACQUIRED",
+    }
+    try:
+        transaction_factory = getattr(client, "transaction", None)
+        if transaction_factory is not None:
+            transaction = transaction_factory()
+            snapshot = transaction.get(ref)
+            if snapshot.exists:
+                current = snapshot.to_dict() or {}
+                current_owner = str(current.get("owner") or "")
+                current_plan_id = str(current.get("plan_id") or "")
+                current_expiry = str(current.get("lease_expires_at_utc") or "")
+                if current_plan_id != plan_id or (
+                    current_owner and current_owner != owner and current_expiry > now.isoformat()
+                ):
+                    return False
+            transaction.set(ref, payload, merge=True)
+            transaction.commit()
+            return True
+        snapshot = ref.get()
+        if snapshot.exists:
+            current = snapshot.to_dict() or {}
+            if str(current.get("owner") or "") not in {"", owner}:
+                return False
+        ref.set(payload, merge=True)
+        return True
+    except Exception as exc:
+        print(f"[cloud_job_runner] night SOC lease acquisition failed: {exc}", flush=True)
+        return False
+
+
+def can_apply_day_transition(*, plan_date: str, open_firestore: FirestoreOpener) -> bool:
+    client = open_firestore()
+    if client is None:
+        return False
+    try:
+        snapshot = client.collection("night_soc_execution").document(plan_date).get()
+        if not snapshot.exists:
+            return False
+        state = str((snapshot.to_dict() or {}).get("state") or "")
+        return state in {"STANDBY_ACKED", "COMPLETED_NO_CHARGE", "SAFE_TERMINATED", "VERIFIED"}
+    except Exception as exc:
+        print(f"[cloud_job_runner] day transition lease check failed: {exc}", flush=True)
+        return False
+
+
 def _plan_date_from_json(plan: dict[str, Any]) -> str:
     forecast = plan.get("forecast", {}) if isinstance(plan.get("forecast"), dict) else {}
     return str(forecast.get("date", "")).strip()
@@ -152,10 +256,15 @@ def persist_03_monitor_schedule_to_firestore(
     day_end = os.getenv("KP_DAY_DISCHARGE_WINDOW_END", "23:00").strip() or "23:00"
     detail: dict[str, Any] = {
         "plan_date": plan_date, "charge_start_time": charge_start_time, "charge_end_time": charge_end_time,
+        "plan_id": plan_meta.get("plan_id"),
+        "plan_revision": plan_meta.get("plan_revision"),
+        "plan_hash": plan_meta.get("plan_hash"),
+        "target_soc_7_percent": target_soc,
         "night_window_start": os.getenv("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip() or "23:00",
         "night_window_end": os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00",
         "day_discharge_window_start": day_start, "day_discharge_window_end": day_end,
-        "discharge_fixed_window": f"{day_start}-{day_end}", "soc_charge_mode": str(int(round(target_soc))),
+        "discharge_fixed_window": f"{day_start}-{day_end}",
+        "soc_charge_mode": plan_meta.get("device_soc_code"),
         "mode": "forced", "battery_operating_mode": "forced", "estimated_charge_power_kw": default_power_kw,
         "latest_soc_percent_at_schedule": latest_soc, "soc_source": soc_source, "soc_error": soc_error,
         "monitor_start_reason": monitor_start_reason, "required_night_charge_kwh_at_schedule": required_kwh,
@@ -196,8 +305,12 @@ def persist_03_no_charge_decision_to_firestore(
     now_utc = datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds").replace("+00:00", "Z")
     event_id = f"{plan_date}-03-no-charge"
     detail = {
-        "plan_date": plan_date, "charge_end_time": os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00",
-        "soc_charge_mode": str(int(round(target_soc))), "mode": "standby", "battery_operating_mode": "standby",
+        "plan_date": plan_date,
+        "plan_id": plan_meta.get("plan_id"),
+        "target_soc_7_percent": target_soc,
+        "charge_end_time": os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00",
+        "soc_charge_mode": None,
+        "mode": "standby", "battery_operating_mode": "standby",
         "latest_soc_percent_at_schedule": latest_soc, "soc_source": soc_source,
         "required_night_charge_kwh_at_schedule": required_kwh, "schedule_source": "03-no-charge",
     }

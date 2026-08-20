@@ -376,6 +376,47 @@ def test_apply_settings_profile_dry_run_confirms_without_writing(
     ]
 
 
+def test_apply_settings_profile_rejects_readback_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def confirm_setting(self, payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            return True, "confirmed", "", "<html>confirmed</html>"
+
+        def write_setting(self, confirm_html: str) -> dict[str, object]:
+            return {"changed": True}
+
+        def read_current_settings(self) -> dict[str, str]:
+            return {"socChargeMode": "0"}
+
+    monkeypatch.setenv("NIGHT_SOC_READBACK_REQUIRED", "true")
+    monkeypatch.setattr(
+        "app.kpnet.workflow._build_payload",
+        lambda **kwargs: ({"socChargeMode": "50"}, ["socChargeMode"]),
+    )
+    cfg = KpNetConfig(
+        **{**_build_cfg(plan_path=tmp_path / "plan.json").__dict__, "dry_run": False}
+    )
+    summary: dict[str, object] = {"setting_results": []}
+
+    with pytest.raises(RuntimeError, match="read-back mismatch"):
+        _apply_settings_profile(
+            client=FakeClient(),
+            cfg=cfg,
+            run_dir=tmp_path,
+            summary=summary,
+            current={"socChargeMode": "0"},
+            value_maps=_value_maps(),
+            profile=FORCED_CHARGE_PROFILE,
+        )
+
+    assert summary["setting_results"][0]["readback_mismatch_fields"] == ["socChargeMode"]
+
+
 def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:
     class FakeClient:
         csrf_setting = "csrf"

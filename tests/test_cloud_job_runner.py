@@ -11,6 +11,7 @@ from app.runtime.cloud_job import (
     _execute_monitor_terminal_transition,
     SocReading,
     _adjust03_target_date,
+    _assert_day_transition_allowed,
     _estimate_forced_charge_minutes,
     _estimate_forced_charge_rate_percent_per_hour,
     _estimate_required_charge_kwh,
@@ -45,6 +46,17 @@ def test_mask_env_updates_hides_secrets() -> None:
 
 def test_mask_env_updates_none() -> None:
     assert _mask_env_updates(None) == {}
+
+
+def test_day_transition_dry_run_does_not_require_night_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setattr(
+        "app.runtime.cloud_job.plan_persistence.can_apply_day_transition",
+        lambda **_: pytest.fail("dry-run must not query the execution lease"),
+    )
+
+    _assert_day_transition_allowed()
 
 
 def test_required_charge_percent_from_plan_uses_soc_delta() -> None:

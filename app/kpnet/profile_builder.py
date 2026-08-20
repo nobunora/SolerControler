@@ -16,6 +16,7 @@ from app.domain.constants import SOCBounds, validate_soc_percent
 from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.kpnet.plan import NightChargePlan, load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
+from app.runtime.night_soc_controller import build_device_soc_guard
 from app.kpnet.rules import _minutes_to_hm, _night_window_contract, _parse_hhmm
 from app.kpnet.rules import _in_time_window
 from app.configuration.environment import env
@@ -403,7 +404,13 @@ def _build_dynamic_forced_profile(
         plan=plan,
         green_mode_max_charge_percent=cfg.green_mode_max_charge_percent,
     )
-    soc_charge_code = _pick_ceil_code(value_maps["SocChargeMode"], target_soc_7_percent)
+    stop_margin_percent = float(os.getenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "1.0"))
+    soc_guard = build_device_soc_guard(
+        value_maps["SocChargeMode"],
+        raw_target_soc_percent=target_soc_7_percent,
+        stop_margin_percent=stop_margin_percent,
+    )
+    soc_charge_code = soc_guard.device_soc_code
 
     duration_minutes_kwh = 0
     if estimated_charge_power_kw > 0 and required_night_charge_kwh > 0:
@@ -490,6 +497,9 @@ def _build_dynamic_forced_profile(
     if slot23_guard_applied:
         contact_soc_lower_code = _pick_ceil_code(value_maps["SocContactInput"], 100.0)
         soc_charge_code = _pick_min_code(value_maps["SocChargeMode"])
+        device_soc_ceiling_percent = to_float(value_maps["SocChargeMode"].get(soc_charge_code))
+    else:
+        device_soc_ceiling_percent = soc_guard.device_soc_ceiling_percent
 
     summary["night_charge_plan"] = {
         "plan_path": str(plan.plan_path),
@@ -501,6 +511,13 @@ def _build_dynamic_forced_profile(
         "soc_now_percent": plan.soc_now_percent,
         "effective_capacity_kwh": plan.effective_capacity_kwh,
         "target_soc_7_percent_raw": target_soc_7_percent,
+        "plan_id": plan.plan_id,
+        "plan_revision": plan.plan_revision,
+        "plan_hash": plan.plan_hash,
+        "generated_at_utc": plan.generated_at_utc,
+        "device_soc_code": soc_charge_code,
+        "device_soc_ceiling_percent": device_soc_ceiling_percent,
+        "stop_threshold_percent": soc_guard.stop_threshold_percent,
         "estimated_charge_power_kw": estimated_charge_power_kw,
         "duration_minutes_kwh": duration_minutes_kwh,
         "duration_minutes_soc": duration_minutes_soc,

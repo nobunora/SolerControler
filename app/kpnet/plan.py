@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.parsing.numbers import to_float
+from app.runtime.night_soc_controller import make_plan_snapshot
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,10 @@ class NightChargePlan:
     soc_now_percent: float | None
     effective_capacity_kwh: float | None
     csv_paths: list[Path]
+    plan_id: str = ""
+    plan_revision: str = ""
+    plan_hash: str = ""
+    generated_at_utc: str = ""
 
 
 def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
@@ -64,6 +69,7 @@ def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     if not csv_paths:
         raise RuntimeError("夜間充電計画にCSVパスが含まれていません")
 
+    snapshot = make_plan_snapshot(raw)
     return NightChargePlan(
         plan_path=plan_path,
         forecast_date=forecast_date,
@@ -72,6 +78,10 @@ def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         soc_now_percent=soc_now_percent,
         effective_capacity_kwh=effective_capacity_kwh,
         csv_paths=csv_paths,
+        plan_id=snapshot.plan_id,
+        plan_revision=snapshot.revision,
+        plan_hash=snapshot.content_hash,
+        generated_at_utc=snapshot.generated_at_utc,
     )
 
 

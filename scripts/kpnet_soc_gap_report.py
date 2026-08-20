@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -163,6 +164,8 @@ def _load_plan(plan_date: str) -> dict[str, Any]:
         data["_plan"] = load_night_plan_detail_from_firestore_doc(data) or {}
     except Exception:
         data["_plan"] = {}
+    execution = client.collection("night_soc_execution").document(plan_date).get()
+    data["night_soc_execution"] = execution.to_dict() or {} if execution.exists else {}
     return data
 
 
@@ -296,6 +299,18 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
     pv_gap = float(final_pv or 0.0) - daytime.pv_kwh
     charge_gap = night.charge_kwh - float(predicted_night_charge or 0.0)
 
+    execution = _nested(plan_doc, "night_soc_execution", {})
+    if not isinstance(execution, dict):
+        execution = metrics.get("night_soc_execution", {})
+    if not isinstance(execution, dict):
+        execution = {}
+    audit_status, audit_reasons, target_error = _night_soc_audit(
+        target_soc=target_soc,
+        night=night,
+        daytime=daytime,
+        execution=execution,
+    )
+
     now = datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S %Z")
     lines = [
         f"# KP-NET SOC・予測充電量乖離レポート {target_date.isoformat()}",
@@ -316,6 +331,16 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         f"- 期待売電量: {_fmt_kwh(expected_sell)}",
         f"- 95%ピークSOC未達想定: {_fmt_kwh(peak_unmet)}",
         f"- 95%ピークSOC未達ペナルティ: {_money(peak_unmet_cost)}",
+        "",
+        "## 夜間SOC監査",
+        "",
+        f"- 判定: **{audit_status}**",
+        f"- 07:00 SOC誤差: {_fmt_percent(target_error)}",
+        f"- read-back一致: {execution.get('readback_match', '未記録')}",
+        f"- 停止確認: {execution.get('standby_confirmed_at_utc', '未記録')}",
+        f"- 競合書込み数: {execution.get('competing_writes', '未記録')}",
+        f"- 観測鮮度秒: {execution.get('soc_observation_age_seconds', '未記録')}",
+        f"- 理由: {', '.join(audit_reasons) if audit_reasons else 'なし'}",
         "",
         "## 実績サマリ",
         "",
@@ -355,6 +380,54 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
     return output_path
+
+
+def _night_soc_audit(
+    *,
+    target_soc: Any,
+    night: WindowSummary,
+    daytime: WindowSummary,
+    execution: dict[str, Any],
+) -> tuple[str, list[str], float | None]:
+    """Classify execution evidence separately from forecast/report availability."""
+    reasons: list[str] = []
+    try:
+        target = float(target_soc)
+    except (TypeError, ValueError):
+        return "INCONCLUSIVE", ["target_soc_missing"], None
+    if not math.isfinite(target) or not 0.0 <= target <= 100.0:
+        return "INCONCLUSIVE", ["target_soc_invalid"], None
+    actual_0700 = daytime.soc_first
+    if actual_0700 is None:
+        reasons.append("soc_at_0700_missing")
+        target_error = None
+    else:
+        target_error = actual_0700 - target
+        if target_error < -3.0:
+            reasons.append("target_soc_under_3pt")
+        if target_error > 2.0:
+            reasons.append("target_soc_over_2pt")
+    if execution.get("plan_id") is None:
+        reasons.append("execution_record_missing")
+    if execution.get("readback_match") is not True:
+        reasons.append("readback_not_confirmed")
+    if execution.get("standby_confirmed_at_utc") in {None, "", "未記録"}:
+        reasons.append("standby_confirmation_missing")
+    competing_writes = execution.get("competing_writes")
+    if competing_writes is None:
+        reasons.append("competing_write_count_missing")
+    else:
+        try:
+            if int(competing_writes) > 0:
+                reasons.append("competing_writes_detected")
+        except (TypeError, ValueError):
+            reasons.append("competing_write_count_invalid")
+    if target_error is not None and any(
+        reason in {"target_soc_under_3pt", "target_soc_over_2pt", "competing_writes_detected"}
+        for reason in reasons
+    ):
+        return "FAIL", reasons, target_error
+    return ("PASS" if not reasons else "INCONCLUSIVE"), reasons, target_error
 
 
 def _summary_row(label: str, summary: WindowSummary) -> str:

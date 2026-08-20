@@ -20,6 +20,7 @@ def _latest_kpnet_csv_paths(*args: Any, **kwargs: Any) -> Any: return _cloud_cal
 def _ensure_night_plan_available(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_ensure_night_plan_available", *args, **kwargs)
 def _monitor_partial_forced_and_stop(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_monitor_partial_forced_and_stop", *args, **kwargs)
 def _run_settings_profile_with_retry(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_run_settings_profile_with_retry", *args, **kwargs)
+def _assert_day_transition_allowed() -> Any: return _cloud_call("_assert_day_transition_allowed")
 def _run_night_23() -> None:
     # 23:00 is only a mode-control guard. Forecast/data work is centralized in
     # the 03:00 controller, which still has enough time to reach 100% if needed.
@@ -84,6 +85,7 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
 def _run_day_07() -> None:
     # 07:00 実行:
     # 日中運用向けにグリーンモード設定のみ登録
+    _assert_day_transition_allowed()
     _run_settings_profile_with_retry(profile="green", dynamic_forced_profile=False, label="07-green")
 
 

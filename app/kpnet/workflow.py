@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,7 @@ from app.kpnet.csv_visualization import (
 )
 from app.kpnet.client_support import validate_base_url as _validate_base_url  # noqa: F401
 from app.kpnet.config import LOGGER, KpNetConfig
+from app.runtime.night_soc_controller import CONTROLLED_SETTING_FIELDS, compare_setting_readback
 from app.kpnet.profile_builder import (
     _build_dynamic_forced_profile,
     _build_dynamic_green_profile,
@@ -149,16 +151,60 @@ def _apply_settings_profile(
         return current
 
     write_result = client.write_setting(confirm_html)
+    readback = client.read_current_settings()
+    readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    readback_ok, mismatches = compare_setting_readback(
+        payload,
+        readback,
+        tuple(field for field in CONTROLLED_SETTING_FIELDS if field in payload),
+    )
     summary["setting_results"].append(
         {
             "profile": profile.name,
             "changed_fields": changed_fields,
             "status": "applied",
             "write_result": write_result,
+            "readback_match": readback_ok,
+            "readback_mismatch_fields": list(mismatches),
+            "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
+            "plan_id": summary.get("night_soc", {}).get("plan_id")
+            if isinstance(summary.get("night_soc"), dict)
+            else None,
             "confirm_path": str(confirm_path),
         }
     )
-    return client.read_current_settings()
+    if readback_required and not readback_ok:
+        raise RuntimeError(
+            f"KP-NET settings read-back mismatch for profile={profile.name}: {', '.join(mismatches)}"
+        )
+    return readback
+
+
+def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any]) -> ProfileOverrides:
+    """Make the 23:00 guard unable to overwrite the night SOC owner fields."""
+    field_to_attribute = {
+        "batteryOperatingMode": "battery_operating_mode",
+        "socSafetyMode": "soc_safety_mode",
+        "socEconomyMode": "soc_economy_mode",
+        "socContactInput": "soc_contact_input",
+        "socChargeMode": "soc_charge_mode",
+        "chargeStartTimeH": "charge_start_h",
+        "chargeStartTimeM": "charge_start_m",
+        "chargeEndTimeH": "charge_end_h",
+        "chargeEndTimeM": "charge_end_m",
+        "dischargeStartTimeH": "discharge_start_h",
+        "dischargeStartTimeM": "discharge_start_m",
+        "dischargeEndTimeH": "discharge_end_h",
+        "dischargeEndTimeM": "discharge_end_m",
+    }
+    updates = {
+        attribute: str(current[field])
+        for field, attribute in field_to_attribute.items()
+        if field in current and str(current[field]).strip()
+    }
+    return replace(profile, **updates)
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -190,9 +236,17 @@ def _run_settings_phase(
             for rule in _enabled_sorted_rules(conditions, "variable")
         ],
     }
+    summary["night_soc"] = {
+        "writer": os.getenv("NIGHT_SOC_WRITER", f"{os.getenv('CLOUD_JOB_SLOT', 'unknown')}:{cfg.force_settings_profile}"),
+        "plan_id": None,
+        "readback_required": os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower()
+        in {"1", "true", "yes", "on"},
+    }
 
     if cfg.dynamic_forced_profile:
         forced_profile = _build_dynamic_forced_profile(cfg=cfg, value_maps=maps, summary=summary)
+        if isinstance(summary.get("night_charge_plan"), dict):
+            summary["night_soc"]["plan_id"] = summary["night_charge_plan"].get("plan_id")
     else:
         mode_preference = "green"
         required_charge_percent = None
@@ -291,6 +345,11 @@ def _run_settings_phase(
         cfg.dynamic_forced_profile,
         cfg.dynamic_mode_switch_by_time,
     )
+
+    if os.getenv("CLOUD_JOB_SLOT", "").strip() == "23" and os.getenv(
+        "NIGHT_SOC_CONTROL_MODE", "observe"
+    ).strip().lower() == "enforce":
+        profiles = tuple(_preserve_night_soc_fields(profile, current) for profile in profiles)
 
     for profile in profiles:
         current = _apply_settings_profile(
