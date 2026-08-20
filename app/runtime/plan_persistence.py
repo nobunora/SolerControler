@@ -17,6 +17,17 @@ FirestoreOpener = Callable[[], Any | None]
 PlanMeta = dict[str, float | str | None]
 
 
+def _transaction_snapshot(transaction: Any, ref: Any) -> Any | None:
+    """Normalize Firestore transaction.get across supported client versions."""
+    result = transaction.get(ref)
+    if result is None or hasattr(result, "exists"):
+        return result
+    try:
+        return next(iter(result), None)
+    except TypeError:
+        return None
+
+
 def persist_night_soc_execution(
     *,
     plan_meta: Mapping[str, Any],
@@ -81,8 +92,8 @@ def acquire_night_soc_lease(
         transaction_factory = getattr(client, "transaction", None)
         if transaction_factory is not None:
             transaction = transaction_factory()
-            snapshot = transaction.get(ref)
-            if snapshot.exists:
+            snapshot = _transaction_snapshot(transaction, ref)
+            if snapshot is not None and snapshot.exists:
                 current = snapshot.to_dict() or {}
                 current_owner = str(current.get("owner") or "")
                 current_plan_id = str(current.get("plan_id") or "")
