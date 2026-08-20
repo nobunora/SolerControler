@@ -19,8 +19,18 @@ function Backup-Source {
     if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
     New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
 
+    $excludedNames = @(
+        "artifacts",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".venv",
+        ".git",
+        ".env"
+    )
     Get-ChildItem -Force -Path . | Where-Object {
-        $_.Name -notin @("artifacts", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", ".git")
+        $isDotEnvVariant = $_.Name.StartsWith('.env.') -and $_.Name -ne '.env.example'
+        $_.Name -notin $excludedNames -and -not $isDotEnvVariant
     } | ForEach-Object {
         Copy-Item -Recurse -Force -Path $_.FullName -Destination (Join-Path $tmpDir $_.Name)
     }

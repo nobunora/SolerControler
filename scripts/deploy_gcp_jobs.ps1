@@ -93,6 +93,32 @@ function Invoke-GCloud {
     }
 }
 
+function Assert-LatestSmokeExecution {
+    param(
+        [string]$JobName,
+        [string]$ProjectId,
+        [string]$Region
+    )
+    $jsonText = Invoke-GCloud run jobs executions list --job $JobName --region $Region --project $ProjectId --limit 1 --sort-by "~createTime" --format json
+    $executions = @($jsonText | ConvertFrom-Json)
+    if ($executions.Count -eq 0) {
+        throw 'Cloud Run smoke execution was not found.'
+    }
+    $latest = $executions[0]
+    $conditions = @($latest.conditions)
+    $requiredTypes = @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')
+    foreach ($type in $requiredTypes) {
+        $condition = $conditions | Where-Object { $_.type -eq $type } | Select-Object -First 1
+        if (-not $condition -or [string]$condition.status -ne 'True') {
+            throw "Cloud Run smoke execution condition is not ready: $type"
+        }
+    }
+    if ([int]$latest.failedCount -gt 0) {
+        throw 'Cloud Run smoke execution reported failed tasks.'
+    }
+    Write-Host 'Cloud Run smoke execution passed explicit completion and readiness checks.'
+}
+
 function Read-DotEnv {
     param([string]$Path)
     $map = @{}
@@ -696,6 +722,7 @@ if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $Sched
 if ($RunSmokeTest) {
     Write-Host "Run smoke test (07 job with DRY_RUN=true)..."
     Invoke-GCloud run jobs execute $Job07Name --region $Region --project $ProjectId --wait --update-env-vars DRY_RUN=true
+    Assert-LatestSmokeExecution -JobName $Job07Name -ProjectId $ProjectId -Region $Region
 }
 
 Write-Host ""

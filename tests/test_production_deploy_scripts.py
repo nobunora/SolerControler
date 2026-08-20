@@ -223,6 +223,56 @@ def test_cloud_validation_checks_every_production_entrypoint() -> None:
     assert "$state -ne 'ENABLED'" in script
 
 
+def test_production_gate_automates_backup_security_and_validation() -> None:
+    script = (ROOT / "scripts" / "production_deployment_gate.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "working_tree_clean",
+        "git_diff_check",
+        "env_is_ignored_and_unstaged",
+        "backup_local.ps1",
+        "security_check.py",
+        "deploy_production_from_env.ps1",
+        "-ValidateOnly",
+        "production_deployment_preflight",
+    ):
+        assert required in script
+    assert "StatePath must remain under artifacts/deployment_state" in script
+
+
+def test_deployment_resume_requires_same_commit_and_successful_stages() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[switch]$Resume" in script
+    assert "Resume state belongs to a different repository commit." in script
+    assert "if ($state.stages.pre_release.status -eq 'success')" in script
+    assert "if ($state.stages.jobs.status -eq 'success')" in script
+    assert "status = 'running'" in script
+    assert "error_code = 'command_failed'" in script
+    assert "StatePath must remain under artifacts/deployment_state" in script
+
+
+def test_smoke_requires_explicit_cloud_run_execution_conditions() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "Assert-LatestSmokeExecution" in script
+    for condition in ("Completed", "ResourcesAvailable", "Started", "ContainerReady"):
+        assert f"'{condition}'" in script
+    assert "failedCount" in script
+
+
+def test_local_source_backup_excludes_credential_environment_files() -> None:
+    script = (ROOT / "scripts" / "backup_local.ps1").read_text(encoding="utf-8")
+
+    assert '".env"' in script
+    assert "StartsWith('.env.')" in script
+    assert "-ne '.env.example'" in script
+
+
 def test_manual_backup_job_name_is_unique_per_execution() -> None:
     script = (ROOT / "scripts" / "run_drive_backup_cloud_from_env.ps1").read_text(
         encoding="utf-8"

@@ -15,36 +15,47 @@
 
 ```powershell
 git status --short
-python -m pytest
-python scripts/security_check.py
-git check-ignore .env
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -ValidateOnly
+pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 ```
 
 次の全条件を満たすまでデプロイしません。
 
-- 関連テストと全体回帰テストが成功している
-- `security_check.py` が成功している
+- 作業ツリーがcleanである
+- ローカルsource/DBバックアップが成功している（`-SkipLocalBackup`は禁止。バックアップは`.env`を含めない）
+- `security_check.py`、関連テスト、全体回帰テストが成功している
 - `.env` がignore対象で、stageされていない
 - `-ValidateOnly` が必須設定を検証し、「No deployment was performed」と表示する
+
+ゲートは `artifacts/deployment_state/preflight-*.json` に非機密の判定結果を保存します。ゲートが失敗した場合は本番ラッパーを起動しません。
 
 ## 2. 通常デプロイ
 
 最初は必ず高レベルの公式ラッパーを使用します。
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1
+pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
+  -SkipPreRelease `
+  -StatePath artifacts/deployment_state/production-<開始時刻>.json
 ```
 
 低レベルスクリプトや独自の `gcloud` 更新コマンドへ置き換えません。
+デプロイラッパーは工程ごとに状態を書き込みます。`running` のまま終了した工程は成功扱いにしません。
 
 ## 3. Windowsで途中終了した場合の再開
 
-成功済み工程をログで確認してから、同じ公式ラッパーを再開します。確認できない工程は成功扱いにしません。
+`artifacts/deployment_state/production-*.json` の `status=success` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。
+
+同じcommitの状態ファイルを明示して再開します。`-Resume` はJSON内で明示的に `success` となった工程だけをスキップし、Cloud側の現在状態から成功を推測しません。
+
+```powershell
+pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
+  -Resume `
+  -StatePath artifacts/deployment_state/production-<開始時刻>.json
+```
 
 ### 3.1 pre-release後に終了した場合
 
-テスト、Firestore/SQLite同期、dashboard parityが成功済みの場合だけ `-SkipPreRelease` を使用します。
+状態ファイルで `pre_release.status=success` が確認できる場合だけ `-Resume` または `-SkipPreRelease` を使用します。
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -SkipPreRelease
@@ -101,6 +112,7 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 - Scheduler時刻が23時=`0 23 * * *`、03時=`0 3 * * *`、07時=`0 7 * * *`
 - Secret値を出力していない
 - DryRunが完了している
+- Cloud Run smokeの最新executionで `Completed=True`、`ResourcesAvailable=True`、`Started=True`、`ContainerReady=True` を確認している
 
 DryRunは公式ラッパーで実行します。
 
@@ -132,3 +144,4 @@ git status --short
 - `.env`、Secret値、project番号、resource IDをtracked fileや報告へ記載する
 - DryRunの受付だけで本番検証成功と判断する
 - 失敗したビルドや状態不明のイメージをジョブへ反映する
+- 状態ファイルの `running` または `failed` を手動で `success` に書き換える

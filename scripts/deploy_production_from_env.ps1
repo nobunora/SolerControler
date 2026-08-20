@@ -8,7 +8,9 @@ param(
     [switch]$SkipJob07Deploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipKpNetImport,
-    [switch]$SkipDriveBackup
+    [switch]$SkipDriveBackup,
+    [string]$StatePath = "",
+    [switch]$Resume
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,9 +65,112 @@ if ($ValidateOnly) {
     return
 }
 
+$artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
+if (-not $StatePath) {
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+    $StatePath = Join-Path $artifactsRoot "deployment_state/production-$stamp.json"
+} elseif (-not [IO.Path]::IsPathRooted($StatePath)) {
+    $StatePath = Join-Path $repoRoot $StatePath
+}
+$StatePath = [IO.Path]::GetFullPath($StatePath)
+if (-not $StatePath.StartsWith($artifactsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "StatePath must remain under artifacts/deployment_state."
+}
+
+$state = $null
+if ($Resume) {
+    if (-not (Test-Path -LiteralPath $StatePath)) {
+        throw "Resume state was not found: $StatePath"
+    }
+    $state = Get-Content -LiteralPath $StatePath -Raw -Encoding utf8 | ConvertFrom-Json
+    $currentCommit = (git rev-parse HEAD).Trim()
+    if ($state.repository_commit -ne $currentCommit) {
+        throw 'Resume state belongs to a different repository commit.'
+    }
+    if ($state.kind -ne 'production_deployment') {
+        throw 'Resume state kind is not production_deployment.'
+    }
+    if ($state.stages.pre_release.status -eq 'success') { $SkipPreRelease = $true }
+    if ($state.stages.jobs.status -eq 'success') {
+        $SkipJobBuild = $true
+        $SkipJobDeploy = $true
+    }
+    if ($state.stages.dashboard.status -eq 'success') { $SkipDashboardBuild = $true }
+    if ($state.stages.kpnet_import.status -eq 'success') { $SkipKpNetImport = $true }
+    if ($state.stages.drive_backup.status -eq 'success') { $SkipDriveBackup = $true }
+} else {
+    $state = [ordered]@{
+        schema_version = 1
+        kind = 'production_deployment'
+        repository_commit = ((git rev-parse HEAD).Trim())
+        repository_branch = ((git branch --show-current).Trim())
+        started_at = (Get-Date).ToUniversalTime().ToString('o')
+        updated_at = $null
+        status = 'running'
+        stages = [ordered]@{
+            pre_release = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+            jobs = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+            dashboard = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+            kpnet_import = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+            drive_backup = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+        }
+    }
+}
+
+function Save-DeploymentState {
+    $state.updated_at = (Get-Date).ToUniversalTime().ToString('o')
+    $parent = Split-Path -Parent $StatePath
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatePath -Encoding utf8
+}
+
+function Invoke-DeploymentStage {
+    param(
+        [string]$Name,
+        [bool]$Skip,
+        [scriptblock]$Action
+    )
+    $stage = $state.stages.$Name
+    if ($Skip) {
+        if ($stage.status -ne 'success') {
+            $stage.status = 'skipped_manual'
+            $stage.completed_at = (Get-Date).ToUniversalTime().ToString('o')
+            Save-DeploymentState
+        }
+        Write-Host "Skip stage: $Name"
+        return
+    }
+    $stage.status = 'running'
+    $stage.started_at = (Get-Date).ToUniversalTime().ToString('o')
+    $stage.completed_at = $null
+    $stage.error_code = $null
+    Save-DeploymentState
+    try {
+        & $Action
+        if ($LASTEXITCODE -ne 0) {
+            throw "Deployment stage failed: $Name"
+        }
+        $stage.status = 'success'
+        $stage.completed_at = (Get-Date).ToUniversalTime().ToString('o')
+        Save-DeploymentState
+    } catch {
+        $stage.status = 'failed'
+        $stage.completed_at = (Get-Date).ToUniversalTime().ToString('o')
+        $stage.error_code = 'command_failed'
+        $state.status = 'failed'
+        Save-DeploymentState
+        throw
+    }
+}
+
+Save-DeploymentState
+
 if (-not $SkipPreRelease) {
-    & (Join-Path $PSScriptRoot 'pre_release_integration.ps1') -SkipInstall
-    if ($LASTEXITCODE -ne 0) { throw 'Pre-release integration checks failed.' }
+    Invoke-DeploymentStage -Name 'pre_release' -Skip:$false -Action {
+        & (Join-Path $PSScriptRoot 'pre_release_integration.ps1') -SkipInstall
+    }
+} else {
+    Invoke-DeploymentStage -Name 'pre_release' -Skip:$true -Action { }
 }
 
 $jobDeployArgs = @{
@@ -95,45 +200,49 @@ if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
 if ($SkipJob23Deploy) { $jobDeployArgs.SkipJob23Deploy = $true }
 if ($SkipJob03Deploy) { $jobDeployArgs.SkipJob03Deploy = $true }
 if ($SkipJob07Deploy) { $jobDeployArgs.SkipJob07Deploy = $true }
-& (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
-if ($LASTEXITCODE -ne 0) { throw 'Cloud Run Jobs deployment failed.' }
+Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -Action {
+    & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
+}
 
 $dashboardImage = "$region-docker.pkg.dev/$projectId/$dashboardRepository/${dashboardImageName}:latest"
-if (-not $SkipDashboardBuild) {
+Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
     & $gcloud builds submit --config cloudbuild.dashboard.yaml --region $region --project $projectId --substitutions "_DASHBOARD_IMAGE=$dashboardImage" .
-    if ($LASTEXITCODE -ne 0) { throw 'Dashboard image build failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Dashboard image build failed.'
+    }
+
+    $tempEnv = New-TemporaryFile
+    try {
+        $dashboardEnv = [ordered]@{
+            DATA_BACKEND = Get-RequiredProductionEnv 'DATA_BACKEND'
+            FIRESTORE_PROJECT_ID = Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID'
+            FIRESTORE_DATABASE_ID = Get-RequiredProductionEnv 'FIRESTORE_DATABASE_ID'
+            DASHBOARD_HOST = '0.0.0.0'
+            DASHBOARD_BASIC_USER = Get-RequiredProductionEnv 'DASHBOARD_BASIC_USER'
+            DASHBOARD_BASIC_PASSWORD = Get-RequiredProductionEnv 'DASHBOARD_BASIC_PASSWORD'
+            DASHBOARD_SESSION_SECRET = Get-RequiredProductionEnv 'DASHBOARD_SESSION_SECRET'
+            DASHBOARD_COOKIE_SECURE = 'true'
+            DASHBOARD_AGGREGATION_CLOSE_DAY = Get-ProductionEnv 'DASHBOARD_AGGREGATION_CLOSE_DAY' '14'
+            DASHBOARD_SESSION_TTL_SECONDS = Get-ProductionEnv 'DASHBOARD_SESSION_TTL_SECONDS' '31536000'
+        }
+        $yamlLines = foreach ($entry in $dashboardEnv.GetEnumerator()) {
+            $escaped = ([string]$entry.Value).Replace("'", "''")
+            "$($entry.Key): '$escaped'"
+        }
+        [IO.File]::WriteAllLines($tempEnv.FullName, $yamlLines, [Text.UTF8Encoding]::new($false))
+        & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --env-vars-file $tempEnv.FullName
+    } finally {
+        Remove-Item -LiteralPath $tempEnv.FullName -Force -ErrorAction SilentlyContinue
+    }
 }
 
-$tempEnv = New-TemporaryFile
-try {
-    $dashboardEnv = [ordered]@{
-        DATA_BACKEND = Get-RequiredProductionEnv 'DATA_BACKEND'
-        FIRESTORE_PROJECT_ID = Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID'
-        FIRESTORE_DATABASE_ID = Get-RequiredProductionEnv 'FIRESTORE_DATABASE_ID'
-        DASHBOARD_HOST = '0.0.0.0'
-        DASHBOARD_BASIC_USER = Get-RequiredProductionEnv 'DASHBOARD_BASIC_USER'
-        DASHBOARD_BASIC_PASSWORD = Get-RequiredProductionEnv 'DASHBOARD_BASIC_PASSWORD'
-        DASHBOARD_SESSION_SECRET = Get-RequiredProductionEnv 'DASHBOARD_SESSION_SECRET'
-        DASHBOARD_COOKIE_SECURE = 'true'
-        DASHBOARD_AGGREGATION_CLOSE_DAY = Get-ProductionEnv 'DASHBOARD_AGGREGATION_CLOSE_DAY' '14'
-        DASHBOARD_SESSION_TTL_SECONDS = Get-ProductionEnv 'DASHBOARD_SESSION_TTL_SECONDS' '31536000'
-    }
-    $yamlLines = foreach ($entry in $dashboardEnv.GetEnumerator()) {
-        $escaped = ([string]$entry.Value).Replace("'", "''")
-        "$($entry.Key): '$escaped'"
-    }
-    [IO.File]::WriteAllLines($tempEnv.FullName, $yamlLines, [Text.UTF8Encoding]::new($false))
-    & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --env-vars-file $tempEnv.FullName
-    if ($LASTEXITCODE -ne 0) { throw 'Dashboard service deployment failed.' }
-} finally {
-    Remove-Item -LiteralPath $tempEnv.FullName -Force -ErrorAction SilentlyContinue
-}
-
-if (-not $SkipKpNetImport) {
+Invoke-DeploymentStage -Name 'kpnet_import' -Skip:$SkipKpNetImport -Action {
     & (Join-Path $PSScriptRoot 'run_kpnet_import_from_env.ps1')
 }
-if (-not $SkipDriveBackup) {
+Invoke-DeploymentStage -Name 'drive_backup' -Skip:$SkipDriveBackup -Action {
     & (Join-Path $PSScriptRoot 'run_drive_backup_cloud_from_env.ps1')
 }
 
-Write-Host 'Production deployment, validation, KP-NET import, and Drive backup completed.'
+$state.status = 'complete'
+Save-DeploymentState
+Write-Host "Production deployment, validation, KP-NET import, and Drive backup completed. State: $StatePath"

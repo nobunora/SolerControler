@@ -22,9 +22,12 @@ Read this first. Keep work evidence-based, small, and reviewable.
 ## Production Operations (Mandatory)
 
 - Before every production deployment, read and follow `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` in full. Its validation, safe-resume, verification, and stop conditions are mandatory; do not rely on memory or a previous run.
+- For production deployment or interrupted-deployment recovery, use the `solar-production-deployment` Skill; its judgment boundaries are part of this repository's operating procedure.
 - For every production deployment, validation, data import, backup, or Cloud Run Job execution, use the repository scripts below. Do not reconstruct equivalent `gcloud` or credential-bearing commands ad hoc.
 - Before a production deployment, run `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -ValidateOnly`.
+- Prefer `pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease` as the single pre-deployment gate; it creates a local backup, runs security/validation checks, and records non-sensitive results under `artifacts/deployment_state/`.
 - Deploy with `pwsh -NoProfile -File scripts/deploy_production_from_env.ps1` only after validation and relevant tests pass.
+- Pass `-StatePath artifacts/deployment_state/production-<timestamp>.json` to the deployment wrapper. On interruption, resume with the same path and `-Resume`; only stages explicitly marked `success` may be skipped. `running` is inconclusive, not success.
 - Import KP-NET data with `scripts/run_kpnet_import_from_env.ps1`, run Drive backup with `scripts/run_drive_backup_cloud_from_env.ps1`, and execute a production job with `scripts/run_cloud_job_from_env.ps1`.
 - For a daily actual-versus-forecast review, run `scripts/run_kpnet_import_from_env.ps1` first, then `scripts/run_kpnet_soc_gap_report.ps1 -SkipDownload`. Do not rebuild this workflow with direct credential or cloud commands.
 - Read project IDs, regions, resource IDs, account identifiers, and other deployment settings from the Git-ignored `.env` through `scripts/production_env.ps1`. Keep credentials and sensitive identifiers out of commands, tracked files, reports, and chat output.
