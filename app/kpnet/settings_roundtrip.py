@@ -8,6 +8,7 @@ complete controlled-settings snapshot.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import time
 from typing import Any, Mapping
 
@@ -178,7 +179,13 @@ def run_settings_roundtrip(
         if not snapshot_ok:
             raise RuntimeError(f"KP-NET restore did not match initial snapshot: {', '.join(snapshot_mismatches)}")
         restored_verified = True
-        summary.update({"probe_changed_fields": probe_changed, "restore_changed_fields": restore_changed})
+        summary.update(
+            {
+                "probe_changed_fields": probe_changed,
+                "restore_changed_fields": restore_changed,
+                "restore_verified": True,
+            }
+        )
         if not summary["forced_target_compatible"]:
             raise RuntimeError(f"forced-charge target is not device-representable: {summary['forced_target_error']}")
         summary["status"] = "passed"
@@ -201,3 +208,4 @@ def run_settings_roundtrip(
             client.logout()
         finally:
             summary.setdefault("status", "failed")
+            print(f"[settings_roundtrip] {json.dumps(summary, ensure_ascii=False, sort_keys=True)}", flush=True)

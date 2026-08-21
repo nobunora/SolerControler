@@ -74,3 +74,14 @@ def test_live_roundtrip_requires_an_exact_one_minute_hold() -> None:
 
     with pytest.raises(ValueError, match="exactly 60"):
         run_settings_roundtrip(target_soc_percent=50.0, hold_seconds=59)
+
+
+def test_roundtrip_emits_a_restore_audit_record() -> None:
+    source = (
+        __import__("app.kpnet.settings_roundtrip", fromlist=["__file__"]).__file__
+    )
+    assert source is not None
+    text = open(source, encoding="utf-8").read()
+
+    assert '"restore_verified": True' in text
+    assert "[settings_roundtrip]" in text
