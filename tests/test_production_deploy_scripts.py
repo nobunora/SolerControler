@@ -285,6 +285,10 @@ def test_manual_backup_job_name_is_unique_per_execution() -> None:
 
     assert "yyyyMMddHHmmss" in script
     assert "$PID" in script
+    assert "$backupSucceeded = $false" in script
+    assert "$backupSucceeded = $true" in script
+    assert "temporary job cleanup failed" in script
+    assert "exit 0" in script
 
 
 def test_security_check_compares_sensitive_dotenv_values_with_tracked_files() -> None:

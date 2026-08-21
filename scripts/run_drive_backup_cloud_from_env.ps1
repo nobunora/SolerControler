@@ -29,6 +29,8 @@ $jobName = "solar-drive-backup-manual-$((Get-Date).ToUniversalTime().ToString('y
 $image = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:latest"
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
 $created = $false
+$backupSucceeded = $false
+$cleanupSucceeded = $true
 
 try {
     $deployArgs = @(
@@ -49,10 +51,18 @@ try {
 
     & $gcloud run jobs execute $jobName --project $projectId --region $region --wait
     if ($LASTEXITCODE -ne 0) { throw 'Drive backup execution failed.' }
+    $backupSucceeded = $true
 } finally {
     if ($created) {
         & $gcloud run jobs delete $jobName --project $projectId --region $region --quiet
+        if ($LASTEXITCODE -ne 0) {
+            $cleanupSucceeded = $false
+            Write-Warning 'Drive backup completed, but temporary job cleanup failed.'
+        }
     }
 }
 
+if (-not $backupSucceeded) { throw 'Drive backup did not complete successfully.' }
+if (-not $cleanupSucceeded) { throw 'Drive backup succeeded, but temporary job cleanup failed.' }
 Write-Host 'Google Drive data backup completed.'
+exit 0
