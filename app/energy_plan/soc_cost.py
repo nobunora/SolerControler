@@ -56,12 +56,13 @@ class SocCostModel:
     day_tier1_rate_yen_per_kwh: float = 31.80
     day_tier2_rate_yen_per_kwh: float = 39.10
     day_tier3_rate_yen_per_kwh: float = 43.62
+    monthly_tariff_projection_enabled: bool = False
     monthly_tier_landing_enabled: bool = False
     expected_rest_of_month_day_buy_kwh: float = 0.0
     tier1_underuse_penalty_yen_per_kwh: float = 0.0
-    tier1_crossing_penalty_yen_per_kwh: float = 30.0
-    tier2_extra_penalty_yen_per_kwh: float = 8.0
-    tier3_extra_penalty_yen_per_kwh: float = 20.0
+    tier1_crossing_penalty_yen_per_kwh: float = 0.0
+    tier2_extra_penalty_yen_per_kwh: float = 0.0
+    tier3_extra_penalty_yen_per_kwh: float = 0.0
 
     @property
     def night_effective_rate_yen_per_kwh(self) -> float:
@@ -90,8 +91,11 @@ class SocCostModel:
         buy = max(0.0, buy_kwh)
         if (self.tariff_mode or "flat").strip().lower() != "night8_tiered":
             return buy * self.day_buy_rate_yen_per_kwh * self.day_buy_penalty_factor
+        previous_kwh = self.monthly_day_buy_kwh_before_target
+        if self.monthly_tariff_projection_enabled:
+            previous_kwh += self.expected_rest_of_month_day_buy_kwh
         return tiered_day_increment_cost(
-            previous_kwh=self.monthly_day_buy_kwh_before_target,
+            previous_kwh=previous_kwh,
             delta_kwh=buy,
             tier1_upper_kwh=self.day_tier1_upper_kwh,
             tier2_upper_kwh=self.day_tier2_upper_kwh,

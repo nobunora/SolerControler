@@ -519,6 +519,31 @@ def test_cost_model_uses_tiered_day_buy_increment_cost() -> None:
     assert cost_model.day_buy_cost_yen(2.0) == pytest.approx(31.80 + 39.10)
 
 
+def test_cost_model_projects_previous_billing_period_without_extra_penalty() -> None:
+    cost_model = SocCostModel(
+        day_buy_rate_yen_per_kwh=39.10,
+        night_buy_rate_yen_per_kwh=28.85,
+        charge_efficiency=0.93,
+        sell_value_ratio=0.0,
+        tariff_mode="night8_tiered",
+        monthly_day_buy_kwh_before_target=55.579,
+        expected_rest_of_month_day_buy_kwh=164.632,
+        monthly_tariff_projection_enabled=True,
+        monthly_tier_landing_enabled=False,
+        tier1_underuse_penalty_yen_per_kwh=0.0,
+        tier1_crossing_penalty_yen_per_kwh=0.0,
+        tier2_extra_penalty_yen_per_kwh=0.0,
+        tier3_extra_penalty_yen_per_kwh=0.0,
+    )
+
+    # 55.579 + 164.632 = 220.211 kWh before the candidate; the candidate is
+    # priced by the real tier rates, not by an additional tier-3 penalty.
+    assert cost_model.day_buy_cost_yen(8.0) == pytest.approx(
+        8.0 * 39.10
+    )
+    assert cost_model.monthly_tier_landing_penalty_yen(8.0) == pytest.approx(0.0)
+
+
 def test_cost_model_monthly_tier_landing_penalty_discourages_tier_crossing() -> None:
     cost_model = SocCostModel(
         day_buy_rate_yen_per_kwh=39.10,

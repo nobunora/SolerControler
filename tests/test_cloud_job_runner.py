@@ -231,7 +231,7 @@ def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
     assert _adjust03_target_date(now=now) == "2026-05-27"
 
 
-def test_monitor_forced_charge_applies_minimum_when_plan_target_is_zero(
+def test_monitor_forced_charge_does_not_invent_minimum_when_plan_target_is_zero(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -244,7 +244,7 @@ def test_monitor_forced_charge_applies_minimum_when_plan_target_is_zero(
         lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 0.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
-    soc_values = iter([0.0, 30.0])
+    soc_values = iter([0.0])
     monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: next(soc_values))
     monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
@@ -261,27 +261,8 @@ def test_monitor_forced_charge_applies_minimum_when_plan_target_is_zero(
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert calls == [("forced", True), ("standby", False)]
-    assert db_calls == [
-        (
-            "03",
-            False,
-            True,
-            {
-                "DATA_DB_WRITE_ONLY_23": "false",
-                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-            },
-        ),
-        (
-            "03",
-            False,
-            True,
-            {
-                "DATA_DB_WRITE_ONLY_23": "false",
-                "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
-            },
-        ),
-    ]
+    assert calls == []
+    assert db_calls == []
 
 
 def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(

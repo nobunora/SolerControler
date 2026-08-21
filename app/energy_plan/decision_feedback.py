@@ -102,12 +102,13 @@ def _cost_model_from_plan(plan: dict[str, Any]) -> SocCostModel:
         day_tier1_rate_yen_per_kwh=_finite_float(source.get("day_tier1_rate_yen_per_kwh"), 31.80),
         day_tier2_rate_yen_per_kwh=_finite_float(source.get("day_tier2_rate_yen_per_kwh"), 39.10),
         day_tier3_rate_yen_per_kwh=_finite_float(source.get("day_tier3_rate_yen_per_kwh"), 43.62),
+        monthly_tariff_projection_enabled=bool(source.get("monthly_tariff_projection_enabled", False)),
         monthly_tier_landing_enabled=bool(source.get("monthly_tier_landing_enabled", False)),
         expected_rest_of_month_day_buy_kwh=_finite_float(source.get("expected_rest_of_month_day_buy_kwh"), 0.0),
         tier1_underuse_penalty_yen_per_kwh=_finite_float(source.get("tier1_underuse_penalty_yen_per_kwh"), 0.0),
-        tier1_crossing_penalty_yen_per_kwh=_finite_float(source.get("tier1_crossing_penalty_yen_per_kwh"), 30.0),
-        tier2_extra_penalty_yen_per_kwh=_finite_float(source.get("tier2_extra_penalty_yen_per_kwh"), 8.0),
-        tier3_extra_penalty_yen_per_kwh=_finite_float(source.get("tier3_extra_penalty_yen_per_kwh"), 20.0),
+        tier1_crossing_penalty_yen_per_kwh=_finite_float(source.get("tier1_crossing_penalty_yen_per_kwh"), 0.0),
+        tier2_extra_penalty_yen_per_kwh=_finite_float(source.get("tier2_extra_penalty_yen_per_kwh"), 0.0),
+        tier3_extra_penalty_yen_per_kwh=_finite_float(source.get("tier3_extra_penalty_yen_per_kwh"), 0.0),
     )
 
 

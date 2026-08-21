@@ -175,10 +175,24 @@ def test_high_level_wrapper_supports_resuming_individual_job_deploys() -> None:
 def test_example_preserves_production_soc_and_export_safety_settings() -> None:
     values = _env_example_values()
 
-    assert values["NIGHT_RESERVE_SOC_PERCENT"] == "30"
+    assert values["NIGHT_RESERVE_SOC_PERCENT"] == "0"
     assert values["SOC_EXPORT_CONTRACT_STATUS"] == "inactive"
     assert values["SOC_EXPORT_VALUE_MODE"] == "neutral"
     assert values["SOC_SELL_REVENUE_YEN_PER_KWH"] == "0"
+
+
+def test_production_uses_previous_billing_period_without_heuristic_tier_penalties() -> None:
+    values = _env_example_values()
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert values["SOC_MONTHLY_TARIFF_PROJECTION_ENABLED"] == "true"
+    assert values["SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH"] == "0"
+    assert values["SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH"] == "0"
+    assert values["SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH"] == "0"
+    assert '"SOC_MONTHLY_TARIFF_PROJECTION_ENABLED=true"' in script
+    assert '"SOC_MONTHLY_TIER_LANDING_ENABLED=false"' in script
+    assert '"SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH=0"' in script
+    assert 'ADJUST03_MIN_TARGET_SOC_PERCENT=0' in script
 
 
 def test_production_deploy_supports_non_mutating_validation() -> None:

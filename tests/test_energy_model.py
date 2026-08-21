@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -341,20 +341,27 @@ def test_effective_capacity_includes_degradation_and_temperature() -> None:
 def test_monthly_day_buy_uses_billing_close_day(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOC_MONTHLY_TIER_CLOSE_DAY", "14")
     rows = [
-        {"dt": datetime(2026, 6, 14, 12), "buy": 10.0},
-        {"dt": datetime(2026, 6, 15, 12), "buy": 1.0},
-        {"dt": datetime(2026, 6, 20, 12), "buy": 2.0},
-        {"dt": datetime(2026, 6, 21, 12), "buy": 4.0},
-        {"dt": datetime(2026, 7, 15, 12), "buy": 8.0},
+        {"dt": datetime(2026, 6, 15, 12) + timedelta(days=index), "buy": 2.0}
+        for index in range(30)
     ]
+    rows[5]["buy"] = 4.0
+    rows.extend(
+        {"dt": datetime(2026, 7, 15, 12) + timedelta(days=index), "buy": 1.0}
+        for index in range(5)
+    )
 
-    before = _monthly_day_buy_kwh_before_target(rows, target_date="2026-06-21")
-    rest = _expected_rest_of_month_day_buy_kwh(rows, target_date="2026-06-21")
+    before = _monthly_day_buy_kwh_before_target(rows, target_date="2026-07-20")
+    rest = _expected_rest_of_month_day_buy_kwh(rows, target_date="2026-07-20")
 
-    assert before["kwh"] == pytest.approx(3.0)
-    assert before["billing_period_start"] == "2026-06-15"
-    assert before["billing_period_end"] == "2026-07-14"
-    assert rest["remaining_days_after_target"] == 23
+    assert before["kwh"] == pytest.approx(5.0)
+    assert before["billing_period_start"] == "2026-07-15"
+    assert before["billing_period_end"] == "2026-08-14"
+    assert rest["source"] == "previous_billing_period_daytime_buy"
+    assert rest["previous_billing_period_total_kwh"] == pytest.approx(62.0)
+    assert rest["previous_reference_target_date"] == "2026-06-20"
+    assert rest["previous_reference_target_day_buy_kwh"] == pytest.approx(4.0)
+    assert rest["kwh"] == pytest.approx(53.0)
+    assert rest["remaining_days_after_target"] == 25
 
 
 def test_energy_model_csv_reader_preserves_financial_energy_fields(tmp_path: Path) -> None:
@@ -413,8 +420,8 @@ def test_monthly_buy_aggregate_uses_values_from_production_csv_reader(
     rest = _expected_rest_of_month_day_buy_kwh(rows, target_date="2026-07-20")
 
     assert before["kwh"] == pytest.approx(5.0)
-    assert rest["recent_daily_avg_kwh"] == pytest.approx(2.5)
-    assert rest["kwh"] == pytest.approx(62.5)
+    assert rest["source"] == "previous_billing_period_incomplete"
+    assert rest["kwh"] == pytest.approx(0.0)
 
 
 def test_compute_night_charge_target() -> None:

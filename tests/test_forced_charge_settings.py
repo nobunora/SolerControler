@@ -26,7 +26,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
 
     assert settings == ForcedChargeSettings(
         cutoff=time(7, 0),
-        min_target_soc_percent=30.0,
+        min_target_soc_percent=0.0,
         poll_interval_seconds=180,
         retry_attempts=3,
         retry_delay_seconds=5.0,

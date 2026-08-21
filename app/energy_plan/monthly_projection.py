@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import statistics
 from datetime import date, datetime, time as dt_time, timedelta
 from typing import Any
 
@@ -45,6 +44,40 @@ def billing_period_for_target(target_day: date) -> tuple[date, date, int]:
     return period_start, period_end, close_day
 
 
+def previous_billing_period_for_target(target_day: date) -> tuple[date, date, int]:
+    """Return the complete billing period immediately before target_day's period."""
+
+    current_start, _, _ = billing_period_for_target(target_day)
+    return billing_period_for_target(current_start - timedelta(days=1))
+
+
+def _daytime_buy_by_day(
+    rows: list[dict[str, Any]],
+    *,
+    period_start: date,
+    period_end: date,
+    day_start: dt_time,
+    day_end: dt_time,
+) -> dict[date, float]:
+    daily: dict[date, float] = {}
+    for row in rows:
+        timestamp = row.get("dt")
+        if not isinstance(timestamp, datetime) or not (
+            period_start <= timestamp.date() <= period_end
+        ):
+            continue
+        if not _is_within_window(
+            timestamp.hour * 60 + timestamp.minute,
+            start_minute=_clock_minutes(day_start),
+            end_minute=_clock_minutes(day_end),
+        ):
+            continue
+        daily[timestamp.date()] = daily.get(timestamp.date(), 0.0) + max(
+            0.0, float(row.get("buy", 0.0) or 0.0)
+        )
+    return daily
+
+
 def monthly_day_buy_kwh_before_target(rows: list[dict[str, Any]], *, target_date: str) -> dict[str, object]:
     try:
         target_day = date.fromisoformat(target_date)
@@ -71,18 +104,69 @@ def expected_rest_of_month_day_buy_kwh(rows: list[dict[str, Any]], *, target_dat
         target_day = date.fromisoformat(target_date)
     except ValueError:
         return {"kwh": 0.0, "source": "invalid_target_date", "target_date": target_date}
-    lookback_days = max(1, int(float(os.getenv("SOC_MONTHLY_TIER_RECENT_DAYS", "7"))))
     day_start = _parse_hhmm(os.getenv("NIGHT8_DAY_START_HHMM", "07:00"), default="07:00")
     day_end = _parse_hhmm(os.getenv("NIGHT8_DAY_END_HHMM", "23:00"), default="23:00")
     period_start, period_end, close_day = billing_period_for_target(target_day)
-    daily: dict[date, float] = {}
-    for row in rows:
-        timestamp = row.get("dt")
-        if not isinstance(timestamp, datetime) or not (period_start <= timestamp.date() < target_day):
-            continue
-        if _is_within_window(timestamp.hour * 60 + timestamp.minute, start_minute=_clock_minutes(day_start), end_minute=_clock_minutes(day_end)):
-            daily[timestamp.date()] = daily.get(timestamp.date(), 0.0) + max(0.0, float(row.get("buy", 0.0) or 0.0))
-    recent_days = sorted(daily)[-lookback_days:]
-    average = statistics.mean([daily[day] for day in recent_days]) if recent_days else 0.0
+    previous_start, previous_end, _ = previous_billing_period_for_target(target_day)
+    previous_daily = _daytime_buy_by_day(
+        rows,
+        period_start=previous_start,
+        period_end=previous_end,
+        day_start=day_start,
+        day_end=day_end,
+    )
+    expected_previous_days = (previous_end - previous_start).days + 1
     remaining = max(0, (period_end - target_day).days)
-    return {"kwh": round(average * remaining, 4), "source": "recent_daytime_buy_average", "target_date": target_date, "billing_period_start": period_start.isoformat(), "billing_period_end": period_end.isoformat(), "billing_close_day": close_day, "day_window": f"{day_start:%H:%M}-{day_end:%H:%M}", "lookback_days": lookback_days, "sample_day_count": len(recent_days), "recent_daily_avg_kwh": round(average, 4), "remaining_days_after_target": remaining, "sample_days": [day.isoformat() for day in recent_days]}
+    base = monthly_day_buy_kwh_before_target(rows, target_date=target_date)
+    sample_days = sorted(previous_daily)
+    result: dict[str, object] = {
+        "target_date": target_date,
+        "billing_period_start": period_start.isoformat(),
+        "billing_period_end": period_end.isoformat(),
+        "billing_close_day": close_day,
+        "day_window": f"{day_start:%H:%M}-{day_end:%H:%M}",
+        "previous_billing_period_start": previous_start.isoformat(),
+        "previous_billing_period_end": previous_end.isoformat(),
+        "previous_billing_period_expected_days": expected_previous_days,
+        "previous_billing_period_sample_day_count": len(sample_days),
+        "remaining_days_after_target": remaining,
+        "sample_days": [day.isoformat() for day in sample_days[-10:]],
+    }
+    if len(previous_daily) < expected_previous_days:
+        return {
+            "kwh": 0.0,
+            "source": "previous_billing_period_incomplete",
+            **result,
+            "current_day_buy_before_target_kwh": base.get("kwh", 0.0),
+        }
+
+    previous_total = sum(previous_daily.values())
+    target_offset = max(0, (target_day - period_start).days)
+    previous_target_day = min(
+        previous_start + timedelta(days=target_offset),
+        previous_end,
+    )
+    previous_target_day_buy = previous_daily[previous_target_day]
+    raw_current_before_target = base.get("kwh", 0.0)
+    current_before_target = (
+        float(raw_current_before_target)
+        if isinstance(raw_current_before_target, (int, float))
+        else 0.0
+    )
+    return {
+        "kwh": round(
+            max(0.0, previous_total - current_before_target - previous_target_day_buy),
+            4,
+        ),
+        "source": "previous_billing_period_daytime_buy",
+        **result,
+        "previous_billing_period_total_kwh": round(previous_total, 4),
+        "previous_reference_target_date": previous_target_day.isoformat(),
+        "previous_reference_target_day_buy_kwh": round(previous_target_day_buy, 4),
+        "current_day_buy_before_target_kwh": round(current_before_target, 4),
+        "projected_month_end_before_target_kwh": round(
+            current_before_target
+            + max(0.0, previous_total - current_before_target - previous_target_day_buy),
+            4,
+        ),
+    }

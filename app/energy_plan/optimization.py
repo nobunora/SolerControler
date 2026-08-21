@@ -206,35 +206,32 @@ def soc_cost_model_from_env(
         export_value_mode=export_value_mode,
         sell_revenue_yen_per_kwh=sell_revenue,
         tariff_mode=tariff_mode,
-        monthly_day_buy_kwh_before_target=max(
-            0.0,
-            _env_float("SOC_MONTHLY_DAY_BUY_KWH_BEFORE_TARGET", monthly_day_buy_kwh_before_target),
-        ),
+        monthly_day_buy_kwh_before_target=max(0.0, monthly_day_buy_kwh_before_target),
         day_tier1_upper_kwh=_env_float("NIGHT8_DAY_TIER1_UPPER_KWH", 90.0),
         day_tier2_upper_kwh=_env_float("NIGHT8_DAY_TIER2_UPPER_KWH", 230.0),
         day_tier1_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER1_YEN", 31.80),
         day_tier2_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER2_YEN", 39.10),
         day_tier3_rate_yen_per_kwh=_env_float("NIGHT8_DAY_RATE_TIER3_YEN", 43.62),
-        monthly_tier_landing_enabled=_env_bool("SOC_MONTHLY_TIER_LANDING_ENABLED", False),
-        expected_rest_of_month_day_buy_kwh=max(
-            0.0,
-            _env_float("SOC_EXPECTED_REST_OF_MONTH_DAY_BUY_KWH", expected_rest_of_month_day_buy_kwh),
+        monthly_tariff_projection_enabled=_env_bool(
+            "SOC_MONTHLY_TARIFF_PROJECTION_ENABLED", True
         ),
+        monthly_tier_landing_enabled=_env_bool("SOC_MONTHLY_TIER_LANDING_ENABLED", False),
+        expected_rest_of_month_day_buy_kwh=max(0.0, expected_rest_of_month_day_buy_kwh),
         tier1_underuse_penalty_yen_per_kwh=max(
             0.0,
-            _env_float("SOC_TIER1_UNDERUSE_PENALTY_YEN_PER_KWH", 0.2),
+            _env_float("SOC_TIER1_UNDERUSE_PENALTY_YEN_PER_KWH", 0.0),
         ),
         tier1_crossing_penalty_yen_per_kwh=max(
             0.0,
-            _env_float("SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH", 30.0),
+            _env_float("SOC_TIER1_CROSSING_PENALTY_YEN_PER_KWH", 0.0),
         ),
         tier2_extra_penalty_yen_per_kwh=max(
             0.0,
-            _env_float("SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH", 8.0),
+            _env_float("SOC_TIER2_EXTRA_PENALTY_YEN_PER_KWH", 0.0),
         ),
         tier3_extra_penalty_yen_per_kwh=max(
             0.0,
-            _env_float("SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH", 20.0),
+            _env_float("SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH", 0.0),
         ),
     )
 
@@ -397,6 +394,7 @@ def run_current_optimizer(
                     "tariff_mode": cost_model.tariff_mode,
                     "monthly_day_buy_kwh_before_target": cost_model.monthly_day_buy_kwh_before_target,
                     "expected_rest_of_month_day_buy_kwh": cost_model.expected_rest_of_month_day_buy_kwh,
+                    "monthly_tariff_projection_enabled": cost_model.monthly_tariff_projection_enabled,
                     "monthly_tier_landing_enabled": cost_model.monthly_tier_landing_enabled,
                     "monthly_tier_landing_penalty_yen": optimized.expected_monthly_tier_landing_penalty_yen,
                     "projected_monthly_day_buy_kwh": round(

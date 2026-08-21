@@ -34,7 +34,7 @@ class ForcedChargeSettings:
             ),
             min_target_soc_percent=min(
                 100.0,
-                max(0.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=30.0)),
+                max(0.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=0.0)),
             ),
             # Never poll faster than one minute; this protects the remote service and still tracks SOC closely.
             poll_interval_seconds=max(60, env_int("ADJUST03_FORCE_MONITOR_POLL_SECONDS", default=180)),
