@@ -286,6 +286,17 @@ def test_night_soc_deploy_can_run_reversible_kpnet_settings_roundtrip() -> None:
     assert "Remove-Item Env:KP_MONITOR_USERNAME" in wrapper
 
 
+def test_deployment_stage_state_uses_explicit_dictionary_or_json_lookup() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function Get-DeploymentStageRecord" in script
+    assert "$state.stages[$Name]" in script
+    assert "$state.stages.PSObject.Properties[$Name]" in script
+    assert "Get-DeploymentStageRecord -Name $Name" in script
+
+
 def test_runner_build_uses_explicit_cache_and_narrow_context() -> None:
     script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
     build = (ROOT / "cloudbuild.runner.yaml").read_text(encoding="utf-8")

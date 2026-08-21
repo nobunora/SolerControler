@@ -154,13 +154,31 @@ function Get-SafeErrorDetail {
     return (($safeLines -join ' ') -replace '\s+', ' ').Trim()
 }
 
+function Get-DeploymentStageRecord {
+    param([string]$Name)
+
+    # New state uses OrderedDictionary while -Resume reads PSCustomObject.
+    # Do not rely on dynamic member resolution: it can leave a stage's durable
+    # state unchanged even though its action has run.
+    if ($state.stages -is [System.Collections.IDictionary]) {
+        $stage = $state.stages[$Name]
+    } else {
+        $property = $state.stages.PSObject.Properties[$Name]
+        $stage = if ($property) { $property.Value } else { $null }
+    }
+    if ($null -eq $stage) {
+        throw "Deployment state is missing stage: $Name"
+    }
+    return ,$stage
+}
+
 function Invoke-DeploymentStage {
     param(
         [string]$Name,
         [bool]$Skip,
         [scriptblock]$Action
     )
-    $stage = $state.stages.$Name
+    $stage = Get-DeploymentStageRecord -Name $Name
     if ($Skip) {
         if ($stage.status -ne 'success') {
             $stage.status = 'skipped_manual'
