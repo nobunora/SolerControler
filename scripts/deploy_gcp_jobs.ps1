@@ -120,7 +120,12 @@ function Assert-LatestSmokeExecution {
             throw "Cloud Run smoke execution condition is not ready: $type"
         }
     }
-    if ([int]$status.failedCount -gt 0) {
+    $failedCount = if ($status.PSObject.Properties.Name -contains 'failedCount') {
+        [int]$status.failedCount
+    } else {
+        0
+    }
+    if ($failedCount -gt 0) {
         throw 'Cloud Run smoke execution reported failed tasks.'
     }
     Write-Host 'Cloud Run smoke execution passed explicit completion and readiness checks.'

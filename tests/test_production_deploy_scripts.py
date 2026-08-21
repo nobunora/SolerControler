@@ -262,7 +262,9 @@ def test_smoke_requires_explicit_cloud_run_execution_conditions() -> None:
     assert "Assert-LatestSmokeExecution" in script
     assert "$status = $latest.status" in script
     assert "$conditions = @($status.conditions)" in script
+    assert "$status.PSObject.Properties.Name -contains 'failedCount'" in script
     assert "[int]$status.failedCount" in script
+    assert "$failedCount = if" in script
     assert "conditions were missing from gcloud output" in script
     for condition in ("Completed", "ResourcesAvailable", "Started", "ContainerReady"):
         assert f"'{condition}'" in script
