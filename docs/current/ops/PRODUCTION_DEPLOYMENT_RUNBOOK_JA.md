@@ -41,6 +41,21 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 低レベルスクリプトや独自の `gcloud` 更新コマンドへ置き換えません。
 デプロイラッパーは工程ごとに状態を書き込みます。`running` のまま終了した工程は成功扱いにしません。
 
+### 2.1 短縮経路（検証を維持する場合）
+
+通常経路ではジョブ更新中にも07時ジョブのDryRunを実行します。デプロイ後の公式DryRunを別途実施する場合は、次のオプションで重複実行を避けられます。
+
+```powershell
+pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
+  -SkipInlineSmokeTest `
+  -StatePath artifacts/deployment_state/production-<開始時刻>.json
+pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
+```
+
+`-SkipInlineSmokeTest` は検証を省略する指定ではなく、デプロイ工程内の重複待機を省略する指定です。合格判定には、必ず後段の公式DryRunとCloud Run executionの4条件確認を使用します。
+
+runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキャッシュ候補として再利用し、用途別のignoreファイルで不要なテスト・文書・生成物を送信しません。依存関係を変更した場合はキャッシュ効果が下がるため、通常より長くなることがあります。
+
 ## 3. Windowsで途中終了した場合の再開
 
 `artifacts/deployment_state/production-*.json` の `status=success` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。
@@ -71,6 +86,8 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 ```
 
 `WORKING`、`QUEUED`、失敗、または状態不明のビルドを再利用しません。
+
+外側のPowerShellや実行環境の待機が先に終了しても、Cloud Build／Cloud Runの状態を読み取り専用で確認するまで失敗・成功を推測しません。再開時は同じcommitの状態ファイルを使い、`success` が記録された工程だけをスキップします。各工程の失敗時には、機密語を除去したエラー概要を状態ファイルへ保存します。
 
 ### 3.3 ジョブ1本の更新後に終了した場合
 

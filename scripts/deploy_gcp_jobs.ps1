@@ -74,6 +74,7 @@ function Invoke-GCloud {
     $startInfo.FileName = $gcloudPython
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     $startInfo.Environment["CLOUDSDK_ROOT_DIR"] = $cloudSdkRoot
     [void]$startInfo.ArgumentList.Add("-S")
     [void]$startInfo.ArgumentList.Add($gcloudEntryPoint)
@@ -82,11 +83,21 @@ function Invoke-GCloud {
     }
     $process = [System.Diagnostics.Process]::Start($startInfo)
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
     $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
     $gcloudExitCode = $process.ExitCode
     if ($gcloudExitCode -ne 0) {
-        throw "gcloud failed: $($Args -join ' ')"
+        $safeStderr = @(
+            $stderr -split "`r?`n" |
+                Where-Object { $_.Trim() -and $_ -notmatch '(?i)password|secret|token|authorization|credential' } |
+                Select-Object -Last 8
+        ) -join ' | '
+        if (-not $safeStderr) {
+            $safeStderr = 'stderr was empty or redacted.'
+        }
+        throw "gcloud failed (exit code $gcloudExitCode): $safeStderr"
     }
     if ($stdout) {
         Write-Output $stdout.TrimEnd()
@@ -394,7 +405,9 @@ if (-not $repoExists) {
 
 if (-not $SkipBuild) {
     Write-Host "Build container image..."
-    Invoke-GCloud builds submit --region $Region --tag $image --project $ProjectId $repoRoot
+    $runnerBuildConfig = Join-Path $repoRoot 'cloudbuild.runner.yaml'
+    $runnerIgnoreFile = Join-Path $repoRoot '.gcloudignore-runner'
+    Invoke-GCloud builds submit --config $runnerBuildConfig --ignore-file $runnerIgnoreFile --region $Region --project $ProjectId --substitutions "_RUNNER_IMAGE=$image" $repoRoot
 } else {
     Write-Host "Skip build (using existing image): $image"
 }

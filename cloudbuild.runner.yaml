@@ -2,17 +2,17 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - pull
-      - ${_DASHBOARD_IMAGE}
+      - ${_RUNNER_IMAGE}
     allowFailure: true
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - --cache-from
-      - ${_DASHBOARD_IMAGE}
-      - -f
-      - Dockerfile.dashboard
+      - ${_RUNNER_IMAGE}
       - -t
-      - ${_DASHBOARD_IMAGE}
+      - ${_RUNNER_IMAGE}
+      - -f
+      - Dockerfile
       - .
 images:
-  - ${_DASHBOARD_IMAGE}
+  - ${_RUNNER_IMAGE}

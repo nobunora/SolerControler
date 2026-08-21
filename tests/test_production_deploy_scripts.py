@@ -111,7 +111,7 @@ def test_plan_refresh_cloud_job_mode_is_limited_to_slot_03() -> None:
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:
     config = (ROOT / "cloudbuild.dashboard.yaml").read_text(encoding="utf-8")
 
-    assert config.count("${_DASHBOARD_IMAGE}") == 2
+    assert config.count("${_DASHBOARD_IMAGE}") == 4
     assert "codrivernavi-web" not in config
 
 
@@ -149,7 +149,8 @@ def test_job_deploy_uses_isolated_gcloud_python_and_absolute_build_source() -> N
     assert "$process.StandardOutput.ReadToEndAsync()" in script
     assert "Write-Output $stdout.TrimEnd()" in script
     assert "cmd.exe /d /c gcloud.cmd" not in script
-    assert "builds submit --region $Region --tag $image --project $ProjectId $repoRoot" in script
+    assert "builds submit --config $runnerBuildConfig" in script
+    assert "--substitutions \"_RUNNER_IMAGE=$image\"" in script
 
 
 def test_production_disables_fixed_weather_upside_scenario() -> None:
@@ -225,6 +226,43 @@ def test_production_deploy_splats_named_job_arguments() -> None:
     assert "@jobDeployArgs" in script
 
 
+def test_production_deploy_has_fast_verified_smoke_path_and_safe_stage_details() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[switch]$SkipInlineSmokeTest" in script
+    assert "if (-not $SkipInlineSmokeTest) { $jobDeployArgs.RunSmokeTest = $true }" in script
+    assert "error_detail = $null" in script
+    assert "Get-SafeErrorDetail" in script
+    assert "Where-Object { $_ -notmatch '(?i)password|secret|token|authorization|credential' }" in script
+    assert "--ignore-file $dashboardIgnoreFile" in script
+
+
+def test_runner_build_uses_explicit_cache_and_narrow_context() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+    build = (ROOT / "cloudbuild.runner.yaml").read_text(encoding="utf-8")
+    ignore = (ROOT / ".gcloudignore-runner").read_text(encoding="utf-8")
+
+    assert "cloudbuild.runner.yaml" in script
+    assert ".gcloudignore-runner" in script
+    assert "--ignore-file $runnerIgnoreFile" in script
+    assert "--cache-from" in build
+    assert "allowFailure: true" in build
+    assert "tests/" in ignore
+    assert "artifacts/" in ignore
+
+
+def test_gcloud_failures_capture_redacted_stderr_without_credentials() -> None:
+    script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "$startInfo.RedirectStandardError = $true" in script
+    assert "$stderrTask = $process.StandardError.ReadToEndAsync()" in script
+    assert "$stderr = $stderrTask.GetAwaiter().GetResult()" in script
+    assert "gcloud failed (exit code $gcloudExitCode)" in script
+    assert "password|secret|token|authorization|credential" in script
+
+
 def test_cloud_validation_checks_every_production_entrypoint() -> None:
     script = (ROOT / "scripts" / "check_production_env.ps1").read_text(
         encoding="utf-8"
@@ -254,6 +292,16 @@ def test_production_gate_automates_backup_security_and_validation() -> None:
     ):
         assert required in script
     assert "StatePath must remain under artifacts/deployment_state" in script
+
+
+def test_production_gate_records_safe_failure_details() -> None:
+    script = (ROOT / "scripts" / "production_deployment_gate.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "error_detail = $null" in script
+    assert "Get-SafeErrorDetail" in script
+    assert "Where-Object { $_ -notmatch '(?i)password|secret|token|authorization|credential' }" in script
 
 
 def test_deployment_resume_requires_same_commit_and_successful_stages() -> None:

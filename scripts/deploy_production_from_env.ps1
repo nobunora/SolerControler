@@ -7,6 +7,7 @@ param(
     [switch]$SkipJob03Deploy,
     [switch]$SkipJob07Deploy,
     [switch]$SkipDashboardBuild,
+    [switch]$SkipInlineSmokeTest,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
     [string]$StatePath = "",
@@ -108,11 +109,11 @@ if ($Resume) {
         updated_at = $null
         status = 'running'
         stages = [ordered]@{
-            pre_release = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
-            jobs = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
-            dashboard = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
-            kpnet_import = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
-            drive_backup = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null }
+            pre_release = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
+            jobs = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
+            dashboard = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
+            kpnet_import = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
+            drive_backup = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
         }
     }
 }
@@ -122,6 +123,24 @@ function Save-DeploymentState {
     $parent = Split-Path -Parent $StatePath
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatePath -Encoding utf8
+}
+
+function Get-SafeErrorDetail {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $message = $ErrorRecord.Exception.Message
+    if (-not $message) {
+        return 'No error message was available.'
+    }
+    $safeLines = @(
+        $message -split "`r?`n" |
+            Where-Object { $_ -notmatch '(?i)password|secret|token|authorization|credential' } |
+            Select-Object -First 6
+    )
+    if (-not $safeLines) {
+        return 'Error detail was redacted.'
+    }
+    return (($safeLines -join ' ') -replace '\s+', ' ').Trim()
 }
 
 function Invoke-DeploymentStage {
@@ -144,6 +163,7 @@ function Invoke-DeploymentStage {
     $stage.started_at = (Get-Date).ToUniversalTime().ToString('o')
     $stage.completed_at = $null
     $stage.error_code = $null
+    $stage.error_detail = $null
     Save-DeploymentState
     try {
         & $Action
@@ -157,6 +177,7 @@ function Invoke-DeploymentStage {
         $stage.status = 'failed'
         $stage.completed_at = (Get-Date).ToUniversalTime().ToString('o')
         $stage.error_code = 'command_failed'
+        $stage.error_detail = Get-SafeErrorDetail -ErrorRecord $_
         $state.status = 'failed'
         Save-DeploymentState
         throw
@@ -187,7 +208,6 @@ $jobDeployArgs = @{
     SheetsShareEmail = $sheetsShare
     DriveBackupFolderId = $driveFolder
     NightPlanArchiveGcsPrefix = $archivePrefix
-    RunSmokeTest = $true
     # Cloud capacity is already checked by ValidateOnly/CheckCloud. Running the
     # legacy Windows PowerShell capacity helper here can terminate the parent
     # deployment process after gcloud.cmd exits.
@@ -195,6 +215,7 @@ $jobDeployArgs = @{
     SkipIamSetup = $true
     SkipSecretSetup = $true
 }
+if (-not $SkipInlineSmokeTest) { $jobDeployArgs.RunSmokeTest = $true }
 if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }
 if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
 if ($SkipJob23Deploy) { $jobDeployArgs.SkipJob23Deploy = $true }
@@ -206,7 +227,8 @@ Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -A
 
 $dashboardImage = "$region-docker.pkg.dev/$projectId/$dashboardRepository/${dashboardImageName}:latest"
 Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
-    & $gcloud builds submit --config cloudbuild.dashboard.yaml --region $region --project $projectId --substitutions "_DASHBOARD_IMAGE=$dashboardImage" .
+    $dashboardIgnoreFile = Join-Path $repoRoot '.gcloudignore-dashboard'
+    & $gcloud builds submit --config cloudbuild.dashboard.yaml --ignore-file $dashboardIgnoreFile --region $region --project $projectId --substitutions "_DASHBOARD_IMAGE=$dashboardImage" .
     if ($LASTEXITCODE -ne 0) {
         throw 'Dashboard image build failed.'
     }

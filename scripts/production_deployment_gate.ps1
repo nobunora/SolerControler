@@ -39,6 +39,24 @@ function Save-State {
     $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $StatePath -Encoding utf8
 }
 
+function Get-SafeErrorDetail {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $message = $ErrorRecord.Exception.Message
+    if (-not $message) {
+        return 'No error message was available.'
+    }
+    $safeLines = @(
+        $message -split "`r?`n" |
+            Where-Object { $_ -notmatch '(?i)password|secret|token|authorization|credential' } |
+            Select-Object -First 6
+    )
+    if (-not $safeLines) {
+        return 'Error detail was redacted.'
+    }
+    return (($safeLines -join ' ') -replace '\s+', ' ').Trim()
+}
+
 function Add-SkippedCheck {
     param([string]$Name, [string]$Reason)
     $state.checks.Add([ordered]@{
@@ -60,6 +78,7 @@ function Invoke-GateCheck {
         started_at = (Get-Date).ToUniversalTime().ToString('o')
         completed_at = $null
         error_code = $null
+        error_detail = $null
     }
     $state.checks.Add($entry)
     Save-State
@@ -75,6 +94,7 @@ function Invoke-GateCheck {
         $entry.status = 'failed'
         $entry.completed_at = (Get-Date).ToUniversalTime().ToString('o')
         $entry.error_code = 'command_failed'
+        $entry.error_detail = Get-SafeErrorDetail -ErrorRecord $_
         Save-State
         throw
     }
