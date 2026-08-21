@@ -59,6 +59,26 @@ def test_day_transition_dry_run_does_not_require_night_lease(monkeypatch: pytest
     _assert_day_transition_allowed()
 
 
+def test_enforced_monitor_fails_closed_when_night_lease_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._read_plan_meta",
+        lambda _: {"date": "2026-08-21", "plan_id": "plan-1", "target_soc_7_percent": 80.0},
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._acquire_night_soc_lease", lambda _meta: False)
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._run_settings_profile",
+        lambda **_: pytest.fail("lease failure must not change battery settings"),
+    )
+
+    with pytest.raises(RuntimeError, match="night SOC lease could not be acquired"):
+        _monitor_partial_forced_and_stop(plan_path)
+
+
 def test_required_charge_percent_from_plan_uses_soc_delta() -> None:
     pct = _required_charge_percent_from_plan(
         {

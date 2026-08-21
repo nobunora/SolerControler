@@ -105,7 +105,14 @@ function Assert-LatestSmokeExecution {
         throw 'Cloud Run smoke execution was not found.'
     }
     $latest = $executions[0]
-    $conditions = @($latest.conditions)
+    $status = $latest.status
+    if (-not $status) {
+        throw 'Cloud Run smoke execution status was missing from gcloud output.'
+    }
+    $conditions = @($status.conditions)
+    if ($conditions.Count -eq 0) {
+        throw 'Cloud Run smoke execution conditions were missing from gcloud output.'
+    }
     $requiredTypes = @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')
     foreach ($type in $requiredTypes) {
         $condition = $conditions | Where-Object { $_.type -eq $type } | Select-Object -First 1
@@ -113,7 +120,7 @@ function Assert-LatestSmokeExecution {
             throw "Cloud Run smoke execution condition is not ready: $type"
         }
     }
-    if ([int]$latest.failedCount -gt 0) {
+    if ([int]$status.failedCount -gt 0) {
         throw 'Cloud Run smoke execution reported failed tasks.'
     }
     Write-Host 'Cloud Run smoke execution passed explicit completion and readiness checks.'

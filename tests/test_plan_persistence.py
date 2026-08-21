@@ -81,3 +81,26 @@ def test_acquire_night_soc_lease_accepts_firestore_get_shapes(snapshot_result: o
     assert client.transaction_ref.committed is True
     assert client.document_ref.payload is not None
     assert client.document_ref.payload["state"] == "LEASE_ACQUIRED"
+
+
+def test_acquire_night_soc_lease_rejects_active_owner_from_generator() -> None:
+    snapshot = _Snapshot(
+        exists=True,
+        data={
+            "plan_id": "plan-1",
+            "owner": "another-owner",
+            "lease_expires_at_utc": "9999-12-31T23:59:59+00:00",
+        },
+    )
+    client = _Client((item for item in [snapshot]))
+
+    acquired = acquire_night_soc_lease(
+        plan_meta={"date": "2026-08-21", "plan_id": "plan-1"},
+        owner="03-monitor",
+        lease_seconds=18000,
+        open_firestore=lambda: client,
+    )
+
+    assert acquired is False
+    assert client.transaction_ref.committed is False
+    assert client.document_ref.payload is None
