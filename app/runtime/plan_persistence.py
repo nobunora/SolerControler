@@ -28,6 +28,22 @@ def _transaction_snapshot(transaction: Any, ref: Any) -> Any | None:
         return None
 
 
+def _run_firestore_transaction(transaction: Any, operation: Callable[[Any], bool]) -> bool:
+    """Run a Firestore operation through the SDK's transaction lifecycle."""
+    try:
+        from google.cloud.firestore_v1.transaction import transactional
+    except ImportError:
+        begin = getattr(transaction, "_begin", None) or getattr(transaction, "begin", None)
+        if callable(begin):
+            begin()
+        result = operation(transaction)
+        commit = getattr(transaction, "commit", None) or getattr(transaction, "_commit", None)
+        if callable(commit):
+            commit()
+        return result
+    return bool(transactional(operation)(transaction))
+
+
 def persist_night_soc_execution(
     *,
     plan_meta: Mapping[str, Any],
@@ -92,22 +108,22 @@ def acquire_night_soc_lease(
         transaction_factory = getattr(client, "transaction", None)
         if transaction_factory is not None:
             transaction = transaction_factory()
-            begin = getattr(transaction, "begin", None)
-            if callable(begin):
-                begin()
-            snapshot = _transaction_snapshot(transaction, ref)
-            if snapshot is not None and snapshot.exists:
-                current = snapshot.to_dict() or {}
-                current_owner = str(current.get("owner") or "")
-                current_plan_id = str(current.get("plan_id") or "")
-                current_expiry = str(current.get("lease_expires_at_utc") or "")
-                if current_plan_id != plan_id or (
-                    current_owner and current_owner != owner and current_expiry > now.isoformat()
-                ):
-                    return False
-            transaction.set(ref, payload, merge=True)
-            transaction.commit()
-            return True
+
+            def acquire_in_transaction(active_transaction: Any) -> bool:
+                snapshot = _transaction_snapshot(active_transaction, ref)
+                if snapshot is not None and snapshot.exists:
+                    current = snapshot.to_dict() or {}
+                    current_owner = str(current.get("owner") or "")
+                    current_plan_id = str(current.get("plan_id") or "")
+                    current_expiry = str(current.get("lease_expires_at_utc") or "")
+                    if current_plan_id != plan_id or (
+                        current_owner and current_owner != owner and current_expiry > now.isoformat()
+                    ):
+                        return False
+                active_transaction.set(ref, payload, merge=True)
+                return True
+
+            return _run_firestore_transaction(transaction, acquire_in_transaction)
         snapshot = ref.get()
         if snapshot.exists:
             current = snapshot.to_dict() or {}

@@ -36,9 +36,15 @@ class _Transaction:
         self.document = document
         self.begun = False
         self.committed = False
+        self._max_attempts = 1
+        self._read_only = False
+        self._id = b"test-transaction"
 
-    def begin(self) -> None:
+    def _begin(self, *, retry_id: bytes | None = None) -> None:
         self.begun = True
+
+    def _clean_up(self) -> None:
+        self.begun = False
 
     def get(self, _: _Document) -> object:
         if not self.begun:
@@ -48,10 +54,17 @@ class _Transaction:
     def set(self, _: _Document, payload: dict, *, merge: bool) -> None:
         self.document.set(payload, merge=merge)
 
-    def commit(self) -> None:
+    def _commit(self) -> list[object]:
         if not self.begun:
             raise RuntimeError("Transaction not in progress, cannot be committed.")
         self.committed = True
+        return []
+
+    def _rollback(self) -> None:
+        self.begun = False
+
+    def commit(self) -> None:
+        self._commit()
 
 
 class _Client:
@@ -111,5 +124,5 @@ def test_acquire_night_soc_lease_rejects_active_owner_from_generator() -> None:
     )
 
     assert acquired is False
-    assert client.transaction_ref.committed is False
+    assert client.transaction_ref.committed is True
     assert client.document_ref.payload is None
