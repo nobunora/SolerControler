@@ -34,15 +34,23 @@ class _Transaction:
     def __init__(self, snapshot_result: object, document: _Document) -> None:
         self.snapshot_result = snapshot_result
         self.document = document
+        self.begun = False
         self.committed = False
 
+    def begin(self) -> None:
+        self.begun = True
+
     def get(self, _: _Document) -> object:
+        if not self.begun:
+            raise RuntimeError("Transaction not in progress, cannot be used in API requests.")
         return self.snapshot_result
 
     def set(self, _: _Document, payload: dict, *, merge: bool) -> None:
         self.document.set(payload, merge=merge)
 
     def commit(self) -> None:
+        if not self.begun:
+            raise RuntimeError("Transaction not in progress, cannot be committed.")
         self.committed = True
 
 
@@ -78,6 +86,7 @@ def test_acquire_night_soc_lease_accepts_firestore_get_shapes(snapshot_result: o
     )
 
     assert acquired is True
+    assert client.transaction_ref.begun is True
     assert client.transaction_ref.committed is True
     assert client.document_ref.payload is not None
     assert client.document_ref.payload["state"] == "LEASE_ACQUIRED"

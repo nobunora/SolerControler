@@ -92,6 +92,9 @@ def acquire_night_soc_lease(
         transaction_factory = getattr(client, "transaction", None)
         if transaction_factory is not None:
             transaction = transaction_factory()
+            begin = getattr(transaction, "begin", None)
+            if callable(begin):
+                begin()
             snapshot = _transaction_snapshot(transaction, ref)
             if snapshot is not None and snapshot.exists:
                 current = snapshot.to_dict() or {}
