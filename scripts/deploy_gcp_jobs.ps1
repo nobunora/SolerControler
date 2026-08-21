@@ -9,6 +9,7 @@
     [string]$Job23Name = "solar-battery-23",
     [string]$Job03Name = "solar-battery-03",
     [string]$Job07Name = "solar-battery-07",
+    [string]$SettingsRoundTripJobName = "solar-battery-settings-roundtrip",
     [string]$SheetsJobName = "solar-sheets-export",
     [string]$SheetsSchedulerName = "solar-sheets-export-daily",
     [string]$RunServiceAccountName = "solar-battery-job-sa",
@@ -44,6 +45,7 @@
     [switch]$SkipJob23Deploy,
     [switch]$SkipJob03Deploy,
     [switch]$SkipJob07Deploy,
+    [switch]$SkipSettingsRoundTripJobDeploy,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
     [switch]$RunSmokeTest,
@@ -694,6 +696,7 @@ if (-not $SkipJobDeploy) {
     if (-not $SkipJob23Deploy) { Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg }
     if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=0,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
     if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
+    if (-not $SkipSettingsRoundTripJobDeploy) { Invoke-GCloud run jobs deploy $SettingsRoundTripJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false" --set-secrets $secretEnvArg }
 }
 
 if (-not $SkipIamSetup) {

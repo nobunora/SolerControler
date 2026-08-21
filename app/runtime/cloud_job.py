@@ -24,6 +24,7 @@ from app.forced_charge import (
     decide_transition,
     requires_forced_charge,
 )
+from app.kpnet.settings_roundtrip import run_settings_roundtrip
 from app.runtime import plan_persistence
 from app.runtime import soc_reading
 from app.runtime import forced_charge_monitor
@@ -891,7 +892,14 @@ def main() -> int:
     if slot in {"7", "07", "day", "day07"}:
         _run_day_07()
         return 0
-    raise RuntimeError("CLOUD_JOB_SLOT は 23/night, 03/adjust, 07/day のいずれかを指定してください")
+    if slot in {"settings-roundtrip", "settings_roundtrip"}:
+        target_soc = _env_float("SETTINGS_ROUNDTRIP_TARGET_SOC", 100.0, min_value=0.0)
+        if target_soc > 100.0:
+            raise RuntimeError("SETTINGS_ROUNDTRIP_TARGET_SOC must be <= 100")
+        summary = run_settings_roundtrip(target_soc_percent=target_soc)
+        print(f"[cloud_job_runner] settings round-trip passed: {summary}", flush=True)
+        return 0
+    raise RuntimeError("CLOUD_JOB_SLOT は 23/night, 03/adjust, 07/day, settings-roundtrip のいずれかを指定してください")
 
 
 if __name__ == "__main__":

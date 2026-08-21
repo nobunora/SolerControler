@@ -108,6 +108,35 @@ def test_plan_refresh_cloud_job_mode_is_limited_to_slot_03() -> None:
     assert "--args=--plan-refresh-only" in script
 
 
+def test_cloud_settings_roundtrip_job_is_explicit_and_can_run_at_any_time() -> None:
+    runner = (ROOT / "scripts" / "run_cloud_job_from_env.ps1").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+    runtime = (ROOT / "app" / "runtime" / "cloud_job.py").read_text(encoding="utf-8")
+
+    assert "'settings-roundtrip'" in runner
+    assert "Live settings round-trip requires -TestExecution." in runner
+    assert "SETTINGS_ROUNDTRIP_TARGET_SOC=$SettingsRoundTripTargetSoc,DRY_RUN=false" in runner
+    assert "solar-battery-settings-roundtrip" in deploy
+    assert "--task-timeout 600 --max-retries 0" in deploy
+    assert "CLOUD_JOB_SLOT=settings-roundtrip" in deploy
+    assert "run_settings_roundtrip(target_soc_percent=target_soc)" in runtime
+
+
+def test_runbook_fixes_single_build_cache_resume_and_roundtrip_rules() -> None:
+    runbook = (ROOT / "docs" / "current" / "ops" / "PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "一つのcommitへ固定",
+        "同一commitでrunnerを複数回ビルドしない",
+        "-SkipInlineSmokeTest",
+        "Cloud Runの再試行は0回",
+        "同じ状態ファイルの`-Resume`",
+    ):
+        assert required in runbook
+
+
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:
     config = (ROOT / "cloudbuild.dashboard.yaml").read_text(encoding="utf-8")
 
@@ -237,6 +266,24 @@ def test_production_deploy_has_fast_verified_smoke_path_and_safe_stage_details()
     assert "Get-SafeErrorDetail" in script
     assert "Where-Object { $_ -notmatch '(?i)password|secret|token|authorization|credential' }" in script
     assert "--ignore-file $dashboardIgnoreFile" in script
+
+
+def test_night_soc_deploy_can_run_reversible_kpnet_settings_roundtrip() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+    wrapper = (ROOT / "scripts" / "run_kpnet_settings_roundtrip_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[switch]$RunSettingsRoundTripTest" in script
+    assert "[double]$SettingsRoundTripTargetSoc = 100" in script
+    assert "-Name 'settings_roundtrip'" in script
+    assert "run_cloud_job_from_env.ps1" in script
+    assert "-Slot settings-roundtrip" in script
+    assert "-TestExecution" in script
+    assert "secrets versions access latest" in wrapper
+    assert "Remove-Item Env:KP_MONITOR_USERNAME" in wrapper
 
 
 def test_runner_build_uses_explicit_cache_and_narrow_context() -> None:

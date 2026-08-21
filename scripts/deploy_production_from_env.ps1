@@ -6,8 +6,11 @@ param(
     [switch]$SkipJob23Deploy,
     [switch]$SkipJob03Deploy,
     [switch]$SkipJob07Deploy,
+    [switch]$SkipSettingsRoundTripJobDeploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipInlineSmokeTest,
+    [switch]$RunSettingsRoundTripTest,
+    [double]$SettingsRoundTripTargetSoc = 100,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
     [string]$StatePath = "",
@@ -97,6 +100,7 @@ if ($Resume) {
         $SkipJobDeploy = $true
     }
     if ($state.stages.dashboard.status -eq 'success') { $SkipDashboardBuild = $true }
+    if ($state.stages.settings_roundtrip.status -eq 'success') { $RunSettingsRoundTripTest = $false }
     if ($state.stages.kpnet_import.status -eq 'success') { $SkipKpNetImport = $true }
     if ($state.stages.drive_backup.status -eq 'success') { $SkipDriveBackup = $true }
 } else {
@@ -112,10 +116,17 @@ if ($Resume) {
             pre_release = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
             jobs = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
             dashboard = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
+            settings_roundtrip = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
             kpnet_import = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
             drive_backup = [ordered]@{ status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null }
         }
     }
+}
+
+if (-not ($state.stages.PSObject.Properties.Name -contains 'settings_roundtrip')) {
+    $state.stages | Add-Member -NotePropertyName settings_roundtrip -NotePropertyValue ([ordered]@{
+        status = 'not_started'; started_at = $null; completed_at = $null; error_code = $null; error_detail = $null
+    })
 }
 
 function Save-DeploymentState {
@@ -221,6 +232,7 @@ if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
 if ($SkipJob23Deploy) { $jobDeployArgs.SkipJob23Deploy = $true }
 if ($SkipJob03Deploy) { $jobDeployArgs.SkipJob03Deploy = $true }
 if ($SkipJob07Deploy) { $jobDeployArgs.SkipJob07Deploy = $true }
+if ($SkipSettingsRoundTripJobDeploy) { $jobDeployArgs.SkipSettingsRoundTripJobDeploy = $true }
 Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -Action {
     & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
 }
@@ -256,6 +268,10 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
     } finally {
         Remove-Item -LiteralPath $tempEnv.FullName -Force -ErrorAction SilentlyContinue
     }
+}
+
+Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:(-not $RunSettingsRoundTripTest) -Action {
+    & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot settings-roundtrip -SettingsRoundTripTargetSoc $SettingsRoundTripTargetSoc -TestExecution
 }
 
 Invoke-DeploymentStage -Name 'kpnet_import' -Skip:$SkipKpNetImport -Action {

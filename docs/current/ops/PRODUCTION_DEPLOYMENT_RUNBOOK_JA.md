@@ -35,11 +35,15 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
   -SkipPreRelease `
+  -RunSettingsRoundTripTest `
+  -SettingsRoundTripTargetSoc <今回の03時目標SOC> `
   -StatePath artifacts/deployment_state/production-<開始時刻>.json
 ```
 
 低レベルスクリプトや独自の `gcloud` 更新コマンドへ置き換えません。
 デプロイラッパーは工程ごとに状態を書き込みます。`running` のまま終了した工程は成功扱いにしません。
+
+夜間SOCの変更を含むデプロイでは、`-RunSettingsRoundTripTest` を必須とします。この工程は、Schedulerを持たない専用Cloud Run Jobで実行します。(1) 実機の`SocChargeMode`候補が今回の目標SOC以上であること、(2) 待機への可逆な設定変更と読戻し、(3) **60秒後**にデプロイ直前のcontrolled settings全項目へ復元して読戻すこと、を確認します。明示的な`-TestExecution`を伴う専用ジョブのため時間帯を問いません。候補不足、変更失敗、または復元不一致では、復元後に工程を失敗として停止します。
 
 ### 2.1 短縮経路（検証を維持する場合）
 
@@ -55,6 +59,14 @@ pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 `-SkipInlineSmokeTest` は検証を省略する指定ではなく、デプロイ工程内の重複待機を省略する指定です。合格判定には、必ず後段の公式DryRunとCloud Run executionの4条件確認を使用します。
 
 runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキャッシュ候補として再利用し、用途別のignoreファイルで不要なテスト・文書・生成物を送信しません。依存関係を変更した場合はキャッシュ効果が下がるため、通常より長くなることがあります。
+
+### 2.2 失敗・手戻りを減らす実行規約
+
+- 本番へ送る内容は、ゲート実行前に一つのcommitへ固定する。未commit差分のままビルドしない。
+- 同一commitでrunnerを複数回ビルドしない。公式ラッパーのキャッシュ利用ビルドを一度だけ行い、外側の待機が切れた場合はCloud Buildの終端状態を確認してから、同じ状態ファイルで再開する。
+- `-SkipInlineSmokeTest` は、直後に公式07時DryRunを実行する場合だけ使う。設定往復テストと07時DryRunの双方のCloud Run終端条件を確認するまで合格にしない。
+- 設定往復テストは専用Jobだけから明示実行する。Schedulerを追加せず、Cloud Runの再試行は0回とし、失敗時に同じ設定変更を自動で重ねない。
+- `failed`または`running`の工程を手動で成功へ書き換えない。実機設定が復元済みであることをログから確認した後にのみ、同じ状態ファイルの`-Resume`で未成功工程を再実行する。
 
 ## 3. Windowsで途中終了した場合の再開
 
