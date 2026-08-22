@@ -120,6 +120,8 @@ def _apply_and_verify(
     return readback, changed_fields
 
 
+# HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): this live probe must remain
+# explicit, exactly 60 seconds, and restore/read back the original snapshot.
 def run_settings_roundtrip(
     *,
     target_soc_percent: float,

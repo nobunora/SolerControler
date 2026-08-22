@@ -79,6 +79,9 @@ def persist_night_soc_execution(
         return False
 
 
+# HISTORICAL_FAILURE_LOCK (79361c4, f910b98, 0a804f4): Firestore transaction
+# acquisition must remain read-safe and compatible with both real and fake clients.
+# Do not move reads before transaction start or weaken plan/owner/expiry checks.
 def acquire_night_soc_lease(
     *,
     plan_meta: Mapping[str, Any],

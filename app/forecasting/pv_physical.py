@@ -19,9 +19,9 @@ from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float
 
 
-# Calibration and SOC planning deliberately retain the established 07:00 window.
-# The physical forecast additionally exposes sunrise production from 05:00 without
-# changing the scales that determine the existing planning-hour values.
+# HISTORICAL_FAILURE_LOCK (4af0d59, f35a74f): calibration and SOC planning retain
+# the established 07:00 window. Sunrise output is an additive 05:00 view; do not
+# change planning-hour scales while extending the physical output window.
 HOURS = range(7, 23)
 OUTPUT_HOURS = range(5, 23)
 DAYPARTS = {

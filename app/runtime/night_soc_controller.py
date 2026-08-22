@@ -98,6 +98,9 @@ def make_plan_snapshot(plan: Mapping[str, Any]) -> NightPlanSnapshot:
     )
 
 
+# HISTORICAL_FAILURE_LOCK (d1d7792): the real device may expose no SocChargeMode
+# candidate at or above the plan target. Keep this fail-closed boundary; do not
+# restore a fallback-to-maximum candidate without approval and replay tests.
 def build_device_soc_guard(
     value_map: Mapping[str, str],
     *,

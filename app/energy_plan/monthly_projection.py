@@ -44,6 +44,8 @@ def billing_period_for_target(target_day: date) -> tuple[date, date, int]:
     return period_start, period_end, close_day
 
 
+# HISTORICAL_FAILURE_LOCK (541cd60): monthly estimation uses the complete previous
+# billing period, not an invented current-month tier penalty or partial-month proxy.
 def previous_billing_period_for_target(target_day: date) -> tuple[date, date, int]:
     """Return the complete billing period immediately before target_day's period."""
 

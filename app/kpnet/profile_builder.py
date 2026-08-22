@@ -376,6 +376,8 @@ def _pick_night_mode_preference(
     return ("forced" if force_charge else "green"), required_charge_percent, force_charge
 
 
+# HISTORICAL_FAILURE_LOCK (d1d7792): this is the only dynamic forced-profile
+# construction boundary. Preserve the device guard and its target semantics.
 def _build_dynamic_forced_profile(
     cfg: KpNetConfig,
     value_maps: dict[str, dict[str, str]],

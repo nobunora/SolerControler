@@ -19,6 +19,13 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Do not add dependencies or change external contracts without user approval.
 - Leave no debug code, temporary bypasses, or commented-out code.
 
+## Historical Failure Protected Regions (Mandatory)
+
+- Before changing a symbol or constant listed in `docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md`, read that document and the cited commit evidence.
+- Comments containing `HISTORICAL_FAILURE_LOCK` are operational constraints. Do not refactor, simplify, rename, or change the behavior below the comment without explicit user approval and a regression test for the historical failure.
+- If a requested change touches a protected region, record the affected lock, the historical failure it prevents, and the additional validation in the change description before editing.
+- Do not remove a lock comment because the current tests pass. Update the protection document and its guard test only when the protected contract is intentionally retired or replaced.
+
 ## Production Operations (Mandatory)
 
 - Before every production deployment, read and follow `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` in full. Its validation, safe-resume, verification, and stop conditions are mandatory; do not rely on memory or a previous run.

@@ -154,6 +154,9 @@ function Get-SafeErrorDetail {
     return (($safeLines -join ' ') -replace '\s+', ' ').Trim()
 }
 
+# HISTORICAL_FAILURE_LOCK (0bc046b, 92c32d0, 5e46ff8): deployment stage state is
+# a durable resume contract. Resolve both dictionary shapes explicitly; dynamic
+# member access previously allowed a completed action to remain not_started.
 function Get-DeploymentStageRecord {
     param([string]$Name)
 

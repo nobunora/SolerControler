@@ -83,6 +83,8 @@ class _RunnerMonitorDevicePort:
         return _read_soc_with_fallback(csv_paths)
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
+        # HISTORICAL_FAILURE_LOCK (d1d7792): readback_match acknowledges the
+        # settings write only; it is not evidence that forced charging started.
         _run_03_settings_profile_with_db(
             profile=profile,
             dynamic_forced_profile=dynamic_forced_profile,
@@ -312,6 +314,8 @@ def _persist_night_soc_execution(
     )
 
 
+# HISTORICAL_FAILURE_LOCK (79361c4, f910b98, 0a804f4): 03-monitor must acquire
+# the same single-owner lease as the persistence layer; do not bypass the wrapper.
 def _acquire_night_soc_lease(plan_meta: dict[str, Any]) -> bool:
     return plan_persistence.acquire_night_soc_lease(
         plan_meta=plan_meta,
@@ -321,6 +325,8 @@ def _acquire_night_soc_lease(plan_meta: dict[str, Any]) -> bool:
     )
 
 
+# HISTORICAL_FAILURE_LOCK (d1d7792): the 07:00 transition cannot bypass the
+# durable 03-monitor terminal state while single-owner control is enforced.
 def _assert_day_transition_allowed() -> None:
     if os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() != "enforce":
         return
@@ -565,7 +571,10 @@ def _keep_standby_when_initial_soc_is_unavailable(
         )
 
 
-# readable-code-audit: skip STRUCT-04 — this job owns the complete forced-charge monitor lifecycle, including the final standby command and durable stop result
+# HISTORICAL_FAILURE_LOCK (d1d7792): this function owns the complete forced-charge
+# lifecycle, including fail-safe standby, target stop, and durable execution state.
+# Do not split or reorder those transitions without replaying the morning-SOC failure.
+# readable-code-audit: skip STRUCT-04 — Cloud Job must own the complete lifecycle.
 def _monitor_partial_forced_and_stop(
     plan_path: Path,
     *,
