@@ -10,6 +10,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Do not scan all docs, all source, generated files, caches, logs, or artifacts.
 - Prefer focused tests near the changed code.
 - Before running any tests, invoke the `code-quality-audit` Skill and complete its applicable Ruff, ty, deptry, Oxlint, and tsc checks. Triage findings before test execution; fix only verified issues and report configuration gaps separately.
+- Ruffはlint（`python -m ruff check .`）だけに使用する。formatterの実行、format checkの追加、Ruffによる一括整形は行わない。
 
 ## Change Style
 

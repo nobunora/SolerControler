@@ -71,6 +71,13 @@ def test_agent_instructions_require_canonical_production_scripts() -> None:
     assert "Before every production deployment" in instructions
 
 
+def test_agent_instructions_keep_ruff_as_lint_only() -> None:
+    instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "Ruffはlint（`python -m ruff check .`）だけに使用する。" in instructions
+    assert "formatterの実行、format checkの追加、Ruffによる一括整形は行わない。" in instructions
+
+
 def test_production_deployment_runbook_documents_safe_resume_and_verification() -> None:
     runbook = (ROOT / "docs" / "current" / "ops" / "PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md").read_text(
         encoding="utf-8"
