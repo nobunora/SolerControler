@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from app.backup.drive import collect_source_files, hash_source_tree, _row_sort_key
+from app.backup.drive import collect_source_files, export_data_backup, hash_source_tree, _row_sort_key
 from app.operations.sync import TABLE_SPECS
 
 
@@ -63,3 +64,93 @@ def test_row_sort_key_handles_mixed_types() -> None:
 
     assert isinstance(key, tuple)
     assert len(key) == len(spec["key_cols"])
+
+
+class _EmptyFirestoreCollection:
+    def stream(self):
+        return []
+
+
+class _EmptyFirestoreClient:
+    def collection(self, _name: str) -> _EmptyFirestoreCollection:
+        return _EmptyFirestoreCollection()
+
+
+class _FakeRequest:
+    def __init__(self, response: dict[str, str]) -> None:
+        self.response = response
+
+    def execute(self) -> dict[str, str]:
+        return self.response
+
+
+class _FakeDriveFiles:
+    def __init__(self) -> None:
+        self.created: list[dict[str, object]] = []
+        self.updated = 0
+
+    def create(self, **kwargs: object) -> _FakeRequest:
+        self.created.append(kwargs)
+        return _FakeRequest({"id": str(len(self.created)), "name": str(kwargs["body"])})
+
+    def update(self, **_kwargs: object) -> _FakeRequest:
+        self.updated += 1
+        return _FakeRequest({})
+
+
+class _FakeDriveService:
+    def __init__(self) -> None:
+        self.file_api = _FakeDriveFiles()
+
+    def files(self) -> _FakeDriveFiles:
+        return self.file_api
+
+
+def test_data_backup_creates_a_new_generation_each_time(tmp_path: Path) -> None:
+    first = export_data_backup(service=None, folder_id=None, client=_EmptyFirestoreClient(), out_dir=tmp_path)
+    second = export_data_backup(service=None, folder_id=None, client=_EmptyFirestoreClient(), out_dir=tmp_path)
+
+    assert first["generation_id"] != second["generation_id"]
+    assert first["snapshot"]["name"] != second["snapshot"]["name"]
+    assert first["manifest_path"] != second["manifest_path"]
+    assert len(list(tmp_path.glob("data_snapshot-*.json.gz"))) == 2
+    assert len(list(tmp_path.glob("data_manifest-*.json"))) == 2
+    manifest = json.loads(Path(second["manifest_path"]).read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["generation_id"] == second["generation_id"]
+
+
+def test_data_backup_uploads_new_files_without_update(tmp_path: Path) -> None:
+    service = _FakeDriveService()
+    result = export_data_backup(
+        service=service,
+        folder_id="folder",
+        client=_EmptyFirestoreClient(),
+        out_dir=tmp_path,
+    )
+
+    names = [str(call["body"]["name"]) for call in service.file_api.created]
+    assert result["uploaded"] is True
+    assert len(names) == 2
+    assert all(result["generation_id"] in name for name in names)
+    assert service.file_api.updated == 0
+
+
+def test_data_backup_can_include_device_readback(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "app.backup.drive.build_device_settings_snapshot",
+        lambda: {"schema_version": 1, "source": "kpnet_readback", "settings": {"socChargeMode": "50"}},
+    )
+
+    result = export_data_backup(
+        service=None,
+        folder_id=None,
+        client=_EmptyFirestoreClient(),
+        out_dir=tmp_path,
+        include_device_readback=True,
+    )
+
+    device = result["device_readback"]
+    assert device is not None
+    assert result["generation_id"] in device["name"]
+    assert (tmp_path / device["name"]).exists()

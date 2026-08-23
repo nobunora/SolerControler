@@ -242,17 +242,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_7am_task.ps1 -Daily
   - 変更がないときは再保存しない
 - データ: `scripts/backup_drive.py --mode data`
   - Firestore の全コレクションを JSON gzip で保存
+  - `DRIVE_BACKUP_DEVICE_READBACK=true` の本番ジョブでは、KP-NETの現在設定read-backも同じ世代IDで保存
   - 1.7MB 規模なら毎日フルで十分
 - `all` モード
   - ソースは更新時だけ上書き
-  - データは毎日上書き
+  - データは実行ごとに世代ID付きで新規保存
 - 本番のCloud Run運用
   - 03:00ジョブ内で `scripts/backup_drive.py --mode data` を実行
   - ソースバックアップはソース更新時に手動または別手順で実行
   - バックアップ専用の Cloud Scheduler / Cloud Run Job は作成しない
 
 Drive 側は、共有フォルダを Cloud Run の実行サービスアカウントに編集権限で共有してください。
-このフォルダには `source.zip` / `source_manifest.json` / `data_snapshot.json.gz` / `data_manifest.json` を置きます。
+このフォルダにはソースの最新ファイルと、`data_snapshot-<世代ID>.json.gz` / `data_manifest-<世代ID>.json` 形式のデータ世代バックアップを置きます。
 
 ローカルで直接実行する場合は、Drive への書き込み権限を持つ認証が必要です。
 - サービスアカウント鍵を使うなら `GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json`

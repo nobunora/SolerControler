@@ -4,12 +4,14 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request
@@ -19,6 +21,7 @@ from googleapiclient.http import MediaFileUpload
 from app.domain.constants import FileConstants
 from app.operations.sync import TABLE_SPECS
 from app.operations.firestore import open_firestore
+from app.backup.device import build_device_settings_snapshot
 
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
@@ -52,6 +55,9 @@ SOURCE_BACKUP_NAME = "source.zip"
 SOURCE_MANIFEST_NAME = "source_manifest.json"
 DATA_BACKUP_NAME = "data_snapshot.json.gz"
 DATA_MANIFEST_NAME = "data_manifest.json"
+DATA_BACKUP_PREFIX = "data_snapshot"
+DATA_MANIFEST_PREFIX = "data_manifest"
+DEVICE_BACKUP_PREFIX = "device_settings"
 
 
 @dataclass(frozen=True)
@@ -167,8 +173,13 @@ def _row_sort_key(table_name: str, row: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(keys)
 
 
-def build_firestore_snapshot(client: Any | None = None) -> dict[str, Any]:
+def build_firestore_snapshot(
+    client: Any | None = None,
+    *,
+    captured_at: datetime | None = None,
+) -> dict[str, Any]:
     firestore_client = client or open_firestore()
+    captured_at = captured_at or utc_now()
     collections: dict[str, list[dict[str, Any]]] = {}
     counts: dict[str, int] = {}
     for table_name in TABLE_SPECS:
@@ -179,7 +190,7 @@ def build_firestore_snapshot(client: Any | None = None) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "backend": "firestore",
-        "captured_at_utc": utc_now().replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "captured_at_utc": captured_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "collections": collections,
         "counts": counts,
     }
@@ -312,6 +323,34 @@ def upload_or_update_file(
     return dict(response) if isinstance(response, dict) else {}
 
 
+def upload_new_file(
+    service: Any,
+    *,
+    folder_id: str,
+    file_name: str,
+    local_path: Path,
+    mime_type: str,
+) -> dict[str, Any]:
+    """Create an immutable Drive artifact without replacing another generation."""
+    media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=False)
+    response = (
+        service.files()
+        .create(
+            body={"name": file_name, "parents": [folder_id]},
+            media_body=media,
+            fields="id, name, size, md5Checksum, modifiedTime, webViewLink",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    return dict(response) if isinstance(response, dict) else {}
+
+
+def make_backup_generation_id(captured_at: datetime | None = None) -> str:
+    timestamp = (captured_at or utc_now()).strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{timestamp}-{uuid4().hex[:8]}"
+
+
 def make_source_manifest(
     *,
     source_artifact: BackupArtifact,
@@ -338,10 +377,12 @@ def make_data_manifest(
     *,
     snapshot_artifact: BackupArtifact,
     snapshot_payload: dict[str, Any],
+    generation_id: str | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "backup_type": "data",
+        "generation_id": generation_id,
         "captured_at_utc": snapshot_payload["captured_at_utc"],
         "backend": snapshot_payload["backend"],
         "archive_name": snapshot_artifact.name,
@@ -423,26 +464,56 @@ def export_data_backup(
     folder_id: str | None,
     client: Any | None = None,
     out_dir: Path | None = None,
+    include_device_readback: bool | None = None,
 ) -> dict[str, Any]:
     base = repo_root()
     target_dir = out_dir or (base / "artifacts" / "backups" / "drive")
     target_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_payload = build_firestore_snapshot(client=client)
-    snapshot_path = target_dir / DATA_BACKUP_NAME
+    captured_at = utc_now()
+    generation_id = make_backup_generation_id(captured_at)
+    snapshot_payload = build_firestore_snapshot(client=client, captured_at=captured_at)
+    snapshot_name = f"{DATA_BACKUP_PREFIX}-{generation_id}.json.gz"
+    manifest_name = f"{DATA_MANIFEST_PREFIX}-{generation_id}.json"
+    snapshot_path = target_dir / snapshot_name
     snapshot_artifact = write_gzip_json(snapshot_payload, snapshot_path)
-    manifest = make_data_manifest(snapshot_artifact=snapshot_artifact, snapshot_payload=snapshot_payload)
-    manifest_path = target_dir / DATA_MANIFEST_NAME
+    manifest = make_data_manifest(
+        snapshot_artifact=snapshot_artifact,
+        snapshot_payload=snapshot_payload,
+        generation_id=generation_id,
+    )
+    manifest_path = target_dir / manifest_name
     write_json(manifest, manifest_path)
+
+    if include_device_readback is None:
+        include_device_readback = os.getenv("DRIVE_BACKUP_DEVICE_READBACK", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+    device_artifact: BackupArtifact | None = None
+    if include_device_readback:
+        device_path = target_dir / f"{DEVICE_BACKUP_PREFIX}-{generation_id}.json"
+        device_artifact = write_json(build_device_settings_snapshot(), device_path)
 
     uploaded = bool(service is not None and folder_id)
     if service is not None and folder_id is not None:
-        upload_or_update_file(service, folder_id=folder_id, file_name=DATA_BACKUP_NAME, local_path=snapshot_path, mime_type="application/gzip")
-        upload_or_update_file(service, folder_id=folder_id, file_name=DATA_MANIFEST_NAME, local_path=manifest_path, mime_type="application/json")
+        upload_new_file(service, folder_id=folder_id, file_name=snapshot_name, local_path=snapshot_path, mime_type="application/gzip")
+        upload_new_file(service, folder_id=folder_id, file_name=manifest_name, local_path=manifest_path, mime_type="application/json")
+        if device_artifact is not None:
+            upload_new_file(
+                service,
+                folder_id=folder_id,
+                file_name=device_artifact.name,
+                local_path=device_artifact.path,
+                mime_type="application/json",
+            )
 
     return {
         "backup_type": "data",
         "created": True,
         "uploaded": uploaded,
+        "generation_id": generation_id,
         "snapshot": {
             "name": snapshot_artifact.name,
             "size_bytes": snapshot_artifact.size_bytes,
@@ -450,4 +521,13 @@ def export_data_backup(
         },
         "manifest_path": str(manifest_path),
         "counts": snapshot_payload["counts"],
+        "device_readback": (
+            {
+                "name": device_artifact.name,
+                "size_bytes": device_artifact.size_bytes,
+                "sha256": device_artifact.sha256,
+            }
+            if device_artifact is not None
+            else None
+        ),
     }

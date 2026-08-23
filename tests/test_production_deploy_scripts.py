@@ -436,6 +436,16 @@ def test_manual_backup_job_name_is_unique_per_execution() -> None:
     assert "exit 0" in script
 
 
+def test_operational_backup_redacts_secrets_and_does_not_read_secret_values() -> None:
+    script = (ROOT / "scripts" / "backup_operational_state_from_env.ps1").read_text(encoding="utf-8")
+
+    assert "secret_metadata.json" in script
+    assert "project_iam_policy.json" in script
+    assert "secret_values_included = $false" in script
+    assert "versions access" not in script
+    assert "[REDACTED]" in script
+
+
 def test_security_check_compares_sensitive_dotenv_values_with_tracked_files() -> None:
     script = (ROOT / "scripts" / "security_check.py").read_text(encoding="utf-8")
 

@@ -669,7 +669,8 @@ $commonEnv = @(
     "SHEETS_SPREADSHEET_TITLE=$SheetsSpreadsheetTitle",
     "SHEETS_SHARE_EMAIL=$sheetsShareResolved",
     "DRIVE_BACKUP_FOLDER_ID=$driveBackupFolderResolved",
-    "DRIVE_BACKUP_MODE=data"
+    "DRIVE_BACKUP_MODE=data",
+    "DRIVE_BACKUP_DEVICE_READBACK=true"
 )
 $backendEnv = @()
 if ($DataBackend -eq "postgres") {
