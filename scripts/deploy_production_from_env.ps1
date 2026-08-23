@@ -13,6 +13,8 @@ param(
     [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
+    [ValidateSet('auto', 'full', 'runner', 'dashboard')]
+    [string]$DeploymentScope = 'auto',
     [string]$StatePath = "",
     [switch]$Resume
 )
@@ -62,6 +64,39 @@ $sheetsShare = Get-RequiredProductionEnv 'SHEETS_SHARE_EMAIL'
 $archivePrefix = Get-RequiredProductionEnv 'NIGHT_PLAN_ARCHIVE_GCS_PREFIX'
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
 
+function Get-LastCompletedDeploymentCommit {
+    $stateDir = Join-Path $artifactsRoot 'deployment_state'
+    if (-not (Test-Path -LiteralPath $stateDir)) { return $null }
+    foreach ($candidate in Get-ChildItem -LiteralPath $stateDir -Filter 'production-*.json' | Sort-Object LastWriteTimeUtc -Descending) {
+        try { $record = Get-Content -LiteralPath $candidate.FullName -Raw -Encoding utf8 | ConvertFrom-Json } catch { continue }
+        if ($record.kind -eq 'production_deployment' -and $record.status -eq 'complete' -and $record.repository_commit) {
+            return [string]$record.repository_commit
+        }
+    }
+    return $null
+}
+
+function Resolve-DeploymentScope {
+    param([string]$RequestedScope)
+    if ($RequestedScope -ne 'auto') { return $RequestedScope }
+    $baseCommit = Get-LastCompletedDeploymentCommit
+    if (-not $baseCommit) { return 'full' }
+    git merge-base --is-ancestor $baseCommit HEAD
+    if ($LASTEXITCODE -ne 0) { return 'full' }
+    $changed = @(git diff --name-only "$baseCommit..HEAD")
+    if ($changed.Count -eq 0) { return 'none' }
+    $runnerChanged = $false
+    $dashboardChanged = $false
+    foreach ($path in $changed) {
+        if ($path -match '^(app/|config/|Dockerfile$|requirements-runner\.txt$|cloudbuild\.runner\.yaml$|main\.py$|kpnet_main\.py$|energy_model_main\.py$|cloud_job_runner\.py$|db_pipeline_main\.py$|sheets_export_main\.py$)') { $runnerChanged = $true }
+        if ($path -match '^(app/|templates/|static/|Dockerfile\.dashboard$|requirements-dashboard\.txt$|cloudbuild\.dashboard\.yaml$|dashboard_server\.py$)') { $dashboardChanged = $true }
+    }
+    if ($runnerChanged -and $dashboardChanged) { return 'full' }
+    if ($runnerChanged) { return 'runner' }
+    if ($dashboardChanged) { return 'dashboard' }
+    return 'none'
+}
+
 if ($ValidateOnly) {
     & (Join-Path $PSScriptRoot 'check_production_env.ps1') -CheckCloud
     if ($LASTEXITCODE -ne 0) { throw 'Production environment validation failed.' }
@@ -79,6 +114,20 @@ if (-not $StatePath) {
 $StatePath = [IO.Path]::GetFullPath($StatePath)
 if (-not $StatePath.StartsWith($artifactsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
     throw "StatePath must remain under artifacts/deployment_state."
+}
+
+$resolvedScope = Resolve-DeploymentScope -RequestedScope $DeploymentScope
+Write-Host "Deployment scope: $resolvedScope"
+if ($resolvedScope -eq 'none') {
+    Write-Host 'No deployable runner or dashboard source changed since the last completed deployment. No production mutation was performed.'
+    return
+}
+if ($resolvedScope -eq 'runner') { $SkipDashboardBuild = $true }
+if ($resolvedScope -eq 'dashboard') {
+    $SkipJobBuild = $true
+    $SkipJobDeploy = $true
+    $SkipKpNetImport = $true
+    $SkipDriveBackup = $true
 }
 
 $state = $null

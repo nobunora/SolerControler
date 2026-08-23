@@ -254,6 +254,21 @@ def test_production_deploy_skips_duplicate_legacy_capacity_subprocess() -> None:
     assert "SkipSecretSetup = $true" in script
 
 
+def test_production_deploy_auto_scope_skips_irrelevant_cloud_work() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[ValidateSet('auto', 'full', 'runner', 'dashboard')]" in script
+    assert "function Resolve-DeploymentScope" in script
+    assert "Get-LastCompletedDeploymentCommit" in script
+    assert "No deployable runner or dashboard source changed" in script
+    assert "$SkipDashboardBuild = $true" in script
+    assert "$SkipJobBuild = $true" in script
+    assert "$SkipKpNetImport = $true" in script
+    assert "$SkipDriveBackup = $true" in script
+
+
 def test_production_deploy_splats_named_job_arguments() -> None:
     script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
         encoding="utf-8"
