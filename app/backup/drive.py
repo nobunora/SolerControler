@@ -16,6 +16,7 @@ from uuid import uuid4
 from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 from app.domain.constants import FileConstants
@@ -254,6 +255,10 @@ def find_drive_file(service: Any, *, folder_id: str, file_name: str) -> dict[str
 
 
 def download_drive_file_text(service: Any, *, file_id: str) -> str:
+    return download_drive_file_bytes(service, file_id=file_id).decode("utf-8")
+
+
+def download_drive_file_bytes(service: Any, *, file_id: str) -> bytes:
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
     buf = io.BytesIO()
     downloader = None
@@ -268,9 +273,9 @@ def download_drive_file_text(service: Any, *, file_id: str) -> str:
         # Fallback to streaming via request.execute() if download helper is unavailable.
         content = request.execute()
         if isinstance(content, bytes):
-            return content.decode("utf-8")
-        return str(content)
-    return buf.getvalue().decode("utf-8")
+            return content
+        return str(content).encode("utf-8")
+    return buf.getvalue()
 
 
 def read_drive_json(service: Any, *, folder_id: str, file_name: str) -> dict[str, Any] | None:
@@ -344,6 +349,146 @@ def upload_new_file(
         .execute()
     )
     return dict(response) if isinstance(response, dict) else {}
+
+
+def _is_drive_storage_quota_error(error: Exception) -> bool:
+    return isinstance(error, HttpError) and error.resp.status == 403 and "storage quota" in str(error).lower()
+
+
+def _read_drive_gzip_json(service: Any, *, folder_id: str, file_name: str) -> dict[str, Any] | None:
+    existing = find_drive_file(service, folder_id=folder_id, file_name=file_name)
+    if not existing:
+        return None
+    try:
+        payload = json.loads(gzip.decompress(download_drive_file_bytes(service, file_id=existing["id"])).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _legacy_generation_entry(
+    *,
+    snapshot: dict[str, Any],
+    manifest: dict[str, Any] | None,
+) -> dict[str, Any]:
+    captured_at = str(snapshot.get("captured_at_utc", "unknown"))
+    return {
+        "generation_id": f"legacy-{captured_at.replace(':', '').replace('-', '')}",
+        "captured_at_utc": captured_at,
+        "counts": snapshot.get("counts", {}),
+        "snapshot": snapshot,
+        "source_manifest": manifest or {},
+        "device_settings": None,
+    }
+
+
+def _build_cumulative_data_archive(
+    *,
+    service: Any,
+    folder_id: str,
+    current_snapshot: dict[str, Any],
+    current_generation_id: str,
+    current_manifest: dict[str, Any],
+    device_snapshot: dict[str, Any] | None,
+    out_path: Path,
+    max_generations: int = 14,
+) -> tuple[BackupArtifact, BackupArtifact, int]:
+    previous_snapshot = _read_drive_gzip_json(service, folder_id=folder_id, file_name=DATA_BACKUP_NAME)
+    previous_manifest = read_drive_json(service, folder_id=folder_id, file_name=DATA_MANIFEST_NAME)
+    generations: list[dict[str, Any]] = []
+    if previous_snapshot:
+        if previous_snapshot.get("backup_type") == "data_generations":
+            generations = [entry for entry in previous_snapshot.get("generations", []) if isinstance(entry, dict)]
+        elif previous_snapshot.get("backend") == "firestore":
+            generations.append(_legacy_generation_entry(snapshot=previous_snapshot, manifest=previous_manifest))
+    generations.append(
+        {
+            "generation_id": current_generation_id,
+            "captured_at_utc": current_snapshot["captured_at_utc"],
+            "counts": current_snapshot["counts"],
+            "snapshot": current_snapshot,
+            "source_manifest": current_manifest,
+            "device_settings": device_snapshot,
+        }
+    )
+    generations = generations[-max_generations:]
+    archive_payload = {
+        "schema_version": 2,
+        "backup_type": "data_generations",
+        "backend": "firestore",
+        "latest_generation_id": current_generation_id,
+        "generations": generations,
+    }
+    archive_artifact = write_gzip_json(archive_payload, out_path)
+    archive_manifest = {
+        "schema_version": 3,
+        "backup_type": "data_generations",
+        "backend": "firestore",
+        "latest_generation_id": current_generation_id,
+        "generation_count": len(generations),
+        "archive_name": DATA_BACKUP_NAME,
+        "archive_sha256": archive_artifact.sha256,
+        "archive_size_bytes": archive_artifact.size_bytes,
+        "generations": [
+            {
+                "generation_id": entry.get("generation_id"),
+                "captured_at_utc": entry.get("captured_at_utc"),
+                "counts": entry.get("counts", {}),
+            }
+            for entry in generations
+        ],
+    }
+    manifest_path = out_path.with_name(f"{DATA_MANIFEST_PREFIX}-archive-{current_generation_id}.json")
+    manifest_artifact = write_json(archive_manifest, manifest_path)
+    return archive_artifact, manifest_artifact, len(generations)
+
+
+def _upload_data_generation(
+    service: Any,
+    *,
+    folder_id: str,
+    snapshot_name: str,
+    snapshot_path: Path,
+    manifest_name: str,
+    manifest_path: Path,
+    current_snapshot: dict[str, Any],
+    current_generation_id: str,
+    current_manifest: dict[str, Any],
+    device_snapshot: dict[str, Any] | None,
+    target_dir: Path,
+) -> dict[str, Any]:
+    try:
+        upload_new_file(service, folder_id=folder_id, file_name=snapshot_name, local_path=snapshot_path, mime_type="application/gzip")
+        upload_new_file(service, folder_id=folder_id, file_name=manifest_name, local_path=manifest_path, mime_type="application/json")
+        return {"mode": "immutable_files", "generation_count": 1}
+    except Exception as error:
+        if not _is_drive_storage_quota_error(error):
+            raise
+        archive_path = target_dir / f"data_snapshot-archive-{current_generation_id}.json.gz"
+        archive_artifact, archive_manifest_artifact, generation_count = _build_cumulative_data_archive(
+            service=service,
+            folder_id=folder_id,
+            current_snapshot=current_snapshot,
+            current_generation_id=current_generation_id,
+            current_manifest=current_manifest,
+            device_snapshot=device_snapshot,
+            out_path=archive_path,
+        )
+        upload_or_update_file(
+            service,
+            folder_id=folder_id,
+            file_name=DATA_BACKUP_NAME,
+            local_path=archive_artifact.path,
+            mime_type="application/gzip",
+        )
+        upload_or_update_file(
+            service,
+            folder_id=folder_id,
+            file_name=DATA_MANIFEST_NAME,
+            local_path=archive_manifest_artifact.path,
+            mime_type="application/json",
+        )
+        return {"mode": "cumulative_existing_file", "generation_count": generation_count}
 
 
 def make_backup_generation_id(captured_at: datetime | None = None) -> str:
@@ -492,15 +637,35 @@ def export_data_backup(
             "on",
         }
     device_artifact: BackupArtifact | None = None
+    device_snapshot: dict[str, Any] | None = None
     if include_device_readback:
         device_path = target_dir / f"{DEVICE_BACKUP_PREFIX}-{generation_id}.json"
-        device_artifact = write_json(build_device_settings_snapshot(), device_path)
+        device_snapshot = build_device_settings_snapshot()
+        device_artifact = write_json(device_snapshot, device_path)
+        manifest["device_readback"] = {
+            "name": device_artifact.name,
+            "size_bytes": device_artifact.size_bytes,
+            "sha256": device_artifact.sha256,
+        }
+        write_json(manifest, manifest_path)
 
     uploaded = bool(service is not None and folder_id)
+    drive_storage: dict[str, Any] | None = None
     if service is not None and folder_id is not None:
-        upload_new_file(service, folder_id=folder_id, file_name=snapshot_name, local_path=snapshot_path, mime_type="application/gzip")
-        upload_new_file(service, folder_id=folder_id, file_name=manifest_name, local_path=manifest_path, mime_type="application/json")
-        if device_artifact is not None:
+        drive_storage = _upload_data_generation(
+            service,
+            folder_id=folder_id,
+            snapshot_name=snapshot_name,
+            snapshot_path=snapshot_path,
+            manifest_name=manifest_name,
+            manifest_path=manifest_path,
+            current_snapshot=snapshot_payload,
+            current_generation_id=generation_id,
+            current_manifest=manifest,
+            device_snapshot=device_snapshot,
+            target_dir=target_dir,
+        )
+        if device_artifact is not None and drive_storage["mode"] == "immutable_files":
             upload_new_file(
                 service,
                 folder_id=folder_id,
@@ -514,6 +679,7 @@ def export_data_backup(
         "created": True,
         "uploaded": uploaded,
         "generation_id": generation_id,
+        "drive_storage": drive_storage,
         "snapshot": {
             "name": snapshot_artifact.name,
             "size_bytes": snapshot_artifact.size_bytes,

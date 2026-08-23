@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import gzip
 import json
 from pathlib import Path
+
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 
 from app.backup.drive import collect_source_files, export_data_backup, hash_source_tree, _row_sort_key
 from app.operations.sync import TABLE_SPECS
@@ -154,3 +158,72 @@ def test_data_backup_can_include_device_readback(monkeypatch, tmp_path: Path) ->
     assert device is not None
     assert result["generation_id"] in device["name"]
     assert (tmp_path / device["name"]).exists()
+
+
+class _Request:
+    def __init__(self, value: object) -> None:
+        self.value = value
+
+    def execute(self) -> object:
+        return self.value
+
+
+class _ExistingDriveFiles:
+    def __init__(self, snapshot: bytes, manifest: dict[str, object]) -> None:
+        self.snapshot = snapshot
+        self.manifest = manifest
+        self.updated: list[str] = []
+
+    def list(self, **kwargs: object) -> _Request:
+        query = str(kwargs["q"])
+        if "data_snapshot.json.gz" in query:
+            files = [{"id": "snapshot", "name": "data_snapshot.json.gz"}]
+        elif "data_manifest.json" in query:
+            files = [{"id": "manifest", "name": "data_manifest.json"}]
+        else:
+            files = []
+        return _Request({"files": files})
+
+    def get_media(self, *, fileId: str, **_kwargs: object) -> _Request:
+        value = self.snapshot if fileId == "snapshot" else json.dumps(self.manifest).encode()
+        return _Request(value)
+
+    def create(self, **_kwargs: object) -> _Request:
+        raise HttpError(Response({"status": "403"}), b"Service Accounts do not have storage quota.")
+
+    def update(self, *, fileId: str, **_kwargs: object) -> _Request:
+        self.updated.append(fileId)
+        return _Request({"id": fileId})
+
+
+class _ExistingDriveService:
+    def __init__(self, files: _ExistingDriveFiles) -> None:
+        self.file_api = files
+
+    def files(self) -> _ExistingDriveFiles:
+        return self.file_api
+
+
+def test_data_backup_falls_back_to_cumulative_existing_files_for_service_account_quota(tmp_path: Path) -> None:
+    previous = {
+        "schema_version": 1,
+        "backend": "firestore",
+        "captured_at_utc": "2026-08-22T00:00:00Z",
+        "collections": {},
+        "counts": {},
+    }
+    previous_manifest = {"schema_version": 1, "backup_type": "data", "counts": {}}
+    files = _ExistingDriveFiles(gzip.compress(json.dumps(previous).encode()), previous_manifest)
+
+    result = export_data_backup(
+        service=_ExistingDriveService(files),
+        folder_id="folder",
+        client=_EmptyFirestoreClient(),
+        out_dir=tmp_path,
+    )
+
+    assert result["drive_storage"] == {"mode": "cumulative_existing_file", "generation_count": 2}
+    assert files.updated == ["snapshot", "manifest"]
+    archive_path = next(tmp_path.glob("data_snapshot-archive-*.json.gz"))
+    archive = json.loads(gzip.open(archive_path, "rb").read())
+    assert len(archive["generations"]) == 2
