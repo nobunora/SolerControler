@@ -43,7 +43,7 @@ try {
         '--max-retries', '0',
         '--command', 'python',
         '--args', "scripts/backup_drive.py,--mode,$Mode,--folder-id,$folderId,--pretty",
-        '--set-env-vars', "DATA_BACKEND=firestore,FIRESTORE_PROJECT_ID=$firestoreProject,FIRESTORE_DATABASE_ID=$firestoreDatabase,DRIVE_BACKUP_FOLDER_ID=$folderId,DRIVE_BACKUP_MODE=$Mode"
+        '--set-env-vars', "DATA_BACKEND=firestore,FIRESTORE_PROJECT_ID=$firestoreProject,FIRESTORE_DATABASE_ID=$firestoreDatabase,DRIVE_BACKUP_FOLDER_ID=$folderId,DRIVE_BACKUP_MODE=$Mode,DRIVE_BACKUP_DEVICE_READBACK=true"
     )
     & $gcloud @deployArgs
     if ($LASTEXITCODE -ne 0) { throw 'Temporary Drive backup job deployment failed.' }
