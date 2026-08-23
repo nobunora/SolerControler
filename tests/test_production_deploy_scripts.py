@@ -311,6 +311,18 @@ def test_every_production_deploy_runs_the_50_percent_forced_charge_roundtrip() -
     assert "Remove-Item Env:KP_MONITOR_USERNAME" in wrapper
 
 
+def test_manual_drive_backup_passes_kpnet_credentials_for_device_readback() -> None:
+    script = (ROOT / "scripts" / "run_drive_backup_cloud_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "KP_MONITOR_USERNAME_SECRET" in script
+    assert "KP_MONITOR_PASSWORD_SECRET" in script
+    assert "'--set-secrets'" in script
+    assert "KP_MONITOR_USERNAME=$usernameSecret" in script
+    assert "KP_MONITOR_PASSWORD=$passwordSecret" in script
+
+
 def test_deployment_stage_state_uses_explicit_dictionary_or_json_lookup() -> None:
     script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
         encoding="utf-8"

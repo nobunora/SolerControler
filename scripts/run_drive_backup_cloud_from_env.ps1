@@ -14,7 +14,9 @@ Assert-ProductionEnv @(
     'GCP_RUN_SERVICE_ACCOUNT',
     'FIRESTORE_PROJECT_ID',
     'FIRESTORE_DATABASE_ID',
-    'DRIVE_BACKUP_FOLDER_ID'
+    'DRIVE_BACKUP_FOLDER_ID',
+    'KP_MONITOR_USERNAME_SECRET',
+    'KP_MONITOR_PASSWORD_SECRET'
 )
 
 $projectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
@@ -25,6 +27,8 @@ $serviceAccount = Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT'
 $firestoreProject = Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID'
 $firestoreDatabase = Get-RequiredProductionEnv 'FIRESTORE_DATABASE_ID'
 $folderId = Get-RequiredProductionEnv 'DRIVE_BACKUP_FOLDER_ID'
+$usernameSecret = Get-RequiredProductionEnv 'KP_MONITOR_USERNAME_SECRET'
+$passwordSecret = Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
 $jobName = "solar-drive-backup-manual-$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))-$PID"
 $image = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:latest"
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
@@ -43,7 +47,8 @@ try {
         '--max-retries', '0',
         '--command', 'python',
         '--args', "scripts/backup_drive.py,--mode,$Mode,--folder-id,$folderId,--pretty",
-        '--set-env-vars', "DATA_BACKEND=firestore,FIRESTORE_PROJECT_ID=$firestoreProject,FIRESTORE_DATABASE_ID=$firestoreDatabase,DRIVE_BACKUP_FOLDER_ID=$folderId,DRIVE_BACKUP_MODE=$Mode,DRIVE_BACKUP_DEVICE_READBACK=true"
+        '--set-env-vars', "DATA_BACKEND=firestore,FIRESTORE_PROJECT_ID=$firestoreProject,FIRESTORE_DATABASE_ID=$firestoreDatabase,DRIVE_BACKUP_FOLDER_ID=$folderId,DRIVE_BACKUP_MODE=$Mode,DRIVE_BACKUP_DEVICE_READBACK=true",
+        '--set-secrets', "KP_MONITOR_USERNAME=$usernameSecret`:latest,KP_MONITOR_PASSWORD=$passwordSecret`:latest"
     )
     & $gcloud @deployArgs
     if ($LASTEXITCODE -ne 0) { throw 'Temporary Drive backup job deployment failed.' }
