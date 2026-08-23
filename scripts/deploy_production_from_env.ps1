@@ -9,8 +9,8 @@ param(
     [switch]$SkipSettingsRoundTripJobDeploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipInlineSmokeTest,
-    [switch]$RunSettingsRoundTripTest,
-    [double]$SettingsRoundTripTargetSoc = 100,
+    [ValidateRange(50, 50)]
+    [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
     [string]$StatePath = "",
@@ -100,7 +100,6 @@ if ($Resume) {
         $SkipJobDeploy = $true
     }
     if ($state.stages.dashboard.status -eq 'success') { $SkipDashboardBuild = $true }
-    if ($state.stages.settings_roundtrip.status -eq 'success') { $RunSettingsRoundTripTest = $false }
     if ($state.stages.kpnet_import.status -eq 'success') { $SkipKpNetImport = $true }
     if ($state.stages.drive_backup.status -eq 'success') { $SkipDriveBackup = $true }
 } else {
@@ -291,7 +290,12 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
     }
 }
 
-Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:(-not $RunSettingsRoundTripTest) -Action {
+# HISTORICAL_FAILURE_LOCK (device contract, confirmed 2026-08-23): every
+# production deployment must prove the live forced-charge command path using
+# the inverter's supported 50% SocChargeMode, then restore the exact snapshot.
+# Do not make this stage optional or change the target to the continuous plan
+# target; the 03 monitor, not SocChargeMode, stops at the plan target.
+Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:$false -Action {
     & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot settings-roundtrip -SettingsRoundTripTargetSoc $SettingsRoundTripTargetSoc -TestExecution
 }
 

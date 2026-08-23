@@ -1,5 +1,6 @@
 param(
-    [double]$TargetSoc,
+    [ValidateRange(50, 50)]
+    [double]$TargetSoc = 50,
     [switch]$TestExecution
 )
 
@@ -9,7 +10,6 @@ Set-Location $repoRoot
 . (Join-Path $PSScriptRoot 'production_env.ps1')
 Import-ProductionEnv
 
-if ($TargetSoc -lt 0 -or $TargetSoc -gt 100) { throw 'TargetSoc must be within 0..100.' }
 if (-not $TestExecution) { throw 'Live setting mutation requires -TestExecution.' }
 $projectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
 $usernameSecret = Get-RequiredProductionEnv 'KP_MONITOR_USERNAME_SECRET'

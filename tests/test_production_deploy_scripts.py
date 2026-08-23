@@ -122,6 +122,8 @@ def test_cloud_settings_roundtrip_job_is_explicit_and_can_run_at_any_time() -> N
 
     assert "'settings-roundtrip'" in runner
     assert "Live settings round-trip requires -TestExecution." in runner
+    assert "[ValidateRange(50, 50)]" in runner
+    assert "[double]$SettingsRoundTripTargetSoc = 50" in runner
     assert "SETTINGS_ROUNDTRIP_TARGET_SOC=$SettingsRoundTripTargetSoc,DRY_RUN=false" in runner
     assert "solar-battery-settings-roundtrip" in deploy
     assert "--task-timeout 600 --max-retries 0" in deploy
@@ -275,7 +277,7 @@ def test_production_deploy_has_fast_verified_smoke_path_and_safe_stage_details()
     assert "--ignore-file $dashboardIgnoreFile" in script
 
 
-def test_night_soc_deploy_can_run_reversible_kpnet_settings_roundtrip() -> None:
+def test_every_production_deploy_runs_the_50_percent_forced_charge_roundtrip() -> None:
     script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
         encoding="utf-8"
     )
@@ -283,12 +285,13 @@ def test_night_soc_deploy_can_run_reversible_kpnet_settings_roundtrip() -> None:
         encoding="utf-8"
     )
 
-    assert "[switch]$RunSettingsRoundTripTest" in script
-    assert "[double]$SettingsRoundTripTargetSoc = 100" in script
+    assert "[ValidateRange(50, 50)]" in script
+    assert "[double]$SettingsRoundTripTargetSoc = 50" in script
     assert "-Name 'settings_roundtrip'" in script
     assert "run_cloud_job_from_env.ps1" in script
     assert "-Slot settings-roundtrip" in script
     assert "-TestExecution" in script
+    assert "Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:$false" in script
     assert "secrets versions access latest" in wrapper
     assert "Remove-Item Env:KP_MONITOR_USERNAME" in wrapper
 

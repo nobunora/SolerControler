@@ -98,19 +98,25 @@ def make_plan_snapshot(plan: Mapping[str, Any]) -> NightPlanSnapshot:
     )
 
 
-# HISTORICAL_FAILURE_LOCK (d1d7792): the real device may expose no SocChargeMode
-# candidate at or above the plan target. Keep this fail-closed boundary; do not
-# restore a fallback-to-maximum candidate without approval and replay tests.
+# HISTORICAL_FAILURE_LOCK (device contract, confirmed 2026-08-23): this inverter
+# exposes SocChargeMode only through 0..50%, while the planning target is a
+# continuous value up to 100%.  When the target is above the highest candidate,
+# send that highest candidate (50% on the installed device) *and still start
+# forced charge*.  The 03 owner monitors the raw planning target and changes to
+# standby when it is reached.  Do not turn the candidate fallback into a
+# start-blocking error or use it as the stop threshold: that caused a 97% plan
+# to issue no forced-charge command and left the morning SOC at 0%.
+# HISTORICAL_FAILURE_LOCK: keep this explicit contract at the function boundary.
 def build_device_soc_guard(
     value_map: Mapping[str, str],
     *,
     raw_target_soc_percent: float,
     stop_margin_percent: float,
 ) -> DeviceSocGuard:
-    """Choose the smallest candidate not below the target.
+    """Map a continuous plan target to the device's discrete forced-mode code.
 
-    The candidate is an upper guard only.  The monitor must stop at the target
-    threshold and then verify the standby read-back.
+    The device code selects the forced-charge setting, not the actual stop
+    criterion.  The 03 monitor owns the raw target stop and standby transition.
     """
     target = _finite_float(raw_target_soc_percent, name="raw_target_soc_percent")
     if target > 100.0:
@@ -123,11 +129,19 @@ def build_device_soc_guard(
             percent = float(str(value).strip().removesuffix("%"))
         except (TypeError, ValueError):
             continue
-        if math.isfinite(percent) and target <= percent <= 100.0:
+        if math.isfinite(percent) and 0.0 <= percent <= 100.0:
             candidates.append((percent, str(code)))
     if not candidates:
-        raise ValueError("SocChargeMode has no candidate at or above target")
-    ceiling, code = min(candidates, key=lambda item: (item[0], item[1]))
+        raise ValueError("SocChargeMode has no numeric candidate")
+    at_or_above_target = [candidate for candidate in candidates if candidate[0] >= target]
+    # The installed KP-NET device stops exposing candidates at 50%.  Retain the
+    # maximum candidate for forced-mode activation; stopping at the plan target
+    # is performed by the single 03 monitor, never by this discrete setting.
+    ceiling, code = (
+        min(at_or_above_target, key=lambda item: (item[0], item[1]))
+        if at_or_above_target
+        else max(candidates, key=lambda item: (item[0], item[1]))
+    )
     return DeviceSocGuard(
         raw_target_soc_percent=target,
         device_soc_code=code,

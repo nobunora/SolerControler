@@ -4,7 +4,8 @@ param(
     [string]$Slot,
     [switch]$DryRun,
     [switch]$PlanRefreshOnly,
-    [double]$SettingsRoundTripTargetSoc = 100,
+    [ValidateRange(50, 50)]
+    [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$TestExecution
 )
 
@@ -24,9 +25,6 @@ if ($PlanRefreshOnly -and $Slot -ne '03') {
 }
 if ($Slot -eq 'settings-roundtrip' -and -not $TestExecution) {
     throw 'Live settings round-trip requires -TestExecution.'
-}
-if ($SettingsRoundTripTargetSoc -lt 0 -or $SettingsRoundTripTargetSoc -gt 100) {
-    throw 'SettingsRoundTripTargetSoc must be within 0..100.'
 }
 if ($DryRun) {
     $arguments += @('--update-env-vars', 'DRY_RUN=true')

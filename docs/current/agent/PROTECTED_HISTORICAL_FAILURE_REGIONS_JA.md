@@ -16,7 +16,7 @@
 
 | 保護対象 | 過去の根拠 | 再発防止する事故 | 拘束内容 |
 | --- | --- | --- | --- |
-| `app/runtime/night_soc_controller.py::build_device_soc_guard`、`app/kpnet/profile_builder.py::_build_dynamic_forced_profile` | `d1d7792` | 実機の `SocChargeMode` 最大候補が目標SOC未満のとき、候補を勝手に下限へ丸めず、強制充電開始前に失敗を明示する | 候補値の不在を fail-closed にすること、目標SOCと停止閾値を分離することを変更しない。変更時は実機候補値と強制開始・待機遷移を再検証する |
+| `app/runtime/night_soc_controller.py::build_device_soc_guard`、`app/kpnet/profile_builder.py::_build_dynamic_forced_profile` | `d1d7792`、2026-08-23実機確認 | 実機の `SocChargeMode` は最大50%までで、計画SOCは50%を超え得る。このとき50%候補で強制充電を開始し、03時監視が連続値の計画SOC到達で待機へ遷移する | 最大候補未満を強制開始エラーに戻さない。`SocChargeMode` を停止閾値に使わず、連続目標と停止閾値を03時監視に残す。変更時は50%強制開始・read-back・60秒後の復元と待機遷移を再検証する |
 | `app/runtime/cloud_job.py::_monitor_partial_forced_and_stop`、`_RunnerMonitorDevicePort::apply_profile`、`_assert_day_transition_allowed` | `d1d7792` | 強制充電開始失敗時の安全待機、目標SOC到達後の待機、07:00遷移の所有者制御が崩れて朝SOC 0%になる | このジョブが強制開始からSOC監視、停止、最終待機、実行状態永続化を所有する。`readback_match` だけを強制開始成功の証拠にしない |
 | `app/runtime/plan_persistence.py::acquire_night_soc_lease`、`app/runtime/cloud_job.py::_acquire_night_soc_lease` | `79361c4`, `f910b98`, `0a804f4` | Firestore transaction の呼び出し順・generator互換性・既存リース判定の不整合で、所有権取得を誤って拒否または上書きする | transaction は read 前に開始し、plan_id・owner・有効期限を維持する。リトライや lease 判定を変更する場合は Firestore fake テストを先に更新する |
 | `scripts/deploy_production_from_env.ps1::Get-DeploymentStageRecord`、`Invoke-DeploymentStage` | `0bc046b`, `92c32d0`, `5e46ff8` | 実行済みCloud操作が状態ファイルへ保存されず、再実行で不要な再ビルド・再実行や手戻りが発生する | OrderedDictionary と PSCustomObject の両方を明示的に扱う。成功した段階だけを resume でスキップし、stage状態の動的メンバー解決に戻さない |

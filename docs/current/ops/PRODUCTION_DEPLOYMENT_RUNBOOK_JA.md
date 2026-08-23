@@ -35,15 +35,14 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
   -SkipPreRelease `
-  -RunSettingsRoundTripTest `
-  -SettingsRoundTripTargetSoc <今回の03時目標SOC> `
+  -SettingsRoundTripTargetSoc 50 `
   -StatePath artifacts/deployment_state/production-<開始時刻>.json
 ```
 
 低レベルスクリプトや独自の `gcloud` 更新コマンドへ置き換えません。
 デプロイラッパーは工程ごとに状態を書き込みます。`running` のまま終了した工程は成功扱いにしません。
 
-夜間SOCの変更を含むデプロイでは、`-RunSettingsRoundTripTest` を必須とします。この工程は、Schedulerを持たない専用Cloud Run Jobで実行します。(1) 実機の`SocChargeMode`候補が今回の目標SOC以上であること、(2) 待機への可逆な設定変更と読戻し、(3) **60秒後**にデプロイ直前のcontrolled settings全項目へ復元して読戻すこと、を確認します。明示的な`-TestExecution`を伴う専用ジョブのため時間帯を問いません。候補不足、変更失敗、または復元不一致では、復元後に工程を失敗として停止します。
+全ての本番デプロイ後に、設定テストを必ず実行します。この工程はSchedulerを持たない専用Cloud Run Jobで、実機が受け付ける最大`SocChargeMode`である**50%**と強制充電モードを設定し、read-backで強制充電の設定を確認します。保持時間は**60秒固定**で、その後デプロイ直前のcontrolled settings全項目へ復元してread-backします。計画SOCが50%を超えても、これは機器設定の離散値であり、03時ジョブが連続値の計画SOC到達で待機へ切り替えます。強制充電設定、変更、または復元のいずれかが失敗した場合は、復元後に工程を失敗として停止します。
 
 ### 2.1 短縮経路（検証を維持する場合）
 

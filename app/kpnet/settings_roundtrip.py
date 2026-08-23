@@ -1,9 +1,4 @@
-"""Safe, reversible KP-NET settings probe helpers.
-
-The probe deliberately validates the planned forced-charge SOC guard before it
-touches the device, then makes one reversible setting change and restores the
-complete controlled-settings snapshot.
-"""
+"""Reversible live verification of the KP-NET forced-charge command path."""
 
 from __future__ import annotations
 
@@ -52,7 +47,7 @@ def profile_from_current_settings(current: Mapping[str, Any]) -> ProfileOverride
 
 
 def validate_forced_target(*, value_maps: Mapping[str, Mapping[str, str]], target_soc_percent: float) -> DeviceSocGuard:
-    """Fail before mutation when the actual device has no safe upper guard."""
+    """Map the test target to the actual device's forced-mode candidate."""
     return build_device_soc_guard(
         value_maps.get("SocChargeMode", {}),
         raw_target_soc_percent=target_soc_percent,
@@ -64,32 +59,32 @@ def make_reversible_probe_profile(
     *,
     restore_profile: ProfileOverrides,
     value_maps: Mapping[str, Mapping[str, str]],
+    target_soc_percent: float,
 ) -> ProfileOverrides:
-    """Change exactly one safe field; prefer standby mode during the brief probe."""
+    """Build the required 50%-candidate forced-charge test profile.
+
+    The test confirms the command path that matters for the 03 job: set the
+    device's maximum supported SocChargeMode and enter forced charge.  It keeps
+    every other controlled setting from the initial snapshot and restores that
+    snapshot after exactly 60 seconds.
+    """
     modes = value_maps.get("BatteryOperatingMode", {})
-    standby_code = next(
+    forced_code = next(
         (
             str(code)
             for code, label in modes.items()
-            if "待機" in str(label) or "standby" in str(label).lower()
+            if "強制充電" in str(label) or "forced charge" in str(label).lower()
         ),
-        "0" if "0" in modes else None,
+        "3" if "3" in modes else None,
     )
-    if standby_code is not None and standby_code != restore_profile.battery_operating_mode:
-        return replace(
-            restore_profile,
-            name="post-deploy-standby-probe",
-            battery_operating_mode=standby_code,
-        )
-
-    candidates = [str(code) for code in value_maps.get("SocChargeMode", {})]
-    alternate_soc_code = next((code for code in candidates if code != restore_profile.soc_charge_mode), None)
-    if alternate_soc_code is None:
-        raise RuntimeError("KP-NET has no reversible setting candidate for the post-deploy probe")
+    if forced_code is None:
+        raise RuntimeError("KP-NET has no forced-charge operating-mode candidate for the post-deploy probe")
+    guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
     return replace(
         restore_profile,
-        name="post-deploy-soc-probe",
-        soc_charge_mode=alternate_soc_code,
+        name="post-deploy-forced-charge-50-probe",
+        battery_operating_mode=forced_code,
+        soc_charge_mode=guard.device_soc_code,
     )
 
 
@@ -152,16 +147,16 @@ def run_settings_roundtrip(
         client.open_settings_page()
         current = client.read_current_settings()
         value_maps = client.collect_candidate_maps()
-        try:
-            guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
-            summary["forced_guard_ceiling_percent"] = guard.device_soc_ceiling_percent
-            summary["forced_target_compatible"] = True
-        except ValueError as guard_error:
-            summary["forced_target_compatible"] = False
-            summary["forced_target_error"] = str(guard_error)
+        guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
+        summary["forced_guard_ceiling_percent"] = guard.device_soc_ceiling_percent
+        summary["forced_target_compatible"] = True
 
         restore_profile = profile_from_current_settings(current)
-        probe_profile = make_reversible_probe_profile(restore_profile=restore_profile, value_maps=value_maps)
+        probe_profile = make_reversible_probe_profile(
+            restore_profile=restore_profile,
+            value_maps=value_maps,
+            target_soc_percent=target_soc_percent,
+        )
         summary["probe_profile"] = probe_profile.name
         _, probe_changed = _apply_and_verify(
             client=client, current=current, value_maps=value_maps, profile=probe_profile
@@ -188,8 +183,6 @@ def run_settings_roundtrip(
                 "restore_verified": True,
             }
         )
-        if not summary["forced_target_compatible"]:
-            raise RuntimeError(f"forced-charge target is not device-representable: {summary['forced_target_error']}")
         summary["status"] = "passed"
         return summary
     finally:

@@ -40,11 +40,14 @@ def test_device_candidate_is_guard_but_stop_threshold_is_before_it() -> None:
     assert guard.stop_threshold_percent == pytest.approx(70)
 
 
-def test_device_candidate_without_safe_upper_value_is_rejected() -> None:
-    with pytest.raises(ValueError, match="no candidate"):
-        build_device_soc_guard(
-            {"50": "50%"}, raw_target_soc_percent=71, stop_margin_percent=1
-        )
+def test_device_candidate_uses_maximum_supported_code_above_its_range() -> None:
+    guard = build_device_soc_guard(
+        {"50": "50%"}, raw_target_soc_percent=71, stop_margin_percent=1
+    )
+
+    assert guard.device_soc_code == "50"
+    assert guard.device_soc_ceiling_percent == pytest.approx(50)
+    assert guard.stop_threshold_percent == pytest.approx(70)
 
 
 def test_readback_comparison_reports_only_controlled_mismatches() -> None:
