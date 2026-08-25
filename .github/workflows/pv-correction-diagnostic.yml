@@ -6,11 +6,13 @@ on:
       - analysis/pv-correction-root-cause-simulation
     paths:
       - scripts/diagnose_hourly_pv_correction_limits.py
+      - scripts/diagnose_hourly_pv_regime_bias.py
       - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
       - .github/workflows/pv-correction-diagnostic.yml
   pull_request:
     paths:
       - scripts/diagnose_hourly_pv_correction_limits.py
+      - scripts/diagnose_hourly_pv_regime_bias.py
       - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
       - .github/workflows/pv-correction-diagnostic.yml
 
@@ -22,9 +24,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Compile diagnostic script
-        run: python -m py_compile scripts/diagnose_hourly_pv_correction_limits.py
-      - name: Run frozen-snapshot diagnostic
+      - name: Compile diagnostic scripts
+        run: >-
+          python -m py_compile
+          scripts/diagnose_hourly_pv_correction_limits.py
+          scripts/diagnose_hourly_pv_regime_bias.py
+      - name: Run frozen-snapshot analog diagnostic
         run: >-
           python scripts/diagnose_hourly_pv_correction_limits.py
           --output artifacts/analysis/hourly_pv_correction_diagnostic.json
+      - name: Run recent-regime bias diagnostic
+        run: >-
+          python scripts/diagnose_hourly_pv_regime_bias.py
+          --output artifacts/analysis/hourly_pv_regime_bias_diagnostic.json
