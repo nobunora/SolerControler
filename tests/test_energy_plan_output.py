@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from app.energy_plan import EnergyPlanOutput, PlanDocumentV1
 
@@ -24,7 +25,12 @@ def test_energy_plan_output_preserves_utf8_document_contract(tmp_path) -> None:
     )
     path = tmp_path / "night_charge_plan.json"
 
+    before = datetime.now(timezone.utc).replace(microsecond=0)
     EnergyPlanOutput(document, path).persist()
+    after = datetime.now(timezone.utc).replace(microsecond=0)
 
-    assert json.loads(path.read_text(encoding="utf-8")) == document.to_payload()
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    generated_at = datetime.fromisoformat(str(persisted.pop("generated_at")).replace("Z", "+00:00"))
+    assert before <= generated_at <= after
+    assert persisted == document.to_payload()
     assert "監視.csv" in path.read_text(encoding="utf-8")
