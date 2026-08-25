@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.operations.domain import extract_final_pv_source_from_plan, extract_hourly_forecast_from_plan
-from app.parsing.numbers import to_float
+from app.parsing.numbers import to_float, to_int
 
 _SNAPSHOT_COLUMNS = (
     "snapshot_id",
@@ -33,6 +33,9 @@ _SNAPSHOT_COLUMNS = (
     "forecast_wind_speed_10m",
     "forecast_provider",
     "pv_input_source",
+    "pv_provider",
+    "physical_pv_kwh",
+    "pv_forecast_detail_json",
     "pv_model_source",
     "pv_model_version",
     "weather_model_version",
@@ -41,6 +44,12 @@ _SNAPSHOT_COLUMNS = (
     "source",
     "recorded_at",
 )
+_JSON_COLUMNS = {"quality_flags_json", "pv_forecast_detail_json"}
+
+
+def _dict_section(data: dict[str, Any], name: str) -> dict[str, Any]:
+    value: Any = data.get(name)
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _parse_timestamp(value: str, *, timezone: str) -> datetime:
@@ -54,7 +63,7 @@ def _parse_timestamp(value: str, *, timezone: str) -> datetime:
 
 
 def _issued_at_from_plan(data: dict[str, Any], *, ingested_at: str) -> tuple[str, str]:
-    forecast = data.get("forecast") if isinstance(data.get("forecast"), dict) else {}
+    forecast = _dict_section(data, "forecast")
     candidates = (
         data.get("issued_at"),
         data.get("generated_at"),
@@ -69,9 +78,7 @@ def _issued_at_from_plan(data: dict[str, Any], *, ingested_at: str) -> tuple[str
 
 
 def _model_version(data: dict[str, Any], section_name: str) -> str | None:
-    section = data.get(section_name)
-    if not isinstance(section, dict):
-        return None
+    section = _dict_section(data, section_name)
     for key in ("model_version", "version", "model"):
         value = section.get(key)
         if value is not None and str(value).strip():
@@ -79,11 +86,69 @@ def _model_version(data: dict[str, Any], section_name: str) -> str | None:
     return None
 
 
+def _hourly_row_for_hour(
+    section: dict[str, Any],
+    *,
+    target_date: str,
+    hour: int,
+) -> dict[str, Any] | None:
+    rows = section.get("hourly")
+    if not isinstance(rows, list):
+        return None
+    for raw_row in rows:
+        if not isinstance(raw_row, dict):
+            continue
+        row = dict(raw_row)
+        explicit_hour = to_int(row.get("hour"))
+        if explicit_hour == hour:
+            return row
+        raw_time = row.get("time")
+        if not isinstance(raw_time, str) or not raw_time.strip():
+            continue
+        try:
+            timestamp = datetime.fromisoformat(raw_time.strip().replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if timestamp.date().isoformat() == target_date and timestamp.hour == hour:
+            return row
+    return None
+
+
+def _pv_forecast_evidence(
+    pv_forecast: dict[str, Any],
+    *,
+    target_date: str,
+    hour: int,
+) -> dict[str, Any]:
+    selected = _hourly_row_for_hour(pv_forecast, target_date=target_date, hour=hour)
+    providers: dict[str, Any] = {}
+    provider_forecasts = pv_forecast.get("provider_forecasts")
+    if isinstance(provider_forecasts, dict):
+        for raw_name, raw_forecast in provider_forecasts.items():
+            if not isinstance(raw_forecast, dict):
+                continue
+            provider_row = _hourly_row_for_hour(
+                dict(raw_forecast),
+                target_date=target_date,
+                hour=hour,
+            )
+            if provider_row is not None:
+                providers[str(raw_name)] = provider_row
+    evidence: dict[str, Any] = {}
+    if selected is not None:
+        evidence["selected"] = selected
+    if providers:
+        evidence["providers"] = providers
+    return evidence
+
+
 def _quality_flags(
     row: dict[str, Any],
     *,
     issued_at_source: str,
     lead_minutes: int,
+    pv_model_source: str,
+    physical_pv_kwh: float | None,
 ) -> list[str]:
     flags: list[str] = []
     if issued_at_source != "plan":
@@ -100,6 +165,8 @@ def _quality_flags(
         flags.append("missing_cloud_cover")
     if row.get("forecast_weather_code") is None:
         flags.append("missing_weather_code")
+    if "physical" in pv_model_source.lower() and physical_pv_kwh is None:
+        flags.append("missing_physical_pv_detail")
     return flags
 
 
@@ -122,7 +189,7 @@ def _forecast_run_id(
             "plan_quality": data.get("plan_quality"),
         }
     return hashlib.sha256(
-        json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()[:24]
 
 
@@ -148,13 +215,14 @@ def build_forecast_snapshot_rows(
         issued_dt = _parse_timestamp(ingested_at, timezone="UTC")
     issued_local = issued_dt.astimezone(local_zone)
     forecast_source = extract_final_pv_source_from_plan(data)
-    forecast = data.get("forecast") if isinstance(data.get("forecast"), dict) else {}
-    pv_forecast = data.get("pv_array_forecast") if isinstance(data.get("pv_array_forecast"), dict) else {}
+    forecast = _dict_section(data, "forecast")
+    pv_forecast = _dict_section(data, "pv_array_forecast")
     weather_provider = str(forecast.get("source") or "").strip() or None
     pv_input_source = str(pv_forecast.get("source") or "").strip() or None
+    pv_provider = str(pv_forecast.get("provider") or "").strip() or None
     pv_model_version = _model_version(data, "pv_array_forecast")
     weather_model_version = _model_version(data, "forecast")
-    calibration = pv_forecast.get("calibration") if isinstance(pv_forecast, dict) else None
+    calibration = pv_forecast.get("calibration")
     calibration_factor = None
     if isinstance(calibration, dict):
         calibration_factor = to_float(calibration.get("effective_factor"))
@@ -170,16 +238,31 @@ def build_forecast_snapshot_rows(
     )
     result: list[dict[str, Any]] = []
     for row in hourly_rows:
-        target_local = datetime.fromisoformat(f"{row['date']}T{int(row['hour']):02d}:00:00").replace(tzinfo=local_zone)
+        target_date = str(row["date"])
+        hour = int(row["hour"])
+        target_local = datetime.fromisoformat(f"{target_date}T{hour:02d}:00:00").replace(tzinfo=local_zone)
         lead_minutes = int(round((target_local - issued_local).total_seconds() / 60.0))
+        pv_evidence = _pv_forecast_evidence(
+            pv_forecast,
+            target_date=target_date,
+            hour=hour,
+        )
+        selected_pv = pv_evidence.get("selected")
+        physical_pv_kwh = (
+            to_float(selected_pv.get("total_kwh"))
+            if isinstance(selected_pv, dict)
+            else None
+        )
         flags = _quality_flags(
             row,
             issued_at_source=issued_at_source,
             lead_minutes=lead_minutes,
+            pv_model_source=forecast_source,
+            physical_pv_kwh=physical_pv_kwh,
         )
         result.append(
             {
-                "snapshot_id": f"{forecast_run_id}-{row['date']}-{int(row['hour']):02d}",
+                "snapshot_id": f"{forecast_run_id}-{target_date}-{hour:02d}",
                 "forecast_run_id": forecast_run_id,
                 "issued_at": issued_at,
                 "issued_at_source": issued_at_source,
@@ -188,6 +271,14 @@ def build_forecast_snapshot_rows(
                 **row,
                 "forecast_provider": weather_provider,
                 "pv_input_source": pv_input_source,
+                "pv_provider": pv_provider,
+                "physical_pv_kwh": physical_pv_kwh,
+                "pv_forecast_detail_json": json.dumps(
+                    pv_evidence,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    default=str,
+                ),
                 "pv_model_source": forecast_source,
                 "pv_model_version": pv_model_version,
                 "weather_model_version": weather_model_version,
@@ -226,6 +317,9 @@ def _ensure_sqlite_schema(conn: Any) -> None:
             forecast_wind_speed_10m REAL,
             forecast_provider TEXT,
             pv_input_source TEXT,
+            pv_provider TEXT,
+            physical_pv_kwh REAL,
+            pv_forecast_detail_json TEXT NOT NULL DEFAULT '{}',
             pv_model_source TEXT,
             pv_model_version TEXT,
             weather_model_version TEXT,
@@ -238,6 +332,15 @@ def _ensure_sqlite_schema(conn: Any) -> None:
             ON forecast_hourly_snapshots(date, hour, issued_at);
         """
     )
+    existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(forecast_hourly_snapshots)").fetchall()}
+    additions = {
+        "pv_provider": "pv_provider TEXT",
+        "physical_pv_kwh": "physical_pv_kwh REAL",
+        "pv_forecast_detail_json": "pv_forecast_detail_json TEXT NOT NULL DEFAULT '{}'",
+    }
+    for column, definition in additions.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE forecast_hourly_snapshots ADD COLUMN {definition}")
 
 
 def _persist_sqlite(conn: Any, rows: list[dict[str, Any]]) -> int:
@@ -279,6 +382,9 @@ def _ensure_postgres_schema(conn: Any) -> None:
                 forecast_wind_speed_10m DOUBLE PRECISION,
                 forecast_provider TEXT,
                 pv_input_source TEXT,
+                pv_provider TEXT,
+                physical_pv_kwh DOUBLE PRECISION,
+                pv_forecast_detail_json JSONB NOT NULL DEFAULT '{}'::jsonb,
                 pv_model_source TEXT,
                 pv_model_version TEXT,
                 weather_model_version TEXT,
@@ -288,6 +394,12 @@ def _ensure_postgres_schema(conn: Any) -> None:
                 recorded_at TEXT NOT NULL
             )
             """
+        )
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS pv_provider TEXT")
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS physical_pv_kwh DOUBLE PRECISION")
+        cur.execute(
+            "ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS "
+            "pv_forecast_detail_json JSONB NOT NULL DEFAULT '{}'::jsonb"
         )
         cur.execute(
             """
@@ -299,7 +411,10 @@ def _ensure_postgres_schema(conn: Any) -> None:
 
 def _persist_postgres(conn: Any, rows: list[dict[str, Any]]) -> int:
     _ensure_postgres_schema(conn)
-    placeholders = ", ".join(f"%({column})s" for column in _SNAPSHOT_COLUMNS)
+    placeholders = ", ".join(
+        f"%({column})s::jsonb" if column in _JSON_COLUMNS else f"%({column})s"
+        for column in _SNAPSHOT_COLUMNS
+    )
     with conn.cursor() as cur:
         cur.executemany(
             f"INSERT INTO forecast_hourly_snapshots ({', '.join(_SNAPSHOT_COLUMNS)}) VALUES ({placeholders}) "
@@ -324,6 +439,7 @@ def _persist_firestore(client: Any, rows: list[dict[str, Any]]) -> int:
             continue
         payload = dict(row)
         payload["quality_flags"] = json.loads(str(payload.pop("quality_flags_json")))
+        payload["pv_forecast_detail"] = json.loads(str(payload.pop("pv_forecast_detail_json")))
         pending.append((document, payload))
     if not pending:
         return 0
@@ -354,7 +470,7 @@ def persist_forecast_snapshots(
     if not isinstance(raw, dict):
         return 0
     rows = build_forecast_snapshot_rows(
-        raw,
+        dict(raw),
         ingested_at=ingested_at,
         timezone=timezone,
         source_run_key=source_run_key,
@@ -383,7 +499,8 @@ def select_latest_snapshot_before(
     cutoff = _parse_timestamp(cutoff_at, timezone=timezone)
     eligible: list[tuple[datetime, dict[str, Any]]] = []
     for row in rows:
-        if str(row.get("date") or "") != target_date or int(row.get("hour", -1)) != hour:
+        row_hour = to_int(row.get("hour"))
+        if str(row.get("date") or "") != target_date or row_hour != hour:
             continue
         issued_raw = str(row.get("issued_at") or "").strip()
         if not issued_raw:
