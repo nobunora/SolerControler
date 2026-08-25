@@ -87,7 +87,6 @@ def test_snapshot_builder_records_issue_lead_provenance_and_physical_evidence() 
         _plan(),
         ingested_at="2026-08-25T15:05:00Z",
         timezone="Asia/Tokyo",
-        source_run_key="site:23:csv:settings-a",
     )
 
     assert len(rows) == 1
@@ -170,7 +169,6 @@ def test_sqlite_keeps_multiple_vintages_while_latest_contract_still_overwrites(
             night_plan_path=plan_path,
             timezone="Asia/Tokyo",
             ingested_at="2026-08-25T15:00:00Z",
-            source_run_key="run-a",
         ) == 1
 
         second = _plan(pv_kwh=1.6, issued_at="2026-08-26T02:00:00+09:00")
@@ -188,7 +186,6 @@ def test_sqlite_keeps_multiple_vintages_while_latest_contract_still_overwrites(
             night_plan_path=plan_path,
             timezone="Asia/Tokyo",
             ingested_at="2026-08-25T17:00:00Z",
-            source_run_key="run-b",
         ) == 1
 
         latest = conn.execute(
@@ -214,7 +211,6 @@ def test_sqlite_keeps_multiple_vintages_while_latest_contract_still_overwrites(
             night_plan_path=plan_path,
             timezone="Asia/Tokyo",
             ingested_at="2026-08-25T17:00:00Z",
-            source_run_key="run-b",
         ) == 0
         assert conn.execute("SELECT COUNT(*) FROM forecast_hourly_snapshots").fetchone()[0] == 2
     finally:
@@ -268,7 +264,6 @@ def test_sqlite_migrates_snapshot_table_created_by_phase0_v1(tmp_path: Path) -> 
             night_plan_path=plan_path,
             timezone="Asia/Tokyo",
             ingested_at="2026-08-25T15:00:00Z",
-            source_run_key="run-after-v1",
         ) == 1
 
         columns = {row[1] for row in conn.execute("PRAGMA table_info(forecast_hourly_snapshots)").fetchall()}
@@ -362,7 +357,6 @@ def test_firestore_snapshot_store_is_append_only_and_idempotent(tmp_path: Path) 
         night_plan_path=plan_path,
         timezone="Asia/Tokyo",
         ingested_at="2026-08-25T15:00:00Z",
-        source_run_key="run-a",
     )
     repeated = persist_forecast_snapshots(
         client,
@@ -370,15 +364,15 @@ def test_firestore_snapshot_store_is_append_only_and_idempotent(tmp_path: Path) 
         night_plan_path=plan_path,
         timezone="Asia/Tokyo",
         ingested_at="2026-08-25T15:05:00Z",
-        source_run_key="run-a",
     )
+    second_plan = _plan(issued_at="2026-08-26T02:00:00+09:00")
+    _write_plan(plan_path, second_plan)
     second = persist_forecast_snapshots(
         client,
         backend="firestore",
         night_plan_path=plan_path,
         timezone="Asia/Tokyo",
         ingested_at="2026-08-25T15:10:00Z",
-        source_run_key="run-b",
     )
 
     assert (first, repeated, second) == (1, 0, 1)

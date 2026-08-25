@@ -153,7 +153,6 @@ def _ingest_sqlite(
                 night_plan_path=night_plan_path,
                 timezone=cfg.timezone,
                 ingested_at=now_iso,
-                source_run_key=run_key,
             )
             print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
             sqlite_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
@@ -258,7 +257,6 @@ def _ingest_postgres(
                 night_plan_path=night_plan_path,
                 timezone=cfg.timezone,
                 ingested_at=now_iso,
-                source_run_key=run_key,
             )
             print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
             postgres_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
@@ -360,7 +358,6 @@ def _ingest_firestore(
             night_plan_path=night_plan_path,
             timezone=cfg.timezone,
             ingested_at=now_iso,
-            source_run_key=run_key,
         )
         print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
         firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
