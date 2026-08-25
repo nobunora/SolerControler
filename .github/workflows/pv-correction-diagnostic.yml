@@ -1,0 +1,30 @@
+name: pv-correction-diagnostic
+
+on:
+  push:
+    branches:
+      - analysis/pv-correction-root-cause-simulation
+    paths:
+      - scripts/diagnose_hourly_pv_correction_limits.py
+      - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
+      - .github/workflows/pv-correction-diagnostic.yml
+  pull_request:
+    paths:
+      - scripts/diagnose_hourly_pv_correction_limits.py
+      - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
+      - .github/workflows/pv-correction-diagnostic.yml
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Compile diagnostic script
+        run: python -m py_compile scripts/diagnose_hourly_pv_correction_limits.py
+      - name: Run frozen-snapshot diagnostic
+        run: >-
+          python scripts/diagnose_hourly_pv_correction_limits.py
+          --output artifacts/analysis/hourly_pv_correction_diagnostic.json
