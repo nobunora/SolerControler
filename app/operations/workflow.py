@@ -8,6 +8,7 @@ from typing import Any
 
 from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
+from app.operations.forecast_snapshot import persist_forecast_snapshots
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
@@ -146,6 +147,15 @@ def _ingest_sqlite(
                 timezone=cfg.timezone,
                 ingested_at=now_iso,
             )
+            snapshot_rows = persist_forecast_snapshots(
+                conn,
+                backend="sqlite",
+                night_plan_path=night_plan_path,
+                timezone=cfg.timezone,
+                ingested_at=now_iso,
+                source_run_key=run_key,
+            )
+            print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
             sqlite_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
         else:
             print("[db_pipeline] skip night plan and forecast ingestion")
@@ -242,6 +252,15 @@ def _ingest_postgres(
                 timezone=cfg.timezone,
                 ingested_at=now_iso,
             )
+            snapshot_rows = persist_forecast_snapshots(
+                conn,
+                backend="postgres",
+                night_plan_path=night_plan_path,
+                timezone=cfg.timezone,
+                ingested_at=now_iso,
+                source_run_key=run_key,
+            )
+            print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
             postgres_ops.upsert_model_parameters_from_plan(conn, night_plan_path=night_plan_path, updated_at=now_iso)
         else:
             print("[db_pipeline] skip night plan and forecast ingestion")
@@ -335,6 +354,15 @@ def _ingest_firestore(
             timezone=cfg.timezone,
             ingested_at=now_iso,
         )
+        snapshot_rows = persist_forecast_snapshots(
+            client,
+            backend="firestore",
+            night_plan_path=night_plan_path,
+            timezone=cfg.timezone,
+            ingested_at=now_iso,
+            source_run_key=run_key,
+        )
+        print(f"[db_pipeline] forecast snapshot rows={snapshot_rows}")
         firestore_ops.upsert_model_parameters_from_plan(client, night_plan_path=night_plan_path, updated_at=now_iso)
     else:
         print("[db_pipeline] skip night plan and forecast ingestion")
