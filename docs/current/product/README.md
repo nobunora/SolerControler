@@ -13,6 +13,7 @@
 | 時刻別PV補正の文献調査・改善実装方針 | [HOURLY_VECTOR_CORRECTION_IMPROVEMENT_PLAN_JA.md](HOURLY_VECTOR_CORRECTION_IMPROVEMENT_PLAN_JA.md) |
 | 時刻別PV補正の根本原因シミュレーション | [HOURLY_PV_CORRECTION_ROOT_CAUSE_SIMULATION.md](HOURLY_PV_CORRECTION_ROOT_CAUSE_SIMULATION.md) |
 | 時刻別PV補正のadaptive gateシミュレーション | [HOURLY_PV_ADAPTIVE_GATE_SIMULATION.md](HOURLY_PV_ADAPTIVE_GATE_SIMULATION.md) |
+| Codexによるforecast snapshot Phase 0検証 | [CODEX_FORECAST_SNAPSHOT_VALIDATION_JA.md](CODEX_FORECAST_SNAPSHOT_VALIDATION_JA.md) |
 | 不在予定入力シート | [OCCUPANCY_SCHEDULE_JA.md](OCCUPANCY_SCHEDULE_JA.md) |
 | 将来のSOCシミュレーション表示構想 | [dashboard_soc_simulation_vision_ja.md](dashboard_soc_simulation_vision_ja.md)（未実装） |
 
