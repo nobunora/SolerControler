@@ -4,15 +4,18 @@ on:
   push:
     branches:
       - analysis/pv-correction-root-cause-simulation
+      - analysis/pv-adaptive-correction-gate
     paths:
       - scripts/diagnose_hourly_pv_correction_limits.py
       - scripts/diagnose_hourly_pv_regime_bias.py
+      - scripts/diagnose_hourly_pv_adaptive_gate.py
       - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
       - .github/workflows/pv-correction-diagnostic.yml
   pull_request:
     paths:
       - scripts/diagnose_hourly_pv_correction_limits.py
       - scripts/diagnose_hourly_pv_regime_bias.py
+      - scripts/diagnose_hourly_pv_adaptive_gate.py
       - docs/current/product/evidence/hourly_vector_dataset_2026-08-23.csv
       - .github/workflows/pv-correction-diagnostic.yml
 
@@ -29,6 +32,7 @@ jobs:
           python -m py_compile
           scripts/diagnose_hourly_pv_correction_limits.py
           scripts/diagnose_hourly_pv_regime_bias.py
+          scripts/diagnose_hourly_pv_adaptive_gate.py
       - name: Run frozen-snapshot analog diagnostic
         run: >-
           python scripts/diagnose_hourly_pv_correction_limits.py
@@ -37,3 +41,7 @@ jobs:
         run: >-
           python scripts/diagnose_hourly_pv_regime_bias.py
           --output artifacts/analysis/hourly_pv_regime_bias_diagnostic.json
+      - name: Run adaptive correction gate diagnostic
+        run: >-
+          python scripts/diagnose_hourly_pv_adaptive_gate.py
+          --output artifacts/analysis/hourly_pv_adaptive_gate_diagnostic.json
