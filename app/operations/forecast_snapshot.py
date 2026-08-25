@@ -175,19 +175,17 @@ def _forecast_run_id(
     data: dict[str, Any],
     hourly_rows: list[dict[str, Any]],
     issued_at: str,
+    issued_at_source: str,
     forecast_source: str,
-    source_run_key: str | None,
 ) -> str:
-    if source_run_key:
-        identity = {"pipeline_run_key": source_run_key}
-    else:
-        identity = {
-            "issued_at": issued_at,
-            "forecast_date": hourly_rows[0]["date"],
-            "source": forecast_source,
-            "rows": hourly_rows,
-            "plan_quality": data.get("plan_quality"),
-        }
+    identity = {
+        "issued_at": issued_at if issued_at_source == "plan" else None,
+        "forecast_date": hourly_rows[0]["date"],
+        "source": forecast_source,
+        "rows": hourly_rows,
+        "pv_array_forecast": data.get("pv_array_forecast"),
+        "plan_quality": data.get("plan_quality"),
+    }
     return hashlib.sha256(
         json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()[:24]
@@ -198,7 +196,6 @@ def build_forecast_snapshot_rows(
     *,
     ingested_at: str,
     timezone: str,
-    source_run_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build immutable forecast evidence rows without changing the latest-value contract."""
     hourly_rows = extract_hourly_forecast_from_plan(data)
@@ -233,8 +230,8 @@ def build_forecast_snapshot_rows(
         data=data,
         hourly_rows=hourly_rows,
         issued_at=issued_at,
+        issued_at_source=issued_at_source,
         forecast_source=forecast_source,
-        source_run_key=source_run_key,
     )
     result: list[dict[str, Any]] = []
     for row in hourly_rows:
@@ -248,11 +245,9 @@ def build_forecast_snapshot_rows(
             hour=hour,
         )
         selected_pv = pv_evidence.get("selected")
-        physical_pv_kwh = (
-            to_float(selected_pv.get("total_kwh"))
-            if isinstance(selected_pv, dict)
-            else None
-        )
+        physical_pv_kwh = to_float(selected_pv.get("total_kwh")) if isinstance(selected_pv, dict) else None
+        if physical_pv_kwh is None and isinstance(selected_pv, dict):
+            physical_pv_kwh = to_float(selected_pv.get("total_kw"))
         flags = _quality_flags(
             row,
             issued_at_source=issued_at_source,
@@ -461,7 +456,6 @@ def persist_forecast_snapshots(
     night_plan_path: Path,
     timezone: str,
     ingested_at: str,
-    source_run_key: str | None = None,
 ) -> int:
     """Persist one forecast vintage without modifying the latest forecast store."""
     if not night_plan_path.exists():
@@ -473,7 +467,6 @@ def persist_forecast_snapshots(
         dict(raw),
         ingested_at=ingested_at,
         timezone=timezone,
-        source_run_key=source_run_key,
     )
     if not rows:
         return 0
