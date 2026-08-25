@@ -135,7 +135,7 @@ def select_model(
 
     baseline_mae = _mae_for_model(history, "baseline")
     scores = {model: _mae_for_model(history, model) for model in MODEL_NAMES}
-    best_model = min(scores, key=scores.get)
+    best_model = min(scores, key=lambda model: scores[model])
     best_mae = scores[best_model]
     threshold = baseline_mae * (1.0 - margin)
     if best_mae < threshold:
