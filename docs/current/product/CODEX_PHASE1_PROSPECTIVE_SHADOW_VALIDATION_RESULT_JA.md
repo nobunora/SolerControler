@@ -71,10 +71,12 @@ python scripts/forecast_shadow.py --mode report --target-start YYYY-MM-DD --targ
 | `python -m ruff check .` | PASS |
 | Import Linter | PASS（3 contracts kept / 0 broken） |
 | `python -m py_compile app/operations/shadow_gate.py scripts/forecast_shadow.py tests/test_shadow_gate.py` | PASS |
-| focused tests | **18 passed** |
-| full suite | **501 passed, 1 skipped** |
+| focused tests | **23 passed** |
+| full suite | **506 passed, 1 skipped** |
 
 GitHub Actionsの既存 `quality` 最新run（SHA `6ae72a4`、run `32913031831`）は `static/dashboard.js` の既存TypeScript診断（implicit any / Window property）で失敗していた。forecast snapshot/shadow固有の失敗ではなく、今回のPRへダッシュボード修正を混在させていない。
+
+今回の再監査では、対象ファイルへのtyはPASS、Ruff/Import Linter/OxlintはPASSした。一方、リポジトリ全体のty（既存型・未導入numpy/matplotlib等）とdeptry（既存Google/依存定義差分）は既存診断、tscは既存dashboard JavaScript診断であり、本変更の範囲外として修正していない。
 
 ### 必須受入項目
 
@@ -95,6 +97,25 @@ GitHub Actionsの既存 `quality` 最新run（SHA `6ae72a4`、run `32913031831`�
 | shadow report generation | PASS | CLI decision/outcome/report smoke成功。 |
 | offline SOC/cost evaluation | DEFERRED | 既存の安全なcounterfactual interfaceをこのPRでは確認できず。 |
 
+## PR #11 ハードニング指示への追従結果
+
+PR #11（`docs: harden Phase 1 prospective shadow evidence integrity`）で指摘された、PR #10の証拠完全性を最新master上で修正した。
+
+| 指示項目 | 判定 | 実装・検証 |
+|---|---|---|
+| prospective eligibility hard gate | PASS | primaryは `decision_at < target_at`、`decision_at <= cutoff_at`、`forecast_issued_at <= cutoff_at` を満たさなければfail closed。 |
+| retrospective evidence exclusion | PASS | `retrospective_diagnostic`を明示保存できるが、selectorとprimary reportから除外。通常CLIはprimaryの過去targetを拒否。 |
+| finalized-actual gate | PASS | target hour終了+5分以内、またはsample count 0のactualはoutcomeへ保存せず、diagnostic reasonを追記。 |
+| multi-vintage primary-sample deduplication | PASS | 全vintageを監査保存し、decision/issued時刻とIDによる決定的な1件だけをprimary score/reportへ使用。 |
+| production-like candidate parity | PASS | frozen diagnosticのmedian/variance/shrinkage（spread 0.6 kWh、n/(n+2)）と一致するfixtureを追加。 |
+| same-hour candidate parity | PASS | frozen diagnosticのminimum 2 observations、recency decay、similarity weightをfixtureで比較。 |
+| weather-class parity | PASS | 診断スクリプトと同じclear/fog/rain/snow/shower/other mappingをshadow側へ実装。 |
+| timezone-safe actual aggregation | PASS | monitoring timestampを`TIMEZONE`（既定Asia/Tokyo）へ変換してdate/hourを作成。UTC/JST境界fixtureが成功。 |
+| primary-report evidence filtering | PASS | valid primary decision、finalized outcome、diagnostic vintage、missing/incomplete reasonを分離集計。 |
+| production/SOC/control non-interference | PASS | shadow moduleはproduction forecast/SOC/controlから参照されず、既存全テストが成功。 |
+
+ハードニング後のCLI smokeでは、24 decisionを保存し、実績未到着のためoutcome 0件、primary reportの除外理由を `missing_finalized_outcome: 24` として出力した。
+
 ### CLI smoke
 
 Phase 0の非機密SQLiteコピーを使用し、対象日1日・24時間をprospective decisionとして保存した。
@@ -114,19 +135,19 @@ Phase 0の非機密SQLiteコピーを使用し、対象日1日・24時間をpros
 識者が同じ結果を再出力できるよう、以下を固定する。
 
 1. SQLite接続を開き、`ensure_shadow_schema(conn)`を実行する。
-2. `forecast_hourly_snapshots`から対象date範囲を読み、issued_atをUTC化してcutoff以前の各 `(date,hour)` 最新rowを選ぶ。
+2. `forecast_hourly_snapshots`から対象date範囲を読み、issued_atをUTC化してcutoff以前の各 `(date,hour)` 最新rowを選ぶ。primaryで過去targetを再実行する場合はfail closedとなるため、診断用途は `retrospective_diagnostic` と明示する。
 3. 各rowについて、baselineと3候補を計算し、target日以前のoutcome履歴で21日/2% selectorを適用する。
 4. `build_shadow_decision()`の返却rowを`persist_shadow_decisions()`へ渡す。actualをdecision payloadへ混ぜない。
-5. actual PVを `(date,hour) -> kWh` で渡し、`persist_shadow_outcomes()`を呼ぶ。outcomeは `INSERT OR IGNORE` で追記する。
+5. actual PVを `(date,hour) -> {actual, sample_count}` で渡し、target hour終了+5分後に `persist_shadow_outcomes()`を呼ぶ。未確定actualはoutcomeへ入れず、diagnostic tableへ理由を追記する。
 6. `report_shadow_outcomes()`またはCLI reportで集計する。
 
-actual PVのCLI集計は既存 `monitoring_samples` のtimestamp先頭10文字（date）と時刻部分（hour）を使い、`pv_kwh`をhour単位にSUMする。新しいweather provider、依存関係、credentialは追加していない。
+actual PVのCLI集計は既存 `monitoring_samples` のtimestampをISO parseし、naive値はsite timezone、offset付き値はsite timezoneへ変換してから`date/hour`ごとにSUMする。`sample_count`も保存する。新しいweather provider、依存関係、credentialは追加していない。
 
 ## 残存リスク・過去からの経緯・現在の課題
 
 - Phase 0でappend-only forecast vintage、generated/issued時刻、lead、weather/shortwave、physical/provider evidence、idempotency、cutoff protectionを確立した。Phase 1はそのsnapshotを入力に、actual到着後の因果評価を分離した。
 - 過去のvector similarity実験は、全日hit判定と時間別hit判定、逆補正を比較する探索であり、期間依存性が確認されている。特に直近期間では時間帯ごとの改善が不安定だったため、今回の固定gateは本番補正を直接有効化せず、prospective evidenceを先に貯める設計とした。
-- `production_like_45d` は現行補正式の完全再現ではなく、weather/shortwave条件付き残差medianの近似である。候補名を維持し、採用判断時に差分を明示する。
+- `production_like_45d` はfrozen diagnosticのproduction-shaped shrinkage式（coarse weather class、shortwave ±30%、spread 0.6 kWh、variance shrinkage）に合わせた。元のproduction補正式へ接続したわけではないため、production-equivalentという名称は使わない。
 - まだ30日分のprospective outcomesがなく、MAE改善・bias・hour別安定性について結論を出せない。
 - Firestore/PostgreSQLの同等保存は未実行。SQLiteのcontractを先に確立し、cloud parityは別作業とする。
 - SOC、買電量、購入コスト、制約penaltyへのcounterfactual影響は未評価。shadow値をlive planへ注入しない。

@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -26,22 +29,26 @@ from app.operations.shadow_gate import (
 )
 
 
-def _actuals(conn, start: date | None, end: date | None) -> dict[tuple[str, int], float]:
-    clauses = []
-    params: list[str] = []
-    if start:
-        clauses.append("substr(ts,1,10) >= ?")
-        params.append(start.isoformat())
-    if end:
-        clauses.append("substr(ts,1,10) <= ?")
-        params.append(end.isoformat())
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    rows = conn.execute(
-        "SELECT substr(ts,1,10) AS day, CAST(substr(ts,12,2) AS INTEGER) AS hour, "
-        f"SUM(COALESCE(pv_kwh,0)) AS actual FROM monitoring_samples {where} GROUP BY 1,2",
-        params,
-    ).fetchall()
-    return {(str(row["day"]), int(row["hour"])): float(row["actual"]) for row in rows}
+def _parse_monitoring_timestamp(value: str, site_timezone: ZoneInfo) -> datetime:
+    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=site_timezone)
+    return parsed.astimezone(site_timezone)
+
+
+def _actuals(conn, start: date | None, end: date | None, *, timezone_name: str = "Asia/Tokyo") -> dict[tuple[str, int], dict[str, float | int]]:
+    site_timezone = ZoneInfo(timezone_name)
+    totals: defaultdict[tuple[str, int], dict[str, float | int]] = defaultdict(lambda: {"actual": 0.0, "sample_count": 0})
+    for row in conn.execute("SELECT ts, pv_kwh FROM monitoring_samples").fetchall():
+        local = _parse_monitoring_timestamp(str(row["ts"]), site_timezone)
+        key = (local.date().isoformat(), local.hour)
+        if start and local.date() < start:
+            continue
+        if end and local.date() > end:
+            continue
+        totals[key]["actual"] = float(totals[key]["actual"]) + float(row["pv_kwh"] or 0.0)
+        totals[key]["sample_count"] = int(totals[key]["sample_count"]) + 1
+    return dict(totals)
 
 
 def main() -> int:
@@ -50,11 +57,17 @@ def main() -> int:
     parser.add_argument("--mode", choices=("decision", "outcome", "report"), required=True)
     parser.add_argument("--target-start", type=date.fromisoformat)
     parser.add_argument("--target-end", type=date.fromisoformat)
-    parser.add_argument("--cutoff-at", default=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-    parser.add_argument("--decision-at", default=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-    parser.add_argument("--recorded-at", default=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    parser.add_argument("--cutoff-at")
+    parser.add_argument("--decision-at")
+    parser.add_argument("--recorded-at")
+    parser.add_argument("--timezone", default=os.getenv("TIMEZONE", "Asia/Tokyo"))
+    parser.add_argument("--evidence-class", choices=("prospective_primary", "retrospective_diagnostic"), default="prospective_primary")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    args.cutoff_at = args.cutoff_at or now
+    args.decision_at = args.decision_at or now
+    args.recorded_at = args.recorded_at or now
 
     conn = sqlite.open_db(args.db_path)
     try:
@@ -69,12 +82,13 @@ def main() -> int:
                     snapshot,
                     decision_at=args.decision_at,
                     cutoff_at=args.cutoff_at,
+                    evidence_class=args.evidence_class,
                 )
                 for snapshot in snapshots
             ]
             result = {"mode": "decision", "candidate_snapshot_count": len(snapshots), "inserted_decision_count": persist_shadow_decisions(conn, decisions)}
         elif args.mode == "outcome":
-            actuals = _actuals(conn, args.target_start, args.target_end)
+            actuals = _actuals(conn, args.target_start, args.target_end, timezone_name=args.timezone)
             result = {"mode": "outcome", "actual_hour_count": len(actuals), "inserted_outcome_count": persist_shadow_outcomes(conn, actuals, recorded_at=args.recorded_at)}
         else:
             result = {"mode": "report", **report_shadow_outcomes(conn, start=args.target_start, end=args.target_end)}

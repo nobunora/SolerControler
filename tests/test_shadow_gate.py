@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from datetime import date
+
+import pytest
+from scripts.diagnose_hourly_pv_correction_limits import Candidate, Row, predict_variant, production_like_prediction as diagnostic_production_like_prediction
+from scripts.forecast_shadow import _actuals
 
 from app.operations.shadow_gate import (
     POLICY_NAME,
     POLICY_VERSION,
+    DIAGNOSTIC_EVIDENCE_CLASS,
     build_shadow_decision,
     ensure_shadow_schema,
+    production_like_prediction,
     persist_shadow_decisions,
     persist_shadow_outcomes,
     report_shadow_outcomes,
+    same_hour_bias_prediction,
+    weather_class,
 )
 from app.operations.shadow_gate import _select_model, _snapshot_rows
 
@@ -89,7 +98,7 @@ def test_build_decision_falls_back_without_history_and_contains_no_actual() -> N
         conn,
         _snapshot("target"),
         decision_at="2026-08-29T15:00:00Z",
-        cutoff_at="2026-08-29T15:00:00Z",
+        cutoff_at="2026-08-30T00:00:00Z",
     )
     assert decision["selected_model"] == "baseline"
     assert decision["baseline_fallback_reason"] == "insufficient_shadow_history"
@@ -178,3 +187,88 @@ def test_snapshot_cutoff_compares_timezone_aware_issue_times() -> None:
     conn.commit()
     selected = _snapshot_rows(conn, "2026-08-30T01:00:00+09:00", date(2026, 8, 30), date(2026, 8, 30))
     assert [row["snapshot_id"] for row in selected] == ["a"]
+
+
+def test_primary_decision_fails_closed_after_target_and_diagnostic_is_excluded() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    ensure_shadow_schema(conn)
+    with pytest.raises(ValueError, match="decision_after_target"):
+        build_shadow_decision(
+            conn,
+            _snapshot("late"),
+            decision_at="2026-08-30T02:00:00Z",
+            cutoff_at="2026-08-30T00:00:00Z",
+        )
+    diagnostic = build_shadow_decision(
+        conn,
+        _snapshot("diagnostic"),
+        decision_at="2026-08-30T02:00:00Z",
+        cutoff_at="2026-08-30T00:00:00Z",
+        evidence_class=DIAGNOSTIC_EVIDENCE_CLASS,
+    )
+    assert diagnostic["evidence_class"] == DIAGNOSTIC_EVIDENCE_CLASS
+    persist_shadow_decisions(conn, [diagnostic])
+    report = report_shadow_outcomes(conn, start=date(2026, 8, 30), end=date(2026, 8, 30))
+    assert report["valid_decision_count"] == 0
+    assert report["excluded_count_by_reason"]["retrospective_diagnostic"] == 1
+
+
+def test_incomplete_outcome_is_not_persisted_until_hour_is_finalized() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    ensure_shadow_schema(conn)
+    decision = _decision_record(_snapshot("finalize"), "2026-08-30", 10, 9.5)
+    persist_shadow_decisions(conn, [decision])
+    assert persist_shadow_outcomes(conn, {("2026-08-30", 10): {"actual": 10.2, "sample_count": 2}}, recorded_at="2026-08-30T01:30:00Z") == 0
+    assert conn.execute("SELECT COUNT(*) FROM forecast_shadow_outcomes").fetchone()[0] == 0
+    assert conn.execute("SELECT reason FROM forecast_shadow_outcome_diagnostics").fetchone()[0] == "target_hour_not_finalized"
+    assert persist_shadow_outcomes(conn, {("2026-08-30", 10): {"actual": 10.2, "sample_count": 2}}, recorded_at="2026-08-30T02:10:00Z") == 1
+    assert tuple(conn.execute("SELECT actual_complete, actual_sample_count FROM forecast_shadow_outcomes").fetchone()) == (1, 2)
+
+
+def test_multiple_vintages_are_retained_but_primary_report_counts_one_sample() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    ensure_shadow_schema(conn)
+    first = _decision_record(_snapshot("vintage-1"), "2026-08-30", 10, 9.5)
+    second = _decision_record(_snapshot("vintage-2"), "2026-08-30", 10, 9.0)
+    second["decision_at"] = "2026-08-30T00:30:00Z"
+    second["cutoff_at"] = "2026-08-30T00:30:00Z"
+    second["forecast_issued_at"] = "2026-08-29T23:30:00Z"
+    persist_shadow_decisions(conn, [first, second])
+    assert persist_shadow_outcomes(conn, {("2026-08-30", 10): {"actual": 10.2, "sample_count": 1}}, recorded_at="2026-08-30T02:10:00Z") == 2
+    report = report_shadow_outcomes(conn, start=date(2026, 8, 30), end=date(2026, 8, 30))
+    assert report["valid_decision_count"] == 1
+    assert report["sample_count"] == 1
+    assert report["excluded_count_by_reason"]["diagnostic_vintage"] == 1
+
+
+def test_candidate_formulas_match_frozen_diagnostic() -> None:
+    target = Row(date(2026, 8, 30), 10, 10.0, 10.0, 500.0, "clear")
+    prior = [
+        Candidate(Row(date(2026, 8, 29), 10, 11.0, 10.0, 510.0, "clear"), 1, abs(math.log(510.0 / 500.0))),
+        Candidate(Row(date(2026, 8, 27), 10, 9.5, 10.0, 480.0, "clear"), 3, abs(math.log(480.0 / 500.0))),
+    ]
+    expected_production = diagnostic_production_like_prediction(target, prior)
+    assert production_like_prediction(10.0, [1.0, -0.5]) == pytest.approx(expected_production)
+    expected_bias = predict_variant(target, prior, residual_kind="additive", half_life_days=7.0, min_candidates=2)
+    actual_bias = same_hour_bias_prediction(10.0, [(1.0, 1, prior[0].distance), (-0.5, 3, prior[1].distance)], half_life_days=7.0)
+    assert actual_bias == pytest.approx(expected_bias)
+    assert weather_class(1) == "clear"
+    assert weather_class(61) == "rain"
+    assert weather_class(95) == "shower"
+    assert same_hour_bias_prediction(10.0, [(1.0, 1, 0.0)], half_life_days=7.0) == 10.0
+
+
+def test_actual_aggregation_converts_utc_to_site_timezone() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE monitoring_samples (ts TEXT, pv_kwh REAL)")
+    conn.executemany(
+        "INSERT INTO monitoring_samples VALUES (?, ?)",
+        [("2026-08-29T15:30:00Z", 1.0), ("2026-08-30T00:30:00Z", 2.0)],
+    )
+    actuals = _actuals(conn, date(2026, 8, 30), date(2026, 8, 30), timezone_name="Asia/Tokyo")
+    assert actuals[("2026-08-30", 0)]["actual"] == pytest.approx(1.0)
+    assert actuals[("2026-08-30", 9)]["actual"] == pytest.approx(2.0)
