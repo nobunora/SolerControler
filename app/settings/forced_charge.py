@@ -32,9 +32,16 @@ class ForcedChargeSettings:
                 os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00",
                 name="ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
             ),
+            # HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence):
+            # this is a non-negotiable execution floor, not an optimization
+            # knob.  Allowing an env override of 0 made optimizer plan=0 remain
+            # an executable SOC=0 target when a plan/write path was absent.
+            # Keep 30 even if a stale deployment or test supplies 0; raw plan
+            # targets above it (including plan=100) remain unchanged by
+            # effective_target_soc.  Guard tests cover 0->30 and 100->100.
             min_target_soc_percent=min(
                 100.0,
-                max(0.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=0.0)),
+                max(30.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=30.0)),
             ),
             # Never poll faster than one minute; this protects the remote service and still tracks SOC closely.
             poll_interval_seconds=max(60, env_int("ADJUST03_FORCE_MONITOR_POLL_SECONDS", default=180)),

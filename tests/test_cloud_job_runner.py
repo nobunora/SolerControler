@@ -11,6 +11,7 @@ from app.runtime.cloud_job import (
     _execute_monitor_terminal_transition,
     SocReading,
     _adjust03_target_date,
+    _assert_manual_handoff_eligible,
     _assert_day_transition_allowed,
     _estimate_forced_charge_minutes,
     _estimate_forced_charge_rate_percent_per_hour,
@@ -26,9 +27,12 @@ from app.runtime.cloud_job import (
     _latest_csv_soc_reading,
     _required_charge_percent_from_plan,
     _run_adjust_03,
+    _run_day_07,
     _run_night_23,
 )
 from app.forced_charge import ChargeEffect, ChargeState, ChargeTransition
+from app.runtime.plan_persistence import persist_night_soc_execution
+from scripts.kpnet_incident_validation import _MemoryFirestore
 
 
 def test_mask_env_updates_hides_secrets() -> None:
@@ -70,6 +74,38 @@ def test_day_transition_accepts_explicit_manual_handoff(monkeypatch: pytest.Monk
     _assert_day_transition_allowed()
 
 
+def test_manual_handoff_postcheck_uses_exact_firestore_record_even_in_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _MemoryFirestore()
+    plan_meta = {
+        "date": "2026-08-28",
+        "plan_id": "2026-08-28-1-manual-handoff",
+        "target_soc_7_percent": 80.0,
+    }
+    assert persist_night_soc_execution(
+        plan_meta=plan_meta,
+        state="MANUAL_OPERATION",
+        owner="manual",
+        device_write_skipped=True,
+        open_firestore=lambda: store,
+    ) is True
+    monkeypatch.setenv("DRY_RUN", "true")
+    monkeypatch.setattr("app.runtime.cloud_job._open_firestore_for_plan", lambda: store)
+
+    _assert_manual_handoff_eligible(plan_meta)
+
+    store.collections["night_soc_execution"]["2026-08-28"]["owner"] = "03-monitor"
+    with pytest.raises(RuntimeError, match="manual operation hand-off is not eligible"):
+        _assert_manual_handoff_eligible(plan_meta)
+
+    store.collections["night_soc_execution"]["2026-08-28"].update(
+        {"owner": "manual", "plan_id": "2026-08-28-2-different-plan"}
+    )
+    with pytest.raises(RuntimeError, match="manual operation hand-off is not eligible"):
+        _assert_manual_handoff_eligible(plan_meta)
+
+
 def test_manual_soc_operation_skips_03_device_writes_and_records_terminal_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -101,6 +137,11 @@ def test_manual_soc_operation_skips_03_device_writes_and_records_terminal_state(
         "app.runtime.cloud_job._persist_night_soc_execution",
         lambda plan, state, **values: persisted.append((plan, state, values)) or True,
     )
+    handoff_checks: list[bool] = []
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._assert_manual_handoff_eligible",
+        lambda _plan: handoff_checks.append(True),
+    )
 
     _run_adjust_03()
 
@@ -111,6 +152,7 @@ def test_manual_soc_operation_skips_03_device_writes_and_records_terminal_state(
             {"owner": "manual", "device_write_skipped": True},
         )
     ]
+    assert handoff_checks == [True]
     assert optional_runs == [True]
 
 
@@ -139,6 +181,84 @@ def test_manual_soc_operation_fails_when_handoff_persistence_fails(
         _run_adjust_03()
 
     assert optional_runs == []
+
+
+def test_manual_soc_operation_fails_when_persisted_handoff_is_not_eligible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    optional_runs: list[bool] = []
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "true")
+    monkeypatch.setenv("ADJUST03_REGENERATE_PLAN", "false")
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: None)
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._read_plan_meta",
+        lambda _: {"date": "2026-08-27", "plan_id": "2026-08-27-1", "target_soc_7_percent": 80.0},
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
+    monkeypatch.setattr(
+        "app.runtime.slot_orchestration._run_optional_04_exports_and_backups",
+        lambda: optional_runs.append(True),
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._assert_manual_handoff_eligible",
+        lambda _plan: (_ for _ in ()).throw(RuntimeError("manual operation hand-off is not eligible")),
+    )
+
+    with pytest.raises(RuntimeError, match="manual operation hand-off is not eligible"):
+        _run_adjust_03()
+
+    assert optional_runs == []
+
+
+def test_scheduled_auto_sequence_keeps_device_control_and_reaches_green(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    settings_calls: list[dict[str, object]] = []
+    monitor_calls: list[Path] = []
+    gate_calls: list[dict[str, object]] = []
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "false")
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("ADJUST03_REGENERATE_PLAN", "false")
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.delenv("NIGHT23_SETTINGS_PROFILE", raising=False)
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._run_settings_profile_with_retry",
+        lambda **kwargs: settings_calls.append(kwargs),
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: None)
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._monitor_partial_forced_and_stop",
+        lambda path: monitor_calls.append(path),
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job.plan_persistence.can_apply_day_transition",
+        lambda **kwargs: gate_calls.append(kwargs) or True,
+    )
+
+    _run_night_23()
+    _run_adjust_03()
+    _run_day_07()
+
+    assert settings_calls == [
+        {"profile": "standby", "dynamic_forced_profile": False, "label": "23-settings-standby"},
+        {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"},
+    ]
+    assert monitor_calls == [plan_path]
+    assert gate_calls and gate_calls[0]["allow_manual_owner"] is False
 
 
 def test_manual_soc_operation_skips_23_device_write(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,38 +475,82 @@ def test_adjust03_target_date_uses_current_day(monkeypatch) -> None:
     assert _adjust03_target_date(now=now) == "2026-05-27"
 
 
-def test_monitor_forced_charge_does_not_invent_minimum_when_plan_target_is_zero(
+def test_monitor_forced_charge_clamps_zero_override_to_protected_minimum(
     monkeypatch,
     tmp_path,
 ) -> None:
     plan_path = tmp_path / "night_charge_plan.json"
     plan_path.write_text("{}", encoding="utf-8")
-    calls: list[tuple[str, bool]] = []
+    settings_calls: list[dict[str, object]] = []
+    cutoff_seconds = iter([3600, 0])
+    monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "0")
 
     monkeypatch.setattr(
         "app.runtime.cloud_job._read_plan_meta",
         lambda _: {"required_night_charge_kwh": 0.0, "target_soc_7_percent": 0.0, "effective_capacity_kwh": 10.0},
     )
     monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
-    soc_values = iter([0.0])
-    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: next(soc_values))
-    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **kwargs: 3600)
     monkeypatch.setattr(
-        "app.runtime.cloud_job._run_settings_profile",
-        lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
+        "app.runtime.cloud_job._read_soc_with_fallback",
+        lambda _: SocReading(0.0, "realtime", None, None),
     )
-    db_calls: list[tuple[str, bool, bool, dict[str, str] | None]] = []
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **_: next(cutoff_seconds))
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **_: True)
     monkeypatch.setattr(
-        "app.runtime.cloud_job._run_db_pipeline_slot",
-        lambda slot, *, include_csv=True, include_settings=True, extra_env=None: db_calls.append(
-            (slot, include_csv, include_settings, extra_env)
-        ),
+        "app.runtime.cloud_job._run_03_settings_profile_with_db",
+        lambda **kwargs: settings_calls.append(kwargs),
     )
 
     _monitor_partial_forced_and_stop(plan_path)
 
-    assert calls == []
-    assert db_calls == []
+    assert settings_calls == [
+        {"profile": "forced", "dynamic_forced_profile": True, "label": "03-forced-start"},
+        {"profile": "standby", "dynamic_forced_profile": False, "label": "03-no-window-standby"},
+    ]
+
+
+def test_monitor_uses_minimum_target_and_invokes_forced_write_readback_at_low_soc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    settings_calls: list[dict[str, object]] = []
+    cutoff_seconds = iter([3600, 0])
+
+    monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "30")
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._read_plan_meta",
+        lambda _: {
+            "date": "2026-08-28",
+            "plan_id": "2026-08-28-1-low-soc",
+            "required_night_charge_kwh": 0.0,
+            "target_soc_7_percent": 0.0,
+            "effective_capacity_kwh": 10.0,
+        },
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._read_soc_with_fallback",
+        lambda _: SocReading(0.0, "realtime", None, None),
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._seconds_until_cutoff",
+        lambda **_kwargs: next(cutoff_seconds),
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **_: True)
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._run_03_settings_profile_with_db",
+        lambda **kwargs: settings_calls.append(kwargs),
+    )
+
+    _monitor_partial_forced_and_stop(plan_path)
+
+    assert settings_calls == [
+        {"profile": "forced", "dynamic_forced_profile": True, "label": "03-forced-start"},
+        {"profile": "standby", "dynamic_forced_profile": False, "label": "03-no-window-standby"},
+    ]
 
 
 def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
@@ -406,7 +570,7 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
         },
     )
     monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
-    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: 10.0)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: 40.0)
     persisted: list[dict] = []
     monkeypatch.setattr(
         "app.runtime.cloud_job._persist_03_no_charge_decision_to_firestore",
@@ -427,11 +591,12 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
         {
             "plan_meta": {
                 "required_night_charge_kwh": 0.2,
-                "target_soc_7_percent": 2.0,
+                "target_soc_7_percent": 30.0,
                 "effective_capacity_kwh": 10.0,
+                "planned_target_soc_7_percent": 2.0,
             },
-            "target_soc": 2.0,
-            "latest_soc": 10.0,
+            "target_soc": 30.0,
+            "latest_soc": 40.0,
             "soc_source": "realtime",
             "required_kwh": 0.0,
         }

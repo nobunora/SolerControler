@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 import json
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from pathlib import Path
 import sys
@@ -24,6 +25,7 @@ if str(REPO_ROOT) not in sys.path:
 from app.kpnet.profiles import GREEN_MODE_PROFILE
 from app.kpnet.settings_roundtrip import ROUNDTRIP_SETTING_FIELDS, run_settings_roundtrip
 import app.runtime.cloud_job as cloud_job
+import app.runtime.slot_orchestration as slot_orchestration
 from app.runtime.plan_persistence import (
     can_apply_day_transition,
     persist_night_soc_execution,
@@ -145,6 +147,95 @@ def run_manual_handoff_validation() -> dict[str, object]:
     }
 
 
+def run_scheduled_auto_path_validation() -> dict[str, object]:
+    """Replay the normal 23:00 -> 03:00 -> 07:00 path without external I/O.
+
+    HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence): a live,
+    reversible settings round-trip proves only mutation/read-back/restore.  It
+    cannot prove the scheduler selected the automatic 23:00 standby and 03:00
+    monitor routes.  When the production manual default was true, that missing
+    coverage allowed plan=100%, actual=0%, charge=0kWh.  This replay is a
+    mandatory release-validation stage: do not remove it, downgrade a failure
+    to warning, or run the live round-trip first.  It must prove 23->03->07,
+    exactly one monitor call, a durable terminal state, and green only after
+    that state.  Separate monitor/read-back and real-device round-trip tests
+    cover the external boundaries that this no-I/O replay deliberately stubs.
+    """
+    store = _MemoryFirestore()
+    plan_meta = {
+        "date": "2099-01-01",
+        "plan_id": "2099-01-01-1-dummy-scheduled-path-validation",
+        "target_soc_7_percent": 100.0,
+    }
+    settings_calls: list[dict[str, object]] = []
+    monitor_calls: list[Path] = []
+    terminal_states: list[str] = []
+
+    def complete_monitor(plan_path: Path) -> None:
+        monitor_calls.append(plan_path)
+        persisted = persist_night_soc_execution(
+            plan_meta=plan_meta,
+            state="STANDBY_ACKED",
+            owner="03-monitor",
+            open_firestore=lambda: store,
+        )
+        if not persisted:
+            raise RuntimeError("scheduled auto-path terminal state could not be persisted")
+        terminal_states.append("STANDBY_ACKED")
+
+    with TemporaryDirectory(prefix="kpnet-scheduled-auto-path-") as temp_dir:
+        plan_path = Path(temp_dir) / "night_charge_plan.json"
+        plan_path.write_text("{}", encoding="utf-8")
+        with patch.dict(
+            "os.environ",
+            {
+                "NIGHT_SOC_MANUAL_OPERATION": "false",
+                "NIGHT_SOC_CONTROL_MODE": "enforce",
+                "DRY_RUN": "false",
+                "KP_NIGHT_PLAN_PATH": str(plan_path),
+                "ADJUST03_REGENERATE_PLAN": "false",
+            },
+            clear=False,
+        ), patch.object(cloud_job, "_open_firestore_for_plan", lambda: store), patch.object(
+            cloud_job, "_adjust03_target_date", lambda: str(plan_meta["date"])
+        ), patch.object(cloud_job, "_read_plan_meta", lambda _path: plan_meta), patch.object(
+            cloud_job,
+            "_run_settings_profile_with_retry",
+            lambda **kwargs: settings_calls.append(kwargs),
+        ), patch.object(cloud_job, "_run_csv_with_retry", lambda **_kwargs: None), patch.object(
+            cloud_job, "_persist_previous_day_soc_feedback", lambda **_kwargs: None
+        ), patch.object(cloud_job, "_latest_kpnet_csv_paths", lambda _path: []), patch.object(
+            cloud_job, "_ensure_night_plan_available", lambda _path: True
+        ), patch.object(cloud_job, "_run_db_pipeline_slot", lambda *_args, **_kwargs: None), patch.object(
+            cloud_job, "_monitor_partial_forced_and_stop", complete_monitor
+        ), patch(
+            "app.runtime.slot_orchestration._run_optional_04_exports_and_backups", lambda: None
+        ):
+            slot_orchestration._run_night_23()
+            slot_orchestration._run_adjust_03()
+            slot_orchestration._run_day_07()
+
+    expected_settings_calls = [
+        {"profile": "standby", "dynamic_forced_profile": False, "label": "23-settings-standby"},
+        {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"},
+    ]
+    passed = (
+        settings_calls == expected_settings_calls
+        and len(monitor_calls) == 1
+        and terminal_states == ["STANDBY_ACKED"]
+    )
+    return {
+        "status": "passed" if passed else "failed",
+        "storage": "in-memory-only",
+        "production_records_written": False,
+        "dummy_plan_date": plan_meta["date"],
+        "manual_operation_enabled": False,
+        "monitor_call_count": len(monitor_calls),
+        "terminal_state": terminal_states[-1] if terminal_states else None,
+        "settings_calls": settings_calls,
+    }
+
+
 def _write_result(path: Path, result: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -177,26 +268,31 @@ def main() -> int:
     if handoff["status"] != "passed":
         result["failure_stage"] = "manual_handoff"
     else:
-        try:
-            live = run_settings_roundtrip(
-                target_soc_percent=args.target_soc,
-                test_charge_start_hhmm=args.test_charge_start,
-                test_charge_end_hhmm=args.test_charge_end,
-            )
-            result["live_device_roundtrip"] = live
-            result["status"] = "passed" if live.get("status") == "passed" else "failed"
-            if result["status"] != "passed":
+        scheduled_auto_path = run_scheduled_auto_path_validation()
+        result["scheduled_auto_path"] = scheduled_auto_path
+        if scheduled_auto_path["status"] != "passed":
+            result["failure_stage"] = "scheduled_auto_path"
+        else:
+            try:
+                live = run_settings_roundtrip(
+                    target_soc_percent=args.target_soc,
+                    test_charge_start_hhmm=args.test_charge_start,
+                    test_charge_end_hhmm=args.test_charge_end,
+                )
+                result["live_device_roundtrip"] = live
+                result["status"] = "passed" if live.get("status") == "passed" else "failed"
+                if result["status"] != "passed":
+                    result["failure_stage"] = "live_device_roundtrip"
+            except Exception as exc:
+                live_failure = {
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                }
+                summary = getattr(exc, "summary", None)
+                if isinstance(summary, dict):
+                    live_failure.update(summary)
+                result["live_device_roundtrip"] = live_failure
                 result["failure_stage"] = "live_device_roundtrip"
-        except Exception as exc:
-            live_failure = {
-                "status": "failed",
-                "error_type": type(exc).__name__,
-            }
-            summary = getattr(exc, "summary", None)
-            if isinstance(summary, dict):
-                live_failure.update(summary)
-            result["live_device_roundtrip"] = live_failure
-            result["failure_stage"] = "live_device_roundtrip"
     result["completed_at_utc"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     output_path = args.result_path or Path("artifacts/validation/kpnet-incident-validation.json")
     _write_result(output_path, result)

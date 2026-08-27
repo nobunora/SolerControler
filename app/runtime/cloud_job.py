@@ -326,11 +326,36 @@ def _acquire_night_soc_lease(plan_meta: dict[str, Any]) -> bool:
     )
 
 
-# HISTORICAL_FAILURE_LOCK (d1d7792): the 07:00 transition cannot bypass the
-# durable 03-monitor terminal state while single-owner control is enforced.
-# The only additional hand-off is the explicit MANUAL_OPERATION state, which
-# is written after the 03:00 path has skipped every device write; 07:00 still
-# requires the KP-NET write and read-back checks in the settings workflow.
+# HISTORICAL_FAILURE_LOCK (d1d7792, 1dd21ae, 2026-08-28 incident evidence):
+# the 07:00 transition cannot bypass the durable 03-monitor terminal state
+# while single-owner control is enforced.  The only additional hand-off is the
+# explicit MANUAL_OPERATION state, written after an intentionally manual 03:00
+# path skips every device write; 07:00 still requires KP-NET write/read-back.
+# Do not remove this exact-record postcondition or give it DRY_RUN/control-mode
+# bypasses: a fake/in-memory Firestore must prove owner, write-skipped marker,
+# freshness, and plan identity just as the real client does.  Otherwise a
+# persistence-shaped record can let 07:00 pass although 03:00 never performed
+# the monitor, lease, forced-charge, read-back, or terminal-state lifecycle.
+def _assert_manual_handoff_eligible(plan_meta: Mapping[str, Any]) -> None:
+    """Fail 03:00 unless its just-written manual hand-off can reach 07:00.
+
+    Unlike the scheduled 07:00 gate below, this is a 03:00 postcondition and
+    must not inherit its DRY_RUN or control-mode bypasses.  It validates the
+    exact plan identity against the durable Firestore record.
+    """
+    plan_date = str(plan_meta.get("date") or "").strip()
+    plan_id = str(plan_meta.get("plan_id") or "").strip()
+    if not plan_date or not plan_id or not plan_persistence.can_apply_day_transition(
+        plan_date=plan_date,
+        open_firestore=_open_firestore_for_plan,
+        allow_manual_owner=True,
+        expected_plan_id=plan_id,
+    ):
+        raise RuntimeError(
+            "03:00 manual operation hand-off is not eligible for the 07:00 transition"
+        )
+
+
 def _assert_day_transition_allowed() -> None:
     if os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() != "enforce":
         return

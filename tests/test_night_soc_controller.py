@@ -75,5 +75,6 @@ def test_soc_observation_gate_rejects_stale_values() -> None:
 
 
 def test_effective_target_respects_minimum_and_upper_bound() -> None:
-    assert effective_target_soc(20, 30) == pytest.approx(30)
+    assert effective_target_soc(0, 30) == pytest.approx(30)
+    assert effective_target_soc(100, 30) == pytest.approx(100)
     assert effective_target_soc(110, 30) == pytest.approx(100)

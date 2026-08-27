@@ -26,7 +26,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
 
     assert settings == ForcedChargeSettings(
         cutoff=time(7, 0),
-        min_target_soc_percent=0.0,
+        min_target_soc_percent=30.0,
         poll_interval_seconds=180,
         retry_attempts=3,
         retry_delay_seconds=5.0,
@@ -67,3 +67,11 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     assert settings.completion_confirm_before_minutes == 0
     assert settings.no_charge_percent_epsilon == 0.0
     assert settings.no_charge_kwh_epsilon == 0.0
+
+
+def test_forced_charge_settings_reject_zero_execution_floor(monkeypatch) -> None:
+    monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "0")
+
+    settings = ForcedChargeSettings.from_env()
+
+    assert settings.min_target_soc_percent == 30.0

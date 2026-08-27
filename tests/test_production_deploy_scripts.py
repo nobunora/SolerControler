@@ -174,7 +174,7 @@ def test_production_adjust03_starts_at_three_and_holds_standby_until_seven() -> 
     assert '-SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *"' in script
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" in script
     assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
-    assert '"NIGHT_SOC_MANUAL_OPERATION=true"' in script
+    assert '"NIGHT_SOC_MANUAL_OPERATION=false"' in script
 
 
 def test_job_deploy_uses_isolated_gcloud_python_and_absolute_build_source() -> None:
@@ -232,7 +232,8 @@ def test_production_uses_previous_billing_period_without_heuristic_tier_penaltie
     assert '"SOC_MONTHLY_TARIFF_PROJECTION_ENABLED=true"' in script
     assert '"SOC_MONTHLY_TIER_LANDING_ENABLED=false"' in script
     assert '"SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH=0"' in script
-    assert 'ADJUST03_MIN_TARGET_SOC_PERCENT=0' in script
+    assert 'ADJUST03_MIN_TARGET_SOC_PERCENT=30' in script
+    assert '"NIGHT_RESERVE_SOC_PERCENT=0"' in script
 
 
 def test_production_deploy_supports_non_mutating_validation() -> None:

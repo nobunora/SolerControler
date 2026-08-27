@@ -20,9 +20,17 @@ def _latest_kpnet_csv_paths(*args: Any, **kwargs: Any) -> Any: return _cloud_cal
 def _ensure_night_plan_available(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_ensure_night_plan_available", *args, **kwargs)
 def _monitor_partial_forced_and_stop(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_monitor_partial_forced_and_stop", *args, **kwargs)
 def _run_settings_profile_with_retry(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_run_settings_profile_with_retry", *args, **kwargs)
+def _assert_manual_handoff_eligible(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_assert_manual_handoff_eligible", *args, **kwargs)
 def _assert_day_transition_allowed() -> Any: return _cloud_call("_assert_day_transition_allowed")
 
-
+# HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence): this is
+# an opt-in override only.  If a deployment makes it true by default, 23:00
+# skips standby and 03:00 skips the entire monitor/forced-charge lifecycle,
+# yielding plan=100%, actual=0%, charge=0kWh and a 07:00 gate without the
+# scheduled terminal state.  Keep the false fallback and do not merge this
+# predicate into a permissive branch.  The deploy default plus a 23->03->07
+# replay are regression-tested; a reversible settings round-trip alone cannot
+# prove that scheduler routing reached this function.
 def _manual_soc_operation_enabled() -> bool:
     return os.getenv("NIGHT_SOC_MANUAL_OPERATION", "false").strip().lower() in {
         "1",
@@ -97,6 +105,13 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
         print("[cloud_job_runner] 03-plan refresh completed without device control", flush=True)
         return
     if _manual_soc_operation_enabled():
+        # HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence):
+        # this branch intentionally replaces the 03 monitor only for an
+        # explicit manual operator.  Removing the automatic branch below, or
+        # allowing the production default to reach this return, removes lease
+        # acquisition, KP-NET forced-charge/read-back, and terminal state.  A
+        # MANUAL_OPERATION record is not equivalent to a completed monitor.
+        # Keep the postcondition: persistence success alone is insufficient.
         plan_meta = _cloud_call("_read_plan_meta", plan_path)
         persisted = _cloud_call(
             "_persist_night_soc_execution",
@@ -110,6 +125,10 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
                 "03:00 manual operation hand-off could not be persisted; "
                 "07:00 transition remains blocked"
             )
+        # This postcondition intentionally has no DRY_RUN/control-mode bypass:
+        # exact plan identity, owner, write-skipped marker, and freshness must
+        # be readable before the 03:00 manual branch can report success.
+        _assert_manual_handoff_eligible(plan_meta)
         _run_optional_04_exports_and_backups()
         print(
             "[cloud_job_runner] 03-monitor skipped: NIGHT_SOC_MANUAL_OPERATION=true; "
@@ -117,6 +136,13 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
             flush=True,
         )
         return
+    # HISTORICAL_FAILURE_LOCK (d1d7792, 1dd21ae, 2026-08-28 incident evidence):
+    # scheduled 03:00 must call the single-owner monitor.  It acquires the
+    # Firestore lease, performs forced-charge KP-NET read-back, writes terminal
+    # state, and leaves 07:00 safely gated.  Do not replace it with a settings
+    # round-trip or omit it after plan refresh: those only prove API mutation,
+    # not scheduled routing or morning SOC.  The incident validation replays
+    # 23->03->07 and fails release validation if this call is not reached.
     _monitor_partial_forced_and_stop(plan_path)
     _run_optional_04_exports_and_backups()
 

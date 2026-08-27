@@ -12,6 +12,8 @@
 4. `code-quality-audit` の適用チェック、対象テスト、必要なら本番ゲートを実行する。
 5. 本番反映は `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` に従い、失敗状態を手動で成功に書き換えない。
 
+`tests/test_night_soc_protected_contract.py` は2026-08-28のSOC 0%事故用の必須ガードである。夜間SOCに限らず、ソース・設定・テスト・デプロイ変更を行う全ての変更で通常のpytest/preflightに含めて実行し、lockコメント、production default、30%実行床、manual opt-in、23→03→07のmonitor・終端state・07 green gate契約を同時に確認する。このテストをskip、削除、warning化してはならない。
+
 ## 保護対象と根拠
 
 | 保護対象 | 過去の根拠 | 再発防止する事故 | 拘束内容 |
@@ -23,6 +25,7 @@
 | `app/forecasting/pv_physical.py::HOURS`、`OUTPUT_HOURS`、補正スケール | `4af0d59`, `f35a74f` | 05:00の物理PV出力を追加する際に、既存の07:00以降のSOC計画・校正スケールまで変わる | 出力時間窓の拡張と、既存計画時間の校正を分離する。時間窓・EWMA/実績比率の意味を変更する場合は同一入力の前後比較を行う |
 | `app/energy_plan/monthly_projection.py::previous_billing_period_for_target`、本番の月次料金環境値 | `541cd60` | 当月前半の観測だけ、または根拠のない第3段階ペナルティを使い、SOC目標に余計なバイアスを加える | 前月の実績を基準にし、料金・売電・ペナルティの未確認契約値を発明しない。料金入力はCSV読込から目的関数まで通し、raw集計と計画値を比較する |
 | `app/kpnet/settings_roundtrip.py::run_settings_roundtrip`、`scripts/deploy_gcp_jobs.ps1` の設定テストJob | `ee84e43`, `bf48f42`, `5e46ff8` | 実機設定を変更したまま戻らない、または実行済みテストがデプロイ状態に記録されない | 実行時だけ有効、保持時間は60秒固定、初期スナップショットへ復元してread-back確認、Cloud Run retryは0回、Schedulerは作らない。復元処理と状態記録を削除・省略しない |
+| `scripts/deploy_gcp_jobs.ps1::$commonEnv` の `NIGHT_SOC_MANUAL_OPERATION=false`、03:00 Job の `ADJUST03_MIN_TARGET_SOC_PERCENT=30`、`app/runtime/slot_orchestration.py::_manual_soc_operation_enabled` / `_run_adjust_03`、`scripts/kpnet_incident_validation.py::run_scheduled_auto_path_validation` | `d1d7792`, `1dd21ae`, 2026-08-28実績（plan=100%, actual=0%, charge=0kWh） | 手動運用を本番既定にして23:00 standby と03:00 lease・監視・強制充電・read-back・終端状態を全て迂回し、07:00だけが残る。又は実行下限を0にしてoptimizerのplan=0がSOC 0%のまま実効目標になる。実機round-tripだけでは定時分岐の迂回を検出できない | 手動運用は runtime の明示 override のみで、本番既定値を `false` から変更しない。03:00実行下限30%を削除・0化しない（plan=100は維持しplan=0だけ30へ上げる）。定時23→03→07 replay は検証の必須成功条件であり、03 monitorが1回、Firestore終端状態、07 green順序を確認してから実機round-tripを行う。real/fake Firestoreのmanual hand-offはowner・write-skipped・freshness・plan_idを同じ契約で満たす。変更時は全ケースの回帰試験と実機read-back/復元を再実施する。 |
 
 ## 履歴の扱い
 
