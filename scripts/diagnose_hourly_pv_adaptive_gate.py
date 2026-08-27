@@ -13,16 +13,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
-import diagnose_hourly_pv_correction_limits as core
-import diagnose_hourly_pv_regime_bias as regime
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts import diagnose_hourly_pv_correction_limits as core
+from scripts import diagnose_hourly_pv_regime_bias as regime
+
 DEFAULT_OUTPUT = ROOT / "artifacts/analysis/hourly_pv_adaptive_gate_diagnostic.json"
 
 MODEL_NAMES = (

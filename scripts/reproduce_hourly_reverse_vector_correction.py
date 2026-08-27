@@ -130,8 +130,10 @@ def replay(
         return rows
 
     def evaluate_period(start: date, end: date) -> dict[str, Any]:
-        results = {method: [] for method in METHODS}
-        hourly = {hour: {method: [] for method in METHODS} for hour in range(7, 23)}
+        results: dict[str, list[tuple[float, float]]] = {method: [] for method in METHODS}
+        hourly: dict[int, dict[str, list[tuple[float, float]]]] = {
+            hour: {method: [] for method in METHODS} for hour in range(7, 23)
+        }
         hourly_hits = {hour: 0 for hour in range(7, 23)}
         multiplier_counts: dict[str, int] = {}
         hit_count = 0

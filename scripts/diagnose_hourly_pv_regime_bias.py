@@ -9,14 +9,18 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import median
 from typing import Any
 
-import diagnose_hourly_pv_correction_limits as core
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts import diagnose_hourly_pv_correction_limits as core
+
 DEFAULT_OUTPUT = ROOT / "artifacts/analysis/hourly_pv_regime_bias_diagnostic.json"
 LOOKBACKS = (3, 7, 14, 21, 30, 45)
 HALF_LIVES = (None, 3.0, 7.0, 14.0)
