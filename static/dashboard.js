@@ -1060,6 +1060,10 @@
           energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
           return Math.round((socAtHourStart / capacityKwh) * 1000) / 10;
         }
+        if (hour < 7 && row.actual_soc_percent != null) {
+          const actualSoc = Number(row.actual_soc_percent);
+          if (Number.isFinite(actualSoc) && actualSoc >= 0 && actualSoc <= 100) return actualSoc;
+        }
         energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
         return Math.round((energyKwh / capacityKwh) * 1000) / 10;
       });

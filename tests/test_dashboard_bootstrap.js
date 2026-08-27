@@ -31,11 +31,13 @@ class ChartStub {
   constructor(_target, config) {
     this.data = config.data || { labels: [], datasets: [] };
     this.options = config.options || {};
+    ChartStub.instances.push(this);
   }
   update() {}
   resize() {}
   destroy() {}
 }
+ChartStub.instances = [];
 
 const context = {
   console,
@@ -60,7 +62,11 @@ const context = {
       status: 200,
       json: async () => ({
         pv_daily: [],
-        forecast_hourly: [{ date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 }],
+        forecast_hourly: [
+          { date: "2026-07-20", hour: 0, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 42 },
+          { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
+          { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
+        ],
         energy_daily: [{ date: "2026-07-17", actual_load_kwh: 1 }], cost_daily: [], cost_monthly: [],
         battery_daily: [], battery_flow_daily: [], model_parameters: [],
         latest_schedule: {
@@ -117,6 +123,8 @@ setImmediate(() => {
   assert.match(elements.get("hourlyForecastNote").textContent, /夜間系統充電 3\.14kWh/);
   assert.match(elements.get("hourlyForecastNote").textContent, /予想SOCピーク 07:00ごろ 77%/);
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
+  const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "予想SOC(%)"));
+  assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77]);
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");

@@ -304,11 +304,12 @@ def _persist_03_monitor_stop_reason(
 
 
 def _persist_night_soc_execution(
-    plan_meta: dict[str, Any], state: str, **values: Any
+    plan_meta: dict[str, Any], state: str, *, owner: str = "03-monitor", **values: Any
 ) -> bool:
     return plan_persistence.persist_night_soc_execution(
         plan_meta=plan_meta,
         state=state,
+        owner=owner,
         open_firestore=_open_firestore_for_plan,
         **values,
     )
@@ -327,15 +328,37 @@ def _acquire_night_soc_lease(plan_meta: dict[str, Any]) -> bool:
 
 # HISTORICAL_FAILURE_LOCK (d1d7792): the 07:00 transition cannot bypass the
 # durable 03-monitor terminal state while single-owner control is enforced.
+# The only additional hand-off is the explicit MANUAL_OPERATION state, which
+# is written after the 03:00 path has skipped every device write; 07:00 still
+# requires the KP-NET write and read-back checks in the settings workflow.
 def _assert_day_transition_allowed() -> None:
     if os.getenv("NIGHT_SOC_CONTROL_MODE", "observe").strip().lower() != "enforce":
         return
     if os.getenv("DRY_RUN", "false").strip().lower() in {"1", "true", "yes", "on"}:
         return
     target_date = _adjust03_target_date()
+    allow_manual_owner = os.getenv("NIGHT_SOC_MANUAL_OPERATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    expected_plan_id = None
+    if allow_manual_owner:
+        try:
+            expected_plan_id = str(
+                _read_plan_meta(Path(os.getenv("KP_NIGHT_PLAN_PATH", "artifacts/night_charge_plan.json"))).get(
+                    "plan_id"
+                )
+                or ""
+            )
+        except Exception:
+            expected_plan_id = ""
     if not plan_persistence.can_apply_day_transition(
         plan_date=target_date,
         open_firestore=_open_firestore_for_plan,
+        allow_manual_owner=allow_manual_owner,
+        expected_plan_id=expected_plan_id,
     ):
         raise RuntimeError(
             f"07:00 day transition blocked: night SOC owner has not completed plan_date={target_date}"

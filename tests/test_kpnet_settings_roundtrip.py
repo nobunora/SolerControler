@@ -66,6 +66,23 @@ def test_probe_requires_a_forced_charge_mode_candidate() -> None:
         )
 
 
+def test_probe_accepts_explicit_short_test_window() -> None:
+    restore = profile_from_current_settings(_current())
+    probe = make_reversible_probe_profile(
+        restore_profile=restore,
+        value_maps={
+            "BatteryOperatingMode": {"0": "待機", "1": "グリーン", "3": "強制充電"},
+            "SocChargeMode": {"0": "0", "50": "50"},
+        },
+        target_soc_percent=50,
+        test_charge_start_hhmm="23:59",
+        test_charge_end_hhmm="00:01",
+    )
+
+    assert (probe.charge_start_h, probe.charge_start_m) == ("23", "59")
+    assert (probe.charge_end_h, probe.charge_end_m) == ("0", "1")
+
+
 def test_live_roundtrip_requires_an_exact_one_minute_hold() -> None:
     from app.kpnet.settings_roundtrip import run_settings_roundtrip
 
@@ -124,6 +141,55 @@ def test_live_roundtrip_applies_forced_charge_50_then_restores_snapshot(monkeypa
     assert applied_profiles[0].battery_operating_mode == "3"
     assert applied_profiles[0].soc_charge_mode == "50"
     assert summary["restore_verified"] is True
+
+
+def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.kpnet.settings_roundtrip as roundtrip
+
+    current = _current()
+    apply_count = 0
+
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def __init__(self, _cfg: object) -> None:
+            pass
+
+        def login(self) -> None:
+            pass
+
+        def open_settings_page(self) -> None:
+            pass
+
+        def read_current_settings(self) -> dict[str, str]:
+            return dict(current)
+
+        def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+            return {
+                "BatteryOperatingMode": {"0": "待機", "1": "グリーン", "3": "強制充電"},
+                "SocChargeMode": {"0": "0", "50": "50"},
+            }
+
+        def logout(self) -> None:
+            pass
+
+    def fake_apply(**kwargs: object) -> tuple[dict[str, str], list[str]]:
+        nonlocal apply_count
+        apply_count += 1
+        if apply_count == 1:
+            raise RuntimeError("probe write failed")
+        return dict(current), []
+
+    monkeypatch.setattr(roundtrip.KpNetConfig, "from_env", lambda: type("Cfg", (), {"dry_run": False})())
+    monkeypatch.setattr(roundtrip, "KpNetClient", FakeClient)
+    monkeypatch.setattr(roundtrip, "_apply_and_verify", fake_apply)
+
+    with pytest.raises(roundtrip.SettingsRoundtripError) as raised:
+        roundtrip.run_settings_roundtrip(target_soc_percent=50.0)
+
+    assert raised.value.summary["error_type"] == "RuntimeError"
+    assert raised.value.summary["restore_after_failure"] == "passed"
 
 
 def test_roundtrip_emits_a_restore_audit_record() -> None:

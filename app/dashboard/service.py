@@ -10,7 +10,7 @@ def merge_forecast_hourly_actuals(
     forecast_rows: list[dict[str, Any]],
     monitoring_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Attach hourly actual load totals without changing the forecast row contract."""
+    """Attach hourly actual load and latest SOC values to forecast rows."""
     actuals: dict[tuple[str, int], dict[str, Any]] = {}
     for row in monitoring_rows:
         ts = str(row.get("ts") or "")
@@ -18,17 +18,36 @@ def merge_forecast_hourly_actuals(
             continue
         try:
             hour = int(ts[11:13])
-            load_kwh = float(row.get("load_kwh") or 0.0)
         except (TypeError, ValueError):
             continue
-        if not 0 <= hour <= 23 or not math.isfinite(load_kwh):
+        if not 0 <= hour <= 23:
             continue
         key = (ts[:10], hour)
-        acc = actuals.setdefault(key, {"actual_load_kwh": 0.0, "latest_sample_at": None})
-        acc["actual_load_kwh"] += load_kwh
+        acc = actuals.setdefault(
+            key,
+            {"actual_load_kwh": 0.0, "actual_soc_percent": None, "latest_sample_at": None},
+        )
         latest = acc["latest_sample_at"]
         if latest is None or ts > latest:
             acc["latest_sample_at"] = ts
+
+        try:
+            load_kwh = float(row.get("load_kwh") or 0.0)
+        except (TypeError, ValueError):
+            load_kwh = None
+        if load_kwh is not None and math.isfinite(load_kwh):
+            acc["actual_load_kwh"] += load_kwh
+
+        soc_value = row.get("soc_percent")
+        try:
+            soc = float(soc_value) if soc_value is not None else None
+        except (TypeError, ValueError):
+            soc = None
+        if soc is not None and math.isfinite(soc) and 0.0 <= soc <= 100.0:
+            current_soc_at = acc.get("actual_soc_at")
+            if current_soc_at is None or ts >= current_soc_at:
+                acc["actual_soc_percent"] = soc
+                acc["actual_soc_at"] = ts
 
     merged: list[dict[str, Any]] = []
     for row in forecast_rows:
@@ -40,6 +59,7 @@ def merge_forecast_hourly_actuals(
             key = ("", -1)
         actual = actuals.get(key)
         item["actual_load_kwh"] = actual["actual_load_kwh"] if actual else None
+        item["actual_soc_percent"] = actual.get("actual_soc_percent") if actual else None
         item["latest_sample_at"] = actual["latest_sample_at"] if actual else None
         merged.append(item)
     merged.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))

@@ -139,7 +139,20 @@ def acquire_night_soc_lease(
         return False
 
 
-def can_apply_day_transition(*, plan_date: str, open_firestore: FirestoreOpener) -> bool:
+def can_apply_day_transition(
+    *,
+    plan_date: str,
+    open_firestore: FirestoreOpener,
+    allow_manual_owner: bool = False,
+    expected_plan_id: str | None = None,
+    max_handoff_age_seconds: float = 18_000.0,
+) -> bool:
+    """Return whether the 07:00 transition has a safe, durable hand-off.
+
+    Manual operation is an explicit hand-off marker written by the 03:00
+    orchestration path after it has skipped all device writes.  It is never
+    accepted implicitly, so the normal single-owner gate remains fail-closed.
+    """
     client = open_firestore()
     if client is None:
         return False
@@ -147,8 +160,35 @@ def can_apply_day_transition(*, plan_date: str, open_firestore: FirestoreOpener)
         snapshot = client.collection("night_soc_execution").document(plan_date).get()
         if not snapshot.exists:
             return False
-        state = str((snapshot.to_dict() or {}).get("state") or "")
-        return state in {"STANDBY_ACKED", "COMPLETED_NO_CHARGE", "SAFE_TERMINATED", "VERIFIED"}
+        record = snapshot.to_dict() or {}
+        state = str(record.get("state") or "")
+        allowed_states = {"STANDBY_ACKED", "COMPLETED_NO_CHARGE", "SAFE_TERMINATED", "VERIFIED"}
+        if state in allowed_states:
+            return True
+        if not allow_manual_owner or state != "MANUAL_OPERATION":
+            return False
+        if str(record.get("owner") or "") != "manual":
+            return False
+        if record.get("device_write_skipped") is not True:
+            return False
+        if str(record.get("plan_date") or "") != plan_date:
+            return False
+        plan_id = str(record.get("plan_id") or "")
+        if not plan_id or not plan_id.startswith(f"{plan_date}-"):
+            return False
+        if expected_plan_id is not None and plan_id != expected_plan_id:
+            return False
+        if max_handoff_age_seconds < 0:
+            return False
+        updated_at = str(record.get("updated_at_utc") or "")
+        try:
+            updated = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if updated.tzinfo is None:
+            return False
+        age_seconds = (datetime.now(ZoneInfo("UTC")) - updated).total_seconds()
+        return 0 <= age_seconds <= max_handoff_age_seconds
     except Exception as exc:
         print(f"[cloud_job_runner] day transition lease check failed: {exc}", flush=True)
         return False

@@ -21,9 +21,27 @@ def _ensure_night_plan_available(*args: Any, **kwargs: Any) -> Any: return _clou
 def _monitor_partial_forced_and_stop(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_monitor_partial_forced_and_stop", *args, **kwargs)
 def _run_settings_profile_with_retry(*args: Any, **kwargs: Any) -> Any: return _cloud_call("_run_settings_profile_with_retry", *args, **kwargs)
 def _assert_day_transition_allowed() -> Any: return _cloud_call("_assert_day_transition_allowed")
+
+
+def _manual_soc_operation_enabled() -> bool:
+    return os.getenv("NIGHT_SOC_MANUAL_OPERATION", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _run_night_23() -> None:
     # 23:00 is only a mode-control guard. Forecast/data work is centralized in
     # the 03:00 controller, which still has enough time to reach 100% if needed.
+    if _manual_soc_operation_enabled():
+        print(
+            "[cloud_job_runner] 23-settings skipped: NIGHT_SOC_MANUAL_OPERATION=true; "
+            "battery settings remain under manual control.",
+            flush=True,
+        )
+        return
     profile = os.getenv("NIGHT23_SETTINGS_PROFILE", "standby").strip() or "standby"
     _run_settings_profile_with_retry(
         profile=profile,
@@ -77,6 +95,27 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
     )
     if plan_refresh_only:
         print("[cloud_job_runner] 03-plan refresh completed without device control", flush=True)
+        return
+    if _manual_soc_operation_enabled():
+        plan_meta = _cloud_call("_read_plan_meta", plan_path)
+        persisted = _cloud_call(
+            "_persist_night_soc_execution",
+            plan_meta,
+            "MANUAL_OPERATION",
+            owner="manual",
+            device_write_skipped=True,
+        )
+        if not persisted:
+            raise RuntimeError(
+                "03:00 manual operation hand-off could not be persisted; "
+                "07:00 transition remains blocked"
+            )
+        _run_optional_04_exports_and_backups()
+        print(
+            "[cloud_job_runner] 03-monitor skipped: NIGHT_SOC_MANUAL_OPERATION=true; "
+            "07:00 hand-off requires settings read-back.",
+            flush=True,
+        )
         return
     _monitor_partial_forced_and_stop(plan_path)
     _run_optional_04_exports_and_backups()

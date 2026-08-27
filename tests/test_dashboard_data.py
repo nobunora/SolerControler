@@ -407,12 +407,12 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
         )
         conn.executemany(
             """
-            INSERT INTO monitoring_samples(ts, load_kwh, ingested_at)
-            VALUES (?, ?, '2026-05-02T00:00:00')
+            INSERT INTO monitoring_samples(ts, load_kwh, soc_percent, ingested_at)
+            VALUES (?, ?, ?, '2026-05-02T00:00:00')
             """,
             [
-                ("2026-05-02T07:00:00", 0.4),
-                ("2026-05-02T07:30:00", 0.5),
+                ("2026-05-02T07:00:00", 0.4, 54),
+                ("2026-05-02T07:30:00", 0.5, 55),
             ],
         )
         conn.commit()
@@ -424,6 +424,7 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
     assert [row["hour"] for row in sliced.data.forecast_hourly] == [7, 8]
     assert sliced.data.forecast_hourly[0]["forecast_charge_kwh"] == pytest.approx(0.4)
     assert sliced.data.forecast_hourly[0]["actual_load_kwh"] == pytest.approx(0.9)
+    assert sliced.data.forecast_hourly[0]["actual_soc_percent"] == pytest.approx(55)
     assert sliced.data.forecast_hourly[0]["latest_sample_at"] == "2026-05-02T07:30:00"
     assert sliced.data.forecast_hourly[1]["actual_load_kwh"] is None
 
@@ -599,19 +600,23 @@ def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samp
         {"date": "2026-07-14", "hour": 1, "forecast_load_kwh": 1.2},
     ]
     monitoring = [
-        {"ts": "2026-07-13T23:00:00", "load_kwh": 0.4},
-        {"ts": "2026-07-13T23:30:00", "load_kwh": 0.6},
-        {"ts": "2026-07-14T00:00:00", "load_kwh": 0.7},
+        {"ts": "2026-07-13T23:00:00", "load_kwh": 0.4, "soc_percent": 35},
+        {"ts": "2026-07-13T23:30:00", "load_kwh": 0.6, "soc_percent": 36},
+        {"ts": "2026-07-14T00:00:00", "load_kwh": 0.7, "soc_percent": 42},
+        {"ts": "2026-07-14T00:30:00", "load_kwh": 0.2, "soc_percent": 43},
         {"ts": "bad", "load_kwh": 99},
         {"ts": "2026-07-14T01:00:00", "load_kwh": float("nan")},
+        {"ts": "2026-07-14T01:30:00", "load_kwh": None, "soc_percent": 51},
     ]
 
     merged = merge_forecast_hourly_actuals(forecast, monitoring)
 
     assert merged[0]["actual_load_kwh"] == pytest.approx(1.0)
     assert merged[0]["latest_sample_at"] == "2026-07-13T23:30:00"
-    assert merged[1]["actual_load_kwh"] == pytest.approx(0.7)
-    assert merged[2]["actual_load_kwh"] is None
+    assert merged[1]["actual_load_kwh"] == pytest.approx(0.9)
+    assert merged[1]["actual_soc_percent"] == pytest.approx(43)
+    assert merged[2]["actual_load_kwh"] == pytest.approx(0.0)
+    assert merged[2]["actual_soc_percent"] == pytest.approx(51)
 
 
 def test_firestore_slice_requests_hourly_forecast_for_entire_window(monkeypatch) -> None:

@@ -119,11 +119,7 @@ def load_postgres_slice(
 
             cur.execute(
                 """
-                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                       fh.forecast_charge_kwh, ah.actual_load_kwh, ah.latest_sample_at,
-                       fh.source, fh.updated_at
-                FROM forecast_hourly fh
-                LEFT JOIN (
+                WITH hourly_actuals AS (
                     SELECT substring(ts,1,10) AS date,
                            EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
                            COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
@@ -131,11 +127,32 @@ def load_postgres_slice(
                     FROM monitoring_samples
                     WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
                     GROUP BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
-                ) ah ON ah.date = fh.date AND ah.hour = fh.hour
+                ), hourly_soc AS (
+                    SELECT date, hour, soc_percent AS actual_soc_percent
+                    FROM (
+                        SELECT substring(ts,1,10) AS date,
+                               EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
+                               soc_percent,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
+                                   ORDER BY ts DESC
+                               ) AS row_number
+                        FROM monitoring_samples
+                        WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
+                          AND soc_percent IS NOT NULL
+                    ) ranked
+                    WHERE row_number = 1
+                )
+                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                       fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
+                       ah.latest_sample_at, fh.source, fh.updated_at
+                FROM forecast_hourly fh
+                LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
+                LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
                 WHERE fh.date >= %s AND fh.date <= %s
                 ORDER BY fh.date, fh.hour
                 """,
-                (start_date, end_date_iso, start_date, end_date_iso),
+                (start_date, end_date_iso, start_date, end_date_iso, start_date, end_date_iso),
             )
             forecast_hourly = _rows_to_dicts(cur.fetchall())
 

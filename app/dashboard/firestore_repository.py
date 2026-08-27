@@ -473,6 +473,7 @@ def _firestore_forecast_hourly_between(
             {
                 "ts": row.get("ts", doc.id),
                 "load_kwh": row.get("load_kwh"),
+                "soc_percent": row.get("soc_percent"),
             }
         )
     return merge_forecast_hourly_actuals(rows, monitoring_rows)

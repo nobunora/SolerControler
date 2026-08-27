@@ -84,6 +84,8 @@ dischargeStartTimeH / dischargeStartTimeM / dischargeEndTimeH / dischargeEndTime
 
 23:00は夜間に備えた非SOC設定のみを許可するか、夜間SOC制御フィールドを含む既存プロファイルを送らない。07:00は、03:00実行の排他リースが終了し、かつ終了read-backが記録済みの場合にのみgreenへ遷移できる。例外的な安全停止も `NightSocController` を経由して行う。
 
+蓄電池をユーザーが手動操作する運用では `NIGHT_SOC_MANUAL_OPERATION=true` を指定する。この場合、23:00と03:00は蓄電池設定を書き込まず、03:00処理は `MANUAL_OPERATION` の引継ぎ状態だけを記録する。07:00のgreen設定は引き続き自動書込みの対象だが、KP-NETの設定後read-backが一致しない場合は成功扱いにせず失敗する。
+
 ### 3.3 計画を実行開始前に凍結する
 
 03:00のCSV取込・計画再生成は、強制充電の最初の書込み前に完了しなければならない。実行に使う計画は次を持つ不変スナップショットとする。
@@ -294,6 +296,7 @@ plan_id
 - 03:00処理でFirestoreの夜間SOC実行記録と排他リースを取得し、計画凍結・充電・停止状態を保存。
 - KP-NET設定後のcontrolled fields read-back不一致をエラー化。
 - 23:00はenforce時に夜間SOCフィールドを保持し、07:00は03:00完了記録がない場合にgreen書込みを拒否。
+- `NIGHT_SOC_MANUAL_OPERATION=true` では23:00/03:00の蓄電池書込みを停止し、03:00の`MANUAL_OPERATION`引継ぎ後に07:00のgreen書込みとread-back確認を行う。
 - SOC乖離レポートに`PASS/FAIL/INCONCLUSIVE`、07:00誤差、read-back、停止確認、競合数、理由を追加。
 - 本番環境変数は`NIGHT_SOC_CONTROL_MODE=enforce`、`NIGHT_SOC_READBACK_REQUIRED=true`、リース18,000秒、SOC鮮度360秒で反映。
 

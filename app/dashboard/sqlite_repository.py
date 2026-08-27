@@ -105,20 +105,37 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
         forecast_hourly: list[dict[str, Any]] = []
         if _sqlite_table_exists(conn, "forecast_hourly"):
             forecast_hourly = _rows_to_dicts(conn.execute("""
-                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                       fh.forecast_charge_kwh, ah.actual_load_kwh, ah.latest_sample_at,
-                       fh.source, fh.updated_at
-                FROM forecast_hourly fh
-                LEFT JOIN (
+                WITH hourly_actuals AS (
                     SELECT substr(ts,1,10) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour,
                            COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
                            MAX(ts) AS latest_sample_at
                     FROM monitoring_samples
                     WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
                     GROUP BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
-                ) ah ON ah.date = fh.date AND ah.hour = fh.hour
+                ), hourly_soc AS (
+                    SELECT date, hour, soc_percent AS actual_soc_percent
+                    FROM (
+                        SELECT substr(ts,1,10) AS date,
+                               CAST(strftime('%H', ts) AS INTEGER) AS hour,
+                               soc_percent,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
+                                   ORDER BY ts DESC
+                               ) AS row_number
+                        FROM monitoring_samples
+                        WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
+                          AND soc_percent IS NOT NULL
+                    )
+                    WHERE row_number = 1
+                )
+                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                       fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
+                       ah.latest_sample_at, fh.source, fh.updated_at
+                FROM forecast_hourly fh
+                LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
+                LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
                 WHERE fh.date >= ? AND fh.date <= ? ORDER BY fh.date, fh.hour
-                """, (start_date, end_date_iso, start_date, end_date_iso)).fetchall())
+                """, (start_date, end_date_iso, start_date, end_date_iso, start_date, end_date_iso)).fetchall())
         history_start = (start_obj - timedelta(days=14)).isoformat()
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []

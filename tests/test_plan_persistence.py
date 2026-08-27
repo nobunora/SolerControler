@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.runtime.plan_persistence import acquire_night_soc_lease
+from app.runtime.plan_persistence import acquire_night_soc_lease, can_apply_day_transition
 
 
 class _Snapshot:
@@ -20,6 +20,30 @@ class _Document:
 
     def set(self, payload: dict, *, merge: bool) -> None:
         self.payload = payload
+
+
+class _ReadDocument:
+    def __init__(self, snapshot: _Snapshot) -> None:
+        self.snapshot = snapshot
+
+    def get(self) -> _Snapshot:
+        return self.snapshot
+
+
+class _ReadCollection:
+    def __init__(self, document: _ReadDocument) -> None:
+        self.document_ref = document
+
+    def document(self, _: str) -> _ReadDocument:
+        return self.document_ref
+
+
+class _ReadClient:
+    def __init__(self, snapshot: _Snapshot) -> None:
+        self.document_ref = _ReadDocument(snapshot)
+
+    def collection(self, _: str) -> _ReadCollection:
+        return _ReadCollection(self.document_ref)
 
 
 class _Collection:
@@ -126,3 +150,60 @@ def test_acquire_night_soc_lease_rejects_active_owner_from_generator() -> None:
     assert acquired is False
     assert client.transaction_ref.committed is True
     assert client.document_ref.payload is None
+
+
+def test_day_transition_manual_owner_requires_explicit_allowance() -> None:
+    client = _ReadClient(
+        _Snapshot(
+            exists=True,
+            data={
+                "state": "MANUAL_OPERATION",
+                "owner": "manual",
+                "device_write_skipped": True,
+                "plan_date": "2026-08-27",
+                "plan_id": "2026-08-27-1-dummy",
+                "updated_at_utc": "2026-08-27T00:00:00Z",
+            },
+        )
+    )
+
+    assert can_apply_day_transition(
+        plan_date="2026-08-27",
+        open_firestore=lambda: client,
+    ) is False
+    assert can_apply_day_transition(
+        plan_date="2026-08-27",
+        open_firestore=lambda: client,
+        allow_manual_owner=True,
+        max_handoff_age_seconds=100000000,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"owner": "03-monitor"},
+        {"device_write_skipped": False},
+        {"plan_id": "2026-08-26-1-dummy"},
+        {"updated_at_utc": "not-a-timestamp"},
+    ],
+)
+def test_day_transition_rejects_invalid_manual_handoff(changes: dict) -> None:
+    record = {
+        "state": "MANUAL_OPERATION",
+        "owner": "manual",
+        "device_write_skipped": True,
+        "plan_date": "2026-08-27",
+        "plan_id": "2026-08-27-1-dummy",
+        "updated_at_utc": "2026-08-27T00:00:00Z",
+    }
+    record.update(changes)
+    client = _ReadClient(_Snapshot(exists=True, data=record))
+
+    assert can_apply_day_transition(
+        plan_date="2026-08-27",
+        open_firestore=lambda: client,
+        allow_manual_owner=True,
+        expected_plan_id="2026-08-27-1-dummy",
+        max_handoff_age_seconds=100000000,
+    ) is False

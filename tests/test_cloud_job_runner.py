@@ -59,6 +59,130 @@ def test_day_transition_dry_run_does_not_require_night_lease(monkeypatch: pytest
     _assert_day_transition_allowed()
 
 
+def test_day_transition_accepts_explicit_manual_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "true")
+    monkeypatch.setattr(
+        "app.runtime.cloud_job.plan_persistence.can_apply_day_transition",
+        lambda **kwargs: kwargs["allow_manual_owner"] is True,
+    )
+
+    _assert_day_transition_allowed()
+
+
+def test_manual_soc_operation_skips_03_device_writes_and_records_terminal_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    persisted: list[tuple[dict[str, object], str, dict[str, object]]] = []
+    optional_runs: list[bool] = []
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "true")
+    monkeypatch.setenv("ADJUST03_REGENERATE_PLAN", "false")
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: None)
+    monkeypatch.setattr(
+        "app.runtime.slot_orchestration._run_optional_04_exports_and_backups",
+        lambda: optional_runs.append(True),
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._read_plan_meta",
+        lambda _: {"date": "2026-08-27", "plan_id": "plan-1", "target_soc_7_percent": 80.0},
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._monitor_partial_forced_and_stop",
+        lambda *_: pytest.fail("manual operation must not write through the 03 monitor"),
+    )
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._persist_night_soc_execution",
+        lambda plan, state, **values: persisted.append((plan, state, values)) or True,
+    )
+
+    _run_adjust_03()
+
+    assert persisted == [
+        (
+            {"date": "2026-08-27", "plan_id": "plan-1", "target_soc_7_percent": 80.0},
+            "MANUAL_OPERATION",
+            {"owner": "manual", "device_write_skipped": True},
+        )
+    ]
+    assert optional_runs == [True]
+
+
+def test_manual_soc_operation_fails_when_handoff_persistence_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    optional_runs: list[bool] = []
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "true")
+    monkeypatch.setenv("ADJUST03_REGENERATE_PLAN", "false")
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: None)
+    monkeypatch.setattr("app.runtime.cloud_job._read_plan_meta", lambda _: {"date": "2026-08-27", "plan_id": "plan-1"})
+    monkeypatch.setattr(
+        "app.runtime.slot_orchestration._run_optional_04_exports_and_backups",
+        lambda: optional_runs.append(True),
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: False)
+
+    with pytest.raises(RuntimeError, match="manual operation hand-off could not be persisted"):
+        _run_adjust_03()
+
+    assert optional_runs == []
+
+
+def test_manual_soc_operation_skips_23_device_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "true")
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._run_settings_profile_with_retry",
+        lambda **_: pytest.fail("manual operation must not write through the 23 slot"),
+    )
+
+    _run_night_23()
+
+
+def test_03_readback_failure_leaves_07_transition_blocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "false")
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("ADJUST03_REGENERATE_PLAN", "false")
+    monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(plan_path))
+    monkeypatch.setattr("app.runtime.cloud_job._run_csv_with_retry", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_previous_day_soc_feedback", lambda **_: None)
+    monkeypatch.setattr("app.runtime.cloud_job._ensure_night_plan_available", lambda _: True)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_, **__: None)
+    def fail_monitor(*_: object) -> None:
+        raise RuntimeError(
+            "KP-NET settings read-back mismatch for profile=night-green: batteryOperatingMode"
+        )
+
+    monkeypatch.setattr("app.runtime.cloud_job._monitor_partial_forced_and_stop", fail_monitor)
+    with pytest.raises(RuntimeError, match="batteryOperatingMode"):
+        _run_adjust_03()
+
+    monkeypatch.setattr(
+        "app.runtime.cloud_job.plan_persistence.can_apply_day_transition",
+        lambda **_: False,
+    )
+    with pytest.raises(RuntimeError, match="07:00 day transition blocked"):
+        _assert_day_transition_allowed()
+
+
 def test_enforced_monitor_fails_closed_when_night_lease_is_unavailable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
