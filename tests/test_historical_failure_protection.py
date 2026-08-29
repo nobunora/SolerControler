@@ -4,83 +4,36 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK_MARKER = "HISTORICAL_FAILURE_LOCK"
 
 
-def test_historical_failure_protection_document_and_agent_rule_exist() -> None:
-    document = (
-        ROOT
-        / "docs"
-        / "current"
-        / "agent"
-        / "PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md"
-    )
-    instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-
-    assert document.exists()
-    assert "Historical Failure Protected Regions (Mandatory)" in instructions
-    assert (
-        "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md" in instructions
-    )
+def test_user_authorized_20260829_time_ownership_replaces_cross_slot_gate() -> None:
+    doc = (ROOT / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
+    assert "2026-08-29 利用者承認" in doc
+    assert "06:45 realtime監視停止・06:50最終standby開始停止・06:55 I/O停止" in doc
 
 
-def test_protected_runtime_boundaries_keep_explicit_lock_comments() -> None:
-    protected_markers = {
-        "app/runtime/night_soc_controller.py": "def build_device_soc_guard(",
-        "app/kpnet/profile_builder.py": "def _build_dynamic_forced_profile(",
-        "app/runtime/cloud_job.py": "def _monitor_partial_forced_and_stop(",
-        "app/runtime/slot_orchestration.py": "def _manual_soc_operation_enabled() -> bool:",
-        "app/runtime/plan_persistence.py": "def acquire_night_soc_lease(",
-        "app/forecasting/pv_physical.py": "HOURS = range(7, 23)",
-        "app/energy_plan/monthly_projection.py": "def previous_billing_period_for_target(",
-        "app/kpnet/settings_roundtrip.py": "def run_settings_roundtrip(",
-        "scripts/deploy_production_from_env.ps1": "function Get-DeploymentStageRecord {",
-        "scripts/deploy_gcp_jobs.ps1": '--max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=settings-roundtrip',
-    }
-
-    for relative_path, symbol in protected_markers.items():
-        source = (ROOT / relative_path).read_text(encoding="utf-8")
-        symbol_index = source.index(symbol)
-        preceding = source[max(0, symbol_index - 2_000) : symbol_index]
-        assert LOCK_MARKER in preceding, relative_path
+def test_legacy_cross_slot_gate_has_no_scheduled_entrypoint() -> None:
+    source = (ROOT / "app/runtime/slot_orchestration.py").read_text(encoding="utf-8")
+    assert "_assert_day_transition_allowed" not in source
+    assert "_manual_soc_operation_enabled" not in source
+    assert "_run_optional_04_exports_and_backups" not in source
 
 
-def test_protected_document_retains_historical_failure_commits() -> None:
-    document = (
-        ROOT
-        / "docs"
-        / "current"
-        / "agent"
-        / "PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md"
-    ).read_text(encoding="utf-8")
-
-    for commit in (
-        "d1d7792",
-        "0a804f4",
-        "5e46ff8",
-        "4af0d59",
-        "541cd60",
-        "ee84e43",
-        "1dd21ae",
-    ):
-        assert commit in document
+def test_protection_document_retires_obsolete_cross_slot_contract_symbols() -> None:
+    doc = (ROOT / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
+    for obsolete in ("manual opt-in", "07 green gate", "_apply_03_confirmed_standby", "30%実行床"):
+        assert obsolete not in doc
+    assert "device read-back" in doc
+    assert "時刻所有権" in doc
 
 
-def test_night_soc_incident_production_contract_keeps_automatic_default_and_floor() -> None:
-    """Lock the deployed values whose reversal reproduced the 2026-08-28 SOC=0 path."""
-    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+def test_retired_architecture_document_points_only_to_current_independent_slot_contract() -> None:
+    doc = (ROOT / "docs/current/architecture/NIGHT_SOC_SINGLE_OWNER_IMPLEMENTATION_SPEC_JA.md").read_text(encoding="utf-8")
+    protection = (ROOT / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
 
-    assert '"NIGHT_SOC_MANUAL_OPERATION=false"' in deploy
-    assert "ADJUST03_MIN_TARGET_SOC_PERCENT=30" in deploy
-    assert "ADJUST03_MIN_TARGET_SOC_PERCENT=0" not in deploy
-    assert "HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence)" in deploy
-
-
-def test_incident_validation_locks_scheduled_replay_before_live_roundtrip() -> None:
-    script = (ROOT / "scripts" / "kpnet_incident_validation.py").read_text(encoding="utf-8")
-
-    scheduled_index = script.index("scheduled_auto_path = run_scheduled_auto_path_validation()")
-    live_index = script.index("live = run_settings_roundtrip(")
-    assert scheduled_index < live_index
-    assert 'result["failure_stage"] = "scheduled_auto_path"' in script
-    assert "HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence)" in script
+    assert "退役した歴史的設計" in doc
+    assert "2026-08-29の利用者承認" in doc
+    assert "app/runtime/night_soc_time_contract.py" in doc
+    assert "app/runtime/night_soc_time_contract.py" in protection
+    for retired_directive in ("NIGHT_SOC_MANUAL_OPERATION", "ADJUST03_MIN_TARGET_SOC_PERCENT", "LEASE_ACQUIRED"):
+        assert retired_directive not in doc

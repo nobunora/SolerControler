@@ -12,6 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.domain.constants import validate_soc_percent
+from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS
 
 
 @dataclass(frozen=True)
@@ -51,11 +52,15 @@ def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetim
     return latest_soc, latest_dt
 
 
-def latest_realtime_soc_percent() -> float | None:
+def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
     from app.kpnet.client import KpNetClient
     from app.kpnet.workflow import KpNetConfig
 
-    client = KpNetClient(KpNetConfig.from_env())
+    operation_start = time.monotonic()
+    operation_deadline = deadline_monotonic if deadline_monotonic is not None else operation_start + SOC_OPERATION_MAX_SECONDS
+    if operation_deadline <= operation_start:
+        raise TimeoutError("SOC deadline expired")
+    client = KpNetClient(KpNetConfig.from_env(), deadline_monotonic=operation_deadline)
     client.login()
     try:
         return client.read_realtime_soc_percent()
@@ -74,20 +79,34 @@ def read_soc_with_fallback(
     env_int: Callable[[str, int], int],
     env_float: Callable[[str, float], float],
     sleep: Callable[[float], None] = time.sleep,
+    deadline_monotonic: float | None = None,
+    allow_realtime: bool = True,
 ) -> SocReading:
     attempts = env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3)
     delay_seconds = env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 2.0)
     errors: list[str] = []
-    for attempt in range(1, attempts + 1):
-        try:
-            value = latest_realtime()
-            if value is not None:
-                return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
-            errors.append("realtime returned no SOC")
-        except Exception as exc:
-            errors.append(str(exc))
-        if attempt < attempts and delay_seconds > 0:
-            sleep(delay_seconds)
+    operation_start = time.monotonic()
+    operation_deadline = deadline_monotonic if deadline_monotonic is not None else operation_start + SOC_OPERATION_MAX_SECONDS
+    if not allow_realtime:
+        errors.append("03 SOC safe budget unavailable")
+    elif operation_deadline <= operation_start:
+        errors.append("SOC deadline expired")
+    else:
+        for attempt in range(1, attempts + 1):
+            if time.monotonic() >= operation_deadline:
+                errors.append("SOC deadline expired")
+                break
+            try:
+                value = latest_realtime()
+                if value is not None:
+                    return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
+                errors.append("realtime returned no SOC")
+            except Exception as exc:
+                errors.append(str(exc))
+            if attempt < attempts and delay_seconds > 0:
+                sleep_seconds = min(delay_seconds, max(0.0, operation_deadline - time.monotonic()))
+                if sleep_seconds > 0:
+                    sleep(sleep_seconds)
 
     csv_value, csv_observed_at = latest_csv(csv_paths)
     if csv_value is not None and csv_observed_at is not None:

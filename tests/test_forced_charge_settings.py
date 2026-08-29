@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import time
+import pytest
 
 from app.settings.forced_charge import ForcedChargeSettings
 
 
-def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
+def test_forced_charge_settings_preserve_runner_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = (
-        "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
         "ADJUST03_MIN_TARGET_SOC_PERCENT",
         "ADJUST03_FORCE_MONITOR_POLL_SECONDS",
         "ADJUST03_SOC_RETRY_ATTEMPTS",
@@ -25,8 +24,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
     settings = ForcedChargeSettings.from_env()
 
     assert settings == ForcedChargeSettings(
-        cutoff=time(7, 0),
-        min_target_soc_percent=30.0,
+        min_target_soc_percent=0.0,
         poll_interval_seconds=180,
         retry_attempts=3,
         retry_delay_seconds=5.0,
@@ -41,8 +39,7 @@ def test_forced_charge_settings_preserve_runner_defaults(monkeypatch) -> None:
     )
 
 
-def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
-    monkeypatch.setenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "")
+def test_forced_charge_settings_preserve_runner_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "101")
     monkeypatch.setenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "1")
     monkeypatch.setenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "-1")
@@ -56,7 +53,6 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
 
     settings = ForcedChargeSettings.from_env()
 
-    assert settings.cutoff == time(7, 0)
     assert settings.min_target_soc_percent == 100.0
     assert settings.poll_interval_seconds == 60
     assert settings.stop_soc_margin_percent == 0.0
@@ -69,9 +65,9 @@ def test_forced_charge_settings_preserve_runner_bounds(monkeypatch) -> None:
     assert settings.no_charge_kwh_epsilon == 0.0
 
 
-def test_forced_charge_settings_reject_zero_execution_floor(monkeypatch) -> None:
+def test_forced_charge_settings_allows_zero_configured_target(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ADJUST03_MIN_TARGET_SOC_PERCENT", "0")
 
     settings = ForcedChargeSettings.from_env()
 
-    assert settings.min_target_soc_percent == 30.0
+    assert settings.min_target_soc_percent == 0.0

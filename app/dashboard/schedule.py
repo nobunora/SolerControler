@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.parsing.numbers import to_float
+from app.runtime.night_soc_time_contract import FORCED_MONITOR_CUTOFF
 
 
 SETTINGS_COMPLETED_STATUSES = {"applied", "skipped-no-change", "skipped-no-charge"}
@@ -79,11 +80,7 @@ def _default_latest_schedule(plan_date: str | None = None) -> dict[str, Any]:
     day_discharge_end = os.getenv("KP_DAY_DISCHARGE_WINDOW_END", "23:00").strip() or "23:00"
     night_window_start = os.getenv("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip() or "23:00"
     night_window_end = os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00"
-    charge_end_time = (
-        os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "").strip()
-        or os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "").strip()
-        or _find_variable_condition_value(conditions, target_id="night_charge_end_time", default="07:00")
-    )
+    charge_end_time = FORCED_MONITOR_CUTOFF.strftime("%H:%M")
     return {
         "plan_date": plan_date, "charge_start_time": None, "charge_end_time": charge_end_time,
         "night_window_start": night_window_start, "night_window_end": night_window_end,

@@ -168,14 +168,22 @@ def test_production_export_cost_configuration_matches_inactive_contract() -> Non
     assert '"SOC_SELL_REVENUE_YEN_PER_KWH=0"' in script
 
 
-def test_production_adjust03_starts_at_three_and_holds_standby_until_seven() -> None:
+def test_production_adjust03_has_independent_time_ownership() -> None:
+    from app.runtime.night_soc_time_contract import (
+        CONTROL_HARD_CUTOFF,
+        FINAL_STANDBY_START_CUTOFF,
+        FORCED_MONITOR_CUTOFF,
+    )
+
     script = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
 
     assert '-SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *"' in script
-    assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" in script
+    assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM" not in script
     assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
-    assert '"NIGHT_SOC_MANUAL_OPERATION=false"' in script
-    assert '--max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03' in script
+    assert "--task-timeout 14100 --max-retries 0" in script
+    assert (FORCED_MONITOR_CUTOFF.hour, FORCED_MONITOR_CUTOFF.minute) == (6, 45)
+    assert (FINAL_STANDBY_START_CUTOFF.hour, FINAL_STANDBY_START_CUTOFF.minute) == (6, 50)
+    assert (CONTROL_HARD_CUTOFF.hour, CONTROL_HARD_CUTOFF.minute) == (6, 55)
 
 
 def test_job_deploy_uses_isolated_gcloud_python_and_absolute_build_source() -> None:
@@ -233,7 +241,7 @@ def test_production_uses_previous_billing_period_without_heuristic_tier_penaltie
     assert '"SOC_MONTHLY_TARIFF_PROJECTION_ENABLED=true"' in script
     assert '"SOC_MONTHLY_TIER_LANDING_ENABLED=false"' in script
     assert '"SOC_TIER3_EXTRA_PENALTY_YEN_PER_KWH=0"' in script
-    assert 'ADJUST03_MIN_TARGET_SOC_PERCENT=30' in script
+    assert 'ADJUST03_MIN_TARGET_SOC_PERCENT=0' in script
     assert '"NIGHT_RESERVE_SOC_PERCENT=0"' in script
 
 

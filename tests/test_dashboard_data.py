@@ -19,8 +19,9 @@ from app.dashboard.data import (
     clear_dashboard_cache,
     load_dashboard_slice,
 )
-from app.dashboard.schedule import _build_latest_schedule_from_events, _select_schedule_event
+from app.dashboard.schedule import _build_latest_schedule_from_events, _default_latest_schedule, _select_schedule_event
 from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
+from app.runtime.night_soc_time_contract import FORCED_MONITOR_CUTOFF
 from app.dashboard.sqlite_repository import load_sqlite_query_snapshot
 from app.dashboard.warnings import build_dashboard_warnings as _build_dashboard_warnings
 from app.dashboard.service import merge_forecast_hourly_actuals
@@ -31,6 +32,16 @@ from app.operations_db import ensure_schema, open_db
 def _use_sqlite_backend_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep SQLite unit tests isolated from the caller's production environment."""
     monkeypatch.setenv("DATA_BACKEND", "sqlite")
+
+
+def test_default_schedule_uses_current_forced_monitor_cutoff_not_retired_environment_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "02:00")
+
+    schedule = _default_latest_schedule()
+
+    assert schedule["charge_end_time"] == FORCED_MONITOR_CUTOFF.strftime("%H:%M")
 
 
 def test_dashboard_slice_includes_energy_daily(tmp_path: Path) -> None:

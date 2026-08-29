@@ -4,7 +4,7 @@ import time
 from email.message import Message
 from email.utils import collapse_rfc2231_value
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import requests
@@ -19,8 +19,9 @@ from app.kpnet.client_support import (
 )
 from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 class KpNetClient:
-    def __init__(self, cfg: KpNetConfig) -> None:
+    def __init__(self, cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
         self.cfg = cfg
+        self.deadline_monotonic = deadline_monotonic
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -47,6 +48,16 @@ class KpNetClient:
             "Referer": self._url(referer_path),
         }
 
+    def _request_timeout(self) -> float:
+        """Return a bounded request timeout without starting after deadline."""
+        deadline = cast(float | None, getattr(self, "deadline_monotonic", None))
+        if deadline is None:
+            return float(self.cfg.timeout_sec)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("KP-NET operation deadline expired before request")
+        return min(float(self.cfg.timeout_sec), remaining)
+
     @staticmethod
     def _json_object(response: requests.Response, *, operation: str) -> dict[str, Any]:
         try:
@@ -62,7 +73,7 @@ class KpNetClient:
         resp = self.session.post(
             self._url(path),
             data=data,
-            timeout=self.cfg.timeout_sec,
+            timeout=self._request_timeout(),
             **kwargs,
         )
         resp.raise_for_status()
@@ -71,7 +82,7 @@ class KpNetClient:
     def _get(self, path: str, **kwargs: Any) -> requests.Response:
         resp = self.session.get(
             self._url(path),
-            timeout=self.cfg.timeout_sec,
+            timeout=self._request_timeout(),
             **kwargs,
         )
         resp.raise_for_status()
@@ -179,7 +190,13 @@ class KpNetClient:
             data = self._json_object(resp, operation=path)
             if data.get("status") == 1:
                 return data
-            time.sleep(0.6)
+            if self.deadline_monotonic is not None:
+                remaining = self.deadline_monotonic - time.monotonic()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.6, remaining))
+            else:
+                time.sleep(0.6)
         raise TimeoutError(f"Polling timeout: {path}")
 
     def read_current_settings(self) -> dict[str, Any]:

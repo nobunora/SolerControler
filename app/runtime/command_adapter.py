@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import time
-from typing import Callable, Iterable, TypeVar
+from typing import Any, Callable, Iterable, TypeVar, cast
 
 _SECRET_KEYWORDS = ("password", "passwd", "secret", "token", "key")
 _T = TypeVar("_T")
@@ -20,7 +21,13 @@ def _mask_env_updates(env_updates: dict[str, str] | None) -> dict[str, str]:
     return masked
 
 
-def _run(command: Iterable[str], env_updates: dict[str, str] | None = None) -> None:
+def _run(
+    command: Iterable[str],
+    env_updates: dict[str, str] | None = None,
+    *,
+    timeout_seconds: float | None = None,
+    deadline_monotonic: float | None = None,
+) -> None:
     env = os.environ.copy()
     if env_updates:
         env.update(env_updates)
@@ -29,9 +36,28 @@ def _run(command: Iterable[str], env_updates: dict[str, str] | None = None) -> N
         f"[cloud_job_runner] run: {' '.join(cmd)} env_updates={_mask_env_updates(env_updates)}",
         flush=True,
     )
-    completed = subprocess.run(cmd, env=env, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Command failed (rc={completed.returncode}): {' '.join(cmd)}")
+    if deadline_monotonic is not None:
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("command deadline expired before start")
+        timeout_seconds = min(timeout_seconds or remaining, remaining)
+    popen_kwargs: dict[str, Any] = {"env": env}
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
+    process = subprocess.Popen(cmd, **cast(Any, popen_kwargs))
+    try:
+        return_code = process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False)
+        else:
+            getattr(os, "killpg")(process.pid, getattr(signal, "SIGKILL"))
+        process.wait()
+        raise TimeoutError(f"command deadline expired: {' '.join(cmd)}") from error
+    if return_code != 0:
+        raise RuntimeError(f"Command failed (rc={return_code}): {' '.join(cmd)}")
 
 
 def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = None, *, label: str) -> None:
@@ -66,11 +92,14 @@ def _run_operation_with_retry(
     delay_env: str = "KP_COMMAND_RETRY_DELAY_SECONDS",
     default_attempts: int = 3,
     default_delay_seconds: float = 20.0,
+    deadline_monotonic: float | None = None,
 ) -> _T:
     attempts = _env_int(attempts_env, default_attempts, min_value=1)
     delay_seconds = _env_float(delay_env, default_delay_seconds, min_value=0.0)
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            raise TimeoutError(f"{label} deadline expired before attempt {attempt}")
         try:
             return operation()
         except Exception as exc:
@@ -82,8 +111,11 @@ def _run_operation_with_retry(
                 f"sleep={delay_seconds}s",
                 flush=True,
             )
-            if delay_seconds > 0:
-                time.sleep(delay_seconds)
+            sleep_seconds = delay_seconds
+            if deadline_monotonic is not None:
+                sleep_seconds = min(sleep_seconds, max(0.0, deadline_monotonic - time.monotonic()))
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
     raise RuntimeError(f"{label} failed after {attempts} attempts: {last_exc}") from last_exc
 
 

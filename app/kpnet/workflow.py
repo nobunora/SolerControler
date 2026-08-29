@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,7 @@ from app.kpnet.profile_builder import (
     _pick_night_mode_preference,
 )
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
+from app.runtime.night_soc_time_contract import MODE_OPERATION_RELEASE_RESERVE_SECONDS, MODE_OPERATION_START_BUDGET_SECONDS
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
@@ -362,9 +364,14 @@ def _run_settings_phase(
         cfg.dynamic_mode_switch_by_time,
     )
 
-    if os.getenv("CLOUD_JOB_SLOT", "").strip() == "23" and os.getenv(
-        "NIGHT_SOC_CONTROL_MODE", "observe"
-    ).strip().lower() == "enforce":
+    # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
+    # not restore NIGHT_SOC_CONTROL_MODE/manual/profile-plan conditions here.
+    # At 23:00 the sequence is one unconditional standby candidate=5 write
+    # while preserving the twelve KP-NET-required SOC/window form fields.  A
+    # condition can skip that write and leave the physical battery green or
+    # forced overnight.  Guarded by test_slot23_is_unconditional_standby_without_cross_slot_dependencies
+    # and test_night_soc_protected_contract.py::test_slot23_form_contract.
+    if os.getenv("CLOUD_JOB_SLOT", "").strip() == "23":
         profiles = tuple(_preserve_night_soc_fields(profile, current) for profile in profiles)
 
     for profile in profiles:
@@ -422,6 +429,44 @@ def run_kpnet_workflow() -> int:
         LOGGER.info("Summary saved: %s", summary_path)
 
     return return_code
+
+
+# HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
+# route 23/07 through _run_settings_phase.  That path reads plans and operation
+# conditions, allowing unrelated forecast/Firestore failures to skip the one
+# required mode write.  This route logs in, reads the real form/candidate map,
+# writes one fixed candidate and verifies it. Guarded by test_slot23_and_07_are_one_unconditional_profile_write.
+def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | None = None) -> int:
+    operation_start = time.monotonic()
+    requested_end = operation_start + MODE_OPERATION_START_BUDGET_SECONDS
+    operation_end = min(deadline_monotonic, requested_end) if deadline_monotonic is not None else requested_end
+    if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
+        raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
+    io_deadline = operation_end - MODE_OPERATION_RELEASE_RESERVE_SECONDS
+    load_dotenv_if_present(); _setup_logging(); cfg = KpNetConfig.from_env(); client = KpNetClient(cfg, deadline_monotonic=io_deadline)
+    run_dir = cfg.artifacts_dir / datetime.now().strftime("%Y%m%d-%H%M%S"); run_dir.mkdir(parents=True, exist_ok=True)
+    summary: dict[str, Any] = {"setting_results": [], "night_soc": {"writer": f"mode-only:{profile}"}}
+    try:
+        if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
+        client.login(); client.open_settings_page(); current = client.read_current_settings(); maps = client.collect_candidate_maps()
+        if profile == "standby":
+            selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
+        elif profile == "green":
+            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
+        elif profile == "forced":
+            selected = replace(FORCED_CHARGE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced"))
+        else: raise ValueError(f"unknown mode-only profile: {profile}")
+        _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
+        return 0
+    except Exception:
+        LOGGER.exception("KP-NET mode-only workflow failed"); return 1
+    finally:
+        try:
+            # Release belongs to the reserved tail, never the I/O budget.
+            if time.monotonic() < operation_end:
+                client.deadline_monotonic = operation_end
+                client.logout()
+        except Exception: LOGGER.exception("Logout failed")
 
 
 def main() -> int:

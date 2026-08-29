@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import time
 import os
 
-from app.domain.time_windows import parse_hhmm
 from app.configuration.environment import env_float, env_int
 
 
 @dataclass(frozen=True)
 class ForcedChargeSettings:
-    cutoff: time
     min_target_soc_percent: float
     poll_interval_seconds: int
     retry_attempts: int
@@ -27,21 +24,15 @@ class ForcedChargeSettings:
     @classmethod
     def from_env(cls) -> "ForcedChargeSettings":
         return cls(
-            # The 07:00 cutoff matches the start of the daytime discharge window.
-            cutoff=parse_hhmm(
-                os.getenv("ADJUST03_FORCE_MONITOR_CUTOFF_HHMM", "07:00").strip() or "07:00",
-                name="ADJUST03_FORCE_MONITOR_CUTOFF_HHMM",
-            ),
-            # HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence):
-            # this is a non-negotiable execution floor, not an optimization
-            # knob.  Allowing an env override of 0 made optimizer plan=0 remain
-            # an executable SOC=0 target when a plan/write path was absent.
-            # Keep 30 even if a stale deployment or test supplies 0; raw plan
-            # targets above it (including plan=100) remain unchanged by
-            # effective_target_soc.  Guard tests cover 0->30 and 100->100.
+            # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership):
+            # do not restore a 30% execution floor.  The independent 03:00
+            # controller must honour plan targets 0/30/50/80/100 continuously;
+            # forcing plan=0 to 30 charges when no charge was planned, while a
+            # floor can also hide the real target in read-back investigations.
+            # Guarded by test_cloud_job_runner.py::test_03_targets_are_continuous.
             min_target_soc_percent=min(
                 100.0,
-                max(30.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=30.0)),
+                max(0.0, env_float("ADJUST03_MIN_TARGET_SOC_PERCENT", default=0.0)),
             ),
             # Never poll faster than one minute; this protects the remote service and still tracks SOC closely.
             poll_interval_seconds=max(60, env_int("ADJUST03_FORCE_MONITOR_POLL_SECONDS", default=180)),

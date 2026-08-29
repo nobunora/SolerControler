@@ -658,20 +658,7 @@ $commonEnv = @(
     "NIGHT8_DAY_RATE_TIER3_YEN=43.62",
     "NIGHT8_NIGHT_RATE_YEN=28.85",
     "NIGHT23_SETTINGS_PROFILE=standby",
-    "NIGHT_SOC_CONTROL_MODE=enforce",
-    # HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence): manual
-    # operation is an explicit operator override, never a production default.
-    # Changing this value to true skips both the 23:00 standby write and the
-    # whole 03:00 monitor/forced-charge route.  On 2026-08-28 that made a
-    # plan=100%, actual=0%, charge=0kWh morning and left 07:00 dependent on a
-    # manual hand-off instead of the 03-monitor terminal state.  Do not
-    # simplify this to a user-preference default: only an intentional runtime
-    # override may opt into manual control.  Guarded by the scheduled 23->03->07
-    # replay and production-default tests in test_historical_failure_protection.
-    "NIGHT_SOC_MANUAL_OPERATION=false",
     "NIGHT_SOC_READBACK_REQUIRED=true",
-    "NIGHT_SOC_LEASE_SECONDS=18000",
-    "NIGHT_SOC_MAX_SOC_AGE_SECONDS=360",
     "SHEETS_EXPORT_ENABLED=$([string](-not $DisableSheetsExport.IsPresent).ToString().ToLowerInvariant())",
     "SHEETS_EXPORT_SLOT_ONLY=03",
     "SHEETS_EXPORT_TIMEZONE=Asia/Tokyo",
@@ -705,23 +692,13 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 Write-Host "Deploy Cloud Run jobs..."
 if (-not $SkipJobDeploy) {
     if (-not $SkipJob23Deploy) { Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg }
-    # HISTORICAL_FAILURE_LOCK (1dd21ae, 2026-08-28 incident evidence): 30 is
-    # the execution safety floor, not an optimizer preference.  Changing or
-    # removing ADJUST03_MIN_TARGET_SOC_PERCENT=30 lets optimizer plan=0 pass
-    # through as an executable 0% target after a missing/invalid plan path;
-    # that is exactly the SOC=0 failure mode.  Keep plan=100 unchanged while
-    # raising only plan=0 to 30; tests exercise both cases.
-    # HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_JOB03_RETRY): keep the
-    # platform retry count exactly zero.  Internal KP-NET retries are bounded
-    # and retain the original error context; a Cloud Run retry regenerates a
-    # different plan_id, then lease acquisition rejects that second attempt and
-    # masks the primary forced/reapply read-back failure.  That leaves no
-    # durable terminal hand-off, so the correctly fail-closed 07:00 gate cannot
-    # switch to green.  Do not change this to 1 or more, and do not compensate
-    # by relaxing the lease/gate.  Guarded by test_night_soc_protected_contract
-    # and test_production_deploy_scripts semantic deployment assertions. The
-    # boundary guard is test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary.
-    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
+    # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
+    # not raise --max-retries above 0 or extend 14100 seconds.
+    # A retry can regenerate a plan into the 07:00 owner; an overlong task can
+    # overwrite green.  The process stops realtime monitoring at 06:45 and
+    # fences settings I/O at 06:55. Guarded
+    # by test_deploy_job03_time_ownership_semantics.
+    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 14100 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=0,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg } # HISTORICAL_FAILURE_LOCK 2026-08-29: do not alter 14100/0; Guarded by test_deploy_job03_time_ownership_semantics.
     if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
     # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): the live settings
     # probe is explicit, non-scheduled, and must never be retried automatically.
