@@ -190,6 +190,13 @@ def _pick_ceil_code(value_map: dict[str, str], target: float) -> str:
     return str(values[-1])
 
 
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_STANDBY_CANDIDATE): do not restore
+# the old standby=0 fallback or make matching optional. KP-NET maps 0=economy,
+# 1=green, 3=forced, and 5=standby; choosing 0/1 instead of candidate 5 breaks
+# the standby write/read-back sequence and physically leaves economy/green mode
+# when 03:00 and 07:00 depend on confirmed standby. Guarded by
+# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
+# and tests/test_kpnet_workflow.py::test_real_kpnet_mode_candidates_map_standby_to_five_not_economy_zero.
 def _pick_battery_operating_mode_code(
     value_map: dict[str, str],
     *,
@@ -221,8 +228,13 @@ def _pick_battery_operating_mode_code(
         return "1"
     if prefer_norm == "forced" and "3" in value_map:
         return "3"
-    if prefer_norm == "standby" and "0" in value_map:
-        return "0"
+    # HISTORICAL_FAILURE_LOCK (2026-08-29 KP-NET candidate read-back): do not
+    # restore the old standby=0 fallback.  The deployed device advertises
+    # 0=economy, 1=green, 3=forced, and 5=standby.  A fallback to 0 therefore
+    # writes economy while logs claim standby, and 23:00/03:00 cannot provide a
+    # trustworthy hand-off to 07:00.  Standby must be selected from its real
+    # candidate label; fail closed if the device stops advertising that label.
+    # Guarded by test_kpnet_workflow.py candidate-map regressions.
 
     raise RuntimeError(
         "BatteryOperatingMode の候補から必要なモードを特定できませんでした "

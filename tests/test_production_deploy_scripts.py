@@ -175,6 +175,7 @@ def test_production_adjust03_starts_at_three_and_holds_standby_until_seven() -> 
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00" in script
     assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
     assert '"NIGHT_SOC_MANUAL_OPERATION=false"' in script
+    assert '--max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03' in script
 
 
 def test_job_deploy_uses_isolated_gcloud_python_and_absolute_build_source() -> None:

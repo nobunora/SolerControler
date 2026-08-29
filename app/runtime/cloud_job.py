@@ -29,6 +29,7 @@ from app.runtime import plan_persistence
 from app.runtime import soc_reading
 from app.runtime import forced_charge_monitor
 from app.runtime import night_soc_controller
+from app.runtime.night_soc_operational_contract import failure_terminal_values
 from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator
 from app.runtime.soc_reading import SocReading
 from app.settings.forced_charge import ForcedChargeSettings
@@ -47,7 +48,6 @@ from app.runtime.command_adapter import (
     _run_optional as _run_optional,  # noqa: F401
 )
 from app.runtime.adjust03_plan import (
-    _attempt_03_fail_safe_standby,
     _ensure_night_plan_available,  # noqa: F401
     _run_db_pipeline_slot,  # noqa: F401
     _run_03_settings_profile_with_db,
@@ -551,6 +551,123 @@ def _run_csv_with_retry(*, label: str = "kpnet-csv") -> None:
     )
 
 
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_FAILSAFE_FINALIZER): do not raise
+# a persistence error here, ACK in finally, or replace primary forced/reapply
+# read-back failure. The required sequence is fail-safe standby apply/read-back,
+# then durable STANDBY_ACKED only on success; otherwise STANDBY_UNCONFIRMED
+# blocks 07:00. Violating it masked the 2026-08-29 mismatch and physically kept
+# the battery out of verified green transition. Guarded by
+# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
+# and tests/test_cloud_job_runner.py fail-safe replay tests.
+def _finalize_03_exception_with_fail_safe_standby(
+    plan_meta: dict[str, Any],
+    *,
+    label: str,
+    reason: str,
+    primary_error: Exception,
+    device: MonitorDevicePort,
+    status: MonitorStatusPort,
+) -> None:
+    """Persist an allowed hand-off only after fail-safe standby read-back succeeds.
+
+    The caller must re-raise ``primary_error``.  In particular, a failed standby
+    command must never replace the original forced/reapply error, and it must
+    never leave a success-shaped state for the 07:00 gate.
+    """
+    try:
+        device.apply_profile(profile="standby", dynamic_forced_profile=False, label=label)
+    except Exception as standby_error:
+        print(
+            "[cloud_job_runner] 03 fail-safe standby is unconfirmed; preserving primary error "
+            f"reason={reason} primary={primary_error!r} standby={standby_error!r}",
+            flush=True,
+        )
+        _persist_night_soc_execution(
+            plan_meta,
+            **failure_terminal_values(stop_reason=reason, standby_confirmed=False),
+            primary_error=repr(primary_error),
+            fail_safe_error=repr(standby_error),
+        )
+        status.persist_stop_reason(plan_meta, reason)
+        return
+    status.persist_stop_reason(plan_meta, reason)
+    persisted = _persist_night_soc_execution(
+        plan_meta,
+        **failure_terminal_values(stop_reason=reason, standby_confirmed=True),
+        primary_error=repr(primary_error),
+    )
+    if not persisted:
+        # HISTORICAL_FAILURE_LOCK (2026-08-29): a device-safe standby without a
+        # durable terminal record is deliberately NOT a 07:00 hand-off.  Do not
+        # raise from this finalizer: every caller is already handling a more
+        # informative forced/read-back exception, which must remain the error
+        # reported to Cloud Run.  The required-persistence helper is used only
+        # on normal terminal paths; this recovery path logs its persistence
+        # failure and preserves the original failure.  Covered by
+        # test_cloud_job_runner.py fail-safe persistence tests.
+        print(
+            "[cloud_job_runner] 03 fail-safe standby read-back succeeded but terminal persistence failed; "
+            "07:00 remains blocked",
+            flush=True,
+        )
+
+
+def _require_night_soc_terminal_persistence(
+    plan_meta: dict[str, Any], state: str, **values: Any
+) -> None:
+    """Persist a terminal hand-off or fail closed before 07:00 can proceed."""
+    # HISTORICAL_FAILURE_LOCK (2026-08-29): NEVER turn a False return into a
+    # warning or continue after it. Firestore is the only durable proof that
+    # KP-NET apply/read-back completed; without it, 07:00 cannot distinguish a
+    # confirmed standby from an unknown device state and must remain blocked.
+    # This helper must stay after device apply/read-back and before any allowed
+    # STANDBY_ACKED state is observable. Do not bypass it for no-charge,
+    # initial-sensor-unavailable, cutoff, target, or no-window paths. Tests:
+    # test_cloud_job_runner.py terminal persistence and 07-gate replays.
+    if not _persist_night_soc_execution(plan_meta, state, **values):
+        raise RuntimeError(
+            "03:00 terminal night SOC execution persistence failed; 07:00 hand-off is unsafe"
+        )
+
+
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_CONFIRMED_STANDBY): do not persist
+# STANDBY_ACKED before device apply/read-back or treat a False Firestore write
+# as success. The sequence is KP-NET confirmed standby, stop reason, required
+# terminal persistence; reordering it lets 07:00 turn green while the physical
+# battery mode is unknown. Guarded by
+# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
+# and tests/test_cloud_job_runner.py terminal persistence tests.
+def _apply_03_confirmed_standby(
+    plan_meta: dict[str, Any],
+    *,
+    label: str,
+    reason: str,
+    terminal_state: str,
+    device: MonitorDevicePort,
+    status: MonitorStatusPort,
+) -> None:
+    """Apply standby and mark it acknowledged only after the device port returns."""
+    try:
+        device.apply_profile(profile="standby", dynamic_forced_profile=False, label=label)
+    except Exception as error:
+        _finalize_03_exception_with_fail_safe_standby(
+            plan_meta,
+            label=f"{label}-retry-failed-standby",
+            reason=reason,
+            primary_error=error,
+            device=device,
+            status=status,
+        )
+        raise
+    status.persist_stop_reason(plan_meta, reason)
+    _require_night_soc_terminal_persistence(
+        plan_meta,
+        "STANDBY_ACKED",
+        terminal_state=terminal_state,
+        stop_reason=reason,
+    )
+
+
 # readable-code-audit: skip DUP-01 — Cloud Job clamps or defaults invalid schedule input so an automated job always has a safe execution time, unlike Dashboard display parsing.
 def _execute_monitor_terminal_transition(
     plan_meta: dict[str, Any],
@@ -578,20 +695,14 @@ def _execute_monitor_terminal_transition(
         persisted_reason = "monitor_timeout"
     else:
         raise RuntimeError(f"unsupported monitor terminal state: {terminal.value}")
-    try:
-        device.apply_profile(
-            profile="standby",
-            dynamic_forced_profile=False,
-            label=label,
-        )
-    finally:
-        status.persist_stop_reason(plan_meta, persisted_reason)
-        _persist_night_soc_execution(
-            plan_meta,
-            "STANDBY_ACKED",
-            terminal_state=terminal.value,
-            stop_reason=persisted_reason,
-        )
+    _apply_03_confirmed_standby(
+        plan_meta,
+        label=label,
+        reason=persisted_reason,
+        terminal_state=terminal.value,
+        device=device,
+        status=status,
+    )
     return True
 
 
@@ -609,19 +720,35 @@ def _keep_standby_when_initial_soc_is_unavailable(
             dynamic_forced_profile=False,
             label="03-initial-soc-unavailable-standby",
         )
-    finally:
-        status.persist_stop_reason(plan_meta, "initial_soc_unavailable", soc_reading=soc_reading)
-        _persist_night_soc_execution(
+    except Exception as error:
+        _finalize_03_exception_with_fail_safe_standby(
             plan_meta,
-            "SAFE_TERMINATED",
-            stop_reason="initial_soc_unavailable",
-            soc_source=soc_reading.source,
+            label="03-initial-soc-unavailable-retry-failed-standby",
+            reason="initial_soc_unavailable_standby_failed",
+            primary_error=error,
+            device=device,
+            status=status,
         )
+        raise
+    status.persist_stop_reason(plan_meta, "initial_soc_unavailable", soc_reading=soc_reading)
+    _require_night_soc_terminal_persistence(
+        plan_meta,
+        "STANDBY_ACKED",
+        terminal_state="failed_sensor",
+        stop_reason="initial_soc_unavailable",
+        soc_source=soc_reading.source,
+    )
 
 
-# HISTORICAL_FAILURE_LOCK (d1d7792): this function owns the complete forced-charge
-# lifecycle, including fail-safe standby, target stop, and durable execution state.
-# Do not split or reorder those transitions without replaying the morning-SOC failure.
+# HISTORICAL_FAILURE_LOCK (d1d7792, 2026-08-29 runtime evidence): this function
+# owns the complete forced-charge lifecycle, including fail-safe standby, target
+# stop, and durable execution state.  Do not split/reorder it, remove the
+# exception finalizer, or persist STANDBY_ACKED in a finally block.  The
+# reapply read-back mismatch on 2026-08-29 left no terminal hand-off; Cloud Run
+# then retried with a regenerated plan_id, lease rejection hid the primary
+# failure, and 07:00 correctly remained blocked even though SOC was 100%.
+# Only a successful standby write *and* read-back may hand off to 07:00.
+# Guarded by test_cloud_job_runner terminal matrix and protected-contract tests.
 # readable-code-audit: skip STRUCT-04 — Cloud Job must own the complete lifecycle.
 def _monitor_partial_forced_and_stop(
     plan_path: Path,
@@ -700,7 +827,7 @@ def _monitor_partial_forced_and_stop(
             soc_source=soc_reading.source,
             required_kwh=required_kwh,
         )
-        _persist_night_soc_execution(
+        _require_night_soc_terminal_persistence(
             plan_meta,
             "COMPLETED_NO_CHARGE",
             latest_soc_percent=latest_soc,
@@ -728,13 +855,14 @@ def _monitor_partial_forced_and_stop(
     cutoff_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if cutoff_seconds <= 0:
         print("[cloud_job_runner] 03-monitor cutoff already reached; keep standby until 07:00 job.", flush=True)
-        device.apply_profile(
-            profile="standby",
-            dynamic_forced_profile=False,
+        _apply_03_confirmed_standby(
+            plan_meta,
             label="03-cutoff-standby",
+            reason="cutoff_reached",
+            terminal_state="completed_cutoff",
+            device=device,
+            status=status,
         )
-        status.persist_stop_reason(plan_meta, "cutoff_reached")
-        _persist_night_soc_execution(plan_meta, "STANDBY_ACKED", stop_reason="cutoff_reached")
         return
 
     charge_start_hhmm = _hhmm_after_delay(timezone_name=timezone_name, delay_seconds=0)
@@ -773,26 +901,28 @@ def _monitor_partial_forced_and_stop(
 
     try:
         device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
-    except Exception:
-        _attempt_03_fail_safe_standby(
+    except Exception as error:
+        _finalize_03_exception_with_fail_safe_standby(
             plan_meta,
             label="03-forced-start-failed-standby",
             reason="forced_start_failed_fail_safe",
-            device_port=device,
-            status_port=status,
+            primary_error=error,
+            device=device,
+            status=status,
         )
-        _persist_night_soc_execution(plan_meta, "SAFE_TERMINATED", stop_reason="forced_start_failed_fail_safe")
         raise
 
     monitor_seconds = _seconds_until_cutoff(timezone_name=timezone_name, cutoff_hhmm=cutoff_hhmm)
     if monitor_seconds <= 0:
         print("[cloud_job_runner] 03-monitor no monitor window after forced-start; switch to standby.", flush=True)
-        device.apply_profile(
-            profile="standby",
-            dynamic_forced_profile=False,
+        _apply_03_confirmed_standby(
+            plan_meta,
             label="03-no-window-standby",
+            reason="no_monitor_window",
+            terminal_state="completed_no_window",
+            device=device,
+            status=status,
         )
-        _persist_night_soc_execution(plan_meta, "STANDBY_ACKED", stop_reason="no_monitor_window")
         return
 
     print(
@@ -836,13 +966,14 @@ def _monitor_partial_forced_and_stop(
             return
         try:
             soc_reading = device.read_soc(csv_paths)
-        except Exception:
-            _attempt_03_fail_safe_standby(
+        except Exception as error:
+            _finalize_03_exception_with_fail_safe_standby(
                 plan_meta,
                 label="03-monitor-exception-standby",
                 reason="monitor_exception_fail_safe",
-                device_port=device,
-                status_port=status,
+                primary_error=error,
+                device=device,
+                status=status,
             )
             raise
         latest_soc = _quality_gated_soc_value(
@@ -882,13 +1013,14 @@ def _monitor_partial_forced_and_stop(
                     dynamic_forced_profile=True,
                     label="03-forced-reapply",
                 )
-            except Exception:
-                _attempt_03_fail_safe_standby(
+            except Exception as error:
+                _finalize_03_exception_with_fail_safe_standby(
                     plan_meta,
                     label="03-forced-reapply-failed-standby",
                     reason="forced_reapply_failed_fail_safe",
-                    device_port=device,
-                    status_port=status,
+                    primary_error=error,
+                    device=device,
+                    status=status,
                 )
                 raise
 

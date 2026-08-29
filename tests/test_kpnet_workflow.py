@@ -26,9 +26,51 @@ from app.kpnet.workflow import (
     _parse_hhmm,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
+    _preserve_night_soc_fields,
     _run_settings_phase,
     _validate_base_url,
 )
+
+
+def test_real_kpnet_mode_candidates_map_standby_to_five_not_economy_zero() -> None:
+    """The observed device mapping is 0=economy, 1=green, 3=forced, 5=standby."""
+    candidates = {"0": "経済", "1": "グリーン", "3": "強制", "5": "待機"}
+
+    assert _pick_battery_operating_mode_code(candidates, prefer="economy") == "0"
+    assert _pick_battery_operating_mode_code(candidates, prefer="green") == "1"
+    assert _pick_battery_operating_mode_code(candidates, prefer="forced") == "3"
+    assert _pick_battery_operating_mode_code(candidates, prefer="standby") == "5"
+
+
+def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candidate() -> None:
+    current = {
+        "batteryOperatingMode": "1",
+        "socSafetyMode": "11",
+        "socEconomyMode": "12",
+        "socContactInput": "13",
+        "socChargeMode": "14",
+        "chargeStartTimeH": "15",
+        "chargeStartTimeM": "16",
+        "chargeEndTimeH": "17",
+        "chargeEndTimeM": "18",
+        "dischargeStartTimeH": "19",
+        "dischargeStartTimeM": "20",
+        "dischargeEndTimeH": "21",
+        "dischargeEndTimeM": "22",
+    }
+    standby = CanonicalProfileOverrides(
+        **{**CanonicalForcedChargeProfile.__dict__, "name": "standby", "battery_operating_mode": "5"}
+    )
+
+    preserved = _preserve_night_soc_fields(standby, current)
+
+    assert preserved.battery_operating_mode == "5"
+    assert [
+        preserved.soc_safety_mode, preserved.soc_economy_mode, preserved.soc_contact_input,
+        preserved.soc_charge_mode, preserved.charge_start_h, preserved.charge_start_m,
+        preserved.charge_end_h, preserved.charge_end_m, preserved.discharge_start_h,
+        preserved.discharge_start_m, preserved.discharge_end_h, preserved.discharge_end_m,
+    ] == [str(value) for key, value in current.items() if key != "batteryOperatingMode"]
 
 
 def test_workflow_reexports_canonical_night_charge_plan_contract() -> None:

@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import app.kpnet.workflow as kpnet_workflow
+from app.kpnet.profiles import STANDBY_PROFILE
 from app.runtime.cloud_job import (
     ForcedChargeCompletionEstimator,
     _execute_monitor_terminal_transition,
+    _finalize_03_exception_with_fail_safe_standby,
     SocReading,
     _adjust03_target_date,
     _assert_manual_handoff_eligible,
@@ -29,10 +33,287 @@ from app.runtime.cloud_job import (
     _run_adjust_03,
     _run_day_07,
     _run_night_23,
+    _RunnerMonitorDevicePort,
 )
 from app.forced_charge import ChargeEffect, ChargeState, ChargeTransition
 from app.runtime.plan_persistence import persist_night_soc_execution
 from scripts.kpnet_incident_validation import _MemoryFirestore
+
+
+class _FailSafeDevice:
+    def __init__(self, *, standby_fails: bool) -> None:
+        self.standby_fails = standby_fails
+        self.calls: list[str] = []
+
+    def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
+        self.calls.append(label)
+        if self.standby_fails:
+            raise RuntimeError("standby readback mismatch")
+
+
+class _FailSafeStatus:
+    def __init__(self) -> None:
+        self.reasons: list[str] = []
+
+    def persist_stop_reason(self, _plan_meta: dict, reason: str, **_kwargs: object) -> bool:
+        self.reasons.append(reason)
+        return True
+
+    def persist_schedule(self, **_values: object) -> bool:
+        return True
+
+    def persist_no_charge(self, **_values: object) -> bool:
+        return True
+
+
+class _ReplayClock:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+
+    def monotonic_seconds(self) -> float:
+        return self.elapsed
+
+    def now(self, timezone: ZoneInfo) -> datetime:
+        return datetime(2099, 8, 29, 3, 0, tzinfo=timezone) + timedelta(seconds=self.elapsed)
+
+    def sleep(self, seconds: int) -> None:
+        self.elapsed += seconds
+
+
+class _ForcedReapplyReplayDevice:
+    def __init__(self, *, standby_fails: bool) -> None:
+        self.standby_fails = standby_fails
+        self.forced_calls = 0
+        self.calls: list[str] = []
+        observed_at = datetime(2099, 8, 29, 3, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+        self.readings = iter(
+            [SocReading(20.0, "realtime", None, observed_at), SocReading(20.0, "realtime", None, observed_at)]
+        )
+
+    def read_soc(self, _csv_paths: list[Path]) -> SocReading:
+        return next(self.readings)
+
+    def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
+        self.calls.append(label)
+        if profile == "forced":
+            self.forced_calls += 1
+            if self.forced_calls == 2:
+                raise RuntimeError("forced reapply readback mismatch")
+        elif self.standby_fails:
+            raise RuntimeError("standby readback mismatch")
+
+
+def _run_forced_reapply_failure_replay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, standby_fails: bool
+) -> tuple[_MemoryFirestore, dict[str, object], _ForcedReapplyReplayDevice, list[dict[str, object]]]:
+    """Use the real monitor, persistence layer, and 07 gate; no device/subprocess I/O."""
+    store = _MemoryFirestore()
+    plan_meta: dict[str, object] = {
+        "date": "2099-08-29", "plan_id": "2099-08-29-1-reapply", "required_night_charge_kwh": 1.0,
+        "target_soc_7_percent": 80.0, "effective_capacity_kwh": 10.0,
+    }
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text("{}", encoding="utf-8")
+    green_calls: list[dict[str, object]] = []
+    device = _ForcedReapplyReplayDevice(standby_fails=standby_fails)
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "false")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setenv("ADJUST03_FORCE_REAPPLY_AFTER_POLLS", "1")
+    monkeypatch.setattr("app.runtime.cloud_job._open_firestore_for_plan", lambda: store)
+    monkeypatch.setattr("app.runtime.cloud_job._acquire_night_soc_lease", lambda _meta: True)
+    monkeypatch.setattr("app.runtime.cloud_job._read_plan_meta", lambda _path: plan_meta)
+    monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _path: [])
+    monkeypatch.setattr("app.runtime.cloud_job._seconds_until_cutoff", lambda **_kwargs: 3600)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **_kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_stop_reason", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._adjust03_target_date", lambda: plan_meta["date"])
+    monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **values: green_calls.append(values))
+
+    with pytest.raises(RuntimeError, match="forced reapply readback mismatch"):
+        _monitor_partial_forced_and_stop(
+            plan_path, clock=_ReplayClock(), device_port=device, status_port=_FailSafeStatus()
+        )
+    return store, plan_meta, device, green_calls
+
+
+def test_monitor_reapply_failure_persists_ack_then_actual_07_runs_green(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store, plan_meta, device, green_calls = _run_forced_reapply_failure_replay(
+        monkeypatch, tmp_path, standby_fails=False
+    )
+
+    record = store.collections["night_soc_execution"][str(plan_meta["date"])]
+    assert record["state"] == "STANDBY_ACKED"
+    assert record["terminal_state"] == "failed_command"
+    assert record["stop_reason"] == "forced_reapply_failed_fail_safe"
+    assert device.calls == ["03-forced-start", "03-forced-reapply", "03-forced-reapply-failed-standby"]
+
+    _run_day_07()
+    assert green_calls == [{"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}]
+
+
+def test_monitor_reapply_failure_with_unconfirmed_standby_blocks_actual_07(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store, plan_meta, device, green_calls = _run_forced_reapply_failure_replay(
+        monkeypatch, tmp_path, standby_fails=True
+    )
+
+    record = store.collections["night_soc_execution"][str(plan_meta["date"])]
+    assert record["state"] == "STANDBY_UNCONFIRMED"
+    assert device.calls == ["03-forced-start", "03-forced-reapply", "03-forced-reapply-failed-standby"]
+    with pytest.raises(RuntimeError, match="07:00 day transition blocked"):
+        _run_day_07()
+    assert green_calls == []
+
+
+def test_confirmed_standby_persistence_failure_blocks_07_after_device_readback(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    device = _FailSafeDevice(standby_fails=False)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: False)
+
+    with pytest.raises(RuntimeError, match="terminal night SOC execution persistence failed"):
+        _execute_monitor_terminal_transition(
+            {"date": "2099-08-29", "plan_id": "2099-08-29-1-persist"},
+            ChargeTransition(ChargeState.STOPPING, (ChargeEffect.SET_STANDBY,), "target", ChargeState.COMPLETED_TARGET),
+            device_port=device,
+            status_port=_FailSafeStatus(),
+        )
+    assert device.calls == ["03-target-standby"]
+
+
+@pytest.mark.parametrize(("readback", "expected_attempts"), [("5", 1), ("1", 3)])
+def test_runner_monitor_port_uses_adjust03_and_cloud_retry_for_kpnet_readback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, readback: str, expected_attempts: int
+) -> None:
+    """Keep the production port -> adjustment -> retry -> KP-NET workflow boundary intact."""
+    attempts: list[str] = []
+
+    class FakeKpNetClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            return True, "confirmed", "", "<html>confirmed</html>"
+
+        def write_setting(self, _confirm_html: str) -> dict[str, bool]:
+            return {"changed": True}
+
+        def read_current_settings(self) -> dict[str, str]:
+            return {"batteryOperatingMode": readback}
+
+    def fake_run_settings_profile(*, profile: str, dynamic_forced_profile: bool) -> None:
+        assert profile == "standby"
+        assert dynamic_forced_profile is False
+        attempts.append(profile)
+        summary: dict[str, object] = {"setting_results": []}
+        kpnet_workflow._apply_settings_profile(
+            client=FakeKpNetClient(),
+            cfg=SimpleNamespace(dry_run=False),
+            run_dir=tmp_path,
+            summary=summary,
+            current={"batteryOperatingMode": "1"},
+            value_maps={},
+            profile=STANDBY_PROFILE,
+        )
+
+    monkeypatch.setenv("NIGHT_SOC_READBACK_REQUIRED", "true")
+    monkeypatch.setenv("KP_SETTINGS_RETRY_ATTEMPTS", "3")
+    monkeypatch.setenv("KP_SETTINGS_RETRY_DELAY_SECONDS", "0")
+    monkeypatch.setattr(
+        "app.kpnet.workflow._build_payload", lambda **_kwargs: ({"batteryOperatingMode": "5"}, ["batteryOperatingMode"])
+    )
+    monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile", fake_run_settings_profile)
+    monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *_args, **_kwargs: None)
+
+    port = _RunnerMonitorDevicePort()
+    if readback == "5":
+        port.apply_profile(profile="standby", dynamic_forced_profile=False, label="test-standby")
+    else:
+        with pytest.raises(RuntimeError, match="read-back mismatch"):
+            port.apply_profile(profile="standby", dynamic_forced_profile=False, label="test-standby")
+    assert attempts == ["standby"] * expected_attempts
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "initial_soc_unavailable",
+        "forced_start_failed_fail_safe",
+        "forced_reapply_failed_fail_safe",
+        "monitor_exception_fail_safe",
+        "target_standby_failed",
+        "cutoff_standby_failed",
+        "sensor_standby_failed",
+    ],
+)
+def test_fail_safe_terminal_matrix_never_claims_ack_without_standby_readback(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    persisted: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._persist_night_soc_execution",
+        lambda _meta, state, **values: persisted.append((state, values)) or True,
+    )
+    plan_meta = {"date": "2026-08-29", "plan_id": "2026-08-29-plan"}
+    status = _FailSafeStatus()
+
+    _finalize_03_exception_with_fail_safe_standby(
+        plan_meta, label="test-standby", reason=reason, primary_error=RuntimeError("primary"),
+        device=_FailSafeDevice(standby_fails=False), status=status,
+    )
+    assert persisted == [("STANDBY_ACKED", {"terminal_state": "failed_command", "stop_reason": reason, "primary_error": "RuntimeError('primary')"})]
+    assert status.reasons == [reason]
+
+    persisted.clear()
+    _finalize_03_exception_with_fail_safe_standby(
+        plan_meta, label="test-standby", reason=reason, primary_error=RuntimeError("primary"),
+        device=_FailSafeDevice(standby_fails=True), status=status,
+    )
+    assert persisted[0][0] == "STANDBY_UNCONFIRMED"
+    assert persisted[0][1]["terminal_state"] == "standby_unconfirmed"
+    assert "STANDBY_ACKED" not in [state for state, _values in persisted]
+
+
+def test_real_failure_recovery_persists_standby_then_allows_07_green(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replay forced-reapply failure recovery through persistence and the actual 07 gate."""
+    store = _MemoryFirestore()
+    plan_meta = {"date": "2099-08-29", "plan_id": "2099-08-29-1-fail-safe"}
+    settings_calls: list[dict[str, object]] = []
+    monkeypatch.setenv("NIGHT_SOC_CONTROL_MODE", "enforce")
+    monkeypatch.setenv("NIGHT_SOC_MANUAL_OPERATION", "false")
+    monkeypatch.setenv("DRY_RUN", "false")
+    monkeypatch.setattr("app.runtime.cloud_job._open_firestore_for_plan", lambda: store)
+    monkeypatch.setattr("app.runtime.cloud_job._adjust03_target_date", lambda: plan_meta["date"])
+    monkeypatch.setattr(
+        "app.runtime.cloud_job._run_settings_profile_with_retry",
+        lambda **values: settings_calls.append(values),
+    )
+
+    _run_night_23()
+    _finalize_03_exception_with_fail_safe_standby(
+        plan_meta,
+        label="03-forced-reapply-failed-standby",
+        reason="forced_reapply_failed_fail_safe",
+        primary_error=RuntimeError("forced readback mismatch"),
+        device=_FailSafeDevice(standby_fails=False),
+        status=_FailSafeStatus(),
+    )
+    _run_day_07()
+
+    record = store.collections["night_soc_execution"][plan_meta["date"]]
+    assert record["state"] == "STANDBY_ACKED"
+    assert record["terminal_state"] == "failed_command"
+    assert record["stop_reason"] == "forced_reapply_failed_fail_safe"
+    assert settings_calls == [
+        {"profile": "standby", "dynamic_forced_profile": False, "label": "23-settings-standby"},
+        {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"},
+    ]
 
 
 def test_mask_env_updates_hides_secrets() -> None:
@@ -570,6 +851,7 @@ def test_monitor_partial_forced_keeps_standby_when_charge_not_needed(
         },
     )
     monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
     monkeypatch.setattr("app.runtime.cloud_job._latest_realtime_soc_percent", lambda: 40.0)
     persisted: list[dict] = []
     monkeypatch.setattr(
@@ -774,6 +1056,7 @@ def test_monitor_partial_forced_starts_immediately_then_switches_standby_at_cuto
         "app.runtime.cloud_job._run_settings_profile",
         lambda *, profile, dynamic_forced_profile: calls.append((profile, dynamic_forced_profile)),
     )
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
 
     _monitor_partial_forced_and_stop(plan_path)
 
@@ -798,6 +1081,7 @@ def test_monitor_terminal_executor_preserves_timeout_persistence_reason(
         "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _meta, reason: reasons.append(reason) or True,
     )
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
 
     handled = _execute_monitor_terminal_transition(
         {},
@@ -873,6 +1157,7 @@ def test_monitor_stops_safely_after_consecutive_soc_failures(monkeypatch, tmp_pa
     )
     monkeypatch.setattr("app.runtime.cloud_job._run_db_pipeline_slot", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.runtime.cloud_job._persist_03_monitor_schedule_to_firestore", lambda **kwargs: True)
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
     monkeypatch.setattr(
         "app.runtime.cloud_job._persist_03_monitor_stop_reason",
         lambda _plan, reason: reasons.append(reason) or True,
@@ -1024,6 +1309,7 @@ def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_
         },
     )
     monkeypatch.setattr("app.runtime.cloud_job._latest_kpnet_csv_paths", lambda _: [])
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
     monkeypatch.setattr("app.runtime.cloud_job._read_soc_with_fallback", lambda _: reading)
     monkeypatch.setattr(
         "app.runtime.cloud_job._run_settings_profile",
@@ -1041,7 +1327,9 @@ def test_monitor_keeps_standby_when_initial_soc_is_unavailable(monkeypatch, tmp_
     assert persisted == [("initial_soc_unavailable", reading)]
 
 
-def test_initial_soc_unavailable_helper_applies_standby_before_persisting() -> None:
+def test_initial_soc_unavailable_helper_applies_standby_before_persisting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     events: list[str] = []
     reading = SocReading(None, "unavailable", "offline", None)
 
@@ -1060,6 +1348,8 @@ def test_initial_soc_unavailable_helper_applies_standby_before_persisting() -> N
             assert reason == "initial_soc_unavailable"
             assert soc_reading is reading
             events.append("persisted")
+
+    monkeypatch.setattr("app.runtime.cloud_job._persist_night_soc_execution", lambda *_, **__: True)
 
     _keep_standby_when_initial_soc_is_unavailable(
         plan_meta={"date": "2026-07-14"}, device=Device(), status=Status(), soc_reading=reading

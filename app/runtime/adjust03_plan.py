@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from app.forced_charge import MonitorDevicePort, MonitorStatusPort
 def _cloud_call(name: str, *args: Any, **kwargs: Any) -> Any:
     from app.runtime import cloud_job
     return getattr(cloud_job, name)(*args, **kwargs)
@@ -116,25 +115,4 @@ def _run_03_settings_profile_with_db(
             "DATA_PREFER_NIGHT_PLAN_METRICS": "true",
         },
     )
-
-
-def _attempt_03_fail_safe_standby(
-    plan_meta: dict[str, Any],
-    *,
-    label: str,
-    reason: str,
-    device_port: MonitorDevicePort | None = None,
-    status_port: MonitorStatusPort | None = None,
-) -> None:
-    device = device_port or _cloud_call("_RunnerMonitorDevicePort")
-    status = status_port or _cloud_call("_RunnerMonitorStatusPort")
-    try:
-        device.apply_profile(
-            profile="standby",
-            dynamic_forced_profile=False,
-            label=label,
-        )
-    finally:
-        status.persist_stop_reason(plan_meta, reason)
-
 

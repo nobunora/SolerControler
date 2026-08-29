@@ -38,6 +38,7 @@ from app.kpnet.profile_builder import (
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
+from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
 __all__ = ["KpNetConfig", "run_kpnet_workflow", "main"]
 
@@ -182,10 +183,17 @@ def _apply_settings_profile(
     return readback
 
 
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE): do not add
+# batteryOperatingMode or replace SLOT23_PRESERVED_FIELDS with a broad current
+# merge. The 23:00 sequence must preserve exactly the twelve SOC/window values
+# while writing standby candidate 5; preserving green 1 overwrites that value,
+# leaves the physical battery green through the night, and makes the successful
+# job log lie about standby. Guarded by
+# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
+# and tests/test_kpnet_workflow.py standby read-back tests.
 def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any]) -> ProfileOverrides:
-    """Make the 23:00 guard unable to overwrite the night SOC owner fields."""
+    """Keep 03:00-owned SOC/window values while allowing the 23:00 standby mode write."""
     field_to_attribute = {
-        "batteryOperatingMode": "battery_operating_mode",
         "socSafetyMode": "soc_safety_mode",
         "socEconomyMode": "soc_economy_mode",
         "socContactInput": "soc_contact_input",
@@ -199,9 +207,17 @@ def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
     }
+    # HISTORICAL_FAILURE_LOCK (2026-08-29 runtime evidence): this must iterate
+    # SLOT23_PRESERVED_FIELDS, whose immutable contract intentionally excludes
+    # batteryOperatingMode.  Adding it back copies the prior green/forced mode
+    # over the real standby candidate, making 23:00 ``skipped-no-change`` and
+    # leaving the battery non-standby until 07:00.  Replacing this with a broad
+    # ``current`` merge can also overwrite the twelve SOC/window fields that
+    # 03:00 owns.  Guarded by the green(1)->standby(5) read-back regression test.
     updates = {
         attribute: str(current[field])
         for field, attribute in field_to_attribute.items()
+        if field in SLOT23_PRESERVED_FIELDS
         if field in current and str(current[field]).strip()
     }
     return replace(profile, **updates)

@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.runtime.night_soc_operational_contract import is_day_transition_allowed_state
+
 from app.energy_plan.decision_feedback import build_soc_decision_feedback
 
 
@@ -162,8 +164,7 @@ def can_apply_day_transition(
             return False
         record = snapshot.to_dict() or {}
         state = str(record.get("state") or "")
-        allowed_states = {"STANDBY_ACKED", "COMPLETED_NO_CHARGE", "SAFE_TERMINATED", "VERIFIED"}
-        if state in allowed_states:
+        if is_day_transition_allowed_state(state):
             return True
         if not allow_manual_owner or state != "MANUAL_OPERATION":
             return False

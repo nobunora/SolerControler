@@ -180,6 +180,22 @@ def test_day_transition_manual_owner_requires_explicit_allowance() -> None:
 
 
 @pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("STANDBY_ACKED", True),
+        ("COMPLETED_NO_CHARGE", True),
+        ("VERIFIED", True),
+        ("STANDBY_UNCONFIRMED", False),
+        ("SAFE_TERMINATED", False),
+        ("LEASE_ACQUIRED", False),
+    ],
+)
+def test_day_transition_terminal_state_contract_is_fail_closed(state: str, expected: bool) -> None:
+    client = _ReadClient(_Snapshot(exists=True, data={"state": state}))
+    assert can_apply_day_transition(plan_date="2026-08-29", open_firestore=lambda: client) is expected
+
+
+@pytest.mark.parametrize(
     "changes",
     [
         {"owner": "03-monitor"},

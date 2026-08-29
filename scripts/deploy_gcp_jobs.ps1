@@ -711,7 +711,17 @@ if (-not $SkipJobDeploy) {
     # through as an executable 0% target after a missing/invalid plan path;
     # that is exactly the SOC=0 failure mode.  Keep plan=100 unchanged while
     # raising only plan=0 to 30; tests exercise both cases.
-    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
+    # HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_JOB03_RETRY): keep the
+    # platform retry count exactly zero.  Internal KP-NET retries are bounded
+    # and retain the original error context; a Cloud Run retry regenerates a
+    # different plan_id, then lease acquisition rejects that second attempt and
+    # masks the primary forced/reapply read-back failure.  That leaves no
+    # durable terminal hand-off, so the correctly fail-closed 07:00 gate cannot
+    # switch to green.  Do not change this to 1 or more, and do not compensate
+    # by relaxing the lease/gate.  Guarded by test_night_soc_protected_contract
+    # and test_production_deploy_scripts semantic deployment assertions. The
+    # boundary guard is test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary.
+    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 27000 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=30,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_FORCE_MONITOR_CUTOFF_HHMM=07:00,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
     if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
     # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): the live settings
     # probe is explicit, non-scheduled, and must never be retried automatically.
