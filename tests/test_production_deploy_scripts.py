@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -113,6 +116,125 @@ def test_plan_refresh_cloud_job_mode_is_limited_to_slot_03() -> None:
     assert "[switch]$PlanRefreshOnly" in script
     assert "-PlanRefreshOnly requires -Slot 03" in script
     assert "--args=--plan-refresh-only" in script
+
+
+def test_manual_dry_run_requires_explicit_cloud_run_execution_conditions() -> None:
+    script = (ROOT / "scripts" / "run_cloud_job_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function Assert-LatestDryRunExecution" in script
+    assert "if ($DryRun) {" in script
+    assert "Assert-LatestDryRunExecution -JobName $jobName" in script
+    assert "run jobs executions list" in script
+    assert "$status = $executions[0].status" in script
+    assert "$conditions = @($status.conditions)" in script
+    assert "$status.PSObject.Properties.Name -contains 'failedCount'" in script
+    for condition in ("Completed", "ResourcesAvailable", "Started", "ContainerReady"):
+        assert f"'{condition}'" in script
+
+
+def _run_dry_run_execution_assertion(
+    execution: dict[str, object], *, gcloud_exit_code: int = 0
+) -> subprocess.CompletedProcess[str]:
+    pwsh = shutil.which("pwsh")
+    assert pwsh is not None
+    execution_json = base64.b64encode(json.dumps([execution]).encode()).decode()
+    command = r"""
+$source = Get-Content -Raw -LiteralPath $env:RUNNER_SCRIPT
+$start = $source.IndexOf('function Assert-LatestDryRunExecution')
+$end = $source.IndexOf('$arguments =', $start)
+Invoke-Expression $source.Substring($start, $end - $start)
+function Invoke-TestGcloud {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    $global:LASTEXITCODE = [int]$env:TEST_GCLOUD_EXIT
+    if ($global:LASTEXITCODE -eq 0) {
+        [System.Text.Encoding]::UTF8.GetString(
+            [System.Convert]::FromBase64String($env:TEST_GCLOUD_EXECUTION_JSON)
+        )
+    }
+}
+$global:gcloud = 'Invoke-TestGcloud'
+Assert-LatestDryRunExecution -JobName 'solar-battery-07' -ProjectId 'test-project' -Region 'test-region'
+"""
+    return subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "RUNNER_SCRIPT": str(ROOT / "scripts" / "run_cloud_job_from_env.ps1"),
+            "TEST_GCLOUD_EXIT": str(gcloud_exit_code),
+            "TEST_GCLOUD_EXECUTION_JSON": execution_json,
+        },
+    )
+
+
+def _completed_execution(*, failed_count: int = 0) -> dict[str, object]:
+    return {
+        "status": {
+            "conditions": [
+                {"type": condition, "status": "True"}
+                for condition in ("Completed", "ResourcesAvailable", "Started", "ContainerReady")
+            ],
+            "failedCount": failed_count,
+        }
+    }
+
+
+def test_manual_dry_run_execution_assertion_accepts_completed_execution() -> None:
+    result = _run_dry_run_execution_assertion(_completed_execution())
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("condition", ("Completed", "ResourcesAvailable", "Started", "ContainerReady"))
+@pytest.mark.parametrize("condition_status", ("False", None))
+def test_manual_dry_run_execution_assertion_rejects_failed_or_missing_condition(
+    condition: str, condition_status: str | None
+) -> None:
+    execution = _completed_execution()
+    conditions = execution["status"]["conditions"]  # type: ignore[index]
+    assert isinstance(conditions, list)
+    if condition_status is None:
+        execution["status"]["conditions"] = [  # type: ignore[index]
+            item for item in conditions if item["type"] != condition
+        ]
+    else:
+        for item in conditions:
+            if item["type"] == condition:
+                item["status"] = condition_status
+
+    result = _run_dry_run_execution_assertion(execution)
+
+    assert result.returncode != 0
+    assert f"condition is not ready: {condition}" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("execution", "expected_error"),
+    (
+        ({}, "status was missing"),
+        ({"status": {"conditions": []}}, "conditions were missing"),
+        (_completed_execution(failed_count=1), "reported failed tasks"),
+    ),
+)
+def test_manual_dry_run_execution_assertion_rejects_invalid_execution_state(
+    execution: dict[str, object], expected_error: str
+) -> None:
+    result = _run_dry_run_execution_assertion(execution)
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+
+
+def test_manual_dry_run_execution_assertion_rejects_gcloud_status_query_failure() -> None:
+    result = _run_dry_run_execution_assertion(_completed_execution(), gcloud_exit_code=1)
+
+    assert result.returncode != 0
+    assert "execution status query failed" in result.stderr
 
 
 def test_cloud_settings_roundtrip_job_is_explicit_and_can_run_at_any_time() -> None:
