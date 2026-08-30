@@ -16,6 +16,17 @@
 - Do not rename public APIs, DB fields, env keys, or integration fields unless the task requires it.
 - Keep generated, cache, build, log, and artifact paths out of normal reads.
 
+## CodebaseMemory Triage
+
+- Read `codebase_memory_triage_and_maintenance_ja.md` before acting on unused-node, low-confidence-call, similarity, or semantic-related findings.
+- Treat `in_degree = 0`, low confidence, `SIMILAR_TO`, and `SEMANTICALLY_RELATED` as investigation leads, not proof of dead code or permission to refactor.
+- Verify graph findings with source, focused text search, compatibility tests, dynamic/string dispatch, monkeypatches, and dependency direction before editing.
+- Never rewrite otherwise clear production code only to improve CodebaseMemory confidence or make a graph edge resolve differently.
+- Do not merge domain-specific readers, backend adapters, standalone operational scripts, compatibility seams, or test fakes solely because their implementations are similar.
+- When intentional duplication is repeatedly flagged and the boundary has been verified, use a concise `codebase-memory: keep-separate` comment stating the design reason. Do not add such comments mechanically.
+- For low-confidence `CALLS`, separate builtins, external SDK calls, test fakes/protocols, dynamic dispatch, and app-to-app edges before deciding whether any source change is justified.
+- If an explicit readable call is misresolved by CodebaseMemory, preserve the source and record it as a graph/parser false positive rather than coding around the tool.
+
 ## Subagent Prompts
 
 Subagents are useful but forgetful. Give them everything needed in a compact packet:
@@ -46,3 +57,4 @@ Subagents are useful but forgetful. Give them everything needed in a compact pac
 
 - Report briefly: changed files, reason, checks run, risks, and open questions.
 - Create milestone reports or files under `docs/completed/reports/` only when the user explicitly asks.
+- Follow `report_template.md` for tracked report hygiene: use repository-relative source links, do not force-add ignored `.log` files, and keep secrets or local absolute paths out of tracked evidence.
