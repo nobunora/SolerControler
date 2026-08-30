@@ -6,6 +6,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 
 - Use PowerShell 7 (`pwsh`) unless it fails.
 - Start with `git status --short`, shallow listings, and `rg`.
+- Before considering or proposing any implementation, query the CodebaseMemory index for the relevant symbols, call paths, dependencies, and architecture. Confirm the index is `ready`; refresh it when repository changes are not yet reflected. Use focused file reads and `rg` to verify CodebaseMemory findings, especially for files reported as partially parsed or excluded.
 - Open only the files and line ranges needed for the task.
 - Do not scan all docs, all source, generated files, caches, logs, or artifacts.
 - Prefer focused tests near the changed code.

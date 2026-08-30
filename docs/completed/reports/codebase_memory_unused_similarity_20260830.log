@@ -1,0 +1,81 @@
+CodebaseMemory unused/similarity investigation
+Timestamp: 2026-08-30 (Asia/Tokyo)
+Repository: C:\VSC\SolerControler
+Project: C-VSC-SolerControler
+
+[1] Registration and version
+$ codex mcp get codebase-memory-mcp
+codebase-memory-mcp
+  enabled: true
+  transport: stdio
+  command: C:\tools\nodejs\codebase-memory-mcp.cmd
+
+$ codebase-memory-mcp --version
+codebase-memory-mcp 0.10.8
+
+[2] Index status
+$ codebase-memory-mcp cli index_status --project C-VSC-SolerControler
+project=C-VSC-SolerControler
+nodes=5783
+edges=18013
+status=ready
+root_path=C:/VSC/SolerControler
+parse_partial_count=9
+skipped_files_count=0
+
+[3] Graph schema counts
+$ codebase-memory-mcp cli get_graph_schema --project C-VSC-SolerControler
+node labels:
+  Section 2374, Function 1479, File 482, Module 480, Variable 351
+  Method 249, Class 174, EnvVar 117, Folder 52, Package 10
+  Decorator 9, Route 4, Branch 1, Project 1
+edge types:
+  DEFINES 8156, CALLS 4445, USAGE 1281, IMPORTS 1253
+  WRITES 682, TESTS 668, CONTAINS_FILE 482, DEFINES_METHOD 244
+  SEMANTICALLY_RELATED 184, CONFIGURES 183, FILE_CHANGES_WITH 174
+  DECORATES 145, CONTAINS_FOLDER 48, CALL_REFERENCE 30
+  SIMILAR_TO 17, DEPENDS_ON 10, HTTP_CALLS 4, INHERITS 3
+  OVERRIDE 2, HAS_BRANCH 1, RAISES 1
+
+[4] Zero inbound CALLS candidate query
+$ codebase-memory-mcp cli query_graph --project C-VSC-SolerControler --query "MATCH (f:Function) WHERE f.in_degree = 0 AND f.is_test = false AND f.is_exported = false AND f.is_entry_point = false RETURN f.name, f.qualified_name, f.file_path, f.start_line, f.out_degree"
+result: 40 Function candidates
+
+$ codebase-memory-mcp cli query_graph --project C-VSC-SolerControler --query "MATCH (m:Method) WHERE m.in_degree = 0 AND m.is_test = false AND m.is_exported = false AND m.is_entry_point = false RETURN m.name, m.qualified_name, m.file_path, m.start_line, m.out_degree"
+result: 6 Method candidates
+
+[5] Direct-reference verification
+$ rg -n "_clip_float|_estimate_required_charge_kwh|_daily_from_hourly|_archive_weather_rows|_provider_order_from_env|_parse_time|_parse_forecast_solar_time|_run_optional" app scripts tests
+strong candidates with definition-only hits:
+  app/forecasting/correction_history_io.py:13 _clip_float
+  app/runtime/cloud_job.py:76 _estimate_required_charge_kwh
+  scripts/analyze_hourly_weather_vectors.py:163 _daily_from_hourly
+  app/energy_plan/workflow.py:571 _archive_weather_rows
+  app/forecasting/pv_array.py:80 _parse_time
+  app/forecasting/pv_array.py:84 _parse_forecast_solar_time
+  app/forecasting/pv_array.py:223 _provider_order_from_env
+  app/runtime/command_adapter.py:63 _run_optional
+
+[6] Similarity
+$ codebase-memory-mcp cli query_graph --project C-VSC-SolerControler --query "MATCH (a)-[r:SIMILAR_TO]->(b) RETURN a.qualified_name, b.qualified_name, r.jaccard, r.same_file ORDER BY r.jaccard DESC"
+result: 17 pairs
+  jaccard=1.000: 14 pairs
+  jaccard=0.953: 3 pairs
+
+[7] Low-confidence CALLS
+$ codebase-memory-mcp cli query_graph --project C-VSC-SolerControler --query "MATCH (a)-[r:CALLS]->(b) WHERE r.confidence < 0.5 RETURN count(*)"
+low_confidence_calls=692
+  suffix_match=355
+  unique_name=337
+
+$ ... WHERE r.confidence < 0.5 AND b.qualified_name CONTAINS 'builtins.' RETURN count(*)
+low_confidence_builtin_calls=240
+
+$ ... WHERE r.confidence < 0.5 AND b.file_path CONTAINS 'tests/' RETURN count(*)
+low_confidence_test_calls=215
+
+[8] Repository state
+$ git status --short
+M AGENTS.md
+
+The AGENTS.md change predates this report and contains the CodebaseMemory pre-implementation rule. This investigation did not modify application source, tests, or deployment files.
