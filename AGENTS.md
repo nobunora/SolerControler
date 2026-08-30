@@ -8,6 +8,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Start with `git status --short`, shallow listings, and `rg`.
 - Before considering or proposing any implementation, query the CodebaseMemory index for the relevant symbols, call paths, dependencies, and architecture. Confirm the index is `ready`; refresh it when repository changes are not yet reflected. Use focused file reads and `rg` to verify CodebaseMemory findings, especially for files reported as partially parsed or excluded.
 - Before deleting an unused candidate, changing a low-confidence call edge, or consolidating similar code reported by CodebaseMemory, read `docs/current/agent/codebase_memory_triage_and_maintenance_ja.md`. A graph result is a lead, not permission to edit. Do not change readable production code merely to increase graph confidence, and do not consolidate intentional domain/backend/standalone/test boundaries based on similarity alone.
+- When `.codebase-memory/graph.db.zst` is present, read `docs/current/agent/codebase_memory_shared_graph_usage_ja.md` before refreshing or committing the shared graph. Use it as the common exploration baseline when it is fresh for the current source-bearing state. Do not re-index solely because committing the generated artifact advanced `HEAD`, and never hand-edit the binary graph.
 - Open only the files and line ranges needed for the task.
 - Do not scan all docs, all source, generated files, caches, logs, or artifacts.
 - Prefer focused tests near the changed code.
