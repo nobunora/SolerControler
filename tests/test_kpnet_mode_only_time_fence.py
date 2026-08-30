@@ -261,6 +261,22 @@ def test_03_forced_mode_only_does_not_inject_static_forced_window(
     assert (payload["chargeEndTimeH"], payload["chargeEndTimeM"]) == ("7", "0")
 
 
+def test_03_forced_mode_only_rejects_missing_required_current_field_without_write(
+    real_mode_only: tuple[_Clock, _Session, KpNetConfig],
+) -> None:
+    _clock, session, _cfg = real_mode_only
+    current = _distinct_current_settings()
+    del current["chargeEndTimeH"]
+    session.current = current
+
+    return_code = workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0)
+
+    assert return_code == 1
+    assert not any(path.endswith("/batterysetting") for _at, _method, path, _timeout in session.requests)
+    assert not any(path.endswith("/write/request") for _at, _method, path, _timeout in session.requests)
+    assert not any(path.endswith("/pcssettingcomplete/") for _at, _method, path, _timeout in session.requests)
+
+
 @pytest.mark.parametrize(
     ("hour", "minute", "second", "io_allowed", "monitor_stopped", "standby_allowed"),
     [
