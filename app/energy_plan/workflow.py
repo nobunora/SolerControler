@@ -568,24 +568,6 @@ def _archive_weather_history(
     )
 
 
-def _archive_weather_rows(
-    rows: list[dict[str, Any]],
-    *,
-    lat: float,
-    lon: float,
-    timezone: str,
-) -> list[dict[str, object]]:
-    return archive_weather_history(
-        rows,
-        lat=lat,
-        lon=lon,
-        timezone=timezone,
-        cache_path=weather_archive_cache_path(),
-        chunk_days=max(1, int(_env_float("WEATHER_ARCHIVE_CHUNK_DAYS", 14.0))),
-        timeout_seconds=max(1.0, _env_float("WEATHER_ARCHIVE_TIMEOUT_SECONDS", 30.0)),
-    ).rows
-
-
 def _consumption_forecast_to_dict(forecast: ConsumptionForecast) -> dict[str, object]:
     return {
         "target_date": forecast.target_date.isoformat(),
