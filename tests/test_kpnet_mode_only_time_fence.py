@@ -46,12 +46,18 @@ class _Response:
 
 
 class _Session:
-    def __init__(self, clock: _Clock, *, request_seconds: float = 1.0) -> None:
+    def __init__(
+        self,
+        clock: _Clock,
+        *,
+        request_seconds: float = 1.0,
+        current: dict[str, str] | None = None,
+    ) -> None:
         self.headers: dict[str, str] = {}
         self.clock = clock
         self.request_seconds = request_seconds
         self.requests: list[tuple[float, str, str, float]] = []
-        self.current = _current_settings()
+        self.current = dict(current or _current_settings())
         self.confirmed: dict[str, str] = {}
         self.confirm_payloads: list[dict[str, str]] = []
 
@@ -78,6 +84,8 @@ class _Session:
         if "/read/response" in url or "/write/response" in url:
             return _Response(payload={"status": 1, "data": self.current})
         if "/valueList/" in url:
+            if url.endswith("/valueList/socchargemode"):
+                return _Response(payload={"data": [{"code": "0", "value": "0%"}, {"code": "30", "value": "30%"}, {"code": "50", "value": "50%"}]})
             return _Response(payload={"data": [{"code": "0", "value": "economy"}, {"code": "1", "value": "green"}, {"code": "3", "value": "forced"}, {"code": "5", "value": "standby"}]})
         if url.endswith("/batterysetting"):
             self.confirmed = {str(key): str(value) for key, value in (data or {}).items()}
@@ -165,6 +173,92 @@ def test_mode_only_operation_cap_is_independent_of_large_hard_cutoff(real_mode_o
     assert len(logout) == 1
     assert logout[0] < 300.0
     assert clock.monotonic() <= 300.0
+
+
+def _distinct_current_settings() -> dict[str, str]:
+    return {
+        "batteryOperatingMode": "1",
+        "socSafetyMode": "20",
+        "socEconomyMode": "10",
+        "socContactInput": "30",
+        "socChargeMode": "0",
+        "chargeStartTimeH": "23",
+        "chargeStartTimeM": "0",
+        "chargeEndTimeH": "7",
+        "chargeEndTimeM": "0",
+        "dischargeStartTimeH": "8",
+        "dischargeStartTimeM": "0",
+        "dischargeEndTimeH": "22",
+        "dischargeEndTimeM": "0",
+        "agreementAmpere": "40",
+        "onPowerOutageMode": "1",
+        "onPowerOutageChargePowerW": "1234",
+    }
+
+
+_MODE_ONLY_CONTROLLED_FIELDS = (
+    "batteryOperatingMode",
+    "socSafetyMode",
+    "socEconomyMode",
+    "socContactInput",
+    "socChargeMode",
+    "onPowerOutageMode",
+    "onPowerOutageChargePowerW",
+    "chargeStartTimeH",
+    "chargeStartTimeM",
+    "chargeEndTimeH",
+    "chargeEndTimeM",
+    "dischargeStartTimeH",
+    "dischargeStartTimeM",
+    "dischargeEndTimeH",
+    "dischargeEndTimeM",
+    "agreementAmpere",
+)
+
+
+def test_03_forced_mode_only_preserves_current_snapshot_except_mode_and_soc_candidate(
+    real_mode_only: tuple[_Clock, _Session, KpNetConfig],
+) -> None:
+    _clock, session, _cfg = real_mode_only
+    current = _distinct_current_settings()
+    session.current = dict(current)
+
+    assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
+
+    payload = session.confirm_payloads[-1]
+    assert payload["batteryOperatingMode"] == "3"
+    assert payload["socChargeMode"] == "50"
+    for field in _MODE_ONLY_CONTROLLED_FIELDS:
+        if field not in {"batteryOperatingMode", "socChargeMode"}:
+            assert payload[field] == current[field]
+
+
+def test_03_forced_mode_only_changes_only_operating_mode_and_soc_charge_candidate(
+    real_mode_only: tuple[_Clock, _Session, KpNetConfig],
+) -> None:
+    _clock, session, _cfg = real_mode_only
+    current = _distinct_current_settings()
+    session.current = dict(current)
+
+    assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
+
+    payload = session.confirm_payloads[-1]
+    changed_fields = [field for field in _MODE_ONLY_CONTROLLED_FIELDS if payload[field] != current[field]]
+    assert set(changed_fields) <= {"batteryOperatingMode", "socChargeMode"}
+    assert set(changed_fields) == {"batteryOperatingMode", "socChargeMode"}
+
+
+def test_03_forced_mode_only_does_not_inject_static_forced_window(
+    real_mode_only: tuple[_Clock, _Session, KpNetConfig],
+) -> None:
+    _clock, session, _cfg = real_mode_only
+    session.current = _distinct_current_settings()
+
+    assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
+
+    payload = session.confirm_payloads[-1]
+    assert (payload["chargeStartTimeH"], payload["chargeStartTimeM"]) == ("23", "0")
+    assert (payload["chargeEndTimeH"], payload["chargeEndTimeM"]) == ("7", "0")
 
 
 @pytest.mark.parametrize(

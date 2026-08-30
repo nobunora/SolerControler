@@ -33,6 +33,7 @@ from app.kpnet.profile_builder import (
     _enabled_sorted_rules,
     _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
+    _pick_max_code,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
 )
@@ -120,6 +121,7 @@ def _apply_settings_profile(
                 "profile": profile.name,
                 "changed_fields": [],
                 "status": "skipped-no-change",
+                "readback_mismatch_values": {},
             }
         )
         return current
@@ -134,6 +136,7 @@ def _apply_settings_profile(
                 "profile": profile.name,
                 "changed_fields": changed_fields,
                 "status": "confirm-failed",
+                "readback_mismatch_values": {},
                 "title": title,
                 "error": err,
                 "confirm_path": str(confirm_path),
@@ -147,6 +150,7 @@ def _apply_settings_profile(
                 "profile": profile.name,
                 "changed_fields": changed_fields,
                 "status": "dry-run-confirmed",
+                "readback_mismatch_values": {},
                 "title": title,
                 "confirm_path": str(confirm_path),
             }
@@ -163,6 +167,13 @@ def _apply_settings_profile(
         readback,
         tuple(field for field in CONTROLLED_SETTING_FIELDS if field in payload),
     )
+    readback_mismatch_values = {
+        field: {
+            "requested": str(payload.get(field, "")),
+            "observed": str(readback.get(field, "")),
+        }
+        for field in mismatches
+    }
     summary["setting_results"].append(
         {
             "profile": profile.name,
@@ -171,6 +182,7 @@ def _apply_settings_profile(
             "write_result": write_result,
             "readback_match": readback_ok,
             "readback_mismatch_fields": list(mismatches),
+            "readback_mismatch_values": readback_mismatch_values,
             "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
             "plan_id": summary.get("night_soc", {}).get("plan_id")
             if isinstance(summary.get("night_soc"), dict)
@@ -179,8 +191,12 @@ def _apply_settings_profile(
         }
     )
     if readback_required and not readback_ok:
+        mismatch_details = ", ".join(
+            f"{field}(requested={values['requested']} observed={values['observed']})"
+            for field, values in readback_mismatch_values.items()
+        )
         raise RuntimeError(
-            f"KP-NET settings read-back mismatch for profile={profile.name}: {', '.join(mismatches)}"
+            f"KP-NET settings read-back mismatch for profile={profile.name}: {mismatch_details}"
         )
     return readback
 
@@ -223,6 +239,41 @@ def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any
         if field in current and str(current[field]).strip()
     }
     return replace(profile, **updates)
+
+
+def _mode_only_profile_from_current_settings(
+    current: dict[str, Any],
+    *,
+    name: str,
+) -> ProfileOverrides:
+    required_fields = {
+        "batteryOperatingMode": "battery_operating_mode",
+        "socSafetyMode": "soc_safety_mode",
+        "socEconomyMode": "soc_economy_mode",
+        "socContactInput": "soc_contact_input",
+        "socChargeMode": "soc_charge_mode",
+        "chargeStartTimeH": "charge_start_h",
+        "chargeStartTimeM": "charge_start_m",
+        "chargeEndTimeH": "charge_end_h",
+        "chargeEndTimeM": "charge_end_m",
+        "dischargeStartTimeH": "discharge_start_h",
+        "dischargeStartTimeM": "discharge_start_m",
+        "dischargeEndTimeH": "discharge_end_h",
+        "dischargeEndTimeM": "discharge_end_m",
+        "agreementAmpere": "agreement_ampere",
+    }
+    missing = [field for field in required_fields if field not in current or str(current[field]).strip() == ""]
+    if missing:
+        raise RuntimeError(f"KP-NET current settings missing mode-only fields: {', '.join(missing)}")
+    return ProfileOverrides(
+        name=name,
+        **{
+            attribute: str(current[field])
+            for field, attribute in required_fields.items()
+        },
+        on_power_outage_mode=str(current.get("onPowerOutageMode", "0")),
+        on_power_outage_charge_power_w=str(current.get("onPowerOutageChargePowerW", "65535")),
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -454,7 +505,14 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         elif profile == "green":
             selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
         elif profile == "forced":
-            selected = replace(FORCED_CHARGE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced"))
+            selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
+            forced_mode_code = _pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced")
+            forced_soc_code = _pick_max_code(maps["SocChargeMode"])
+            selected = replace(
+                selected,
+                battery_operating_mode=forced_mode_code,
+                soc_charge_mode=forced_soc_code,
+            )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
         return 0

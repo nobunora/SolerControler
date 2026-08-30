@@ -412,13 +412,14 @@ def test_apply_settings_profile_dry_run_confirms_without_writing(
             "profile": "night-green",
             "changed_fields": ["socChargeMode"],
             "status": "dry-run-confirmed",
+            "readback_mismatch_values": {},
             "title": "confirmed",
             "confirm_path": str(tmp_path / "confirm_night-green.html"),
         }
     ]
 
 
-def test_apply_settings_profile_rejects_readback_mismatch(
+def test_readback_mismatch_records_requested_and_observed_controlled_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -433,30 +434,41 @@ def test_apply_settings_profile_rejects_readback_mismatch(
             return {"changed": True}
 
         def read_current_settings(self) -> dict[str, str]:
-            return {"socChargeMode": "0"}
+            return {"batteryOperatingMode": "1", "socChargeMode": "0"}
 
     monkeypatch.setenv("NIGHT_SOC_READBACK_REQUIRED", "true")
     monkeypatch.setattr(
         "app.kpnet.workflow._build_payload",
-        lambda **kwargs: ({"socChargeMode": "50"}, ["socChargeMode"]),
+        lambda **kwargs: (
+            {"batteryOperatingMode": "3", "socChargeMode": "50"},
+            ["batteryOperatingMode", "socChargeMode"],
+        ),
     )
     cfg = KpNetConfig(
         **{**_build_cfg(plan_path=tmp_path / "plan.json").__dict__, "dry_run": False}
     )
     summary: dict[str, object] = {"setting_results": []}
 
-    with pytest.raises(RuntimeError, match="read-back mismatch"):
+    with pytest.raises(RuntimeError, match=r"batteryOperatingMode\(requested=3 observed=1\)") as exc_info:
         _apply_settings_profile(
             client=FakeClient(),
             cfg=cfg,
             run_dir=tmp_path,
             summary=summary,
-            current={"socChargeMode": "0"},
+            current={"batteryOperatingMode": "1", "socChargeMode": "0"},
             value_maps=_value_maps(),
             profile=FORCED_CHARGE_PROFILE,
         )
 
-    assert summary["setting_results"][0]["readback_mismatch_fields"] == ["socChargeMode"]
+    assert "batteryOperatingMode(requested=3 observed=1)" in str(exc_info.value)
+    assert summary["setting_results"][0]["readback_mismatch_fields"] == ["batteryOperatingMode", "socChargeMode"]
+    assert summary["setting_results"][0]["readback_mismatch_values"] == {
+        "batteryOperatingMode": {"requested": "3", "observed": "1"},
+        "socChargeMode": {"requested": "50", "observed": "0"},
+    }
+    for secret_name in ("_csrf", "loginid", "loginpassword", "password", "secret", "token", "authorization"):
+        assert secret_name not in str(exc_info.value).lower()
+        assert secret_name not in str(summary["setting_results"][0]).lower()
 
 
 def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:
@@ -511,6 +523,7 @@ def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:
                 "agreementAmpere",
             ],
             "status": "confirm-failed",
+            "readback_mismatch_values": {},
             "title": "confirm title",
             "error": "confirm error",
             "confirm_path": str(tmp_path / "confirm_night-green.html"),
