@@ -9,25 +9,13 @@ from typing import Any, cast
 
 import requests
 
+from app.domain.weather import open_meteo_weather_class
 from app.energy_plan.weather import WeatherHistoryFetchResult
 
 
 def weather_class(weather_code: int | None) -> str:
-    if weather_code is None:
-        return "unknown"
-    if weather_code == 0:
-        return "clear"
-    if 1 <= weather_code <= 3:
-        return "cloudy"
-    if weather_code in {45, 48}:
-        return "fog"
-    if 51 <= weather_code <= 67 or 80 <= weather_code <= 82:
-        return "rain"
-    if 71 <= weather_code <= 77 or 85 <= weather_code <= 86:
-        return "snow"
-    if 95 <= weather_code <= 99:
-        return "storm"
-    return "other"
+    # Compatibility name; classification ownership lives in app.domain.weather.
+    return open_meteo_weather_class(weather_code)
 
 
 def _optional_float(value: object) -> float | None:

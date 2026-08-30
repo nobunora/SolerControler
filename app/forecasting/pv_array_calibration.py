@@ -43,6 +43,7 @@ import numpy as np
 import requests
 
 from app.configuration.environment import env_bool
+from app.domain.weather import open_meteo_weather_class
 from app.forecasting.pv_array_adapters import http_get_with_retry as _http_get_with_retry, response_json_object as _response_json_object
 from app.parsing.numbers import parse_csv_float, to_float, to_int
 
@@ -92,21 +93,7 @@ def _normalize_weather_class(value: str | None) -> str:
 
 
 def _weather_class_from_code(weather_code: int | None) -> str:
-    if weather_code is None:
-        return "unknown"
-    if weather_code == 0:
-        return "clear"
-    if 1 <= weather_code <= 3:
-        return "cloudy"
-    if weather_code in {45, 48}:
-        return "fog"
-    if 51 <= weather_code <= 67 or 80 <= weather_code <= 82:
-        return "rain"
-    if 71 <= weather_code <= 77 or 85 <= weather_code <= 86:
-        return "snow"
-    if 95 <= weather_code <= 99:
-        return "storm"
-    return "other"
+    return open_meteo_weather_class(weather_code)
 
 
 def _ratio_distribution(values: list[float], *, source: str) -> dict[str, Any]:

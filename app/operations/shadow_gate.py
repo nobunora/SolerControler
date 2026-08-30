@@ -76,6 +76,8 @@ def _weighted_median(values: list[tuple[float, float]]) -> float:
     return ordered[-1][0]
 
 
+# codebase-memory: keep-separate — frozen Phase 1 diagnostic classification;
+# intentionally differs from app.domain.weather.open_meteo_weather_class.
 def weather_class(code: Any) -> str:
     """Map weather codes to the frozen diagnostic's coarse classes."""
     try:
