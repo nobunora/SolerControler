@@ -75,6 +75,26 @@ docs/current/agent/RUNTIME_TRIAGE_EVIDENCE_SUMMARY_20260830.md
 
 名前だけで移動しない。各ファイルについてpurpose、creation PR/commit、要求された実装が着地済みか、status/resultがterminalか、current文書がactive contractとして参照しているか、将来もdurable ruleとして必要かを確認する。不明なら移動せず理由を記録する。
 
+### 3.1 archive前のterminal metadata整合
+
+`LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`は`status: COMPLETE`、`checksum_status: PASS`、`unprocessed_count: 0`だが、`Shared graph refresh`節の次の値だけがpre-artifact snapshotのまま残っている。
+
+```text
+artifact_commit: pending status/evidence commit
+```
+
+実際の最終共有artifact commitは完了レポートとGit historyで確認済みの:
+
+```text
+8dfb210428b656ee0db4f545140af033c3efa166
+```
+
+である。
+
+historical destinationへ移す前に、Git historyと`.codebase-memory/artifact.json`を再確認し、statusの`artifact_commit`をこの確定値へbackfillする。これは調査結果の変更ではなく、terminal recordのmetadata正規化である。
+
+他にも`pending`、`TO_FILL`、古いpath、実際のfinal commitと矛盾するterminal metadataが候補文書に残っていないか検索する。ただし推測で値を埋めず、Git/成果物で確定できるものだけ修正する。
+
 ## 4. currentに残すdurable guide
 
 少なくとも次はcompleted候補に含めない。
@@ -157,15 +177,16 @@ docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_NEXT_AGEN
 
 ```text
 1. candidate audit
-2. git mv / reference path修正
-3. .cbmignore更新
-4. READMEの必要最小限修正
-5. git diff --check
-6. docs migration commit
-7. CodebaseMemory refresh / status=ready確認
-8. source/tests/current durable docsのcoverage確認
-9. completed/agent_runs除外確認
-10. .codebase-memory artifact-only commit
+2. terminal metadata整合
+3. git mv / reference path修正
+4. .cbmignore更新
+5. READMEの必要最小限修正
+6. git diff --check
+7. docs migration commit
+8. CodebaseMemory refresh / status=ready確認
+9. source/tests/current durable docsのcoverage確認
+10. completed/agent_runs除外確認
+11. .codebase-memory artifact-only commit
 ```
 
 artifact-only commit自身を追う二度目refreshは禁止。
@@ -220,22 +241,23 @@ production deploymentもしない。
 ## 15. 完了条件
 
 1. `docs/current/agent/`のone-shot候補を実ファイル/history/referenceで監査した。
-2. completedと確認できたものだけをhistorical destinationへ移動した。
-3. active/uncertainなものを誤移動していない。
-4. durable guideを移動していない。
-5. product等へscope拡張していない。
-6. `.cbmignore`へ`docs/completed/agent_runs/`だけを限定追加した。
-7. repo内参照を監査し必要なpath更新を行った。
-8. broken relative linkを残していない。
-9. この指示ファイル自身も完了時にhistoricalへ移動した。
-10. `git diff --check`成功。
-11. production source/tests/runtime behavior変更なし。
-12. docs migration後にCodebaseMemoryを1回refreshした。
-13. CodebaseMemory `status=ready`確認。
-14. current durable docs/source/testsがcoverageに残る。
-15. completed agent runsが意図どおり除外される。
-16. artifact-only commitを追う二度目refreshなし。
-17. repository quality workflow成功。
+2. historical archive前にterminal metadataの`pending`/`TO_FILL`/確定commit不整合を監査し、Gitで確定できる値だけ正規化した。
+3. completedと確認できたものだけをhistorical destinationへ移動した。
+4. active/uncertainなものを誤移動していない。
+5. durable guideを移動していない。
+6. product等へscope拡張していない。
+7. `.cbmignore`へ`docs/completed/agent_runs/`だけを限定追加した。
+8. repo内参照を監査し必要なpath更新を行った。
+9. broken relative linkを残していない。
+10. この指示ファイル自身も完了時にhistoricalへ移動した。
+11. `git diff --check`成功。
+12. production source/tests/runtime behavior変更なし。
+13. docs migration後にCodebaseMemoryを1回refreshした。
+14. CodebaseMemory `status=ready`確認。
+15. current durable docs/source/testsがcoverageに残る。
+16. completed agent runsが意図どおり除外される。
+17. artifact-only commitを追う二度目refreshなし。
+18. repository quality workflow成功。
 
 ## 16. STOP条件
 
@@ -259,6 +281,7 @@ Audited candidates:
 Moved to completed:
 Retained current:
 Reason for retained files:
+Terminal metadata normalized:
 References updated:
 Broken-link check:
 .cbmignore change:
