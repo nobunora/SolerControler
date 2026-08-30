@@ -18,6 +18,8 @@ Use this file when touching large implementations, refactors, exceptions, depend
 - dependencies without a clear need
 - noisy diffs that mix unrelated work
 - untyped or `any` escapes without a strong reason
+- rewriting clear production code only to make a static-analysis or code-graph tool report higher confidence
+- consolidating code solely because a similarity detector reports a high score, when domain, backend, error, compatibility, standalone-entry-point, or test boundaries differ
 
 ## Hard-Coding
 
