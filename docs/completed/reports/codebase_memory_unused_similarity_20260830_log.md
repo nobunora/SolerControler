@@ -37,7 +37,7 @@ after report hygiene: nodes=5625, edges=17857, status=ready
 docs/completed/reports excluded by .cbmignore
 
 After the four verified private-helper cleanups:
-nodes=5621, edges=17809, status=ready
+nodes=5621, edges=17852, status=ready
 the four deleted helper nodes are absent from the graph
 
 $ git diff --check
