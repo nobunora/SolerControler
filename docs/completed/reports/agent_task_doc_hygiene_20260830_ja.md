@@ -12,7 +12,7 @@
 | 取り込み後の基準HEAD | `52e10f52043c76eab64cd2edb7a634a9c06762fd` |
 | 取り込んだ更新 | `fb946fe`（terminal metadata正規化要求）、`76d3d42`（文書衛生タスク定義）、PR #22 merge |
 | 文書移行コミット | `7ce2303c81b420f725fb1f08461705f724216fd3` |
-| CodebaseMemory artifactコミット | `5881528` |
+| CodebaseMemory artifactコミット | `3b32afa`（canonical project名へ再生成した最終版） |
 | 作業ブランチ | `master` |
 
 ## 監査した候補
@@ -67,6 +67,10 @@ docs/completed/agent_runs/
 
 ## CodebaseMemory
 
+### project名の整合
+
+初回再生成時に明示名を短縮したため一時的に同一rootの`SolerControler`が追加された。共有artifactの従来名が`C-VSC-SolerControler`であることを`list_projects`で確認し、短縮名プロジェクトを削除してcanonical名へ再生成した。最終的に同一rootのプロジェクトは1件だけである。
+
 ### 更新前（作業開始時のMCP status）
 
 - project: `C-VSC-SolerControler`
@@ -78,15 +82,16 @@ docs/completed/agent_runs/
 
 ### 更新後
 
-- project: `SolerControler`
+- project: `C-VSC-SolerControler`
 - status: `ready`
 - nodes: `5660`
-- edges: `17929`
-- indexed_at: `2026-08-30T14:00:15Z`（status記録、artifact JSONは`2026-08-30T14:00:17Z`）
+- edges: `17953`
+- indexed_at: `2026-08-30T14:02:57Z`（canonical project再生成時）
 - parse_partial: 9 files（既存のPowerShell/config範囲、内容は未変更）
 - skipped: 0 files
-- artifact source commit: `7ce2303c81b420f725fb1f08461705f724216fd3`
-- artifact log: `C:/Users/nobun/.cache/codebase-memory-mcp/logs/SolerControler-1788098417.log`
+- artifact source commit: `e4609d741ff384c9acdb5a4053862cf723345fcd`
+- artifact commit: `3b32afa`
+- artifact log: `C:/Users/nobun/.cache/codebase-memory-mcp/logs/C-VSC-SolerControler-1788098577.log`
 
 ノード/エッジ減少は、完了済みagent run文書をインデックスから意図的に除外した結果であり、sourceの削除やグラフ品質向上を目的とした変更ではない。`check_index_coverage`では`docs/current/agent`に記録上の問題なし、`app`/`scripts`/`tests`は既存のキャッシュ除外・PowerShell parse_partialのみ、completed agent runは意図どおり`not_indexed_dir`となった。
 
