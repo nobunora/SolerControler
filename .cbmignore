@@ -1,0 +1,8 @@
+# CodebaseMemory should index active implementation and current design guidance.
+# Closed investigation reports are historical evidence, not active code context;
+# indexing them recursively feeds old findings back into similarity/semantic edges.
+docs/completed/reports/
+
+# Intentionally keep docs/current/, AGENTS.md, tests/, and source indexed.
+# Tests are needed for TESTS/compatibility edges and must not be excluded merely
+# because some SDK-shaped fakes create low-confidence CALLS edges.
