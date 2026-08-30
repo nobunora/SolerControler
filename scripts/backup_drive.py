@@ -16,25 +16,11 @@ from app.backup.drive import (
     export_source_backup,
     build_drive_service,
 )
+from app.configuration.environment import load_dotenv_if_present
 
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
-
-
-def _load_dotenv(path: Path = Path(".env")) -> None:
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if len(value) >= 2 and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'")):
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    _load_dotenv()
+    load_dotenv_if_present()
     args = build_parser().parse_args()
     repo_root = Path(args.repo_root).resolve() if args.repo_root else None
     drive_service = None if args.skip_drive else build_drive_service()
