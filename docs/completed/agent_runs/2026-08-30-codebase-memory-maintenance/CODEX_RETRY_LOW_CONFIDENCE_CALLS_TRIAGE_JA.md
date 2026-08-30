@@ -46,8 +46,8 @@ artifact edges:
 1. `AGENTS.md`
 2. `docs/current/agent/codebase_memory_triage_and_maintenance_ja.md`
 3. `docs/current/agent/codebase_memory_shared_graph_usage_ja.md`
-4. `docs/current/agent/CODEX_NEXT_ARCHIVE_WEATHER_AND_LOW_CONFIDENCE_CALLS_JA.md`
-5. `docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`
+4. `docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_NEXT_ARCHIVE_WEATHER_AND_LOW_CONFIDENCE_CALLS_JA.md`
+5. `docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`
 
 protected runtime に触れる可能性が出た場合のみ:
 
@@ -451,7 +451,7 @@ AGENTS.mdどおり、tests前に `code-quality-audit` Skillを実行する。
 この作業では:
 
 ```text
-docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
 ```
 
 を必ず更新する。

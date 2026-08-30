@@ -17,7 +17,7 @@
 
 判定: **strong delete candidate, final local evidence required**。
 
-最終削除条件と検証手順は `CODEX_NEXT_RUNTIME_UNUSED_AND_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md` に従う。
+最終削除条件と検証手順は `CODEX_NEXT_RUNTIME_UNUSED_AND_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md`（同一アーカイブディレクトリ）に従う。
 
 ### `_archive_weather_rows`
 

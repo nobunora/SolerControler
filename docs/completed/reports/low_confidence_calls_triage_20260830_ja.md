@@ -66,7 +66,7 @@ classified + unprocessed = 692 + 0 = 692
 - SHA-256: `3bfb38328697f47d873fda1963b1ebc9d60012843c8564ebc59ed643d483f366`
 - 各recordにsource line、classification、reason、verification statusを含む
 
-tracked statusは [`LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`](../../current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md) に保存した。
+ tracked statusは [`LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`](../agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md) に保存した。
 
 ## 変更・検証
 

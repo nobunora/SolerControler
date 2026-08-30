@@ -63,14 +63,14 @@ working tree、current master、artifact project/source commit、artifact以降�
 ## 3. completed監査の第一候補
 
 ```text
-docs/current/agent/ARCHIVE_LOW_CONFIDENCE_EVIDENCE_SUMMARY_20260830.md
-docs/current/agent/CODEX_EXECUTE_LOW_CONFIDENCE_CALLS_TRIAGE_HANDOFF_JA.md
-docs/current/agent/CODEX_NEXT_ARCHIVE_WEATHER_AND_LOW_CONFIDENCE_CALLS_JA.md
-docs/current/agent/CODEX_NEXT_RUNTIME_UNUSED_AND_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md
-docs/current/agent/CODEX_NEXT_WEATHER_CLASS_CANONICALIZATION_AND_CBM_USE_JA.md
-docs/current/agent/CODEX_RETRY_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md
-docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
-docs/current/agent/RUNTIME_TRIAGE_EVIDENCE_SUMMARY_20260830.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/ARCHIVE_LOW_CONFIDENCE_EVIDENCE_SUMMARY_20260830.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_EXECUTE_LOW_CONFIDENCE_CALLS_TRIAGE_HANDOFF_JA.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_NEXT_ARCHIVE_WEATHER_AND_LOW_CONFIDENCE_CALLS_JA.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_NEXT_RUNTIME_UNUSED_AND_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_NEXT_WEATHER_CLASS_CANONICALIZATION_AND_CBM_USE_JA.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_RETRY_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/RUNTIME_TRIAGE_EVIDENCE_SUMMARY_20260830.md
 ```
 
 名前だけで移動しない。各ファイルについてpurpose、creation PR/commit、要求された実装が着地済みか、status/resultがterminalか、current文書がactive contractとして参照しているか、将来もdurable ruleとして必要かを確認する。不明なら移動せず理由を記録する。

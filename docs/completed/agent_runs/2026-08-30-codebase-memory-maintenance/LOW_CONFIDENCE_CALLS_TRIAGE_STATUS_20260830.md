@@ -242,7 +242,7 @@ git_diff_check: PASS
 refresh_needed: YES (active docs changed after the previous source snapshot)
 source_bearing_commit: 6d04d49c0f42e7fdd23806b076d303963638122e
 refresh_count: 1 (automatic current-state refresh; no artifact-only follow-up)
-artifact_commit: pending status/evidence commit
+artifact_commit: 8dfb210428b656ee0db4f545140af033c3efa166
 artifact_self_followup_refresh: NO
 ```
 

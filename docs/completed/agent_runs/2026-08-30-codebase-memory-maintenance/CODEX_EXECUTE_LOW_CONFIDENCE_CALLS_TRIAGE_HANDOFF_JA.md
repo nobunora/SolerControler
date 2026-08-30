@@ -97,7 +97,7 @@ git status --short
 git rev-parse HEAD
 git log -5 --oneline
 Get-Content .codebase-memory/artifact.json
-Get-Content docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
+Get-Content docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
 ```
 
 確認条件:
@@ -122,8 +122,8 @@ HEADがこの文書記載の`a49a28b...`より進んでいる場合は、**実�
 1. `AGENTS.md`
 2. `docs/current/agent/codebase_memory_triage_and_maintenance_ja.md`
 3. `docs/current/agent/codebase_memory_shared_graph_usage_ja.md`
-4. `docs/current/agent/CODEX_RETRY_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md`
-5. `docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`
+4. `docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/CODEX_RETRY_LOW_CONFIDENCE_CALLS_TRIAGE_JA.md`
+5. `docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md`
 6. この文書
 
 を読む。
@@ -571,7 +571,7 @@ exact next action
 想定changed file:
 
 ```text
-docs/current/agent/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
+docs/completed/agent_runs/2026-08-30-codebase-memory-maintenance/LOW_CONFIDENCE_CALLS_TRIAGE_STATUS_20260830.md
 ```
 
 必要なら分類結果を説明する小さいcurrent docを追加してよいが、completed reportはユーザーの明示依頼なしに作らない。
