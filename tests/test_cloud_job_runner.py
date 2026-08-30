@@ -37,8 +37,10 @@ class _Device:
         self.soc = iter(soc)
         self.fail_forced = fail_forced
         self.calls: list[str] = []
+        self.soc_read_count = 0
 
     def read_soc(self, _paths: list[Path]) -> SocReading:
+        self.soc_read_count += 1
         return SocReading(next(self.soc), "fake", None, datetime(2099, 1, 1, tzinfo=JST))
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
@@ -61,6 +63,41 @@ def test_03_targets_are_continuous(tmp_path: Path, target: float) -> None:
         _plan(tmp_path / "plan.json", target), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=device
     )
     assert device.calls == ["forced", "standby"]
+
+
+def test_03_target_100_does_not_stop_at_93_or_99_even_with_legacy_margin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "7")
+    device = _Device([93.0, 99.0, 100.0])
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 100), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=device
+    )
+    assert device.calls.count("forced") == 1
+    assert device.calls.count("standby") == 1
+    assert device.soc_read_count == 3
+
+
+def test_03_target_80_does_not_stop_at_79_with_legacy_margin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT", "7")
+    device = _Device([79.0, 80.0])
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=device
+    )
+    assert device.calls.count("forced") == 1
+    assert device.calls.count("standby") == 1
+    assert device.soc_read_count == 2
+
+
+def test_03_target_stop_log_records_target_source_and_reason(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    device = _Device([100.0])
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 100), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=device
+    )
+    stdout = capsys.readouterr().out
+    assert "exact_target_stop=true" in stdout
+    assert "target=100.00%" in stdout
+    assert "source=fake" in stdout
+    assert "reason=target_reached" in stdout
+    assert "latest=100.00%" in stdout
 
 
 def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

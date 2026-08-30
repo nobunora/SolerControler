@@ -118,17 +118,31 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     now = lambda: clock.now(zone)
     if not may_start_03_io(now()) or not plan_path.exists(): return
     plan = _read_plan_meta(plan_path); target = max(0.0, min(100.0, plan["target_soc_7_percent"])); settings = ForcedChargeSettings.from_env()
+    print(f"[cloud_job_runner] 03-monitor contract target={target:.2f}% exact_target_stop=true configured_stop_margin={settings.stop_soc_margin_percent:.2f}% applied_stop_margin=0.00%", flush=True)
     paths = _latest_kpnet_csv_paths(Path(os.getenv("ARTIFACTS_DIR", "artifacts")))
     def standby(label: str) -> None:
         if may_start_final_standby(now()): device.apply_profile(profile="standby", dynamic_forced_profile=False, label=label)
+    def log_soc(reading: SocReading) -> None:
+        latest = reading.value_percent
+        action = "soc_unavailable" if latest is None else "target_reached" if latest >= target else "continue"
+        value = "none" if latest is None else f"{latest:.2f}%"
+        observed_at = "none" if reading.observed_at is None else reading.observed_at.isoformat()
+        print(f"[cloud_job_runner] 03-monitor soc value={value} source={reading.source} observed_at={observed_at} target={target:.2f}% action={action}", flush=True)
     try:
         initial = device.read_soc(paths); latest = initial.value_percent
+        log_soc(initial)
         # Literal contract: every configured target begins the forced/readback path.
         # No new KP settings write may start after 06:50: reserve the final
         # five minutes for an already-running operation to terminate cleanly.
         if not may_start_03_io(now()) or must_stop_forced_monitoring(now()): return
         device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
-        if latest is None or latest >= target - settings.stop_soc_margin_percent or must_stop_forced_monitoring(now()):
+        if latest is None:
+            print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
+            standby("03-immediate-standby"); return
+        if latest >= target:
+            print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
+            standby("03-immediate-standby"); return
+        if must_stop_forced_monitoring(now()):
             standby("03-immediate-standby"); return
     except Exception as error:
         try: standby("03-forced-error-standby")
@@ -140,11 +154,17 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
     while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
         reading = device.read_soc(paths); latest = reading.value_percent
-        if latest is None or latest >= target - settings.stop_soc_margin_percent:
+        log_soc(reading)
+        if latest is None:
+            print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
+            standby("03-target-reached-standby"); return
+        if latest >= target:
+            print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
             standby("03-target-reached-standby"); return
         delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
         if delay <= 0: break
         clock.sleep(delay)
+    print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
     standby("03-monitor-cutoff-standby")
 
 
