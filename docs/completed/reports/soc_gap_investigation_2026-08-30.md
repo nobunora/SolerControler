@@ -15,6 +15,7 @@
 - 取得・取込: `scripts/run_kpnet_import_from_env.ps1`（成功）。実行ディレクトリ: `artifacts/20260830-232004`。
 - 事前バックアップ: `artifacts/backups/operational/20260830T141917Z`。
 - 実績: 取込CSV `infoMeasureMulti30Min_*.csv` の30分粒度を集計。
+- 追跡対象データ: [soc_gap_evidence_2026-08-30.csv](./soc_gap_evidence_2026-08-30.csv)。機器識別子を除き、2026-08-29 23:00〜2026-08-30 07:30の検証対象18点だけを抽出した派生証跡である。
 - 計画・実行状態: Firestoreの `night_charge_plans/2026-08-29`、`battery_daily_metrics/2026-08-29`、`night_soc_execution/2026-08-29` から機微情報を除いた項目を確認。
 - 運用ログ: Cloud Run Job `solar-battery-03` の03時監視ログを読み取り専用で確認。
 - 構造確認: CodebaseMemory MCPは `ready`（5,660 nodes / 17,953 edges）。対象ソースは記録上の未解決parse issueなし。ただしmetadataは変更扱いのため、グラフ結果はソース読解で補完した。
@@ -94,4 +95,3 @@ CodebaseMemoryで確認した呼び出し経路は、03時監視のSOC読出し�
 - Cloud Runログは読み取り専用抽出であり、全ログを無制限保存していない。上記は対象時刻のエラー・SOC・再適用記録に限定した抜粋である。
 - 実機がSOC0%を返した理由（実際の深夜放電、SOCリセット、別レジスタ、計画側キャッシュ）は、今回の証跡だけでは一意に確定できない。
 - 今回は原因調査のみで、コード・設定・本番データの変更およびデプロイは行っていない。
-
