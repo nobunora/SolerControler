@@ -160,15 +160,6 @@ def _aggregate_hourly(rows: list[HourlyRow]) -> dict[date, dict[int, dict[str, f
     return {day: dict(hours) for day, hours in by_day.items()}
 
 
-def _daily_from_hourly(hourly: dict[date, dict[int, dict[str, float]]]) -> dict[str, dict[str, float]]:
-    out: dict[str, dict[str, float]] = {}
-    for day, by_hour in hourly.items():
-        load = sum(item["load"] for item in by_hour.values())
-        pv = sum(item["pv"] for item in by_hour.values())
-        out[day.isoformat()] = {"load_kwh": load, "pv_kwh": pv}
-    return out
-
-
 def _fetch_archive(*, lat: float, lon: float, timezone_name: str, start_date: str, end_date: str) -> tuple[dict[str, dict[int, dict[str, float]]], dict[str, dict[str, Any]]]:
     url = "https://archive-api.open-meteo.com/v1/archive"
     hourly_params: dict[str, str | float] = {

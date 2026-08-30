@@ -73,10 +73,6 @@ def _read_plan_meta(path: Path) -> dict[str, float]:
     return {"target_soc_7_percent": float(result["target_soc_7_percent"]), "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0)), "effective_capacity_kwh": float(result.get("effective_capacity_kwh", 0.0))}
 
 
-def _estimate_required_charge_kwh(*, plan_meta: dict[str, float], latest_soc_percent: float | None) -> float:
-    return max(0.0, plan_meta["required_night_charge_kwh"])
-
-
 class _RunnerMonitorDevicePort:
     """KP-NET port: exactly one mode-only write/read-back per invocation."""
     def read_soc(self, csv_paths: list[Path]) -> SocReading:

@@ -10,8 +10,6 @@ from app.configuration.environment import env_float
 from app.parsing.numbers import to_float, to_int
 
 
-def _clip_float(value: float, *, min_val: float, max_val: float) -> float:
-    return max(min_val, min(max_val, value))
 def _forecast_history_start_date(*, target_date: str) -> str:
     lookback_days = max(1, int(env_float("FORECAST_HOURLY_HISTORY_LOOKBACK_DAYS", default=60.0)))
     try:

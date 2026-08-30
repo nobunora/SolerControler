@@ -155,15 +155,6 @@ def _aggregate_load_by_hour(rows: list[dict[str, Any]]) -> dict[date, dict[int, 
     return {day: dict(hours) for day, hours in by_day.items()}
 
 
-def _day_series(day_values: dict[str, float], day: date, window_days: int) -> float:
-    values: list[float] = []
-    for offset in range(window_days):
-        current = (day - timedelta(days=offset)).isoformat()
-        if current in day_values:
-            values.append(day_values[current])
-    return fmean(values) if values else 0.0
-
-
 def _hourly_trailing_mean(
     weather_by_ts: dict[datetime, dict[str, float]],
     ts: datetime,
