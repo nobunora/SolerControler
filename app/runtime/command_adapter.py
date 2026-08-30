@@ -60,13 +60,6 @@ def _run(
         raise RuntimeError(f"Command failed (rc={return_code}): {' '.join(cmd)}")
 
 
-def _run_optional(command: Iterable[str], env_updates: dict[str, str] | None = None, *, label: str) -> None:
-    try:
-        _run(command, env_updates)
-    except Exception as exc:
-        print(f"[cloud_job_runner] optional step failed ({label}): {exc}", flush=True)
-
-
 def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
     try:
         value = int(os.getenv(name, str(default)).strip() or str(default))
