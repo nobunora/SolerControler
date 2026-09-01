@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.energy_plan.night_plan import build_night_plan_provenance
 from app.runtime.cloud_job import _monitor_partial_forced_and_stop
 from app.runtime.soc_reading import SocReading
 from app.runtime.slot_orchestration import _run_day_07, _run_night_23
@@ -56,6 +58,11 @@ def _plan(path: Path, target: float, required_kwh: float = 1.0) -> Path:
     return path
 
 
+def _json_plan(path: Path, payload: dict[str, object]) -> Path:
+    path.write_bytes(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    return path
+
+
 @pytest.mark.parametrize("target", [0, 30, 50, 80, 100])
 def test_03_targets_are_continuous(tmp_path: Path, target: float) -> None:
     device = _Device([0.0, float(target)])
@@ -98,6 +105,116 @@ def test_03_target_stop_log_records_target_source_and_reason(tmp_path: Path, cap
     assert "source=fake" in stdout
     assert "reason=target_reached" in stdout
     assert "latest=100.00%" in stdout
+
+
+def test_03_plan_provenance_logs_cost_base_100_final_91(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan_path = _json_plan(
+        tmp_path / "plan.json",
+        {
+            "forecast": {"date": "2099-01-02"},
+            "result": {
+                "target_soc_7_percent_base": 100,
+                "target_soc_7_percent": 91,
+                "target_soc_7_percent_cost_optimized": 91,
+                "required_night_charge_kwh": 2.75,
+            },
+            "decision_rationale": {"active_constraints": ["reserve_soc"]},
+            "daytime_soc_optimization": {
+                "objective": "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
+                "max_target_soc_percent_after_guards": 100,
+                "selected_candidate": {"target_soc_percent": 91, "total_expected_cost_yen": 10},
+                "candidate_summaries": [
+                    {"target_soc_percent": target, "total_expected_cost_yen": target}
+                    for target in (90, 91, 92, 100)
+                ],
+            },
+        },
+    )
+    _monitor_partial_forced_and_stop(
+        plan_path, clock=_Clock(datetime(2099, 1, 2, 3, tzinfo=JST)), device_port=_Device([90.0, 91.0])
+    )
+
+    stdout = capsys.readouterr().out
+    prefix = "[cloud_job_runner] 03-plan-provenance "
+    assert stdout.count(prefix) == 1
+    provenance_line = next(line for line in stdout.splitlines() if line.startswith(prefix))
+    provenance = json.loads(provenance_line[len(prefix):])
+    assert provenance["base_target_soc_7_percent"] == 100.0
+    assert provenance["final_target_soc_7_percent"] == 91.0
+    assert provenance["optimizer_kind"] == "cost"
+    assert provenance["selected_candidate"]["target_soc_percent"] == 91.0
+    assert provenance["candidate_100_percent"]["target_soc_percent"] == 100.0
+    assert provenance["nearest_lower_candidate"]["target_soc_percent"] == 90.0
+    assert provenance["nearest_higher_candidate"]["target_soc_percent"] == 92.0
+    assert provenance["plan_sha256"] == hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    assert provenance["provenance_status"] == "complete"
+    assert "03-monitor contract target=91.00%" in stdout
+
+
+def test_03_plan_provenance_logs_guard_cap_when_100_candidate_is_absent(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    plan_path = _json_plan(
+        tmp_path / "plan.json",
+        {
+            "forecast": {"date": "2099-01-02"},
+            "result": {"target_soc_7_percent_base": 100, "target_soc_7_percent": 91},
+            "decision_rationale": {
+                "active_constraints": ["daytime_net_surplus_headroom_guard"],
+            },
+            "daytime_soc_optimization": {
+                "max_target_soc_percent_after_guards": 91,
+                "selected_candidate": {"target_soc_percent": 91},
+                "candidate_summaries": [{"target_soc_percent": target} for target in (90, 91)],
+            },
+        },
+    )
+    _monitor_partial_forced_and_stop(
+        plan_path, clock=_Clock(datetime(2099, 1, 2, 3, tzinfo=JST)), device_port=_Device([90.0, 91.0])
+    )
+
+    prefix = "[cloud_job_runner] 03-plan-provenance "
+    provenance_line = next(line for line in capsys.readouterr().out.splitlines() if line.startswith(prefix))
+    provenance = json.loads(provenance_line[len(prefix):])
+    assert provenance["candidate_100_percent"] is None
+    assert provenance["max_target_soc_percent_after_guards"] == 91.0
+    assert provenance["active_constraints"] == ["daytime_net_surplus_headroom_guard"]
+
+
+def test_03_plan_provenance_partial_does_not_block_forced_control(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80),
+        clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+        device_port=_Device([79.0, 80.0]),
+    )
+    stdout = capsys.readouterr().out
+    prefix = "[cloud_job_runner] 03-plan-provenance "
+    provenance_line = next(line for line in stdout.splitlines() if line.startswith(prefix))
+    provenance = json.loads(provenance_line[len(prefix):])
+    assert provenance["final_target_soc_7_percent"] == 80.0
+    assert provenance["provenance_status"] in {"partial", "complete"}
+    assert "03-monitor contract target=80.00%" in stdout
+
+
+def test_night_plan_provenance_marks_conflicting_base_targets_without_changing_final() -> None:
+    provenance = build_night_plan_provenance(
+        {
+            "forecast": {"date": "2099-01-02"},
+            "result": {
+                "target_soc_7_percent_base": 100,
+                "target_soc_7_percent": 91,
+            },
+            "decision_rationale": {"raw_target_soc_7_percent": 95},
+        },
+        plan_sha256="a" * 64,
+    )
+    assert provenance["provenance_status"] == "conflict"
+    assert provenance["base_target_soc_7_percent"] == 100.0
+    assert provenance["final_target_soc_7_percent"] == 91.0
+
+
+def test_03_plan_provenance_does_not_add_external_persistence() -> None:
+    source = Path("app/runtime/cloud_job.py").read_text(encoding="utf-8")
+    for forbidden in ("upload_night_plan_to_gcs", "persist_night_plan_to_firestore", "settings_events"):
+        assert forbidden not in source
 
 
 def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

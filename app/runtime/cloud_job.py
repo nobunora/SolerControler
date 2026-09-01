@@ -2,12 +2,14 @@
 # mypy: disable-error-code=no-untyped-call
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.forced_charge import MonitorClock, MonitorDevicePort
@@ -67,10 +69,20 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
     return plan_path.exists()
 
 
-def _read_plan_meta(path: Path) -> dict[str, float]:
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def _read_plan_meta(path: Path) -> dict[str, Any]:
+    raw_bytes = path.read_bytes()
+    raw = json.loads(raw_bytes)
     result = raw.get("result", {})
-    return {"target_soc_7_percent": float(result["target_soc_7_percent"]), "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0)), "effective_capacity_kwh": float(result.get("effective_capacity_kwh", 0.0))}
+    from app.energy_plan.night_plan import build_night_plan_provenance
+
+    return {
+        "target_soc_7_percent": float(result["target_soc_7_percent"]),
+        "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0)),
+        "effective_capacity_kwh": float(result.get("effective_capacity_kwh", 0.0)),
+        "provenance": build_night_plan_provenance(
+            raw, plan_sha256=hashlib.sha256(raw_bytes).hexdigest()
+        ),
+    }
 
 
 class _RunnerMonitorDevicePort:
@@ -118,6 +130,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     now = lambda: clock.now(zone)
     if not may_start_03_io(now()) or not plan_path.exists(): return
     plan = _read_plan_meta(plan_path); target = max(0.0, min(100.0, plan["target_soc_7_percent"])); settings = ForcedChargeSettings.from_env()
+    print(
+        "[cloud_job_runner] 03-plan-provenance "
+        + json.dumps(plan["provenance"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        flush=True,
+    )
     print(f"[cloud_job_runner] 03-monitor contract target={target:.2f}% exact_target_stop=true configured_stop_margin={settings.stop_soc_margin_percent:.2f}% applied_stop_margin=0.00%", flush=True)
     paths = _latest_kpnet_csv_paths(Path(os.getenv("ARTIFACTS_DIR", "artifacts")))
     def standby(label: str) -> None:
