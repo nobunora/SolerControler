@@ -118,6 +118,16 @@ Firestoreの `pipeline_runs` では、03スロットの最後の記録は2026-08
 - 8/31の03 Jobは成功しているため、設定完了イベント欠落の原因は本報告だけでは確定していない。
 - Cloud Runアプリケーションログの詳細なイベント単位確認、Jobが参照したplanの存在、Firestore書込み応答の相関付けは未実施。
 
+## Follow-up: 2026-09-01 03 exact-target execution
+
+- classification: `EXACT_TARGET_CONFIRMED`
+- contract target: `91.00%`
+- final relevant SOC: `96.00%`
+- SOC source: `realtime`
+- stop reason: `target_reached`
+- sanitized execution window: `2026-08-31 18:00:01Z`〜`21:10:01Z`（JST `2026-09-01 03:00:01`〜`06:10:01`）
+- 通常03 Jobの手動実行: `NO`
+
 ## If Behavior Changed
 
 該当なし。動作変更は行っていない。
