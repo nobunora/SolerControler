@@ -25,8 +25,17 @@ def merge_forecast_hourly_actuals(
         key = (ts[:10], hour)
         acc = actuals.setdefault(
             key,
-            {"actual_load_kwh": 0.0, "actual_soc_percent": None, "latest_sample_at": None},
+            {
+                "actual_load_kwh": 0.0,
+                "actual_soc_percent": None,
+                "latest_sample_at": None,
+                "first_sample_at": None,
+                "opening_soc_percent": None,
+            },
         )
+        first = acc["first_sample_at"]
+        if first is None or ts < first:
+            acc["first_sample_at"] = ts
         latest = acc["latest_sample_at"]
         if latest is None or ts > latest:
             acc["latest_sample_at"] = ts
@@ -44,6 +53,10 @@ def merge_forecast_hourly_actuals(
         except (TypeError, ValueError):
             soc = None
         if soc is not None and math.isfinite(soc) and 0.0 <= soc <= 100.0:
+            opening_soc_at = acc.get("opening_soc_at")
+            if opening_soc_at is None or ts < opening_soc_at:
+                acc["opening_soc_percent"] = soc
+                acc["opening_soc_at"] = ts
             current_soc_at = acc.get("actual_soc_at")
             if current_soc_at is None or ts >= current_soc_at:
                 acc["actual_soc_percent"] = soc
@@ -60,6 +73,8 @@ def merge_forecast_hourly_actuals(
         actual = actuals.get(key)
         item["actual_load_kwh"] = actual["actual_load_kwh"] if actual else None
         item["actual_soc_percent"] = actual.get("actual_soc_percent") if actual else None
+        item["first_sample_at"] = actual.get("first_sample_at") if actual else None
+        item["opening_soc_percent"] = actual.get("opening_soc_percent") if actual else None
         item["latest_sample_at"] = actual["latest_sample_at"] if actual else None
         merged.append(item)
     merged.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))

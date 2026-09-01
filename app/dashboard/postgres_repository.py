@@ -123,29 +123,38 @@ def load_postgres_slice(
                     SELECT substring(ts,1,10) AS date,
                            EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
                            COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                           MIN(ts) AS first_sample_at,
                            MAX(ts) AS latest_sample_at
                     FROM monitoring_samples
                     WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
                     GROUP BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
                 ), hourly_soc AS (
-                    SELECT date, hour, soc_percent AS actual_soc_percent
+                    SELECT date, hour,
+                           MAX(CASE WHEN opening_row_number = 1 THEN soc_percent END) AS opening_soc_percent,
+                           MAX(CASE WHEN latest_row_number = 1 THEN soc_percent END) AS actual_soc_percent
                     FROM (
                         SELECT substring(ts,1,10) AS date,
                                EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
                                soc_percent,
                                ROW_NUMBER() OVER (
                                    PARTITION BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
+                                   ORDER BY ts ASC
+                               ) AS opening_row_number,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY substring(ts,1,10), EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer
                                    ORDER BY ts DESC
-                               ) AS row_number
+                               ) AS latest_row_number
                         FROM monitoring_samples
                         WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
                           AND soc_percent IS NOT NULL
+                          AND soc_percent >= 0 AND soc_percent <= 100
                     ) ranked
-                    WHERE row_number = 1
+                    GROUP BY date, hour
                 )
                 SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
-                       ah.latest_sample_at, fh.source, fh.updated_at
+                       hs.opening_soc_percent,
+                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at
                 FROM forecast_hourly fh
                 LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
                 LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour

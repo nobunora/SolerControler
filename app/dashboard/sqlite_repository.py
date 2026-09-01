@@ -108,29 +108,38 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 WITH hourly_actuals AS (
                     SELECT substr(ts,1,10) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour,
                            COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                           MIN(ts) AS first_sample_at,
                            MAX(ts) AS latest_sample_at
                     FROM monitoring_samples
                     WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
                     GROUP BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
                 ), hourly_soc AS (
-                    SELECT date, hour, soc_percent AS actual_soc_percent
+                    SELECT date, hour,
+                           MAX(CASE WHEN opening_row_number = 1 THEN soc_percent END) AS opening_soc_percent,
+                           MAX(CASE WHEN latest_row_number = 1 THEN soc_percent END) AS actual_soc_percent
                     FROM (
                         SELECT substr(ts,1,10) AS date,
                                CAST(strftime('%H', ts) AS INTEGER) AS hour,
                                soc_percent,
                                ROW_NUMBER() OVER (
                                    PARTITION BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
+                                   ORDER BY ts ASC
+                               ) AS opening_row_number,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
                                    ORDER BY ts DESC
-                               ) AS row_number
+                               ) AS latest_row_number
                         FROM monitoring_samples
                         WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
                           AND soc_percent IS NOT NULL
+                          AND soc_percent >= 0 AND soc_percent <= 100
                     )
-                    WHERE row_number = 1
+                    GROUP BY date, hour
                 )
                 SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
-                       ah.latest_sample_at, fh.source, fh.updated_at
+                       hs.opening_soc_percent,
+                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at
                 FROM forecast_hourly fh
                 LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
                 LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour

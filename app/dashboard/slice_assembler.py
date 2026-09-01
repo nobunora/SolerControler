@@ -65,8 +65,8 @@ def empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_
     return DashboardSlice(data=DashboardData([], [], [], [], [], latest_schedule=schedule), meta={"window_days": window_days, "oldest_loaded_date": None, "newest_loaded_date": None, "global_oldest_date": global_oldest, "global_newest_date": global_newest, "has_more_before": False})
 
 
-def dashboard_warnings(*, latest_schedule: dict[str, Any], battery_daily: list[dict[str, Any]], energy_daily: list[dict[str, Any]], end_date_iso: str, today_jst_iso: str | None = None) -> list[dict[str, Any]]:
-    return build_dashboard_warnings(latest_schedule=latest_schedule, battery_daily=battery_daily, energy_daily=energy_daily, end_date_iso=end_date_iso, today_jst_iso=today_jst_iso or _today_jst_iso())
+def dashboard_warnings(*, latest_schedule: dict[str, Any], battery_daily: list[dict[str, Any]], energy_daily: list[dict[str, Any]], forecast_hourly: list[dict[str, Any]], end_date_iso: str, today_jst_iso: str | None = None) -> list[dict[str, Any]]:
+    return build_dashboard_warnings(latest_schedule=latest_schedule, battery_daily=battery_daily, energy_daily=energy_daily, forecast_hourly=forecast_hourly, end_date_iso=end_date_iso, today_jst_iso=today_jst_iso or _today_jst_iso())
 
 
 def dashboard_meta(*, window_days: int, global_oldest_date: str | None, global_newest_date: str | None, pv_daily: list[dict[str, Any]], cost_daily: list[dict[str, Any]], battery_daily: list[dict[str, Any]], energy_daily: list[dict[str, Any]] | None = None, forecast_hourly: list[dict[str, Any]] | None = None, battery_flow_daily: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -78,7 +78,7 @@ def dashboard_meta(*, window_days: int, global_oldest_date: str | None, global_n
 
 def build_dashboard_slice(raw: DashboardRawData, *, end_date_iso: str, window_days: int, pv_forecast_diagnostics: dict[str, Any] | None = None, daily_review: dict[str, Any] | None = None, daily_reviews: list[dict[str, Any]] | None = None, today_jst_iso: str | None = None) -> DashboardSlice:
     meta = dashboard_meta(window_days=window_days, global_oldest_date=raw.global_oldest, global_newest_date=raw.global_newest, pv_daily=raw.pv_daily, cost_daily=raw.cost_daily, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, forecast_hourly=raw.forecast_hourly, battery_flow_daily=raw.battery_flow_daily)
-    return assemble_dashboard_slice(raw, meta=meta, warnings=dashboard_warnings(latest_schedule=raw.latest_schedule, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, end_date_iso=end_date_iso, today_jst_iso=today_jst_iso), pv_forecast_diagnostics=pv_forecast_diagnostics, daily_review=daily_review, daily_reviews=daily_reviews)
+    return assemble_dashboard_slice(raw, meta=meta, warnings=dashboard_warnings(latest_schedule=raw.latest_schedule, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, forecast_hourly=raw.forecast_hourly, end_date_iso=end_date_iso, today_jst_iso=today_jst_iso), pv_forecast_diagnostics=pv_forecast_diagnostics, daily_review=daily_review, daily_reviews=daily_reviews)
 
 
 def build_slice_from_query_snapshot(snapshot: DashboardQuerySnapshot, *, window_days: int, include_static: bool, pv_forecast_diagnostics: dict[str, Any] | None = None, today_jst_iso: str | None = None) -> DashboardSlice:

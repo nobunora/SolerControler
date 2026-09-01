@@ -194,7 +194,7 @@ def test_query_snapshot_assembler_matches_characterized_sqlite_slice(
     assert assembled == existing
 
 
-def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_shape(
+def test_sqlite_dashboard_slice_contract_keeps_pagination_shape(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -234,19 +234,7 @@ def test_sqlite_dashboard_slice_contract_keeps_schedule_warning_and_pagination_s
     assert sliced.data.forecast_hourly == []
     assert sliced.data.latest_schedule["plan_date"] == "2026-06-02"
     assert sliced.data.latest_schedule["status"] == "fallback-default"
-    assert sliced.data.dashboard_warnings == [
-        {
-            "code": "settings_completion_unconfirmed",
-            "severity": "warning",
-            "title": "設定完了未確認",
-            "message": "最新設定の正常完了イベントを確認できません。",
-            "detail": {
-                "plan_date": "2026-06-02",
-                "status": "fallback-default",
-                "schedule_source": None,
-            },
-        }
-    ]
+    assert sliced.data.dashboard_warnings == []
     assert sliced.meta == {
         "window_days": 1,
         "aggregation_close_day": 14,
@@ -436,6 +424,8 @@ def test_dashboard_slice_includes_hourly_forecast(tmp_path: Path) -> None:
     assert sliced.data.forecast_hourly[0]["forecast_charge_kwh"] == pytest.approx(0.4)
     assert sliced.data.forecast_hourly[0]["actual_load_kwh"] == pytest.approx(0.9)
     assert sliced.data.forecast_hourly[0]["actual_soc_percent"] == pytest.approx(55)
+    assert sliced.data.forecast_hourly[0]["first_sample_at"] == "2026-05-02T07:00:00"
+    assert sliced.data.forecast_hourly[0]["opening_soc_percent"] == pytest.approx(54)
     assert sliced.data.forecast_hourly[0]["latest_sample_at"] == "2026-05-02T07:30:00"
     assert sliced.data.forecast_hourly[1]["actual_load_kwh"] is None
 
@@ -628,6 +618,160 @@ def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samp
     assert merged[1]["actual_soc_percent"] == pytest.approx(43)
     assert merged[2]["actual_load_kwh"] == pytest.approx(0.0)
     assert merged[2]["actual_soc_percent"] == pytest.approx(51)
+
+
+def test_soc_target_warning_uses_exact_0700_soc_not_pv_charge_end_soc() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
+        battery_daily=[
+            {
+                "date": "2026-08-29",
+                "setting_soc_target_percent": 100,
+                "pv_charge_end_soc_percent": 56,
+            }
+        ],
+        energy_daily=[],
+        forecast_hourly=[
+            {
+                "date": "2026-08-29",
+                "hour": 7,
+                "first_sample_at": "2026-08-29T07:00:00",
+                "opening_soc_percent": 100,
+            }
+        ],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    assert "soc_target_unreached" not in {row["code"] for row in warnings}
+
+
+def test_soc_target_warning_fires_when_exact_0700_soc_is_below_target() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
+        battery_daily=[
+            {
+                "date": "2026-08-29",
+                "setting_soc_target_percent": 100,
+                "pv_charge_end_soc_percent": 100,
+            }
+        ],
+        energy_daily=[],
+        forecast_hourly=[
+            {
+                "date": "2026-08-29",
+                "hour": 7,
+                "first_sample_at": "2026-08-29T07:00:00",
+                "opening_soc_percent": 93,
+            }
+        ],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    warning = next(row for row in warnings if row["code"] == "soc_target_unreached")
+    assert warning["detail"] == {
+        "date": "2026-08-29",
+        "target_soc_percent": 100.0,
+        "observed_soc_percent": 93.0,
+        "observed_at": "2026-08-29T07:00:00",
+        "source": "monitoring-sample-07:00",
+    }
+
+
+def test_soc_target_warning_does_not_substitute_0730_for_missing_0700_sample() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
+        battery_daily=[{"date": "2026-08-29", "setting_soc_target_percent": 100}],
+        energy_daily=[],
+        forecast_hourly=[
+            {
+                "date": "2026-08-29",
+                "hour": 7,
+                "first_sample_at": "2026-08-29T07:30:00",
+                "opening_soc_percent": 80,
+            }
+        ],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    assert "soc_target_unreached" not in {row["code"] for row in warnings}
+
+
+def test_merge_forecast_hourly_actuals_keeps_opening_and_latest_soc_separate() -> None:
+    merged = merge_forecast_hourly_actuals(
+        [{"date": "2026-08-29", "hour": 7}],
+        [
+            {"ts": "2026-08-29T07:00:00", "soc_percent": 100},
+            {"ts": "2026-08-29T07:30:00", "soc_percent": 86},
+        ],
+    )
+
+    assert merged[0]["first_sample_at"] == "2026-08-29T07:00:00"
+    assert merged[0]["opening_soc_percent"] == pytest.approx(100)
+    assert merged[0]["latest_sample_at"] == "2026-08-29T07:30:00"
+    assert merged[0]["actual_soc_percent"] == pytest.approx(86)
+
+
+def test_settings_completion_warning_is_suppressed_without_plan_specific_event() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={
+            "plan_date": "2026-08-29",
+            "status": "fallback-default",
+            "settings_completed": False,
+            "recorded_at": None,
+        },
+        battery_daily=[],
+        energy_daily=[],
+        forecast_hourly=[],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    assert "settings_completion_unconfirmed" not in {row["code"] for row in warnings}
+
+
+def test_settings_completion_warning_remains_for_event_backed_incomplete_run() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={
+            "plan_date": "2026-08-29",
+            "status": "pending",
+            "settings_completed": False,
+            "recorded_at": "2026-08-29T03:00:00Z",
+            "schedule_source": "03-monitor",
+        },
+        battery_daily=[],
+        energy_daily=[],
+        forecast_hourly=[],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    warning = next(row for row in warnings if row["code"] == "settings_completion_unconfirmed")
+    assert warning["message"] == "記録された設定イベントに正常完了を確認できません。"
+
+
+def test_monitor_schedule_missing_is_suppressed_for_standalone_fallback() -> None:
+    warnings = _build_dashboard_warnings(
+        latest_schedule={
+            "plan_date": "2026-08-29",
+            "status": "fallback-default",
+            "settings_completed": False,
+        },
+        battery_daily=[
+            {
+                "date": "2026-08-29",
+                "night_charge_kwh": 2.0,
+            }
+        ],
+        energy_daily=[],
+        forecast_hourly=[],
+        end_date_iso="2026-08-29",
+        today_jst_iso="2026-09-01",
+    )
+
+    assert "monitor_schedule_missing" not in {row["code"] for row in warnings}
 
 
 def test_firestore_slice_requests_hourly_forecast_for_entire_window(monkeypatch) -> None:
@@ -1077,8 +1221,16 @@ def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_war
         )
         conn.execute(
             """
-            INSERT INTO monitoring_samples(ts, pv_kwh, load_kwh, ingested_at)
-            VALUES ('2026-06-03T07:00:00', 1.0, 0.8, '2026-06-03T23:10:00')
+            INSERT INTO monitoring_samples(ts, pv_kwh, load_kwh, soc_percent, ingested_at)
+            VALUES ('2026-06-03T07:00:00', 1.0, 0.8, 70, '2026-06-03T23:10:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO forecast_hourly(
+                date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
+            )
+            VALUES ('2026-06-03', 7, 1.0, 1.0, 0.0, 'test', '2026-06-03T00:00:00')
             """
         )
         conn.commit()
