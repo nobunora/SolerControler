@@ -2,61 +2,32 @@
 
 ## Incident
 
-Date: 2026-09-02 JST
+Date range: 2026-08-29 through 2026-09-02 JST
 
-User-visible symptom: morning battery SOC was 0% again.
+User-visible symptom: recent PV forecasts are missing from the production dashboard.
 
-Primary investigation classification: `PLAN_GENERATION_OR_PREP_FAILURE`.
+Primary investigation classification: `FORECAST_NOT_GENERATED` for 2026-08-30 through 2026-09-02.
 
-## Confirmed evidence
+## Read-only production evidence
 
-- 03 Scheduler was enabled and created the scheduled execution at 03:00 JST.
-- Cloud Run execution succeeded at the platform level, but application control never reached the monitor phase.
-- Initial CSV completed.
-- `energy_model_main.py` started with `FORECAST_DATE_OVERRIDE=2026-09-02`.
-- Marker counts in the execution:
-  - `03-plan-provenance`: 0
-  - `03-monitor contract`: 0
-  - `03-monitor soc`: 0
-  - `03-monitor stop reason`: 0
-- About 213 seconds after model start, transport timeout warnings appeared; about 242 seconds after start, KP-NET login consistent with fail-safe standby began.
-- Official monitoring CSV shows 03:00 through 06:30 SOC=1% and charge=0.000 kWh; 07:00 SOC=0%.
-- No forced-mode write/readback failure is proven because forced control was never reached.
-- 23 and 07 jobs succeeded and do not explain the missing overnight charge.
+| JST date | Stored plan / extracted hourly rows | Mutable `forecast_hourly` | Immutable snapshots | `sunshine_daily` | Dashboard slice / browser |
+| --- | --- | --- | --- | --- | --- |
+| 2026-08-29 | exists; 24 rows; 5.2862 kWh | 24 rows; 5.2862 kWh | 2 runs; 48 rows; latest issued 2026-08-28T21:31:39Z | exists; 5.2862 kWh | received and rendered as the latest hourly plan |
+| 2026-08-30 | absent | 0 | 0 | absent | no forecast rows available |
+| 2026-08-31 | absent | 0 | 0 | absent | no forecast rows available |
+| 2026-09-01 | absent | 0 | 0 | absent | no forecast rows available |
+| 2026-09-02 | absent | 0 | 0 | absent | no forecast rows available |
 
-## Confirmed code boundary
+- The 2026-08-29 plan is an archived immutable GCS detail with a matching `forecast.date`, 24 extracted hourly rows, and the same PV sum as mutable storage. This rules out the mutable-delete-without-replacement risk for that date.
+- The production browser displayed the 2026-08-29 hourly plan and its 5.29 kWh PV total. The frontend receives and renders available rows; it is not the cause of the later missing dates.
+- Scheduled 23 Cloud Run executions from 2026-08-29 through 2026-09-02 all completed successfully. Firestore `pipeline_runs` after the 2026-08-29 plan contains only `manual-csv` entries, whose canonical wrapper sets `DATA_PIPELINE_INCLUDE_NIGHT_PLAN=false`; it contains no later 23 forecast-ingestion run.
 
-`app/runtime/cloud_job.py::_ensure_night_plan_available` runs `energy_model_main.py` with an outer maximum of 240 seconds. `app/runtime/slot_orchestration.py::_run_adjust_03` catches prep failure; when no plan exists it performs one fail-safe standby and returns without entering monitor/forced control.
+## Confirmed source trace and root cause
 
-## Hypothesis resolution
+`night_charge_plan.json` -> `extract_hourly_forecast_from_plan()` -> `ingest_sunshine_from_night_plan()` -> mutable `forecast_hourly` -> `persist_forecast_snapshots()` -> `_firestore_forecast_hourly_between()` -> dashboard slice -> `static/dashboard.js` is intact for the 2026-08-29 evidence.
 
-The weather-history hypothesis was not confirmed for the incident-shaped production input.
+The current failure is upstream of this trace. `app/runtime/slot_orchestration.py::_run_night_23` is protected to perform exactly one standby write and explicitly forbids plan/CSV/Firestore dependencies. `app/runtime/cloud_job.py::_ensure_night_plan_available` keeps 03 plan generation local and `tests/test_cloud_job_runner.py` forbids plan persistence there. Consequently, after the 2026-08-29 isolation change, no permitted scheduled owner generates and persists new dashboard forecast vintages. Do not alter the accepted 03 remediation or add persistence to 03.
 
-Reasons:
+## Remaining decision
 
-- `.env.example` has explicit KP CSV months `2026-04,2026-05` plus latest-month download.
-- Weather-history currently derives `requested_days` as every calendar day from the earliest CSV date through the latest CSV date, including dates with no consumption rows.
-- Missing weather days are fetched serially in chunks.
-- Defaults are 14 days per chunk and up to 30 seconds per HTTP request.
-- The cache path is under local `artifacts/`; a Cloud Run job filesystem should not be assumed durable across executions.
-
-Cold-cache measurement requested 33 actual consumption dates in 3 chunks and completed weather history in 5.625s; the complete model finished in 44.554s. Incident Cloud Logging instead emitted two httplib2 per-request-timeout warnings roughly 213s after model start. The only plan-generation path using googleapiclient/httplib2 is the optional occupancy Google Sheets read, whose transport previously had no request timeout. This is the evidenced bounded-I/O defect boundary; the exact upstream network stall remains historical and cannot be replayed locally.
-
-## Implemented remediation awaiting review
-
-- Bound occupancy Sheet transport to 15s and sanitize failure logs so spreadsheet/resource IDs are not emitted.
-- Avoid weather requests for dates without consumption rows and cap total weather archive I/O at 60s, returning partial data plus diagnostics on exhaustion.
-- Emit structured sanitized 03 prep outcome evidence while preserving exactly one standby on no-plan failure.
-- Post-change cold-cache model smoke: 37.100s total, 202.900s margin versus 240s.
-
-## Required acceptance outcome
-
-A correct fix must demonstrate all of the following:
-
-1. Plan-generation phase that consumed the budget is identified with evidence.
-2. Normal production-like plan generation completes inside the 03 budget with meaningful safety margin, or optional external-data work is bounded so the model falls back and still emits a usable plan.
-3. A timeout/no-plan case emits an explicit sanitized prep-failure reason.
-4. A timeout/no-plan case performs exactly one fail-safe standby and never enters monitor/forced control.
-5. Successful plan generation reaches existing provenance/monitor logic unchanged.
-6. No 23/07 ownership, 06:45/06:50/06:55 fences, exact-target stop, forced mode-only/readback, SOC parsing, or optimizer/constraint semantics are changed without separate evidence and approval.
-7. No normal 03 manual execution is used for testing.
+The evidenced repair requires a separate non-control forecast generation and persistence owner. Adding a new scheduled Cloud Run job or scheduler is an operational architecture change, while the task also freezes existing Scheduler times and 23/03/07 ownership. No production data has been changed and no historical forecast will be fabricated pending that decision.

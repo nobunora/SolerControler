@@ -2,76 +2,31 @@
 
 ## Active workspace
 
-- Persistent Draft PR branch: `codex/persistent-workspace`
-- Baseline master at workspace bootstrap: `1c07e4ba51dfbd60902972baeb19915a93cf33b4`
-- Active incident: 2026-09-02 morning battery SOC reached 0%.
-- Latest investigation report: `docs/completed/reports/zero_soc_investigation_2026-09-02.md`
-- Investigation classification: `PLAN_GENERATION_OR_PREP_FAILURE`
-- Investigation result: `INVESTIGATION_COMPLETE_CAUSE_NARROWED`
+- Persistent Draft PR branch: `codex/persistent-workspace`, Draft PR #36.
+- Accepted 03 plan-preparation remediation: `8250353c704ac189c8dd61dd45d2eb48975e04f4`; freeze it unless a direct regression is proven.
+- Active task: missing recent PV forecasts in the production dashboard.
 
-## Current objective
+## Confirmed dashboard finding
 
-Make the scheduled 03 plan-preparation path bounded, observable, and reliable enough to reach the existing monitor/forced-charge controller under normal production conditions. Preserve the existing one-standby fail-safe if no usable plan can be produced.
+- Read-only production matrix for 2026-08-29 to 2026-09-02 JST is in `.ai/BUG_REPORT.md`.
+- 2026-08-29 has a stored immutable plan, 24 mutable rows, two immutable snapshot runs, and browser-rendered forecast data.
+- 2026-08-30 through 2026-09-02 have no plan, mutable row, snapshot, or sunshine forecast record. Classify each as `FORECAST_NOT_GENERATED`.
+- The Dashboard Firestore reader, slice assembly, and frontend store/render path work for available rows; do not change them for this defect.
+- Scheduled 23 jobs succeeded but are protected to be one standby write only. Scheduled 03 is protected to have no Firestore/DB persistence. No permitted scheduled owner currently creates/persists dashboard forecast vintages after the isolation change.
 
-Bound optional plan-generation I/O and make 03 prep outcomes observable without changing the outer 240-second budget or the one-standby fail-safe.
+## Relevant files and contracts
 
-## Current implementation status
+- `app/runtime/slot_orchestration.py::_run_night_23`: protected, no plan/CSV/Firestore dependency.
+- `app/runtime/cloud_job.py::_ensure_night_plan_available`: 03 local plan only; no persistence.
+- `app/operations/domain.py::extract_hourly_forecast_from_plan`
+- `app/operations/firestore.py::ingest_sunshine_from_night_plan`
+- `app/operations/forecast_snapshot.py::persist_forecast_snapshots`
+- `app/dashboard/firestore_repository.py::_firestore_forecast_hourly_between`
+- `static/dashboard.js::mergeHourlyRows`
 
-- Latest local change is not yet reviewed by Web ChatGPT.
-- Cold-cache production-like baseline completed in 44.554s; weather history used 5.625s for 33 requested days / 3 chunks.
-- Incident warning provenance points to the unbounded occupancy Google Sheets transport, not weather archive I/O.
-- Occupancy Sheet I/O now has a 15s request timeout and sanitized outcome logging.
-- Weather history now requests only consumption-row dates and has a 60s total optional-I/O budget with partial-result diagnostics.
-- 03 plan generation now logs sanitized `stage`, `outcome`, elapsed time, exception type, and usable-plan presence.
-- Post-change cold-cache smoke completed in 37.100s, leaving 202.900s margin against 240s.
+## Current status and next action
 
-## Confirmed incident facts
-
-- Scheduled 03 execution existed and started at 2026-09-02 03:00 JST.
-- Initial CSV phase completed.
-- `energy_model_main.py` was launched with `FORECAST_DATE_OVERRIDE=2026-09-02`.
-- No `03-plan-provenance`, `03-monitor contract`, `03-monitor soc`, or `03-monitor stop reason` line appeared.
-- Roughly 240 seconds after model launch, the execution entered behavior consistent with the existing no-plan fail-safe standby path.
-- Official KP-NET CSV shows 03:00-06:30 SOC stayed at 1% and charge energy was 0.000 kWh; 07:00 SOC was 0%.
-- 23 and 07 scheduled mode-only jobs succeeded.
-
-## Current task boundary
-
-Primary files to inspect first:
-
-- `app/runtime/slot_orchestration.py::_run_adjust_03`
-- `app/runtime/cloud_job.py::_ensure_night_plan_available`
-- `app/energy_plan/workflow.py::_build_consumption_forecasts`
-- `app/energy_plan/weather_history.py::archive_weather_history`
-- `tests/test_cloud_job_runner.py`
-
-Only expand the source-change set when evidence proves the bottleneck is owned by another directly related file.
-
-## Required workflow
-
-1. Read `.ai/BUG_REPORT.md` and `.ai/DECISIONS.md`.
-2. Review only the latest relevant Draft PR diff plus the files above.
-3. Reproduce/measure plan-generation phases without a normal 03 manual execution.
-4. Distinguish confirmed findings from hypotheses in the PR discussion.
-5. Implement the smallest proven fix.
-6. Add focused regression tests and run the existing quality suite.
-7. Push to this same branch/Draft PR.
-8. Update these handoff files when the evidence or decision changes materially.
-
-Do not create another PR for this incident.
-
-## Validation completed
-
-- Ruff: pass.
-- Standard Import Linter: 3 kept, 0 broken.
-- Focused energy/occupancy/cloud-job tests: 83 passed.
-- Protected 23/07 and 03 time-fence tests: 78 passed.
-- Full pytest: 596 passed, 1 skipped.
-- Mypy: no issues in 174 source files.
-- Security check: pass.
-- Official local pre-release gate: pass.
-- Advisory pre-existing gaps: energy-plan import contract 1 broken, ty 254 diagnostics, deptry 30 diagnostics.
-
-## Recommended next action
-
-Push this iteration to Draft PR #36 and request Web ChatGPT review. Do not deploy yet.
+- No source change or production mutation was made for this dashboard investigation.
+- The mutable-writer empty replacement risk is real code risk but is not the proven cause of these missing dates.
+- A repair needs a separately owned non-control forecast generation/persistence pipeline. Clarify whether a new scheduled Cloud Run job/scheduler is authorized, because existing scheduler times and 23/03/07 ownership are frozen.
+- Commit and push this concise evidence update to the existing Draft PR, then obtain Web ChatGPT direction before changing runtime or deployment topology.
