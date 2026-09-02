@@ -38,6 +38,11 @@ The following remain unchanged unless a new, directly evidenced defect requires 
 
 If source behavior changes, production deployment is required only after focused tests and the repository's standard quality gate pass. Scheduled 03 acceptance should use the next natural Scheduler execution, not a manual normal 03 run.
 
+## Forecast configuration provenance
+
+- The verified production forecast contract is `SOC_EXPORT_CONTRACT_STATUS=inactive` and `SOC_EXPORT_VALUE_MODE=neutral` (repository canonical configuration and deployed `solar-battery-03`).
+- Local `.env` omission of these fields is `LOCAL_ENV_DRIFT_ONLY`; do not rewrite it during review. A production-like local smoke may use a process-local overlay of only these verified fields.
+
 ## Dedicated forecast owner decision
 
 - Dashboard PV forecasts are owned by a separate non-control Cloud Run job, `solar-forecast-daily`, scheduled daily at 02:30 JST as `solar-forecast-daily-0230`.
