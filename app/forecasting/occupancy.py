@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -140,12 +141,28 @@ def events_from_values(values: list[list[Any]], *, source: str = "") -> list[Occ
     return events
 
 
-def _google_sheets_service() -> Any:
+def _occupancy_sheet_timeout_seconds() -> float:
+    try:
+        return max(
+            1.0,
+            float(os.getenv("OCCUPANCY_SCHEDULE_TIMEOUT_SECONDS", "15").strip() or "15"),
+        )
+    except ValueError:
+        return 15.0
+
+
+def _google_sheets_service(*, timeout_seconds: float) -> Any:
     import google.auth
     from googleapiclient.discovery import build
 
     creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    return build("sheets", "v4", credentials=creds, cache_discovery=False)
+    service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    authorized_http = getattr(service, "_http", None)
+    transport = getattr(authorized_http, "http", None)
+    if transport is None or not hasattr(transport, "timeout"):
+        raise RuntimeError("Google Sheets transport does not expose a request timeout")
+    transport.timeout = timeout_seconds
+    return service
 
 
 def load_occupancy_events_from_sheet(
@@ -155,8 +172,9 @@ def load_occupancy_events_from_sheet(
 ) -> list[OccupancyScheduleEvent]:
     if not spreadsheet_id:
         return []
+    started = time.monotonic()
     try:
-        sheets = _google_sheets_service()
+        sheets = _google_sheets_service(timeout_seconds=_occupancy_sheet_timeout_seconds())
         result = (
             sheets.spreadsheets()
             .values()
@@ -164,8 +182,18 @@ def load_occupancy_events_from_sheet(
             .execute()
         )
     except Exception as exc:
-        print(f"[occupancy_schedule] read skipped/failed: {exc}", flush=True)
+        print(
+            "[occupancy_schedule] read "
+            f"outcome=error elapsed_seconds={time.monotonic() - started:.3f} "
+            f"exception_type={type(exc).__name__}",
+            flush=True,
+        )
         return []
+    print(
+        "[occupancy_schedule] read "
+        f"outcome=success elapsed_seconds={time.monotonic() - started:.3f}",
+        flush=True,
+    )
     return events_from_values(result.get("values", []), source=f"sheet:{tab}")
 
 

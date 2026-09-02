@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app.runtime import cloud_job
 from app.energy_plan.night_plan import build_night_plan_provenance
 from app.runtime.cloud_job import _monitor_partial_forced_and_stop
 from app.runtime.soc_reading import SocReading
@@ -255,6 +256,65 @@ def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.M
     _run_adjust_03(); _run_day_07()
 
     assert [call["profile"] for call in writes] == ["standby", "green"]
+
+
+def test_03_plan_generation_timeout_logs_failure_and_standby_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    writes: list[str] = []
+    monitor_calls: list[Path] = []
+    plan_path = tmp_path / "missing.json"
+    monotonic_values = iter((10.0, 12.5))
+    monkeypatch.setattr(cloud_job, "_night_plan_path", lambda: plan_path)
+    monkeypatch.setattr(cloud_job, "_before_03_external_io", lambda: None)
+    monkeypatch.setattr(cloud_job, "_run_csv_with_retry", lambda **_kwargs: None)
+    monkeypatch.setattr(cloud_job, "_tokyo_now", lambda: datetime(2099, 1, 1, 3, tzinfo=JST))
+    monkeypatch.setattr(cloud_job.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(cloud_job, "_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("secret detail")))
+    monkeypatch.setattr(cloud_job, "_run_03_prep_fail_safe_standby", lambda: writes.append("standby"))
+    monkeypatch.setattr(cloud_job, "_monitor_partial_forced_and_stop", lambda path: monitor_calls.append(path))
+
+    _run_adjust_03()
+
+    output = capsys.readouterr().out
+    prefix = "[cloud_job_runner] 03-prep "
+    payload = json.loads(next(line for line in output.splitlines() if line.startswith(prefix))[len(prefix):])
+    assert payload == {
+        "elapsed_seconds": 2.5,
+        "exception_type": "TimeoutError",
+        "outcome": "timeout",
+        "stage": "plan_generation",
+        "usable_plan_exists": False,
+    }
+    assert "secret detail" not in output
+    assert writes == ["standby"]
+    assert monitor_calls == []
+
+
+def test_03_successful_plan_generation_reaches_monitor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = tmp_path / "plan.json"
+    monitor_calls: list[Path] = []
+    monotonic_values = iter((20.0, 21.25))
+    monkeypatch.setattr(cloud_job, "_night_plan_path", lambda: plan_path)
+    monkeypatch.setattr(cloud_job, "_before_03_external_io", lambda: None)
+    monkeypatch.setattr(cloud_job, "_run_csv_with_retry", lambda **_kwargs: None)
+    monkeypatch.setattr(cloud_job, "_tokyo_now", lambda: datetime(2099, 1, 1, 3, tzinfo=JST))
+    monkeypatch.setattr(cloud_job.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(cloud_job, "_run", lambda *_args, **_kwargs: _plan(plan_path, 80))
+    monkeypatch.setattr(cloud_job, "_monitor_partial_forced_and_stop", lambda path: monitor_calls.append(path))
+
+    _run_adjust_03()
+
+    output = capsys.readouterr().out
+    assert '"outcome":"success"' in output
+    assert '"usable_plan_exists":true' in output
+    assert monitor_calls == [plan_path]
 
 
 def test_slot07_has_no_cross_slot_import_or_call() -> None:

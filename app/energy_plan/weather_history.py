@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -192,7 +193,8 @@ def forecast_weather_row(forecast: dict[str, object]) -> dict[str, object]:
 
 def archive_weather_history(
     rows: list[dict[str, Any]], *, lat: float, lon: float, timezone: str,
-    cache_path: Path | None = None, chunk_days: int | None = None, timeout_seconds: float | None = None,
+    cache_path: Path | None = None, chunk_days: int | None = None,
+    timeout_seconds: float | None = None, total_budget_seconds: float | None = None,
 ) -> WeatherHistoryFetchResult:
     if chunk_days is None:
         try:
@@ -204,10 +206,20 @@ def archive_weather_history(
             timeout_seconds = max(1.0, float(os.getenv("WEATHER_ARCHIVE_TIMEOUT_SECONDS", "30").strip() or "30"))
         except ValueError:
             timeout_seconds = 30.0
+    if total_budget_seconds is None:
+        try:
+            total_budget_seconds = max(
+                1.0,
+                float(os.getenv("WEATHER_ARCHIVE_TOTAL_BUDGET_SECONDS", "60").strip() or "60"),
+            )
+        except ValueError:
+            total_budget_seconds = 60.0
     dates = sorted({row["dt"].date() for row in rows if hasattr(row.get("dt"), "date")})
     if not dates:
         return WeatherHistoryFetchResult([], [], [], [], [], [], [])
-    requested_days = [dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)]
+    # Weather can train the consumption model only on dates that have a load
+    # observation. Sparse source months must not expand into empty gap months.
+    requested_days = dates
     requested_dates = [day.isoformat() for day in requested_days]
     selected_cache_path = cache_path or weather_archive_cache_path()
     cached_rows, errors = load_weather_archive_cache(selected_cache_path)
@@ -216,7 +228,20 @@ def archive_weather_history(
     missing_days = [day for day in requested_days if day.isoformat() not in rows_by_date]
     requested_periods: list[dict[str, object]] = []
     url = "https://archive-api.open-meteo.com/v1/archive"
-    for chunk in consecutive_date_chunks(missing_days, chunk_days=chunk_days):
+    chunks = consecutive_date_chunks(missing_days, chunk_days=chunk_days)
+    deadline = time.monotonic() + total_budget_seconds
+    for chunk_index, chunk in enumerate(chunks):
+        remaining_seconds = deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            errors.append({
+                "stage": "total_budget",
+                "exception_type": "TimeoutError",
+                "message": "weather history total budget exhausted",
+                "budget_seconds": total_budget_seconds,
+                "completed_chunk_count": chunk_index,
+                "remaining_chunk_count": len(chunks) - chunk_index,
+            })
+            break
         params: dict[str, str | float] = {
             "latitude": lat, "longitude": lon, "start_date": chunk[0].isoformat(), "end_date": chunk[-1].isoformat(),
             "daily": "sunshine_duration,temperature_2m_mean,weather_code,precipitation_sum,shortwave_radiation_sum", "timezone": timezone,
@@ -224,7 +249,11 @@ def archive_weather_history(
         period: dict[str, object] = {"start_date": params["start_date"], "end_date": params["end_date"], "requested_day_count": len(chunk)}
         response: object | None = None
         try:
-            response = requests.get(url, params=params, timeout=timeout_seconds)
+            response = requests.get(
+                url,
+                params=params,
+                timeout=min(timeout_seconds, max(0.001, remaining_seconds)),
+            )
             period["http_status"] = getattr(response, "status_code", None)
             response.raise_for_status()
             payload = response.json()

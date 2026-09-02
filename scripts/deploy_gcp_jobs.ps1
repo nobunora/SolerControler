@@ -9,6 +9,8 @@
     [string]$Job23Name = "solar-battery-23",
     [string]$Job03Name = "solar-battery-03",
     [string]$Job07Name = "solar-battery-07",
+    [string]$ForecastJobName = "solar-forecast-daily",
+    [string]$ForecastSchedulerName = "solar-forecast-daily-0230",
     [string]$SettingsRoundTripJobName = "solar-battery-settings-roundtrip",
     [string]$SheetsJobName = "solar-sheets-export",
     [string]$SheetsSchedulerName = "solar-sheets-export-daily",
@@ -45,6 +47,8 @@
     [switch]$SkipJob23Deploy,
     [switch]$SkipJob03Deploy,
     [switch]$SkipJob07Deploy,
+    [switch]$SkipForecastJobDeploy,
+    [switch]$SkipForecastSchedulerDeploy,
     [switch]$SkipSettingsRoundTripJobDeploy,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
@@ -624,6 +628,7 @@ $commonEnv = @(
     "DAYTIME_PV_HEADROOM_CAP_MIN_KWH=0.5",
     "NIGHT_RESERVE_SOC_PERCENT=0",
     "WEATHER_ARCHIVE_CHUNK_DAYS=14",
+    "WEATHER_ARCHIVE_TOTAL_BUDGET_SECONDS=60",
     "EVENING_LOAD_TEMPERATURE_MIN_EFFECTIVE_SAMPLES=5",
     "LOAD_TEMPERATURE_HIGH_FLOOR_ENABLED=true",
     "LOAD_TEMPERATURE_HIGH_CDH28_THRESHOLD=10",
@@ -633,6 +638,7 @@ $commonEnv = @(
     "CONSUMPTION_MODEL_MIN_TRAINING_DAYS=45",
     "CONSUMPTION_MODEL_FALLBACK_WINDOW_DAYS=14",
     "OCCUPANCY_SCHEDULE_ENABLED=true",
+    "OCCUPANCY_SCHEDULE_TIMEOUT_SECONDS=15",
     "OCCUPANCY_SCHEDULE_TAB=occupancy_schedule",
     "OCCUPANCY_AWAY_DEFAULT_FACTOR=0.25",
     "BATTERY_CYCLE_COUNT=0",
@@ -700,6 +706,9 @@ if (-not $SkipJobDeploy) {
     # by test_deploy_job03_time_ownership_semantics.
     if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 14100 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=0,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg } # HISTORICAL_FAILURE_LOCK 2026-08-29: do not alter 14100/0; Guarded by test_deploy_job03_time_ownership_semantics.
     if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
+    # Dedicated forecast owner: no CLOUD_JOB_SLOT and no control entrypoint.
+    # 600 seconds is bounded well inside the 02:30-03:00 JST isolation window.
+    if (-not $SkipForecastJobDeploy) { Invoke-GCloud run jobs deploy $ForecastJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --command python --args forecast_job_main.py --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
     # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): the live settings
     # probe is explicit, non-scheduled, and must never be retried automatically.
     if (-not $SkipSettingsRoundTripJobDeploy) { Invoke-GCloud run jobs deploy $SettingsRoundTripJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false" --set-secrets $secretEnvArg }
@@ -710,6 +719,7 @@ if (-not $SkipIamSetup) {
     Invoke-GCloud run jobs add-iam-policy-binding $Job23Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
     Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
     Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+    Invoke-GCloud run jobs add-iam-policy-binding $ForecastJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
 }
 
 function Upsert-SchedulerRunJob {
@@ -737,6 +747,7 @@ Write-Host "Create or update Cloud Scheduler jobs..."
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *" -TargetJobName $Job03Name
 Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
+if (-not $SkipForecastSchedulerDeploy) { Upsert-SchedulerRunJob -SchedulerName $ForecastSchedulerName -Schedule "30 2 * * *" -TargetJobName $ForecastJobName }
 Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
 Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
 Delete-RunJobIfExists -Name $SheetsJobName
