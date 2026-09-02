@@ -47,3 +47,10 @@
 - One authorized manual `solar-forecast-daily` run completed. It persisted 24 `forecast_hourly` rows for 2026-09-03 (hours 0--23, 7.6845 kWh), 24 immutable snapshot rows, `sunshine_daily`, and `forecast_plans` metadata with `hourly_row_count=24`. The dashboard Firestore slice returned the same 24 rows and PV total.
 - The forecast job log recorded only forecast persistence. `night_charge_plans/latest` remains the prior 2026-08-29 plan (updated 2026-08-28T21:31:41Z), confirming the forecast-only execution did not alter it. No normal manual 03 execution was performed.
 - Remaining acceptance: await the next natural scheduled 03 execution; then verify bounded prep outcome, provenance/monitor path or one-standby fallback, and unchanged time fences/23/07 ownership. Keep PR #36 Draft and unmerged until then.
+
+## Natural scheduled 03 acceptance (2026-09-03 JST)
+
+- The 03:00 JST execution was Scheduler-originated (not a manual normal 03 run) and completed successfully. Plan preparation logged sanitized `outcome=success`, `usable_plan_exists=true`, and 26.945 seconds, well inside the unchanged 240-second child budget.
+- The usable-plan path emitted `03-plan-provenance` and the exact-target monitor contract. Monitor reached realtime SOC 100% at 06:39 JST and emitted `03-monitor stop reason=target_reached`; no fail-safe standby or forced-entry fallback was needed.
+- The completion occurred before the 06:45/06:50/06:55 fences; their unchanged source/deployment contract was therefore not exercised in this run. Current Scheduler schedules remain 23=`0 23 * * *`, 03=`0 3 * * *`, 07=`0 7 * * *` (Asia/Tokyo, enabled), and deployed 23/07 slots remain `23`/`07`.
+- PR #36 remains Draft and unmerged pending Web review of the completed rollout and natural-03 evidence.
