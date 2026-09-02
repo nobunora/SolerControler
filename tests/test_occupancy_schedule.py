@@ -10,6 +10,7 @@ from app.forecasting.occupancy import (
     events_from_values,
     filter_training_load_rows,
     find_event_for_date,
+    load_occupancy_events_from_sheet,
 )
 
 
@@ -135,3 +136,21 @@ def test_find_event_for_date_ignores_normal_status() -> None:
     )
 
     assert find_event_for_date(events, date(2026, 8, 13)) is None
+
+
+def test_sheet_read_uses_bounded_timeout_and_sanitizes_failure(monkeypatch, capsys) -> None:
+    observed_timeout: list[float] = []
+
+    def fail_service(*, timeout_seconds: float):
+        observed_timeout.append(timeout_seconds)
+        raise TimeoutError("sensitive-spreadsheet-id")
+
+    monkeypatch.setenv("OCCUPANCY_SCHEDULE_TIMEOUT_SECONDS", "12")
+    monkeypatch.setattr("app.forecasting.occupancy._google_sheets_service", fail_service)
+
+    assert load_occupancy_events_from_sheet(spreadsheet_id="sensitive-spreadsheet-id") == []
+    output = capsys.readouterr().out
+    assert observed_timeout == [12.0]
+    assert "outcome=error" in output
+    assert "exception_type=TimeoutError" in output
+    assert "sensitive-spreadsheet-id" not in output

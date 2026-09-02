@@ -30,6 +30,9 @@ The following remain unchanged unless a new, directly evidenced defect requires 
 - A no-usable-plan failure must stay fail-safe: one standby attempt, no monitor/forced entry.
 - Add explicit sanitized prep-failure observability so the next incident identifies exception type/stage without secrets, cookies, full env values, HTML, or resource IDs.
 - Do not use normal 03 manual execution for validation.
+- Production-like timing disproved weather history as the incident's dominant phase; retain sparse-date and total-budget guards because optional archive I/O must remain bounded.
+- Bound the evidenced occupancy Sheets transport at 15 seconds. Measured non-occupancy plan work leaves ample margin, and occupancy data already has an established empty-schedule fallback.
+- Bound weather-history optional I/O at 60 seconds. Baseline non-weather work was about 39 seconds, so the worst configured weather budget still leaves roughly 140 seconds inside the unchanged 240-second child limit.
 
 ## Deployment decision
 

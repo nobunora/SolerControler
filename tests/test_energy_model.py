@@ -207,11 +207,75 @@ def test_archive_weather_history_preserves_partial_chunks_and_diagnostics(monkey
 
     result = _archive_weather_history(rows, lat=35.0, lon=139.0, timezone="Asia/Tokyo")
 
-    assert result.received_dates == ["2026-06-01", "2026-06-02"]
+    assert result.received_dates == ["2026-06-01"]
     assert result.missing_dates == ["2026-06-03"]
     assert result.errors[0]["exception_type"] == "Timeout"
-    assert result.requested_periods[0]["received_day_count"] == 2
+    assert result.requested_periods[0]["received_day_count"] == 1
     assert result.requested_periods[1]["received_day_count"] == 0
+
+
+def test_archive_weather_history_requests_only_dates_with_training_rows(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WEATHER_ARCHIVE_CACHE_PATH", str(tmp_path / "weather.json"))
+    requested_periods: list[tuple[str, str]] = []
+
+    def fake_get(*_args, **kwargs):
+        params = kwargs["params"]
+        requested_periods.append((params["start_date"], params["end_date"]))
+        return _WeatherResponse(_daily_weather_payload([params["start_date"]]))
+
+    monkeypatch.setattr("app.energy_plan.weather_history.requests.get", fake_get)
+    rows = [
+        {"dt": datetime.fromisoformat(f"{day}T00:00:00")}
+        for day in ("2026-04-01", "2026-05-01", "2026-09-01")
+    ]
+
+    result = _archive_weather_history(rows, lat=35.0, lon=139.0, timezone="Asia/Tokyo")
+
+    assert result.requested_dates == ["2026-04-01", "2026-05-01", "2026-09-01"]
+    assert requested_periods == [
+        ("2026-04-01", "2026-04-01"),
+        ("2026-05-01", "2026-05-01"),
+        ("2026-09-01", "2026-09-01"),
+    ]
+
+
+def test_archive_weather_history_total_budget_returns_partial_rows(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WEATHER_ARCHIVE_CACHE_PATH", str(tmp_path / "weather.json"))
+    calls = 0
+    monotonic_values = iter((0.0, 0.0, 61.0))
+
+    def fake_get(*_args, **kwargs):
+        nonlocal calls
+        calls += 1
+        day = kwargs["params"]["start_date"]
+        return _WeatherResponse(_daily_weather_payload([day]))
+
+    monkeypatch.setattr("app.energy_plan.weather_history.requests.get", fake_get)
+    monkeypatch.setattr("app.energy_plan.weather_history.time.monotonic", lambda: next(monotonic_values))
+    rows = [
+        {"dt": datetime.fromisoformat(f"{day}T00:00:00")}
+        for day in ("2026-04-01", "2026-05-01", "2026-09-01")
+    ]
+
+    result = _archive_weather_history(
+        rows,
+        lat=35.0,
+        lon=139.0,
+        timezone="Asia/Tokyo",
+        total_budget_seconds=60.0,
+    )
+
+    assert calls == 1
+    assert result.received_dates == ["2026-04-01"]
+    assert result.missing_dates == ["2026-05-01", "2026-09-01"]
+    assert result.errors[-1] == {
+        "stage": "total_budget",
+        "exception_type": "TimeoutError",
+        "message": "weather history total budget exhausted",
+        "budget_seconds": 60.0,
+        "completed_chunk_count": 1,
+        "remaining_chunk_count": 2,
+    }
 
 
 def test_archive_weather_history_reuses_cached_days(monkeypatch, tmp_path) -> None:

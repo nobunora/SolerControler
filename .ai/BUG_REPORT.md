@@ -28,9 +28,9 @@ Primary investigation classification: `PLAN_GENERATION_OR_PREP_FAILURE`.
 
 `app/runtime/cloud_job.py::_ensure_night_plan_available` runs `energy_model_main.py` with an outer maximum of 240 seconds. `app/runtime/slot_orchestration.py::_run_adjust_03` catches prep failure; when no plan exists it performs one fail-safe standby and returns without entering monitor/forced control.
 
-## Strong hypothesis — not yet proven
+## Hypothesis resolution
 
-`app/energy_plan/weather_history.py::archive_weather_history` may consume a large part of the 240-second budget when the local weather cache is cold.
+The weather-history hypothesis was not confirmed for the incident-shaped production input.
 
 Reasons:
 
@@ -40,7 +40,14 @@ Reasons:
 - Defaults are 14 days per chunk and up to 30 seconds per HTTP request.
 - The cache path is under local `artifacts/`; a Cloud Run job filesystem should not be assumed durable across executions.
 
-This is a hypothesis until production-like timing or equivalent deterministic reproduction shows that weather-history fetching is the dominant phase.
+Cold-cache measurement requested 33 actual consumption dates in 3 chunks and completed weather history in 5.625s; the complete model finished in 44.554s. Incident Cloud Logging instead emitted two httplib2 per-request-timeout warnings roughly 213s after model start. The only plan-generation path using googleapiclient/httplib2 is the optional occupancy Google Sheets read, whose transport previously had no request timeout. This is the evidenced bounded-I/O defect boundary; the exact upstream network stall remains historical and cannot be replayed locally.
+
+## Implemented remediation awaiting review
+
+- Bound occupancy Sheet transport to 15s and sanitize failure logs so spreadsheet/resource IDs are not emitted.
+- Avoid weather requests for dates without consumption rows and cap total weather archive I/O at 60s, returning partial data plus diagnostics on exhaustion.
+- Emit structured sanitized 03 prep outcome evidence while preserving exactly one standby on no-plan failure.
+- Post-change cold-cache model smoke: 37.100s total, 202.900s margin versus 240s.
 
 ## Required acceptance outcome
 

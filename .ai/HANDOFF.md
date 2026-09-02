@@ -13,7 +13,17 @@
 
 Make the scheduled 03 plan-preparation path bounded, observable, and reliable enough to reach the existing monitor/forced-charge controller under normal production conditions. Preserve the existing one-standby fail-safe if no usable plan can be produced.
 
-Do not treat a larger outer timeout as a sufficient fix. First identify which plan-generation phase consumed the 240-second budget using production-like inputs and sanitized phase timing/evidence. Then implement the smallest change that removes the demonstrated bottleneck while preserving model semantics as far as possible.
+Bound optional plan-generation I/O and make 03 prep outcomes observable without changing the outer 240-second budget or the one-standby fail-safe.
+
+## Current implementation status
+
+- Latest local change is not yet reviewed by Web ChatGPT.
+- Cold-cache production-like baseline completed in 44.554s; weather history used 5.625s for 33 requested days / 3 chunks.
+- Incident warning provenance points to the unbounded occupancy Google Sheets transport, not weather archive I/O.
+- Occupancy Sheet I/O now has a 15s request timeout and sanitized outcome logging.
+- Weather history now requests only consumption-row dates and has a 60s total optional-I/O budget with partial-result diagnostics.
+- 03 plan generation now logs sanitized `stage`, `outcome`, elapsed time, exception type, and usable-plan presence.
+- Post-change cold-cache smoke completed in 37.100s, leaving 202.900s margin against 240s.
 
 ## Confirmed incident facts
 
@@ -49,3 +59,19 @@ Only expand the source-change set when evidence proves the bottleneck is owned b
 8. Update these handoff files when the evidence or decision changes materially.
 
 Do not create another PR for this incident.
+
+## Validation completed
+
+- Ruff: pass.
+- Standard Import Linter: 3 kept, 0 broken.
+- Focused energy/occupancy/cloud-job tests: 83 passed.
+- Protected 23/07 and 03 time-fence tests: 78 passed.
+- Full pytest: 596 passed, 1 skipped.
+- Mypy: no issues in 174 source files.
+- Security check: pass.
+- Official local pre-release gate: pass.
+- Advisory pre-existing gaps: energy-plan import contract 1 broken, ty 254 diagnostics, deptry 30 diagnostics.
+
+## Recommended next action
+
+Push this iteration to Draft PR #36 and request Web ChatGPT review. Do not deploy yet.

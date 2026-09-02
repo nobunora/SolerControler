@@ -64,9 +64,45 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
     # Regenerate locally only.  03 has no Firestore fallback/persistence path.
     if plan_path.exists() and os.getenv("ADJUST03_REGENERATE_PLAN", "true").lower() not in {"1", "true", "yes", "on"}:
         return True
-    deadline = time.monotonic() + seconds_until_control_cutoff(_tokyo_now())
-    _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": _tokyo_now().date().isoformat()}, timeout_seconds=min(240, seconds_until_control_cutoff(_tokyo_now())), deadline_monotonic=deadline)
-    return plan_path.exists()
+    started = time.monotonic()
+    deadline = started + seconds_until_control_cutoff(_tokyo_now())
+    try:
+        _run([sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": _tokyo_now().date().isoformat()}, timeout_seconds=min(240, seconds_until_control_cutoff(_tokyo_now())), deadline_monotonic=deadline)
+    except Exception as error:
+        outcome = "timeout" if isinstance(error, TimeoutError) else "error"
+        print(
+            "[cloud_job_runner] 03-prep "
+            + json.dumps(
+                {
+                    "stage": "plan_generation",
+                    "outcome": outcome,
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "exception_type": type(error).__name__,
+                    "usable_plan_exists": plan_path.exists(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        raise
+    available = plan_path.exists()
+    print(
+        "[cloud_job_runner] 03-prep "
+        + json.dumps(
+            {
+                "stage": "plan_generation",
+                "outcome": "success" if available else "no_plan",
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "exception_type": None,
+                "usable_plan_exists": available,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    return available
 
 
 def _read_plan_meta(path: Path) -> dict[str, Any]:
