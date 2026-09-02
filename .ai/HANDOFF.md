@@ -24,9 +24,17 @@
 - `app/dashboard/firestore_repository.py::_firestore_forecast_hourly_between`
 - `static/dashboard.js::mergeHourlyRows`
 
-## Current status and next action
+## Current implementation status
 
-- No source change or production mutation was made for this dashboard investigation.
-- The mutable-writer empty replacement risk is real code risk but is not the proven cause of these missing dates.
-- A repair needs a separately owned non-control forecast generation/persistence pipeline. Clarify whether a new scheduled Cloud Run job/scheduler is authorized, because existing scheduler times and 23/03/07 ownership are frozen.
-- Commit and push this concise evidence update to the existing Draft PR, then obtain Web ChatGPT direction before changing runtime or deployment topology.
+- New non-control entrypoint: `forecast_job_main.py` / `app.runtime.forecast_job`.
+- It only acquires read-only CSV input, runs the energy model for the intended JST date, validates a complete 24-hour forecast, and persists forecast-specific data.
+- `app.operations.forecast_persistence.persist_forecast_only_plan` writes immutable snapshots, `sunshine_daily`, `forecast_hourly`, and `forecast_plans`; it never writes `night_charge_plans`.
+- Validation happens before any mutable deletion. A target-date mismatch or incomplete row set raises without touching current rows; valid mutable replacement is one Firestore batch.
+- Deployment tooling adds `solar-forecast-daily` and `solar-forecast-daily-0230` at 02:30 JST, retries=0, task timeout=600 seconds. Existing 23/03/07 names, schedules, and ownership are unchanged.
+
+## Validation and next action
+
+- Focused forecast/persistence/dashboard/protected suites: 138 passed.
+- New-module Ruff and ty: pass; new-module mypy: pass; security check: pass.
+- Full Python suite: 603 passed, 1 skipped; JS tests, full mypy (176 files), and security check passed. Shared CodebaseMemory index refreshed: ready, 6,349 nodes / 19,124 edges.
+- The non-control local production-like smoke reached the existing SOC optimizer but stopped because the local production environment supplied an invalid `SOC_EXPORT_CONTRACT_STATUS`. No value was overridden, no Firestore write occurred, and no deployment or normal 03 run was performed. Resolve/verify that production configuration before a successful smoke or deployment review.

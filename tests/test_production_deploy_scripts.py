@@ -253,6 +253,20 @@ def test_cloud_settings_roundtrip_job_is_explicit_and_can_run_at_any_time() -> N
     assert "run_settings_roundtrip(target_soc_percent=target_soc)" in runtime
 
 
+def test_forecast_job_is_a_separate_bounded_non_control_deployment() -> None:
+    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+    wrapper = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
+
+    assert '"solar-forecast-daily"' in deploy
+    assert '"solar-forecast-daily-0230"' in deploy
+    assert '--task-timeout 600 --max-retries 0 --command python --args forecast_job_main.py' in deploy
+    assert '"30 2 * * *"' in deploy
+    assert "SkipForecastJobDeploy" in deploy
+    assert "SkipForecastSchedulerDeploy" in deploy
+    assert "SkipForecastJobDeploy" in wrapper
+    assert "SkipForecastSchedulerDeploy" in wrapper
+
+
 def test_runbook_fixes_single_build_cache_resume_and_roundtrip_rules() -> None:
     runbook = (ROOT / "docs" / "current" / "ops" / "PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md").read_text(
         encoding="utf-8"

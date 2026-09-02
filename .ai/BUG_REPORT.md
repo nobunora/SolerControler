@@ -31,3 +31,7 @@ The current failure is upstream of this trace. `app/runtime/slot_orchestration.p
 ## Remaining decision
 
 The evidenced repair requires a separate non-control forecast generation and persistence owner. Adding a new scheduled Cloud Run job or scheduler is an operational architecture change, while the task also freezes existing Scheduler times and 23/03/07 ownership. No production data has been changed and no historical forecast will be fabricated pending that decision.
+
+## Implementation status
+
+The authorized dedicated forecast-only owner is implemented on the Draft branch. Local and focused validation passed, including a 24-hour replacement contract that leaves existing mutable rows intact on invalid input. A non-control production-like smoke did not reach plan output because the local production environment's `SOC_EXPORT_CONTRACT_STATUS` was invalid for the existing optimizer; no configuration was guessed or changed. This is a deployment-review blocker, not evidence of a dashboard or 03-control regression.

@@ -6,6 +6,8 @@ param(
     [switch]$SkipJob23Deploy,
     [switch]$SkipJob03Deploy,
     [switch]$SkipJob07Deploy,
+    [switch]$SkipForecastJobDeploy,
+    [switch]$SkipForecastSchedulerDeploy,
     [switch]$SkipSettingsRoundTripJobDeploy,
     [switch]$SkipDashboardBuild,
     [switch]$SkipInlineSmokeTest,
@@ -301,6 +303,8 @@ if ($SkipJobDeploy) { $jobDeployArgs.SkipJobDeploy = $true }
 if ($SkipJob23Deploy) { $jobDeployArgs.SkipJob23Deploy = $true }
 if ($SkipJob03Deploy) { $jobDeployArgs.SkipJob03Deploy = $true }
 if ($SkipJob07Deploy) { $jobDeployArgs.SkipJob07Deploy = $true }
+if ($SkipForecastJobDeploy) { $jobDeployArgs.SkipForecastJobDeploy = $true }
+if ($SkipForecastSchedulerDeploy) { $jobDeployArgs.SkipForecastSchedulerDeploy = $true }
 if ($SkipSettingsRoundTripJobDeploy) { $jobDeployArgs.SkipSettingsRoundTripJobDeploy = $true }
 Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -Action {
     & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs

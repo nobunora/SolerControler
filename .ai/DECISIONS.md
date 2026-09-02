@@ -37,3 +37,11 @@ The following remain unchanged unless a new, directly evidenced defect requires 
 ## Deployment decision
 
 If source behavior changes, production deployment is required only after focused tests and the repository's standard quality gate pass. Scheduled 03 acceptance should use the next natural Scheduler execution, not a manual normal 03 run.
+
+## Dedicated forecast owner decision
+
+- Dashboard PV forecasts are owned by a separate non-control Cloud Run job, `solar-forecast-daily`, scheduled daily at 02:30 JST as `solar-forecast-daily-0230`.
+- The job may obtain read-only CSV input and run the energy model, but must not import or call control orchestration, settings/device writes, or 03 persistence.
+- It writes only forecast-specific stores: immutable `forecast_hourly_snapshots`, mutable `forecast_hourly`, `sunshine_daily`, and `forecast_plans`. It must not write `night_charge_plans/latest`.
+- Forecast date and the exact 24-row hourly contract are validated before any mutable replacement. Invalid input leaves existing rows untouched; no historical forecast is fabricated.
+- Task timeout is 600 seconds with zero retries. The measured 37.100-second plan generation leaves substantial margin before the independent 03 owner at 03:00 JST.
