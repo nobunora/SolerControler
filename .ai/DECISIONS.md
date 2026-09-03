@@ -26,7 +26,7 @@ This task is a dashboard/history-data repair. Do not change battery control or o
 
 - Actual PV/load are facts and may be reconstructed only from trustworthy measured sources.
 - Prefer a complete `dashboard_daily_metrics` row for a day.
-- If the daily row is absent or incomplete, fill that day from `monitoring_samples` when the samples support the requested metrics.
+- If the daily row is absent or incomplete, fill only its missing actual fields from `monitoring_samples` when that field has a complete 48-sample day.
 - The fallback is per-day/per-field, not all-or-nothing for the whole requested range.
 - Do not overwrite a complete authoritative daily metric with a weaker reconstruction.
 - If neither source has sufficient evidence, leave the actual value missing and expose the missing-data condition rather than inventing zero.
@@ -37,10 +37,10 @@ This task is a dashboard/history-data repair. Do not change battery control or o
 - Mutable `forecast_hourly` may be used when it is the stored forecast for the target date.
 - When mutable forecast rows are absent, immutable `forecast_hourly_snapshots` may restore the historical forecast only by selecting one complete, deterministic eligible `forecast_run_id` for that target date.
 - Never combine hours from different forecast runs to make an artificial 24-hour day.
-- The exact historical-vintage cutoff must be justified from the repository's operational contract and production evidence before implementation. Prefer the latest complete run that was actually available before the operational decision window for that day; do not silently choose a later hindsight vintage.
+- Historical snapshots are eligible only when issued no later than the end of their target date in JST. This preserves known pre-isolation 06:31-JST issuance evidence while rejecting next-day hindsight; select the latest eligible complete run deterministically.
 - Daily PV/load forecast totals may be derived from the selected immutable run and must carry a source/provenance label.
 - If only `sunshine_daily` contains trustworthy contemporaneous PV forecast evidence, preserve it as a lower-resolution source with an explicit source label.
-- If no trustworthy forecast evidence exists, leave the forecast missing. Do not use a newly computed rolling forecast and present it as the original historical prediction.
+- If no trustworthy forecast evidence exists, leave the forecast missing. The retained 14-day load estimate is explicitly labeled `legacy_rolling_14d_estimate`, never as a historical prediction.
 
 ## Repair strategy
 

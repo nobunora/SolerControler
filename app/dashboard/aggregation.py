@@ -149,6 +149,8 @@ def _build_energy_daily(
     hourly_load_by_day: dict[str, float] = {}
     hourly_pv_by_day: dict[str, float] = {}
     hourly_source_by_day: dict[str, str] = {}
+    hourly_run_id_by_day: dict[str, str] = {}
+    hourly_issued_at_by_day: dict[str, str] = {}
     for row in forecast_hourly or []:
         day = str(row.get("date") or "")
         value = to_float(row.get("forecast_load_kwh"))
@@ -159,6 +161,10 @@ def _build_energy_daily(
             hourly_pv_by_day[day] = hourly_pv_by_day.get(day, 0.0) + max(0.0, pv_value)
         if day and row.get("source"):
             hourly_source_by_day[day] = str(row["source"])
+        if day and row.get("forecast_run_id"):
+            hourly_run_id_by_day[day] = str(row["forecast_run_id"])
+        if day and row.get("forecast_issued_at"):
+            hourly_issued_at_by_day[day] = str(row["forecast_issued_at"])
     dates = {
         d
         for d in set(pv_by_day) | set(actual_by_day) | set(hourly_load_by_day) | set(hourly_pv_by_day)
@@ -171,6 +177,7 @@ def _build_energy_daily(
         forecast_pv = _forecast_pv_kwh(pv)
         if forecast_pv is None:
             forecast_pv = hourly_pv_by_day.get(day)
+        hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
         out.append(
             {
                 "date": day,
@@ -187,8 +194,10 @@ def _build_energy_daily(
                     else _rolling_load_forecast(day, actual_by_day)
                 ),
                 "forecast_load_source": (
-                    "forecast_hourly" if day in hourly_load_by_day else "rolling_14d_fallback"
+                    hourly_source if day in hourly_load_by_day else "legacy_rolling_14d_estimate"
                 ),
+                "forecast_run_id": hourly_run_id_by_day.get(day),
+                "forecast_issued_at": hourly_issued_at_by_day.get(day),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
             }
         )

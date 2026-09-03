@@ -25,6 +25,10 @@ from app.runtime.night_soc_time_contract import FORCED_MONITOR_CUTOFF
 from app.dashboard.sqlite_repository import load_sqlite_query_snapshot
 from app.dashboard.warnings import build_dashboard_warnings as _build_dashboard_warnings
 from app.dashboard.service import merge_forecast_hourly_actuals
+from app.dashboard.firestore_repository import (
+    _firestore_forecast_hourly_between,
+    _firestore_monitoring_daily,
+)
 from app.operations_db import ensure_schema, open_db
 
 
@@ -272,15 +276,33 @@ def test_energy_daily_restores_both_forecasts_from_selected_snapshot_rows() -> N
         pv_daily=[],
         monitoring_daily=[{"date": "2026-05-02", "actual_pv_kwh": 4.0, "actual_load_kwh": 20.0}],
         forecast_hourly=[
-            {"date": "2026-05-02", "hour": 0, "forecast_pv_kwh": 0.4, "forecast_load_kwh": 1.2, "source": "forecast_hourly_snapshot"},
-            {"date": "2026-05-02", "hour": 1, "forecast_pv_kwh": 0.6, "forecast_load_kwh": 1.8, "source": "forecast_hourly_snapshot"},
+            {
+                "date": "2026-05-02",
+                "hour": 0,
+                "forecast_pv_kwh": 0.4,
+                "forecast_load_kwh": 1.2,
+                "source": "forecast_hourly_snapshot",
+                "forecast_run_id": "historic-run",
+                "forecast_issued_at": "2026-05-01T18:00:00+00:00",
+            },
+            {
+                "date": "2026-05-02",
+                "hour": 1,
+                "forecast_pv_kwh": 0.6,
+                "forecast_load_kwh": 1.8,
+                "source": "forecast_hourly_snapshot",
+                "forecast_run_id": "historic-run",
+                "forecast_issued_at": "2026-05-01T18:00:00+00:00",
+            },
         ],
     )
 
     assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.0)
     assert rows[0]["forecast_load_kwh"] == pytest.approx(3.0)
     assert rows[0]["forecast_pv_source"] == "forecast_hourly_snapshot"
-    assert rows[0]["forecast_load_source"] == "forecast_hourly"
+    assert rows[0]["forecast_load_source"] == "forecast_hourly_snapshot"
+    assert rows[0]["forecast_run_id"] == "historic-run"
+    assert rows[0]["forecast_issued_at"] == "2026-05-01T18:00:00+00:00"
 
 
 def test_energy_daily_uses_rolling_average_only_without_hourly_forecast() -> None:
@@ -296,7 +318,7 @@ def test_energy_daily_uses_rolling_average_only_without_hourly_forecast() -> Non
     )
 
     assert rows[0]["forecast_load_kwh"] == pytest.approx(20.0)
-    assert rows[0]["forecast_load_source"] == "rolling_14d_fallback"
+    assert rows[0]["forecast_load_source"] == "legacy_rolling_14d_estimate"
 
 
 def test_daily_metric_requires_all_48_half_hour_samples() -> None:
@@ -310,6 +332,138 @@ def test_daily_metric_requires_all_48_half_hour_samples() -> None:
     assert _daily_metric_is_complete({**complete, "sample_count": 47}) is False
     assert _daily_metric_is_complete({**complete, "first_sample_at": "2026-05-02T00:30:00"}) is False
     assert _daily_metric_is_complete({**complete, "latest_sample_at": "2026-05-02T23:00:00"}) is False
+
+
+class _FirestoreDoc:
+    def __init__(self, row: dict[str, object]) -> None:
+        self._row = row
+        self.id = str(row.get("date") or row.get("ts") or "doc")
+
+    def to_dict(self) -> dict[str, object]:
+        return dict(self._row)
+
+
+class _FirestoreQuery:
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def where(self, *args: object) -> "_FirestoreQuery":
+        del args
+        return self
+
+    def order_by(self, *args: object) -> "_FirestoreQuery":
+        del args
+        return self
+
+    def stream(self) -> list[_FirestoreDoc]:
+        return [_FirestoreDoc(row) for row in self._rows]
+
+
+class _FirestoreClient:
+    def __init__(self, rows_by_collection: dict[str, list[dict[str, object]]]) -> None:
+        self.rows_by_collection = rows_by_collection
+
+    def collection(self, name: str) -> _FirestoreQuery:
+        return _FirestoreQuery(self.rows_by_collection.get(name, []))
+
+
+def test_firestore_actuals_fill_missing_field_only_after_complete_raw_day() -> None:
+    samples = [
+        {
+            "ts": f"2026-05-02T{hour:02d}:{minute:02d}:00",
+            "pv_kwh": 1.0,
+            "load_kwh": 2.0,
+        }
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
+    client = _FirestoreClient(
+        {
+            "dashboard_daily_metrics": [
+                {
+                    "date": "2026-05-02",
+                    "actual_pv_kwh": 99.0,
+                    "actual_load_kwh": None,
+                    "sample_count": 12,
+                }
+            ],
+            "monitoring_samples": samples,
+        }
+    )
+
+    row = _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-02")[0]
+
+    assert row["actual_pv_kwh"] == pytest.approx(99.0)
+    assert row["actual_load_kwh"] == pytest.approx(96.0)
+
+
+def test_firestore_actuals_do_not_promote_an_incomplete_raw_day() -> None:
+    samples = [
+        {"ts": f"2026-05-02T{hour:02d}:00:00", "pv_kwh": 1.0, "load_kwh": 2.0}
+        for hour in range(23)
+    ]
+    client = _FirestoreClient({"dashboard_daily_metrics": [], "monitoring_samples": samples})
+
+    row = _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-02")[0]
+
+    assert "actual_pv_kwh" not in row
+    assert "actual_load_kwh" not in row
+
+
+def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_snapshot() -> None:
+    snapshot_rows = [
+        {
+            "date": "2026-05-02",
+            "hour": hour,
+            "forecast_pv_kwh": 1.0,
+            "forecast_load_kwh": 2.0,
+            "forecast_run_id": "eligible",
+            "issued_at": "2026-05-02T12:00:00Z",
+        }
+        for hour in range(24)
+    ]
+    snapshot_rows.extend(
+        {
+            "date": "2026-05-02",
+            "hour": hour,
+            "forecast_pv_kwh": 9.0,
+            "forecast_load_kwh": 9.0,
+            "forecast_run_id": "hindsight",
+            "issued_at": "2026-05-02T15:00:00Z",
+        }
+        for hour in range(24)
+    )
+    client = _FirestoreClient(
+        {
+            "forecast_hourly": [
+                {"date": "2026-05-02", "hour": 0, "forecast_pv_kwh": 7.0, "forecast_load_kwh": 7.0}
+            ],
+            "forecast_hourly_snapshots": snapshot_rows,
+            "monitoring_samples": [],
+        }
+    )
+
+    rows = _firestore_forecast_hourly_between(client, start_date="2026-05-02", end_date_iso="2026-05-02")
+
+    assert len(rows) == 24
+    assert {row["forecast_run_id"] for row in rows} == {"eligible"}
+    assert {row["forecast_pv_kwh"] for row in rows} == {1.0}
+
+
+def test_firestore_forecast_omits_partial_mutable_day_without_snapshot() -> None:
+    client = _FirestoreClient(
+        {
+            "forecast_hourly": [
+                {"date": "2026-05-02", "hour": 0, "forecast_pv_kwh": 7.0, "forecast_load_kwh": 7.0}
+            ],
+            "forecast_hourly_snapshots": [],
+            "monitoring_samples": [],
+        }
+    )
+
+    rows = _firestore_forecast_hourly_between(client, start_date="2026-05-02", end_date_iso="2026-05-02")
+
+    assert rows == []
 
 
 def test_review_candidates_exclude_today_and_respect_historical_end_date() -> None:

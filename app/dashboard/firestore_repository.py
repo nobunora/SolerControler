@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Callable
 
@@ -133,34 +133,59 @@ def _firestore_monitoring_daily(
         .where("ts", "<", end_next)
         .order_by("ts")
     )
-    by_day: dict[str, dict[str, float]] = {}
+    by_day: dict[str, dict[str, Any]] = {}
     for doc in q.stream():
         row = doc.to_dict() or {}
         ts = str(row.get("ts", doc.id))
         day = ts[:10]
         if not day:
             continue
-        acc = by_day.setdefault(
-            day,
-            {"actual_pv_kwh": 0.0, "actual_load_kwh": 0.0, "charge_kwh": 0.0, "discharge_kwh": 0.0},
-        )
-        acc["actual_pv_kwh"] += float(row.get("pv_kwh") or 0.0)
-        acc["actual_load_kwh"] += float(row.get("load_kwh") or 0.0)
-        acc["charge_kwh"] += float(row.get("charge_kwh") or 0.0)
-        acc["discharge_kwh"] += float(row.get("discharge_kwh") or 0.0)
+        acc = by_day.setdefault(day, {"sample_count": 0, "first_sample_at": ts, "latest_sample_at": ts})
+        acc["sample_count"] = int(acc["sample_count"]) + 1
+        acc["first_sample_at"] = min(str(acc["first_sample_at"]), ts)
+        acc["latest_sample_at"] = max(str(acc["latest_sample_at"]), ts)
+        for source, target in (("pv_kwh", "actual_pv_kwh"), ("load_kwh", "actual_load_kwh"), ("charge_kwh", "charge_kwh"), ("discharge_kwh", "discharge_kwh")):
+            value = to_float(row.get(source))
+            if value is not None:
+                acc[target] = float(acc.get(target) or 0.0) + value
+                acc[f"{target}_observations"] = int(acc.get(f"{target}_observations") or 0) + 1
     daily_by_date = {str(row.get("date")): row for row in daily_rows if row.get("date")}
     for day, values in by_day.items():
         metric = daily_by_date.get(day)
+        raw_complete = _daily_metric_is_complete(values)
+        raw = {
+            key: values[key]
+            for key in ("actual_pv_kwh", "actual_load_kwh", "charge_kwh", "discharge_kwh")
+            if raw_complete and values.get(f"{key}_observations")
+        }
         if metric is None:
-            daily_by_date[day] = {"date": day, **values}
-        elif not _daily_metric_is_complete(metric):
-            # Incomplete daily metrics are weaker than the complete raw-sample aggregate.
-            daily_by_date[day] = {**metric, **values}
+            daily_by_date[day] = {
+                "date": day,
+                "sample_count": values["sample_count"],
+                "first_sample_at": values["first_sample_at"],
+                "latest_sample_at": values["latest_sample_at"],
+                **raw,
+            }
+        else:
+            merged = dict(metric)
+            for key, value in raw.items():
+                if merged.get(key) is None:
+                    merged[key] = value
+            daily_by_date[day] = merged
     return [daily_by_date[day] for day in sorted(daily_by_date)]
 
 
+def _parse_snapshot_issued_at(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
 def _snapshot_cutoff(target_date: str) -> datetime:
-    return datetime.combine(date.fromisoformat(target_date), time(3, 30), tzinfo=ZoneInfo("Asia/Tokyo"))
+    # Historical pre-isolation evidence includes 06:31 JST issuance; accept same-target-day runs only.
+    return datetime.combine(date.fromisoformat(target_date), time.max, tzinfo=ZoneInfo("Asia/Tokyo"))
 
 
 def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_iso: str, mutable_dates: set[str]) -> list[dict[str, Any]]:
@@ -177,20 +202,18 @@ def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_is
         for (day, run_id), rows in runs.items():
             if day != target_date:
                 continue
-            hours = {int(row.get("hour")) for row in rows if str(row.get("hour", "")).isdigit()}
-            issued = str(rows[0].get("issued_at") or "")
-            try:
-                issued_at = datetime.fromisoformat(issued.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if len(rows) == 24 and hours == set(range(24)) and issued_at <= _snapshot_cutoff(target_date):
+            hours = {int(str(row.get("hour"))) for row in rows if str(row.get("hour", "")).isdigit()}
+            issued_at = _parse_snapshot_issued_at(rows[0].get("issued_at"))
+            values_complete = all(to_float(row.get("forecast_pv_kwh")) is not None and to_float(row.get("forecast_load_kwh")) is not None for row in rows)
+            if issued_at is not None and len(rows) == 24 and hours == set(range(24)) and values_complete and issued_at <= _snapshot_cutoff(target_date):
                 candidates.append((issued_at, run_id, rows))
         if candidates:
             issued_at, run_id, rows = max(candidates, key=lambda item: (item[0], item[1]))
             selected.extend({
                 "date": target_date, "hour": row.get("hour"), "forecast_pv_kwh": row.get("forecast_pv_kwh"),
                 "forecast_load_kwh": row.get("forecast_load_kwh"), "forecast_charge_kwh": row.get("forecast_charge_kwh"),
-                "source": "forecast_hourly_snapshot", "forecast_run_id": run_id, "issued_at": issued_at.isoformat(),
+                "source": "forecast_hourly_snapshot", "forecast_run_id": run_id,
+                "forecast_issued_at": issued_at.isoformat(),
             } for row in rows)
     return selected
 
@@ -219,7 +242,7 @@ def _open_dashboard_firestore_client() -> Any:
 
 def _daily_metric_is_complete(row: dict[str, Any]) -> bool:
     return (
-        int(to_float(row.get("sample_count")) or 0.0) >= 48
+        (to_float(row.get("sample_count")) or 0.0) >= 48.0
         and str(row.get("first_sample_at") or "")[11:16] <= "00:00"
         and str(row.get("latest_sample_at") or "")[11:16] >= "23:30"
     )
@@ -501,8 +524,24 @@ def _firestore_forecast_hourly_between(
             "updated_at",
         ],
     )
-    mutable_dates = {str(row.get("date")) for row in rows if row.get("date")}
-    rows.extend(_snapshot_forecast_rows_between(client, start_date=start_date, end_date_iso=end_date_iso, mutable_dates=mutable_dates))
+    mutable_dates: set[str] = set()
+    for day in {str(row.get("date")) for row in rows if row.get("date")}:
+        day_rows = [row for row in rows if str(row.get("date")) == day]
+        hours = {int(str(row.get("hour"))) for row in day_rows if str(row.get("hour", "")).isdigit()}
+        values_complete = all(to_float(row.get("forecast_pv_kwh")) is not None and to_float(row.get("forecast_load_kwh")) is not None for row in day_rows)
+        if len(day_rows) == 24 and hours == set(range(24)) and values_complete:
+            mutable_dates.add(day)
+    # A partial mutable day is not a usable daily forecast. Discard it entirely
+    # so a selected immutable run can replace it without mixing vintages.
+    rows = [row for row in rows if str(row.get("date")) in mutable_dates]
+    rows.extend(
+        _snapshot_forecast_rows_between(
+            client,
+            start_date=start_date,
+            end_date_iso=end_date_iso,
+            mutable_dates=mutable_dates,
+        )
+    )
     end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
     monitoring_rows: list[dict[str, Any]] = []
     for doc in (
