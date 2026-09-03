@@ -2,55 +2,50 @@
 
 ## Active workspace
 
-- Persistent Draft PR branch: `codex/persistent-workspace`, Draft PR #36.
-- Accepted 03 plan-preparation remediation: `8250353c704ac189c8dd61dd45d2eb48975e04f4`; freeze it unless a direct regression is proven.
-- Active task: missing recent PV forecasts in the production dashboard.
+- Persistent Draft branch: `codex/dashboard-history-restore`.
+- Base: merged master `19aae9c9291ad830788556a5c59c03199e463174` (PR #36 complete).
+- Active task: restore historical dashboard forecast-vs-actual state for both PV generation and household consumption.
 
-## Confirmed dashboard finding
+## User-visible defect
 
-- Read-only production matrix for 2026-08-29 to 2026-09-02 JST is in `.ai/BUG_REPORT.md`.
-- 2026-08-29 has a stored immutable plan, 24 mutable rows, two immutable snapshot runs, and browser-rendered forecast data.
-- 2026-08-30 through 2026-09-02 have no plan, mutable row, snapshot, or sunshine forecast record. Classify each as `FORECAST_NOT_GENERATED`.
-- The Dashboard Firestore reader, slice assembly, and frontend store/render path work for available rows; do not change them for this defect.
-- Scheduled 23 jobs succeeded but are protected to be one standby write only. Scheduled 03 is protected to have no Firestore/DB persistence. No permitted scheduled owner currently creates/persists dashboard forecast vintages after the isolation change.
+The current dashboard has the recent forecast owner restored, but historical forecast/actual series for PV generation and consumption are still missing or incomplete.
 
-## Relevant files and contracts
+## Confirmed source findings
 
-- `app/runtime/slot_orchestration.py::_run_night_23`: protected, no plan/CSV/Firestore dependency.
-- `app/runtime/cloud_job.py::_ensure_night_plan_available`: 03 local plan only; no persistence.
-- `app/operations/domain.py::extract_hourly_forecast_from_plan`
-- `app/operations/firestore.py::ingest_sunshine_from_night_plan`
-- `app/operations/forecast_snapshot.py::persist_forecast_snapshots`
-- `app/dashboard/firestore_repository.py::_firestore_forecast_hourly_between`
-- `static/dashboard.js::mergeHourlyRows`
+1. `static/dashboard.js` renders the PV and load forecast-vs-actual charts from `energy_daily` (`forecast_pv_kwh` vs `actual_pv_kwh`, and `forecast_load_kwh` vs `actual_load_kwh`).
+2. `app/dashboard/firestore_repository.py::_firestore_monitoring_daily()` first reads `dashboard_daily_metrics`; if that query returns even one row, it immediately returns those rows and never fills missing dates from `monitoring_samples`. This is an all-or-nothing fallback and can erase older actual PV/load days from the dashboard when `dashboard_daily_metrics` is only partially backfilled.
+3. `app/dashboard/aggregation.py::_build_energy_daily()` gets historical PV forecast from `sunshine_daily` and load forecast from mutable `forecast_hourly`; absent hourly load forecast falls back to a rolling 14-day estimate.
+4. `forecast_hourly_snapshots` is immutable forecast evidence and includes both `forecast_pv_kwh` and `forecast_load_kwh` plus `forecast_run_id`, `issued_at`, `date`, and `hour`. The current dashboard historical path does not use it to restore missing forecast vintages.
+5. Original chart commit `da2a4c5c54743a2016e814af937f801547b456f6` explicitly introduced historical forecast-vs-actual PV/load charts using monitoring actuals. Preserve that product behavior.
 
-## Current implementation status
+## Primary files to inspect first
 
-- New non-control entrypoint: `forecast_job_main.py` / `app.runtime.forecast_job`.
-- It only acquires read-only CSV input, runs the energy model for the intended JST date, validates a complete 24-hour forecast, and persists forecast-specific data.
-- `app.operations.forecast_persistence.persist_forecast_only_plan` writes immutable snapshots, `sunshine_daily`, `forecast_hourly`, and `forecast_plans`; it never writes `night_charge_plans`.
-- Validation happens before any mutable deletion. A target-date mismatch or incomplete row set raises without touching current rows; valid mutable replacement is one Firestore batch.
-- Deployment tooling adds `solar-forecast-daily` and `solar-forecast-daily-0230` at 02:30 JST, retries=0, task timeout=600 seconds. Existing 23/03/07 names, schedules, and ownership are unchanged.
+- `app/dashboard/firestore_repository.py`
+- `app/dashboard/aggregation.py`
+- `app/dashboard/service.py`
+- `app/dashboard/slice_assembler.py`
+- `static/dashboard.js`
+- `app/operations/forecast_snapshot.py`
+- `tests/test_dashboard_data.py`
+- forecast snapshot/persistence tests
 
-## Validation and next action
+Expand only when production evidence requires it.
 
-- Focused forecast/persistence/dashboard/protected suites: 138 passed.
-- New-module Ruff and ty: pass; new-module mypy: pass; security check: pass.
-- Full Python suite: 603 passed, 1 skipped; JS tests, full mypy (176 files), and security check passed. Shared CodebaseMemory index refreshed: ready, 6,349 nodes / 19,124 edges.
-- Configuration provenance (read-only, 2026-09-03): `.env.example`, `scripts/deploy_gcp_jobs.ps1`, and deployed `solar-battery-03` all set `SOC_EXPORT_CONTRACT_STATUS=inactive` and `SOC_EXPORT_VALUE_MODE=neutral`; the local `.env`/post-import process omitted both. Classification: `LOCAL_ENV_DRIFT_ONLY`. Persistent `.env` was not changed.
-- Non-control, non-persisting production-like smoke then used only a temporary process overlay of those verified values. `build_energy_plan()` for 2026-09-03 completed in 29.758 seconds; the normalized forecast contained exactly hours 0--23 (24 rows) and 7.114 kWh PV. `EnergyPlanOutput.persist`, forecast persistence, Firestore, battery control, and settings writes were not invoked. The optional occupancy Sheets read logged its established `HttpError` fallback and did not prevent completion.
-- No deployment, normal 03 run, or merge has been performed. Next action: obtain Web review of this evidence before any production mutation or PR merge.
+## Required next action
 
-## Production rollout evidence (2026-09-03 JST)
+Before changing production data, build a read-only production matrix over the longest practical historical range currently intended by the dashboard. At minimum sample:
+- a recent complete day;
+- dates where `dashboard_daily_metrics` exists;
+- older dates where it is absent but `monitoring_samples` exists;
+- dates with mutable `forecast_hourly`;
+- dates with immutable `forecast_hourly_snapshots` but no mutable forecast;
+- dates with neither trustworthy forecast source.
 
-- Official runner-scope rollout is complete for `7102bdc`; pre-release gate passed (603 passed, 1 skipped; mypy/security passed), the 07 DryRun met all four Cloud Run terminal/readiness conditions, and the mandatory settings round-trip completed successfully. Existing 23/03/07 schedules were preserved; dashboard, 23/07 job updates, KP-NET import, and Drive backup were skipped.
-- One authorized manual `solar-forecast-daily` run completed. It persisted 24 `forecast_hourly` rows for 2026-09-03 (hours 0--23, 7.6845 kWh), 24 immutable snapshot rows, `sunshine_daily`, and `forecast_plans` metadata with `hourly_row_count=24`. The dashboard Firestore slice returned the same 24 rows and PV total.
-- The forecast job log recorded only forecast persistence. `night_charge_plans/latest` remains the prior 2026-08-29 plan (updated 2026-08-28T21:31:41Z), confirming the forecast-only execution did not alter it. No normal manual 03 execution was performed.
-- Remaining acceptance: await the next natural scheduled 03 execution; then verify bounded prep outcome, provenance/monitor path or one-standby fallback, and unchanged time fences/23/07 ownership. Keep PR #36 Draft and unmerged until then.
+Then implement the smallest repair that restores historical chart rows without fabricating old forecasts. See `.ai/BUG_REPORT.md` and `.ai/DECISIONS.md`.
 
-## Natural scheduled 03 acceptance (2026-09-03 JST)
+## Read-only matrix and implementation in progress
 
-- The 03:00 JST execution was Scheduler-originated (not a manual normal 03 run) and completed successfully. Plan preparation logged sanitized `outcome=success`, `usable_plan_exists=true`, and 26.945 seconds, well inside the unchanged 240-second child budget.
-- The usable-plan path emitted `03-plan-provenance` and the exact-target monitor contract. Monitor reached realtime SOC 100% at 06:39 JST and emitted `03-monitor stop reason=target_reached`; no fail-safe standby or forced-entry fallback was needed.
-- The completion occurred before the 06:45/06:50/06:55 fences; their unchanged source/deployment contract was therefore not exercised in this run. Current Scheduler schedules remain 23=`0 23 * * *`, 03=`0 3 * * *`, 07=`0 7 * * *` (Asia/Tokyo, enabled), and deployed 23/07 slots remain `23`/`07`.
-- PR #36 remains Draft and unmerged pending Web review of the completed rollout and natural-03 evidence.
+- Firestore evidence: complete daily metrics and monitoring aggregates agree on representative dates; mutable hourly forecasts exist for 2026-05-24; snapshots exist only for 2026-08-28, 2026-08-29, and 2026-09-03, all as complete 24-row runs. No current production date has snapshots without mutable rows, so no persistent backfill is justified.
+- Dashboard read-path patch: each non-null `dashboard_daily_metrics` actual remains authoritative; only missing actual fields are filled from a complete 48-sample raw day. A partial raw day remains missing rather than becoming a false daily total. A complete mutable hourly day wins; otherwise one complete immutable snapshot run is selected and partial mutable rows are discarded to prevent mixed vintages.
+- Snapshot eligibility: select the latest complete run issued by 07:00 JST on its target date. This accepts the confirmed pre-isolation 06:31-JST run while rejecting ambiguous later same-day and next-day hindsight. Snapshot source, run ID, and issuance are exposed in `energy_daily`; snapshot PV/load are paired from the same vintage and the legacy load estimate is explicitly labeled.
+- Focused validation after review repair: Ruff passed, `python -m mypy app` passed (154 files), `python -m pytest tests/test_dashboard_data.py -q` passed (52), and full pytest passed (608 passed, 1 skipped). GitHub Actions `quality` runs 33764313104 and 33764306627 succeeded for `76f1e91`.

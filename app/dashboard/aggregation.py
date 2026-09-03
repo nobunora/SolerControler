@@ -147,25 +147,51 @@ def _build_energy_daily(
     pv_by_day = {str(row.get("date")): row for row in pv_daily if row.get("date")}
     actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
     hourly_load_by_day: dict[str, float] = {}
+    hourly_pv_by_day: dict[str, float] = {}
+    hourly_source_by_day: dict[str, str] = {}
+    hourly_run_id_by_day: dict[str, str] = {}
+    hourly_issued_at_by_day: dict[str, str] = {}
     for row in forecast_hourly or []:
         day = str(row.get("date") or "")
         value = to_float(row.get("forecast_load_kwh"))
         if day and value is not None:
             hourly_load_by_day[day] = hourly_load_by_day.get(day, 0.0) + max(0.0, value)
+        pv_value = to_float(row.get("forecast_pv_kwh"))
+        if day and pv_value is not None:
+            hourly_pv_by_day[day] = hourly_pv_by_day.get(day, 0.0) + max(0.0, pv_value)
+        if day and row.get("source"):
+            hourly_source_by_day[day] = str(row["source"])
+        if day and row.get("forecast_run_id"):
+            hourly_run_id_by_day[day] = str(row["forecast_run_id"])
+        if day and row.get("forecast_issued_at"):
+            hourly_issued_at_by_day[day] = str(row["forecast_issued_at"])
     dates = {
         d
-        for d in set(pv_by_day) | set(actual_by_day)
+        for d in set(pv_by_day) | set(actual_by_day) | set(hourly_load_by_day) | set(hourly_pv_by_day)
         if start_date <= d <= end_date_iso
     }
     out: list[dict[str, Any]] = []
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
         pv = pv_by_day.get(day)
-        forecast_pv = _forecast_pv_kwh(pv)
+        hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
+        snapshot_pair = (
+            hourly_source == "forecast_hourly_snapshot" and day in hourly_pv_by_day
+        )
+        forecast_pv = hourly_pv_by_day.get(day) if snapshot_pair else _forecast_pv_kwh(pv)
+        if forecast_pv is None:
+            forecast_pv = hourly_pv_by_day.get(day)
         out.append(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
+                "forecast_pv_source": (
+                    hourly_source
+                    if snapshot_pair
+                    else "sunshine_daily"
+                    if _forecast_pv_kwh(pv) is not None
+                    else hourly_source_by_day.get(day)
+                ),
                 "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
                 "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
                 "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),
@@ -177,8 +203,10 @@ def _build_energy_daily(
                     else _rolling_load_forecast(day, actual_by_day)
                 ),
                 "forecast_load_source": (
-                    "forecast_hourly" if day in hourly_load_by_day else "rolling_14d_fallback"
+                    hourly_source if day in hourly_load_by_day else "legacy_rolling_14d_estimate"
                 ),
+                "forecast_run_id": hourly_run_id_by_day.get(day),
+                "forecast_issued_at": hourly_issued_at_by_day.get(day),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
             }
         )

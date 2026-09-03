@@ -2,51 +2,65 @@
 
 ## Persistent collaboration
 
-- Use this Draft PR as the long-lived Web ChatGPT ↔ Local Codex workspace.
-- Do not create a new PR for each iteration.
-- Instructions are posted as PR comments after bootstrap.
-- Review latest handoff + latest relevant diff; do not restart full-repository analysis every iteration.
-- Do not merge until the incident fix, validation, and production-readiness evidence are complete.
+- Use one Draft PR for this dashboard-history restoration workstream.
+- New instructions go into PR comments; do not open a new PR per iteration.
+- Review latest handoff + latest relevant diff; avoid full-repository rereads unless evidence requires them.
+- Do not merge until historical actual and forecast restoration is validated against production read-only evidence.
 
-## Protected runtime contracts
+## Protected production contracts
 
-The following remain unchanged unless a new, directly evidenced defect requires a separate decision:
+The accepted PR #36 production architecture remains frozen unless direct regression evidence requires otherwise:
 
-- 23:00 is one unconditional standby candidate/read-back.
-- 03:00 remains standalone; no Firestore/DB lease, ownership, persistence, manual handoff, or cross-slot tail work.
-- 07:00 is one unconditional green candidate/read-back.
-- 03 monitor cutoff / final standby / hard I/O fences remain 06:45 / 06:50 / 06:55 JST.
-- Exact SOC target stopping remains exact; no legacy stop margin is reintroduced.
-- Forced mode-only current-snapshot + read-back contract remains unchanged.
-- SOC parser/realtime fallback semantics remain unchanged.
-- Optimizer, SOC constraints, and target semantics are outside this bug fix unless direct evidence proves they caused plan-preparation failure.
+- 23:00 standby-only owner;
+- 03:00 standalone control owner;
+- 07:00 green owner;
+- 06:45 / 06:50 / 06:55 fences;
+- exact-target SOC stop;
+- forced mode-only current-snapshot/read-back contract;
+- dedicated non-control forecast owner `solar-forecast-daily` at 02:30 JST;
+- no forecast-only write to `night_charge_plans/latest`.
 
-## Plan-preparation remediation decisions
+This task is a dashboard/history-data repair. Do not change battery control or optimizer semantics.
 
-- Do not fix this incident by only increasing the 240-second outer timeout.
-- First measure/reproduce the slow phase with production-like inputs.
-- Prefer bounding or removing unnecessary optional external I/O over extending the global control budget.
-- External-data degradation may use the model's existing fallback semantics when safe; do not silently substitute invented forecast values beyond existing contracts.
-- A no-usable-plan failure must stay fail-safe: one standby attempt, no monitor/forced entry.
-- Add explicit sanitized prep-failure observability so the next incident identifies exception type/stage without secrets, cookies, full env values, HTML, or resource IDs.
-- Do not use normal 03 manual execution for validation.
-- Production-like timing disproved weather history as the incident's dominant phase; retain sparse-date and total-budget guards because optional archive I/O must remain bounded.
-- Bound the evidenced occupancy Sheets transport at 15 seconds. Measured non-occupancy plan work leaves ample margin, and occupancy data already has an established empty-schedule fallback.
-- Bound weather-history optional I/O at 60 seconds. Baseline non-weather work was about 39 seconds, so the worst configured weather budget still leaves roughly 140 seconds inside the unchanged 240-second child limit.
+## Historical actual-data decision
 
-## Deployment decision
+- Actual PV/load are facts and may be reconstructed only from trustworthy measured sources.
+- Prefer a complete `dashboard_daily_metrics` row for a day.
+- If the daily row is absent or incomplete, fill only its missing actual fields from `monitoring_samples` when that field has a complete 48-sample day.
+- The fallback is per-day/per-field, not all-or-nothing for the whole requested range.
+- Do not overwrite a complete authoritative daily metric with a weaker reconstruction.
+- If neither source has sufficient evidence, leave the actual value missing and expose the missing-data condition rather than inventing zero.
 
-If source behavior changes, production deployment is required only after focused tests and the repository's standard quality gate pass. Scheduled 03 acceptance should use the next natural Scheduler execution, not a manual normal 03 run.
+## Historical forecast-data decision
 
-## Forecast configuration provenance
+- Do not fabricate past forecasts from today's weather, actual PV/load, or hindsight data.
+- Mutable `forecast_hourly` may be used when it is the stored forecast for the target date.
+- When mutable forecast rows are absent, immutable `forecast_hourly_snapshots` may restore the historical forecast only by selecting one complete, deterministic eligible `forecast_run_id` for that target date.
+- Never combine hours from different forecast runs to make an artificial 24-hour day.
+- Historical snapshots are eligible only when issued no later than 07:00 JST on their target date. Legacy production evidence confirms a 06:31-JST issuance; the legacy producer has no evidenced late-day contract, so later target-day runs remain ineligible to avoid hindsight. Select the latest eligible complete run deterministically.
+- Daily PV/load forecast totals may be derived from the selected immutable run and must carry a source/provenance label.
+- If only `sunshine_daily` contains trustworthy contemporaneous PV forecast evidence, preserve it as a lower-resolution source with an explicit source label.
+- If no trustworthy forecast evidence exists, leave the forecast missing. The retained 14-day load estimate is explicitly labeled `legacy_rolling_14d_estimate`, never as a historical prediction.
 
-- The verified production forecast contract is `SOC_EXPORT_CONTRACT_STATUS=inactive` and `SOC_EXPORT_VALUE_MODE=neutral` (repository canonical configuration and deployed `solar-battery-03`).
-- Local `.env` omission of these fields is `LOCAL_ENV_DRIFT_ONLY`; do not rewrite it during review. A production-like local smoke may use a process-local overlay of only these verified fields.
+## Repair strategy
 
-## Dedicated forecast owner decision
+- Prefer restoring the dashboard read path from existing immutable/raw evidence before performing persistent production backfills.
+- A backfill is allowed only when it copies or deterministically aggregates proven historical evidence, is idempotent, and is separately validated before mutation.
+- Keep current-day/future forecast behavior unchanged.
+- Preserve dashboard pagination and existing chart/UI semantics unless a small provenance indicator is needed to distinguish restored sources.
 
-- Dashboard PV forecasts are owned by a separate non-control Cloud Run job, `solar-forecast-daily`, scheduled daily at 02:30 JST as `solar-forecast-daily-0230`.
-- The job may obtain read-only CSV input and run the energy model, but must not import or call control orchestration, settings/device writes, or 03 persistence.
-- It writes only forecast-specific stores: immutable `forecast_hourly_snapshots`, mutable `forecast_hourly`, `sunshine_daily`, and `forecast_plans`. It must not write `night_charge_plans/latest`.
-- Forecast date and the exact 24-row hourly contract are validated before any mutable replacement. Invalid input leaves existing rows untouched; no historical forecast is fabricated.
-- Task timeout is 600 seconds with zero retries. The measured 37.100-second plan generation leaves substantial margin before the independent 03 owner at 03:00 JST.
+## Validation
+
+At minimum require tests for:
+
+1. partial `dashboard_daily_metrics` range + older `monitoring_samples` restores both dates;
+2. complete daily metric wins over monitoring fallback;
+3. incomplete daily metric can be completed from monitoring evidence without dropping fields;
+4. immutable snapshot fallback selects exactly one complete eligible forecast run;
+5. multiple vintages do not get mixed;
+6. no eligible snapshot leaves forecast missing rather than inventing a historical value;
+7. PV and load daily forecast totals are both restored from the selected run;
+8. dashboard API and frontend chart inputs contain restored historical PV/load forecast and actual values;
+9. current forecast-only owner and protected 23/03/07 tests remain green.
+
+Run the standard repository quality workflow before deployment.
