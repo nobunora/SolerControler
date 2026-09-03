@@ -147,14 +147,21 @@ def _build_energy_daily(
     pv_by_day = {str(row.get("date")): row for row in pv_daily if row.get("date")}
     actual_by_day = {str(row.get("date")): row for row in monitoring_daily if row.get("date")}
     hourly_load_by_day: dict[str, float] = {}
+    hourly_pv_by_day: dict[str, float] = {}
+    hourly_source_by_day: dict[str, str] = {}
     for row in forecast_hourly or []:
         day = str(row.get("date") or "")
         value = to_float(row.get("forecast_load_kwh"))
         if day and value is not None:
             hourly_load_by_day[day] = hourly_load_by_day.get(day, 0.0) + max(0.0, value)
+        pv_value = to_float(row.get("forecast_pv_kwh"))
+        if day and pv_value is not None:
+            hourly_pv_by_day[day] = hourly_pv_by_day.get(day, 0.0) + max(0.0, pv_value)
+        if day and row.get("source"):
+            hourly_source_by_day[day] = str(row["source"])
     dates = {
         d
-        for d in set(pv_by_day) | set(actual_by_day)
+        for d in set(pv_by_day) | set(actual_by_day) | set(hourly_load_by_day) | set(hourly_pv_by_day)
         if start_date <= d <= end_date_iso
     }
     out: list[dict[str, Any]] = []
@@ -162,10 +169,13 @@ def _build_energy_daily(
         actual = actual_by_day.get(day, {})
         pv = pv_by_day.get(day)
         forecast_pv = _forecast_pv_kwh(pv)
+        if forecast_pv is None:
+            forecast_pv = hourly_pv_by_day.get(day)
         out.append(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
+                "forecast_pv_source": "sunshine_daily" if _forecast_pv_kwh(pv) is not None else hourly_source_by_day.get(day),
                 "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
                 "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
                 "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),

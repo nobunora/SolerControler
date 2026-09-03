@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Callable
 
 from app.dashboard.models import DashboardRawData, DashboardSlice
@@ -125,9 +126,6 @@ def _firestore_monitoring_daily(
             "soc_min_percent", "soc_max_percent", "day_soc_max_percent", "sample_count", "first_sample_at", "latest_sample_at",
         ],
     )
-    if daily_rows:
-        return daily_rows
-
     end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
     q = (
         client.collection("monitoring_samples")
@@ -150,7 +148,51 @@ def _firestore_monitoring_daily(
         acc["actual_load_kwh"] += float(row.get("load_kwh") or 0.0)
         acc["charge_kwh"] += float(row.get("charge_kwh") or 0.0)
         acc["discharge_kwh"] += float(row.get("discharge_kwh") or 0.0)
-    return [{"date": day, **values} for day, values in sorted(by_day.items())]
+    daily_by_date = {str(row.get("date")): row for row in daily_rows if row.get("date")}
+    for day, values in by_day.items():
+        metric = daily_by_date.get(day)
+        if metric is None:
+            daily_by_date[day] = {"date": day, **values}
+        elif not _daily_metric_is_complete(metric):
+            # Incomplete daily metrics are weaker than the complete raw-sample aggregate.
+            daily_by_date[day] = {**metric, **values}
+    return [daily_by_date[day] for day in sorted(daily_by_date)]
+
+
+def _snapshot_cutoff(target_date: str) -> datetime:
+    return datetime.combine(date.fromisoformat(target_date), time(3, 30), tzinfo=ZoneInfo("Asia/Tokyo"))
+
+
+def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_iso: str, mutable_dates: set[str]) -> list[dict[str, Any]]:
+    runs: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for doc in client.collection("forecast_hourly_snapshots").where("date", ">=", start_date).where("date", "<=", end_date_iso).stream():
+        row = doc.to_dict() or {}
+        target_date = str(row.get("date") or "")
+        run_id = str(row.get("forecast_run_id") or "")
+        if target_date and run_id and target_date not in mutable_dates:
+            runs.setdefault((target_date, run_id), []).append(row)
+    selected: list[dict[str, Any]] = []
+    for target_date in sorted({day for day, _ in runs}):
+        candidates: list[tuple[datetime, str, list[dict[str, Any]]]] = []
+        for (day, run_id), rows in runs.items():
+            if day != target_date:
+                continue
+            hours = {int(row.get("hour")) for row in rows if str(row.get("hour", "")).isdigit()}
+            issued = str(rows[0].get("issued_at") or "")
+            try:
+                issued_at = datetime.fromisoformat(issued.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if len(rows) == 24 and hours == set(range(24)) and issued_at <= _snapshot_cutoff(target_date):
+                candidates.append((issued_at, run_id, rows))
+        if candidates:
+            issued_at, run_id, rows = max(candidates, key=lambda item: (item[0], item[1]))
+            selected.extend({
+                "date": target_date, "hour": row.get("hour"), "forecast_pv_kwh": row.get("forecast_pv_kwh"),
+                "forecast_load_kwh": row.get("forecast_load_kwh"), "forecast_charge_kwh": row.get("forecast_charge_kwh"),
+                "source": "forecast_hourly_snapshot", "forecast_run_id": run_id, "issued_at": issued_at.isoformat(),
+            } for row in rows)
+    return selected
 
 
 def _dashboard_firestore_config() -> tuple[str | None, str]:
@@ -177,7 +219,7 @@ def _open_dashboard_firestore_client() -> Any:
 
 def _daily_metric_is_complete(row: dict[str, Any]) -> bool:
     return (
-        int(to_float(row.get("sample_count")) or 0) >= 48
+        int(to_float(row.get("sample_count")) or 0.0) >= 48
         and str(row.get("first_sample_at") or "")[11:16] <= "00:00"
         and str(row.get("latest_sample_at") or "")[11:16] >= "23:30"
     )
@@ -459,6 +501,8 @@ def _firestore_forecast_hourly_between(
             "updated_at",
         ],
     )
+    mutable_dates = {str(row.get("date")) for row in rows if row.get("date")}
+    rows.extend(_snapshot_forecast_rows_between(client, start_date=start_date, end_date_iso=end_date_iso, mutable_dates=mutable_dates))
     end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
     monitoring_rows: list[dict[str, Any]] = []
     for doc in (

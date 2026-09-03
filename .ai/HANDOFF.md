@@ -42,3 +42,9 @@ Before changing production data, build a read-only production matrix over the lo
 - dates with neither trustworthy forecast source.
 
 Then implement the smallest repair that restores historical chart rows without fabricating old forecasts. See `.ai/BUG_REPORT.md` and `.ai/DECISIONS.md`.
+
+## Read-only matrix and implementation in progress
+
+- Firestore evidence: complete daily metrics and monitoring aggregates agree on representative dates; mutable hourly forecasts exist for 2026-05-24; snapshots exist only for 2026-08-28, 2026-08-29, and 2026-09-03, all as complete 24-row runs. No current production date has snapshots without mutable rows, so no persistent backfill is justified.
+- Dashboard read-path patch: complete `dashboard_daily_metrics` remain authoritative; missing/incomplete days are filled from same-day monitoring aggregates. When mutable hourly forecasts are absent, one complete immutable snapshot run issued no later than 03:30 JST is selected; later vintages are excluded and PV/load are restored together.
+- Focused validation: `python -m ruff check app/dashboard/firestore_repository.py app/dashboard/aggregation.py tests/test_dashboard_data.py` passed; `python -m pytest tests/test_dashboard_data.py -q` passed (48).

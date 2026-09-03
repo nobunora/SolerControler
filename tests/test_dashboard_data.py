@@ -265,6 +265,24 @@ def test_energy_daily_prefers_saved_hourly_load_forecast() -> None:
     assert rows[0]["forecast_load_source"] == "forecast_hourly"
 
 
+def test_energy_daily_restores_both_forecasts_from_selected_snapshot_rows() -> None:
+    rows = _build_energy_daily(
+        start_date="2026-05-02",
+        end_date_iso="2026-05-02",
+        pv_daily=[],
+        monitoring_daily=[{"date": "2026-05-02", "actual_pv_kwh": 4.0, "actual_load_kwh": 20.0}],
+        forecast_hourly=[
+            {"date": "2026-05-02", "hour": 0, "forecast_pv_kwh": 0.4, "forecast_load_kwh": 1.2, "source": "forecast_hourly_snapshot"},
+            {"date": "2026-05-02", "hour": 1, "forecast_pv_kwh": 0.6, "forecast_load_kwh": 1.8, "source": "forecast_hourly_snapshot"},
+        ],
+    )
+
+    assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.0)
+    assert rows[0]["forecast_load_kwh"] == pytest.approx(3.0)
+    assert rows[0]["forecast_pv_source"] == "forecast_hourly_snapshot"
+    assert rows[0]["forecast_load_source"] == "forecast_hourly"
+
+
 def test_energy_daily_uses_rolling_average_only_without_hourly_forecast() -> None:
     rows = _build_energy_daily(
         start_date="2026-05-02",
