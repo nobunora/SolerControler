@@ -126,42 +126,71 @@ def _firestore_monitoring_daily(
             "soc_min_percent", "soc_max_percent", "day_soc_max_percent", "sample_count", "first_sample_at", "latest_sample_at",
         ],
     )
-    end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
-    q = (
-        client.collection("monitoring_samples")
-        .where("ts", ">=", start_date)
-        .where("ts", "<", end_next)
-        .order_by("ts")
-    )
-    by_day: dict[str, dict[str, Any]] = {}
-    for doc in q.stream():
-        row = doc.to_dict() or {}
-        ts = str(row.get("ts", doc.id))
-        day = ts[:10]
-        if not day:
-            continue
-        acc = by_day.setdefault(day, {"sample_count": 0, "first_sample_at": ts, "latest_sample_at": ts})
-        acc["sample_count"] = int(acc["sample_count"]) + 1
-        acc["first_sample_at"] = min(str(acc["first_sample_at"]), ts)
-        acc["latest_sample_at"] = max(str(acc["latest_sample_at"]), ts)
-        for source, target in (("pv_kwh", "actual_pv_kwh"), ("load_kwh", "actual_load_kwh"), ("charge_kwh", "charge_kwh"), ("discharge_kwh", "discharge_kwh")):
-            value = to_float(row.get(source))
-            if value is not None:
-                acc[target] = float(acc.get(target) or 0.0) + value
-                acc[f"{target}_observations"] = int(acc.get(f"{target}_observations") or 0) + 1
     daily_by_date = {str(row.get("date")): row for row in daily_rows if row.get("date")}
+    actual_fields = ("actual_pv_kwh", "actual_load_kwh")
+    needed_fields_by_date = {
+        day: {
+            field
+            for field in actual_fields
+            if daily_by_date.get(day, {}).get(field) is None
+        }
+        for day in _dates_inclusive(start_date, end_date_iso)
+    }
+    needed_fields_by_date = {
+        day: fields for day, fields in needed_fields_by_date.items() if fields
+    }
+    if not needed_fields_by_date:
+        return [daily_by_date[day] for day in sorted(daily_by_date)]
+
+    by_day: dict[str, dict[str, Any]] = {}
+    for range_start, range_end in _contiguous_date_ranges(set(needed_fields_by_date)):
+        end_next = _date_add_iso(range_end, 1) or range_end
+        q = (
+            client.collection("monitoring_samples")
+            .where("ts", ">=", range_start)
+            .where("ts", "<", end_next)
+            .order_by("ts")
+        )
+        for doc in q.stream():
+            row = doc.to_dict() or {}
+            ts = str(row.get("ts", doc.id))
+            slot = _monitoring_jst_half_hour_slot(ts)
+            if slot is None:
+                continue
+            day, half_hour = slot
+            needed_fields = needed_fields_by_date.get(day)
+            if needed_fields is None:
+                continue
+            acc = by_day.setdefault(
+                day,
+                {
+                    "sample_slots": set(),
+                    "first_sample_at": ts,
+                    "latest_sample_at": ts,
+                    "field_slots": {field: {} for field in actual_fields},
+                },
+            )
+            acc["sample_slots"].add(half_hour)
+            acc["first_sample_at"] = min(str(acc["first_sample_at"]), ts)
+            acc["latest_sample_at"] = max(str(acc["latest_sample_at"]), ts)
+            for source, target in (
+                ("pv_kwh", "actual_pv_kwh"),
+                ("load_kwh", "actual_load_kwh"),
+            ):
+                value = to_float(row.get(source))
+                if target in needed_fields and value is not None:
+                    acc["field_slots"][target].setdefault(half_hour, value)
     for day, values in by_day.items():
         metric = daily_by_date.get(day)
-        raw_complete = _daily_metric_is_complete(values)
         raw = {
-            key: values[key]
-            for key in ("actual_pv_kwh", "actual_load_kwh", "charge_kwh", "discharge_kwh")
-            if raw_complete and values.get(f"{key}_observations")
+            field: sum(values["field_slots"][field].values())
+            for field in needed_fields_by_date[day]
+            if set(values["field_slots"][field]) == _EXPECTED_HALF_HOUR_SLOTS
         }
         if metric is None:
             daily_by_date[day] = {
                 "date": day,
-                "sample_count": values["sample_count"],
+                "sample_count": len(values["sample_slots"]),
                 "first_sample_at": values["first_sample_at"],
                 "latest_sample_at": values["latest_sample_at"],
                 **raw,
@@ -175,6 +204,43 @@ def _firestore_monitoring_daily(
     return [daily_by_date[day] for day in sorted(daily_by_date)]
 
 
+_EXPECTED_HALF_HOUR_SLOTS = {f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in (0, 30)}
+
+
+def _dates_inclusive(start_date: str, end_date_iso: str) -> list[str]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date_iso)
+    return [(start + timedelta(days=offset)).isoformat() for offset in range((end - start).days + 1)]
+
+
+def _contiguous_date_ranges(days: set[str]) -> list[tuple[str, str]]:
+    ordered = sorted(date.fromisoformat(day) for day in days)
+    if not ordered:
+        return []
+    ranges: list[tuple[str, str]] = []
+    range_start = range_end = ordered[0]
+    for current in ordered[1:]:
+        if current == range_end + timedelta(days=1):
+            range_end = current
+        else:
+            ranges.append((range_start.isoformat(), range_end.isoformat()))
+            range_start = range_end = current
+    ranges.append((range_start.isoformat(), range_end.isoformat()))
+    return ranges
+
+
+def _monitoring_jst_half_hour_slot(timestamp: str) -> tuple[str, str] | None:
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(ZoneInfo("Asia/Tokyo"))
+    if parsed.minute not in (0, 30) or parsed.second != 0 or parsed.microsecond != 0:
+        return None
+    return parsed.date().isoformat(), parsed.strftime("%H:%M")
+
+
 def _parse_snapshot_issued_at(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -184,8 +250,9 @@ def _parse_snapshot_issued_at(value: Any) -> datetime | None:
 
 
 def _snapshot_cutoff(target_date: str) -> datetime:
-    # Historical pre-isolation evidence includes 06:31 JST issuance; accept same-target-day runs only.
-    return datetime.combine(date.fromisoformat(target_date), time.max, tzinfo=ZoneInfo("Asia/Tokyo"))
+    # The legacy producer has observed 06:31 JST issuance but no evidence for
+    # later target-day runs; reject ambiguous post-morning vintages.
+    return datetime.combine(date.fromisoformat(target_date), time(7, 0), tzinfo=ZoneInfo("Asia/Tokyo"))
 
 
 def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_iso: str, mutable_dates: set[str]) -> list[dict[str, Any]]:

@@ -305,6 +305,31 @@ def test_energy_daily_restores_both_forecasts_from_selected_snapshot_rows() -> N
     assert rows[0]["forecast_issued_at"] == "2026-05-01T18:00:00+00:00"
 
 
+def test_energy_daily_keeps_snapshot_pv_and_load_as_one_vintage() -> None:
+    rows = _build_energy_daily(
+        start_date="2026-05-02",
+        end_date_iso="2026-05-02",
+        pv_daily=[{"date": "2026-05-02", "forecast_pv_total_kwh": 99.0}],
+        monitoring_daily=[],
+        forecast_hourly=[
+            {
+                "date": "2026-05-02",
+                "hour": 0,
+                "forecast_pv_kwh": 1.0,
+                "forecast_load_kwh": 2.0,
+                "source": "forecast_hourly_snapshot",
+                "forecast_run_id": "historic-run",
+                "forecast_issued_at": "2026-05-01T18:00:00+00:00",
+            }
+        ],
+    )
+
+    assert rows[0]["forecast_pv_kwh"] == pytest.approx(1.0)
+    assert rows[0]["forecast_load_kwh"] == pytest.approx(2.0)
+    assert rows[0]["forecast_pv_source"] == "forecast_hourly_snapshot"
+    assert rows[0]["forecast_load_source"] == "forecast_hourly_snapshot"
+
+
 def test_energy_daily_uses_rolling_average_only_without_hourly_forecast() -> None:
     rows = _build_energy_daily(
         start_date="2026-05-02",
@@ -344,11 +369,13 @@ class _FirestoreDoc:
 
 
 class _FirestoreQuery:
-    def __init__(self, rows: list[dict[str, object]]) -> None:
-        self._rows = rows
+    def __init__(self, client: "_FirestoreClient", name: str) -> None:
+        self._client = client
+        self._name = name
+        self._rows = client.rows_by_collection.get(name, [])
 
     def where(self, *args: object) -> "_FirestoreQuery":
-        del args
+        self._client.where_calls.append((self._name, args))
         return self
 
     def order_by(self, *args: object) -> "_FirestoreQuery":
@@ -356,15 +383,18 @@ class _FirestoreQuery:
         return self
 
     def stream(self) -> list[_FirestoreDoc]:
+        self._client.stream_calls.append(self._name)
         return [_FirestoreDoc(row) for row in self._rows]
 
 
 class _FirestoreClient:
     def __init__(self, rows_by_collection: dict[str, list[dict[str, object]]]) -> None:
         self.rows_by_collection = rows_by_collection
+        self.where_calls: list[tuple[str, tuple[object, ...]]] = []
+        self.stream_calls: list[str] = []
 
     def collection(self, name: str) -> _FirestoreQuery:
-        return _FirestoreQuery(self.rows_by_collection.get(name, []))
+        return _FirestoreQuery(self, name)
 
 
 def test_firestore_actuals_fill_missing_field_only_after_complete_raw_day() -> None:
@@ -410,7 +440,80 @@ def test_firestore_actuals_do_not_promote_an_incomplete_raw_day() -> None:
     assert "actual_load_kwh" not in row
 
 
-def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_snapshot() -> None:
+def test_firestore_actuals_require_all_unique_field_slots_and_keep_observed_zero() -> None:
+    samples = [
+        {
+            "ts": f"2026-05-02T{hour:02d}:{minute:02d}:00",
+            "pv_kwh": 0.0,
+            "load_kwh": None if (hour, minute) == (23, 30) else 2.0,
+        }
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
+    client = _FirestoreClient({"dashboard_daily_metrics": [], "monitoring_samples": samples})
+
+    row = _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-02")[0]
+
+    assert row["actual_pv_kwh"] == pytest.approx(0.0)
+    assert "actual_load_kwh" not in row
+
+
+def test_firestore_actuals_reject_duplicate_slot_with_missing_half_hour() -> None:
+    samples = [
+        {"ts": f"2026-05-02T{hour:02d}:{minute:02d}:00", "pv_kwh": 1.0, "load_kwh": 2.0}
+        for hour in range(24)
+        for minute in (0, 30)
+        if (hour, minute) != (23, 30)
+    ]
+    samples.append({"ts": "2026-05-02T22:30:00", "pv_kwh": 1.0, "load_kwh": 2.0})
+    client = _FirestoreClient({"dashboard_daily_metrics": [], "monitoring_samples": samples})
+
+    row = _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-02")[0]
+
+    assert "actual_pv_kwh" not in row
+    assert "actual_load_kwh" not in row
+
+
+def test_firestore_actuals_skip_raw_reads_when_daily_metrics_are_authoritative() -> None:
+    client = _FirestoreClient(
+        {
+            "dashboard_daily_metrics": [
+                {"date": "2026-05-02", "actual_pv_kwh": 4.0, "actual_load_kwh": 20.0}
+            ],
+            "monitoring_samples": [],
+        }
+    )
+
+    rows = _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-02")
+
+    assert rows[0]["actual_pv_kwh"] == pytest.approx(4.0)
+    assert "monitoring_samples" not in client.stream_calls
+
+
+def test_firestore_actuals_bound_raw_read_to_missing_daily_date() -> None:
+    client = _FirestoreClient(
+        {
+            "dashboard_daily_metrics": [
+                {"date": "2026-05-02", "actual_pv_kwh": 4.0, "actual_load_kwh": 20.0},
+                {"date": "2026-05-03", "actual_pv_kwh": None, "actual_load_kwh": None},
+            ],
+            "monitoring_samples": [],
+        }
+    )
+
+    _firestore_monitoring_daily(client, start_date="2026-05-02", end_date_iso="2026-05-03")
+
+    raw_filters = [args for name, args in client.where_calls if name == "monitoring_samples"]
+    assert raw_filters == [
+        ("ts", ">=", "2026-05-03"),
+        ("ts", "<", "2026-05-04"),
+    ]
+
+
+@pytest.mark.parametrize("mutable_count", [1, 23])
+def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_snapshot(
+    mutable_count: int,
+) -> None:
     snapshot_rows = [
         {
             "date": "2026-05-02",
@@ -418,7 +521,7 @@ def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_sn
             "forecast_pv_kwh": 1.0,
             "forecast_load_kwh": 2.0,
             "forecast_run_id": "eligible",
-            "issued_at": "2026-05-02T12:00:00Z",
+            "issued_at": "2026-05-01T21:30:00Z",
         }
         for hour in range(24)
     ]
@@ -429,14 +532,15 @@ def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_sn
             "forecast_pv_kwh": 9.0,
             "forecast_load_kwh": 9.0,
             "forecast_run_id": "hindsight",
-            "issued_at": "2026-05-02T15:00:00Z",
+            "issued_at": "2026-05-01T22:30:00Z",
         }
         for hour in range(24)
     )
     client = _FirestoreClient(
         {
             "forecast_hourly": [
-                {"date": "2026-05-02", "hour": 0, "forecast_pv_kwh": 7.0, "forecast_load_kwh": 7.0}
+                {"date": "2026-05-02", "hour": hour, "forecast_pv_kwh": 7.0, "forecast_load_kwh": 7.0}
+                for hour in range(mutable_count)
             ],
             "forecast_hourly_snapshots": snapshot_rows,
             "monitoring_samples": [],
@@ -448,6 +552,37 @@ def test_firestore_forecast_replaces_partial_mutable_day_with_single_eligible_sn
     assert len(rows) == 24
     assert {row["forecast_run_id"] for row in rows} == {"eligible"}
     assert {row["forecast_pv_kwh"] for row in rows} == {1.0}
+
+
+def test_firestore_forecast_complete_mutable_day_wins_over_snapshot() -> None:
+    mutable_rows = [
+        {"date": "2026-05-02", "hour": hour, "forecast_pv_kwh": 7.0, "forecast_load_kwh": 8.0}
+        for hour in range(24)
+    ]
+    snapshot_rows = [
+        {
+            "date": "2026-05-02",
+            "hour": hour,
+            "forecast_pv_kwh": 1.0,
+            "forecast_load_kwh": 2.0,
+            "forecast_run_id": "eligible",
+            "issued_at": "2026-05-01T21:30:00Z",
+        }
+        for hour in range(24)
+    ]
+    client = _FirestoreClient(
+        {
+            "forecast_hourly": mutable_rows,
+            "forecast_hourly_snapshots": snapshot_rows,
+            "monitoring_samples": [],
+        }
+    )
+
+    rows = _firestore_forecast_hourly_between(client, start_date="2026-05-02", end_date_iso="2026-05-02")
+
+    assert len(rows) == 24
+    assert {row["forecast_pv_kwh"] for row in rows} == {7.0}
+    assert all("forecast_run_id" not in row for row in rows)
 
 
 def test_firestore_forecast_omits_partial_mutable_day_without_snapshot() -> None:

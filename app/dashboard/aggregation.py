@@ -174,15 +174,24 @@ def _build_energy_daily(
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
         pv = pv_by_day.get(day)
-        forecast_pv = _forecast_pv_kwh(pv)
+        hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
+        snapshot_pair = (
+            hourly_source == "forecast_hourly_snapshot" and day in hourly_pv_by_day
+        )
+        forecast_pv = hourly_pv_by_day.get(day) if snapshot_pair else _forecast_pv_kwh(pv)
         if forecast_pv is None:
             forecast_pv = hourly_pv_by_day.get(day)
-        hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
         out.append(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
-                "forecast_pv_source": "sunshine_daily" if _forecast_pv_kwh(pv) is not None else hourly_source_by_day.get(day),
+                "forecast_pv_source": (
+                    hourly_source
+                    if snapshot_pair
+                    else "sunshine_daily"
+                    if _forecast_pv_kwh(pv) is not None
+                    else hourly_source_by_day.get(day)
+                ),
                 "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
                 "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
                 "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),

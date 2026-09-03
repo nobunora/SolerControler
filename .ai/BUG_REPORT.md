@@ -37,6 +37,27 @@ But `forecast_hourly_snapshots` stores immutable per-run forecast evidence inclu
 
 The original feature commit `da2a4c5c54743a2016e814af937f801547b456f6` introduced exactly these historical charts. The product contract is therefore to retain historical comparison data, not only the current-day forecast.
 
+## Read-only production evidence matrix
+
+The following is sanitized, read-only evidence. The patched local branch read the production Firestore backend on 2026-09-03; no document writes, deployment, or job execution occurred.
+
+| JST date | Daily/monitoring actual | Mutable hourly / snapshot evidence | Sunshine PV | Patched `energy_daily` result | Classification |
+| --- | --- | --- | --- | --- | --- |
+| 2026-05-24 | complete daily metric and raw aggregate agree (representative pre-backfill check) | 24 mutable rows | present when recorded | stored mutable PV/load pair | `ACTUAL_COMPLETE_DAILY_METRIC`, `FORECAST_MUTABLE_AVAILABLE` |
+| 2026-08-28 | actual PV 11.409, load 39.229 | mutable 24 rows; snapshot run: issued 2026-08-27T18:01:36Z, 24 rows, PV 9.3266, load 36.8573 | 9.3266 | PV 9.3266 / load 36.8573, actuals present | complete actual + mutable forecast |
+| 2026-08-29 | actual PV 2.259, load 40.216 | mutable 24 rows; two complete snapshots, latest issued 2026-08-28T21:31:39Z (06:31 JST), PV 5.2862, load 31.3648 | 5.2862 | PV 5.2862 / load 31.3648, actuals present | complete actual + mutable forecast; snapshot fallback unit-tested because mutable exists |
+| 2026-08-30 | actual PV 8.574, load 30.736 | no mutable or immutable row | absent | PV missing; load 39.731 labeled legacy estimate | `FORECAST_EVIDENCE_MISSING` / explicit legacy load |
+| 2026-08-31 | actual PV 5.991, load 32.545 | no mutable or immutable row | absent | PV missing; load 39.343 labeled legacy estimate | `FORECAST_EVIDENCE_MISSING` / explicit legacy load |
+| 2026-09-01 | actual PV 8.311, load 35.772 | no mutable or immutable row | absent | PV missing; load 39.100 labeled legacy estimate | `FORECAST_EVIDENCE_MISSING` / explicit legacy load |
+| 2026-09-02 | no dashboard `energy_daily` source row | no mutable, immutable, or sunshine evidence | absent | no row (no values invented) | `ACTUAL_EVIDENCE_MISSING`, `FORECAST_EVIDENCE_MISSING` |
+| 2026-09-03 | incomplete/current-day actual intentionally missing | mutable 24-row forecast; snapshot run issued 2026-09-02T16:33:01Z, 24 rows, PV 7.6845, load 43.2533 | 7.6845 | PV 7.6845 / load 43.2533; actuals missing | current mutable forecast; actual not promoted |
+
+The raw-monitoring recovery branch has no production snapshot-only counterpart and must remain read-only: deterministic unit coverage proves a missing/incomplete daily metric is reconstructed only from 48 unique JST half-hour slots per requested field. A complete daily metric triggers zero raw reads; non-contiguous recovery dates are queried as tight contiguous ranges only.
+
+### Forecast-vintage eligibility
+
+Before the dedicated 02:30 owner, commit `2c45574` persisted snapshots via the `db_pipeline` night-plan ingestion path. The dedicated `forecast_job.py` owner was introduced only in `894e9f3`; the current 02:30 schedule is `scripts/deploy_gcp_jobs.ps1`. The old path has confirmed 06:31 JST issuance but no evidence that late-day target-date reruns were valid forecasts. Therefore the selector accepts a complete snapshot only through 07:00 JST on its target date: this includes the confirmed legacy 06:31 run, rejects later ambiguous/hindsight vintages, and is deliberately narrower than target-date end.
+
 ## Production evidence still required
 
 Do not assume every historical date is recoverable. For representative dates, prove read-only:
