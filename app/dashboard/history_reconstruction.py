@@ -60,6 +60,58 @@ def _complete_reconstruction_run(rows: list[dict[str, Any]]) -> bool:
     return hours == _EXPECTED_HOURS
 
 
+def _forecast_plan_metadata_by_date(
+    client: Any,
+    *,
+    start_date: str,
+    end_date_iso: str,
+) -> dict[str, dict[str, float]]:
+    """Read forecast-only display metadata without consulting control-plan documents."""
+    try:
+        query = (
+            client.collection("forecast_plans")
+            .where("date", ">=", start_date)
+            .where("date", "<=", end_date_iso)
+        )
+        documents = query.stream()
+    except Exception:
+        return {}
+
+    by_date: dict[str, dict[str, float]] = {}
+    for document in documents:
+        row = document.to_dict() or {}
+        target_date = str(row.get("date") or "")
+        if not target_date:
+            continue
+        metadata: dict[str, float] = {}
+        target_soc = to_float(row.get("planned_target_soc_percent"))
+        night_charge = to_float(row.get("planned_night_charge_kwh"))
+        if target_soc is not None and 0.0 <= target_soc <= 100.0:
+            metadata["forecast_target_soc_percent"] = target_soc
+        if night_charge is not None and night_charge >= 0.0:
+            metadata["forecast_night_charge_kwh"] = night_charge
+        if metadata:
+            by_date[target_date] = metadata
+    return by_date
+
+
+def _with_forecast_plan_metadata(
+    rows: list[dict[str, Any]],
+    metadata_by_date: dict[str, dict[str, float]],
+) -> list[dict[str, Any]]:
+    if not metadata_by_date:
+        return rows
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        metadata = metadata_by_date.get(str(item.get("date") or ""))
+        if metadata:
+            for key, value in metadata.items():
+                item.setdefault(key, value)
+        enriched.append(item)
+    return enriched
+
+
 def _selected_reconstructed_rows_between(
     client: Any,
     *,
@@ -157,13 +209,20 @@ def firestore_forecast_hourly_with_reconstruction(
 
     The original reader already enforces complete mutable rows and one eligible immutable
     snapshot run. Reconstructed rows are considered only for dates absent from that
-    original-evidence result.
+    original-evidence result. Forecast-only SOC metadata is joined by date strictly for
+    dashboard display; no control-plan collection is read or modified here.
     """
     original_rows = _firestore_forecast_hourly_between(
         client,
         start_date=start_date,
         end_date_iso=end_date_iso,
     )
+    metadata_by_date = _forecast_plan_metadata_by_date(
+        client,
+        start_date=start_date,
+        end_date_iso=end_date_iso,
+    )
+    original_rows = _with_forecast_plan_metadata(original_rows, metadata_by_date)
     original_dates = {str(row.get("date")) for row in original_rows if row.get("date")}
     reconstructed_rows = _selected_reconstructed_rows_between(
         client,
@@ -174,6 +233,7 @@ def firestore_forecast_hourly_with_reconstruction(
     if not reconstructed_rows:
         return original_rows
 
+    reconstructed_rows = _with_forecast_plan_metadata(reconstructed_rows, metadata_by_date)
     reconstructed_dates = {
         str(row.get("date")) for row in reconstructed_rows if row.get("date")
     }
