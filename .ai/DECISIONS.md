@@ -40,7 +40,42 @@ This task is a dashboard/history-data repair. Do not change battery control or o
 - Historical snapshots are eligible only when issued no later than 07:00 JST on their target date. Legacy production evidence confirms a 06:31-JST issuance; the legacy producer has no evidenced late-day contract, so later target-day runs remain ineligible to avoid hindsight. Select the latest eligible complete run deterministically.
 - Daily PV/load forecast totals may be derived from the selected immutable run and must carry a source/provenance label.
 - If only `sunshine_daily` contains trustworthy contemporaneous PV forecast evidence, preserve it as a lower-resolution source with an explicit source label.
-- If no trustworthy forecast evidence exists, leave the forecast missing. The retained 14-day load estimate is explicitly labeled `legacy_rolling_14d_estimate`, never as a historical prediction.
+- If no trustworthy forecast evidence exists, leave the original forecast missing. The retained 14-day load estimate is explicitly labeled `legacy_rolling_14d_estimate`, never as a historical prediction.
+
+## Later reconstruction semantic class
+
+A later model replay is permitted only after original forecast evidence has been searched and found absent. It is a separate semantic class, not an original forecast.
+
+Permanent contract:
+
+- persist later replays only in `forecast_hourly_reconstructed` plus metadata in `forecast_reconstructions`;
+- `source = historical_reconstructed_estimate`;
+- `is_reconstructed = true`;
+- keep `forecast_reconstruction_id`, `forecast_reconstructed_at`, `forecast_reconstruction_model_version`, `forecast_reconstruction_basis`, and sanitized input provenance;
+- never write reconstructed rows into `forecast_hourly_snapshots`, `forecast_hourly`, `sunshine_daily`, or `night_charge_plans/latest`;
+- never synthesize an original `forecast_run_id` or contemporaneous `issued_at` for a later replay;
+- reconstructed PV and load must come from the same complete 24-hour reconstruction run;
+- original complete mutable/snapshot evidence always takes precedence over a reconstructed run;
+- incomplete reconstructed runs are not shown;
+- the dashboard must visibly warn when reconstructed history is being displayed.
+
+Allowed reconstruction bases are deliberately narrow: `historical_archive`, `historical_model_replay`, and `legacy_model_replay`. Execution must use defensible historical inputs and must not use actual PV/load as the forecast target.
+
+## Future self-maintaining history
+
+- The 02:30 non-control forecast owner is the authoritative creator of current-day 24-hour forecast evidence.
+- It must keep immutable snapshot evidence so a completed day remains recoverable after mutable current rows change.
+- Completed-day actual PV/load remain authoritative only when daily metrics are present or all 48 unique JST half-hour field observations can reconstruct the total.
+- The dashboard emits recent-history health warnings when original forecast evidence or complete actual evidence is missing.
+- Reconstruction is a repair mechanism for historical gaps, not a replacement for future original forecast persistence.
+
+## HISTORICAL_FAILURE_LOCK
+
+`tests/test_dashboard_history_contract.py` is a named permanent regression contract.
+
+`HISTORICAL_FAILURE_LOCK (2026-09-04): do not weaken without an explicit migration decision.`
+
+The integration pre-release gate runs this test module explicitly before the broader validation flow. Any intentional change to these semantics requires an explicit migration decision in this file and corresponding contract-test changes. Do not silently relax the lock as part of unrelated dashboard/control work.
 
 ## Repair strategy
 
@@ -58,9 +93,12 @@ At minimum require tests for:
 3. incomplete daily metric can be completed from monitoring evidence without dropping fields;
 4. immutable snapshot fallback selects exactly one complete eligible forecast run;
 5. multiple vintages do not get mixed;
-6. no eligible snapshot leaves forecast missing rather than inventing a historical value;
+6. no eligible original snapshot never becomes a fabricated original historical value;
 7. PV and load daily forecast totals are both restored from the selected run;
-8. dashboard API and frontend chart inputs contain restored historical PV/load forecast and actual values;
-9. current forecast-only owner and protected 23/03/07 tests remain green.
+8. later reconstructed estimates remain explicitly reconstructed and cannot masquerade as original evidence;
+9. original mutable/snapshot forecast takes precedence over reconstruction;
+10. incomplete reconstruction is rejected;
+11. dashboard API and warnings contain restored historical PV/load values and provenance;
+12. current forecast-only owner and protected 23/03/07 tests remain green.
 
-Run the standard repository quality workflow before deployment.
+Run the named historical lock, the standard repository quality workflow, and production read-only verification before deployment/merge.
