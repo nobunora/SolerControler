@@ -15,7 +15,7 @@ param(
     [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
-    [ValidateSet('auto', 'full', 'runner', 'dashboard')]
+    [ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]
     [string]$DeploymentScope = 'auto',
     [string]$StatePath = "",
     [switch]$Resume
@@ -125,6 +125,21 @@ if ($resolvedScope -eq 'none') {
     return
 }
 if ($resolvedScope -eq 'runner') { $SkipDashboardBuild = $true }
+if ($resolvedScope -eq 'forecast') {
+    # Dedicated forecast owner uses the shared runner image but has no device/control ownership.
+    # Build one runner image and update only solar-forecast-daily. Keep control jobs, the
+    # settings probe job, forecast Scheduler, imports/backups, and inline 07 smoke untouched.
+    $SkipDashboardBuild = $true
+    $SkipJob23Deploy = $true
+    $SkipJob03Deploy = $true
+    $SkipJob07Deploy = $true
+    $SkipForecastJobDeploy = $false
+    $SkipForecastSchedulerDeploy = $true
+    $SkipSettingsRoundTripJobDeploy = $true
+    $SkipInlineSmokeTest = $true
+    $SkipKpNetImport = $true
+    $SkipDriveBackup = $true
+}
 if ($resolvedScope -eq 'dashboard') {
     $SkipJobBuild = $true
     $SkipJobDeploy = $true
@@ -346,10 +361,10 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
 # HISTORICAL_FAILURE_LOCK (device contract, confirmed 2026-08-23): runner/full
 # production deployments must prove the live forced-charge command path using
 # the inverter's supported 50% SocChargeMode, then restore the exact snapshot.
-# Dashboard-only deployment does not alter the runner/control path; executing the
-# device round-trip there would create unrelated control mutation, so it is
-# canonically recorded as not applicable rather than weakening the round-trip itself.
-if ($resolvedScope -eq 'dashboard') {
+# Dashboard-only and forecast-only scopes do not alter any deployed control owner;
+# executing the device round-trip there would create unrelated control mutation, so
+# it is canonically recorded as not applicable rather than weakening the probe itself.
+if ($resolvedScope -in @('dashboard', 'forecast')) {
     $roundTripStage = Get-DeploymentStageRecord -Name 'settings_roundtrip'
     if ($roundTripStage.status -ne 'success') {
         $roundTripStage.status = 'skipped_not_applicable'
@@ -358,7 +373,7 @@ if ($resolvedScope -eq 'dashboard') {
         $roundTripStage.error_detail = $null
         Save-DeploymentState
     }
-    Write-Host 'Skip stage: settings_roundtrip (not applicable to dashboard-only deployment)'
+    Write-Host "Skip stage: settings_roundtrip (not applicable to $resolvedScope-only deployment)"
 } else {
     # Do not make this stage optional for runner/full or change the target to the
     # continuous plan target; the 03 monitor, not SocChargeMode, stops at the plan target.
