@@ -44,7 +44,8 @@ def test_non_control_scope_runbook_is_explicit() -> None:
     assert "-DeploymentScope dashboard" in runbook
     assert "-DeploymentScope forecast" in runbook
     assert "settings_roundtrip.status` を `skipped_not_applicable`" in runbook
-    assert "runner/fullではsettings round-tripを必須" in runbook
+    assert "`runner`または`full` scopeでは" in runbook
+    assert "settings round-tripを従来どおり必須" in runbook
     assert "23/03/07 Schedulerはdeploy前後のschedule/time-zone/targetが一致" in runbook
     assert "browserで履歴forecast-vs-actualと予想SOCが表示される" in runbook
 
