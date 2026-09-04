@@ -49,11 +49,15 @@ The 02:30 forecast-only owner is allowed to persist **display metadata** needed 
 Permanent contract:
 
 - `forecast_plans/{date}` may persist `planned_target_soc_percent` and `planned_night_charge_kwh` extracted from the forecast-only plan result;
+- the same document also persists `forecast_run_id` / forecast issuance metadata so the SOC anchor can be tied to one forecast vintage;
+- mutable `forecast_hourly` rows persist the same run identity and atomic `updated_at` as `forecast_plans`;
 - these fields are display/read-path evidence only and do not authorize any settings/device write;
 - do not write forecast-only metadata to `night_charge_plans/latest` or any control-owner namespace;
-- dashboard forecast reads may join `forecast_plans` metadata by the same target date and expose it as `forecast_target_soc_percent` / `forecast_night_charge_kwh` on hourly evidence;
-- the dashboard may use that metadata to restore `latest_schedule.planned_target_soc_percent` only when stronger existing control-plan metadata is absent;
-- inconsistent forecast-only SOC metadata fails closed instead of choosing a value;
+- dashboard forecast reads may expose `forecast_target_soc_percent` / `forecast_night_charge_kwh` only when the forecast-plan metadata matches the same forecast vintage: immutable snapshots require the same `forecast_run_id`, while mutable rows require the same atomic `updated_at` identity;
+- later target-day reruns must never donate SOC metadata to an earlier eligible snapshot;
+- reconstructed historical PV/load rows must never inherit original forecast-plan SOC metadata;
+- the dashboard may use matching metadata to restore `latest_schedule.planned_target_soc_percent` only when stronger existing control-plan metadata is absent;
+- inconsistent or mismatched forecast-only SOC metadata fails closed instead of choosing a value;
 - existing control-plan/applied-setting evidence always wins over forecast-only display metadata;
 - the frontend predicted-SOC algorithm remains unchanged: this repair restores its missing finite SOC anchor rather than introducing a new SOC model.
 
@@ -72,6 +76,7 @@ Permanent contract:
 - never write reconstructed rows into `forecast_hourly_snapshots`, `forecast_hourly`, `sunshine_daily`, or `night_charge_plans/latest`;
 - never synthesize an original `forecast_run_id` or contemporaneous `issued_at` for a later replay;
 - reconstructed PV and load must come from the same complete 24-hour reconstruction run;
+- reconstructed rows never inherit original forecast-only SOC metadata;
 - original complete mutable/snapshot evidence always takes precedence over a reconstructed run;
 - incomplete reconstructed runs are not shown;
 - the dashboard must visibly warn when reconstructed history is being displayed.
@@ -86,21 +91,24 @@ Allowed reconstruction bases are deliberately narrow: `historical_archive`, `his
 - The dashboard emits recent-history health warnings when original forecast evidence or complete actual evidence is missing.
 - Reconstruction is a repair mechanism for historical gaps, not a replacement for future original forecast persistence.
 
-## Dashboard-only production deployment contract
+## Non-control production deployment contract
 
-Dashboard-only rollout is a non-control production operation.
+Dashboard-only and explicit forecast-only rollouts are non-control production operations.
 
 - `DeploymentScope=dashboard` may build/update only the dashboard Cloud Run service.
-- It must not deploy or execute 23/03/07, the 02:30 forecast job, Scheduler, KP-NET import, Drive backup, or inverter settings operations.
-- The protected settings round-trip is therefore `skipped_not_applicable`, not `skipped_manual`.
-- `runner` and `full` deployments continue to require the existing protected 50% settings round-trip, 60-second hold, exact snapshot restoration/read-back, zero Cloud Run retries, and no Scheduler.
-- Dashboard-only acceptance is production API/browser evidence plus proof that control resources/device state were not changed.
+- `DeploymentScope=forecast` may build the shared runner image and update only the dedicated `solar-forecast-daily` job revision; 23/03/07 and the settings probe job revision must remain unchanged.
+- `forecast` is explicit-only; `auto` does not infer it from a generic `app/` diff.
+- Neither non-control scope may execute 23/03/07, the settings round-trip, KP-NET import, Drive backup, or inverter settings operations.
+- Forecast Scheduler and 23/03/07 Scheduler must have zero effective configuration change; if the lower canonical script reasserts identical definitions, pre/post schedule/time-zone/target equality is mandatory acceptance evidence.
+- The protected settings round-trip is therefore `skipped_not_applicable`, not `skipped_manual`, for `dashboard` and `forecast` scopes only.
+- `runner` and `full` deployments continue to require the existing protected 50% settings round-trip, 60-second hold, exact snapshot restoration/read-back, zero Cloud Run retries, and no Scheduler for the probe job.
+- Non-control acceptance requires production API/browser or forecast persistence evidence plus proof that protected control resources/device state did not change.
 
-This is an applicability correction, not a weakening of the device-contract test. Running the settings round-trip solely for a dashboard revision would itself violate the non-control boundary.
+This is an applicability correction, not a weakening of the device-contract test. Running the settings round-trip solely for a non-control revision would itself violate the non-control boundary.
 
 ## HISTORICAL_FAILURE_LOCK
 
-`tests/test_dashboard_history_contract.py` is a named permanent regression contract. `tests/test_dashboard_forecast_soc_contract.py` and `tests/test_dashboard_only_deployment_contract.py` extend that named operational contract for predicted SOC and dashboard-only deployment.
+`tests/test_dashboard_history_contract.py` is a named permanent regression contract. `tests/test_dashboard_forecast_soc_contract.py` and `tests/test_dashboard_only_deployment_contract.py` extend that named operational contract for predicted SOC and non-control deployment.
 
 `HISTORICAL_FAILURE_LOCK (2026-09-04): do not weaken without an explicit migration decision.`
 
@@ -129,8 +137,9 @@ At minimum require tests for:
 10. incomplete reconstruction is rejected;
 11. dashboard API and warnings contain restored historical PV/load values and provenance;
 12. current forecast-only owner and protected 23/03/07 tests remain green;
-13. forecast-only persistence stores SOC display metadata without creating `night_charge_plans`;
-14. forecast metadata restores a finite predicted-SOC anchor but never overrides stronger control-plan evidence;
-15. dashboard-only deployment skips settings round-trip only as `skipped_not_applicable`, while runner/full retain the mandatory round-trip.
+13. forecast-only persistence stores SOC display metadata plus forecast-run identity without creating `night_charge_plans`;
+14. forecast metadata restores a finite predicted-SOC anchor only for the matching forecast vintage and never overrides stronger control-plan evidence;
+15. later reruns and reconstructed history cannot borrow SOC metadata from a different/original forecast run;
+16. dashboard/forecast non-control scopes record settings round-trip only as `skipped_not_applicable`, while runner/full retain the mandatory round-trip.
 
 Run the named historical/SOC/deployment locks, the standard repository quality workflow, and production read-only verification before deployment/merge.
