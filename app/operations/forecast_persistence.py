@@ -50,6 +50,10 @@ def persist_forecast_only_plan(
     snapshot_rows = build_forecast_snapshot_rows(data, ingested_at=now, timezone=timezone_name)
     if not _complete_hourly_rows(snapshot_rows, target_date=target_date):
         raise ValueError("forecast snapshot rows must contain exactly hours 0 through 23")
+    forecast_run_id = str(snapshot_rows[0].get("forecast_run_id") or "").strip()
+    forecast_issued_at = str(snapshot_rows[0].get("issued_at") or "").strip()
+    if not forecast_run_id:
+        raise ValueError("forecast snapshot rows must include a forecast_run_id")
 
     snapshot_count = persist_forecast_snapshots(
         client,
@@ -65,7 +69,13 @@ def persist_forecast_only_plan(
     for row in hourly_rows:
         batch.set(
             client.collection("forecast_hourly").document(f"{target_date}-{int(row['hour']):02d}"),
-            {**row, "source": "forecast-only-hourly", "updated_at": now},
+            {
+                **row,
+                "source": "forecast-only-hourly",
+                "forecast_run_id": forecast_run_id,
+                "forecast_issued_at": forecast_issued_at or None,
+                "updated_at": now,
+            },
             merge=True,
         )
 
@@ -101,6 +111,8 @@ def persist_forecast_only_plan(
             "hourly_row_count": len(hourly_rows),
             "forecast_pv_total_kwh": to_float(pv_totals.get("total_kwh")),
             "forecast_source": extract_final_pv_source_from_plan(data),
+            "forecast_run_id": forecast_run_id,
+            "forecast_issued_at": forecast_issued_at or None,
             "planned_target_soc_percent": planned_target_soc_percent,
             "planned_night_charge_kwh": planned_night_charge_kwh,
             "forecast_json": json.dumps(forecast, ensure_ascii=False, separators=(",", ":")),
