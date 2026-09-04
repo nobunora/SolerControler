@@ -82,24 +82,36 @@ def _recent_completed_energy_rows(
     ]
 
 
+def _is_reconstructed_forecast(row: dict[str, Any]) -> bool:
+    pv_source = str(row.get("forecast_pv_source") or "")
+    load_source = str(row.get("forecast_load_source") or "")
+    return bool(row.get("forecast_is_reconstructed")) or (
+        pv_source == _RECONSTRUCTED_FORECAST_SOURCE
+        or load_source == _RECONSTRUCTED_FORECAST_SOURCE
+    )
+
+
 def _history_health(
     energy_daily: list[dict[str, Any]],
     *,
     today_jst_iso: str,
 ) -> tuple[list[str], list[str], list[str]]:
-    reconstructed_dates: list[str] = []
+    # Reconstruction provenance is user-visible for every displayed date, including
+    # older history. Missing-evidence health alerts are restricted to recent completed
+    # days so browsing a historical window does not produce stale operational alarms.
+    reconstructed_dates = sorted(
+        {
+            str(row.get("date"))
+            for row in energy_daily
+            if row.get("date") and _is_reconstructed_forecast(row)
+        }
+    )
     original_forecast_missing_dates: list[str] = []
     actual_missing_dates: list[str] = []
     for row in _recent_completed_energy_rows(energy_daily, today_jst_iso=today_jst_iso):
         day = str(row.get("date"))
         pv_source = str(row.get("forecast_pv_source") or "")
         load_source = str(row.get("forecast_load_source") or "")
-        is_reconstructed = bool(row.get("forecast_is_reconstructed")) or (
-            pv_source == _RECONSTRUCTED_FORECAST_SOURCE
-            or load_source == _RECONSTRUCTED_FORECAST_SOURCE
-        )
-        if is_reconstructed:
-            reconstructed_dates.append(day)
         if pv_source in _NON_ORIGINAL_PV_SOURCES or load_source in _NON_ORIGINAL_LOAD_SOURCES:
             original_forecast_missing_dates.append(day)
         if (
@@ -108,7 +120,7 @@ def _history_health(
         ):
             actual_missing_dates.append(day)
     return (
-        sorted(set(reconstructed_dates)),
+        reconstructed_dates,
         sorted(set(original_forecast_missing_dates)),
         sorted(set(actual_missing_dates)),
     )
