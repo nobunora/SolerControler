@@ -27,12 +27,45 @@ ALLOWED_RECONSTRUCTION_BASES = {
 _EXPECTED_HOURS = set(range(24))
 
 
+def _required_hourly_map(
+    optimization: dict[str, Any],
+    *,
+    key: str,
+) -> dict[int, float]:
+    raw = optimization.get(key)
+    if not isinstance(raw, dict):
+        raise ValueError(f"reconstruction plan is missing {key}")
+    values: dict[int, float] = {}
+    for raw_hour, raw_value in raw.items():
+        try:
+            hour = int(raw_hour)
+        except (TypeError, ValueError):
+            continue
+        if hour not in _EXPECTED_HOURS:
+            continue
+        value = to_float(raw_value)
+        if value is None:
+            raise ValueError(f"reconstruction plan {key} contains a missing value")
+        values[hour] = value
+    if set(values) != _EXPECTED_HOURS:
+        raise ValueError(f"reconstruction plan {key} must contain hours 0 through 23")
+    return values
+
+
 def _normalized_hourly_rows(data: dict[str, Any], *, target_date: str) -> list[dict[str, Any]]:
     forecast_value = data.get("forecast")
     forecast = forecast_value if isinstance(forecast_value, dict) else {}
     forecast_date = str(forecast.get("date") or "").strip()
     if forecast_date != target_date:
         raise ValueError("reconstruction plan forecast.date does not match target date")
+
+    optimization_value = data.get("daytime_soc_optimization")
+    optimization = optimization_value if isinstance(optimization_value, dict) else {}
+    # extract_hourly_forecast_from_plan() intentionally normalizes missing values to zero
+    # for legacy callers. A historical reconstruction must be stricter so missing source
+    # evidence can never become a fabricated zero forecast.
+    _required_hourly_map(optimization, key="hourly_pv_forecast_kwh")
+    _required_hourly_map(optimization, key="hourly_load_forecast_kwh")
 
     rows = extract_hourly_forecast_from_plan(data)
     if len(rows) != 24:
