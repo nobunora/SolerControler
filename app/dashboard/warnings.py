@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -9,6 +9,9 @@ from app.parsing.numbers import to_float
 
 
 _JST = ZoneInfo("Asia/Tokyo")
+_RECONSTRUCTED_FORECAST_SOURCE = "historical_reconstructed_estimate"
+_NON_ORIGINAL_LOAD_SOURCES = {"", "legacy_rolling_14d_estimate", _RECONSTRUCTED_FORECAST_SOURCE}
+_NON_ORIGINAL_PV_SOURCES = {"", _RECONSTRUCTED_FORECAST_SOURCE}
 
 
 def _latest_row_by_date(rows: list[dict[str, Any]], *, date_key: str = "date") -> dict[str, Any] | None:
@@ -57,6 +60,58 @@ def _has_plan_specific_settings_event(latest_schedule: dict[str, Any]) -> bool:
         "03-dynamic",
         "03-no-charge",
     }
+
+
+def _recent_completed_energy_rows(
+    energy_daily: list[dict[str, Any]],
+    *,
+    today_jst_iso: str,
+    lookback_days: int = 7,
+) -> list[dict[str, Any]]:
+    try:
+        today = date.fromisoformat(today_jst_iso)
+    except ValueError:
+        return []
+    yesterday = today - timedelta(days=1)
+    start = yesterday - timedelta(days=max(1, lookback_days) - 1)
+    return [
+        row
+        for row in energy_daily
+        if row.get("date")
+        and start.isoformat() <= str(row.get("date")) <= yesterday.isoformat()
+    ]
+
+
+def _history_health(
+    energy_daily: list[dict[str, Any]],
+    *,
+    today_jst_iso: str,
+) -> tuple[list[str], list[str], list[str]]:
+    reconstructed_dates: list[str] = []
+    original_forecast_missing_dates: list[str] = []
+    actual_missing_dates: list[str] = []
+    for row in _recent_completed_energy_rows(energy_daily, today_jst_iso=today_jst_iso):
+        day = str(row.get("date"))
+        pv_source = str(row.get("forecast_pv_source") or "")
+        load_source = str(row.get("forecast_load_source") or "")
+        is_reconstructed = bool(row.get("forecast_is_reconstructed")) or (
+            pv_source == _RECONSTRUCTED_FORECAST_SOURCE
+            or load_source == _RECONSTRUCTED_FORECAST_SOURCE
+        )
+        if is_reconstructed:
+            reconstructed_dates.append(day)
+        if pv_source in _NON_ORIGINAL_PV_SOURCES or load_source in _NON_ORIGINAL_LOAD_SOURCES:
+            original_forecast_missing_dates.append(day)
+        if (
+            to_float(row.get("actual_pv_kwh")) is None
+            or to_float(row.get("actual_load_kwh")) is None
+        ):
+            actual_missing_dates.append(day)
+    return (
+        sorted(set(reconstructed_dates)),
+        sorted(set(original_forecast_missing_dates)),
+        sorted(set(actual_missing_dates)),
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — the warning list intentionally evaluates schedule, completion, and freshness together so related user-visible warnings are not suppressed independently
@@ -148,6 +203,35 @@ def build_dashboard_warnings(
             "CSV実績未更新",
             "表示終了日の実績CSVがまだ反映されていない可能性があります。",
             {"latest_actual_date": latest_actual, "display_end_date": end_date_iso},
+        )
+
+    reconstructed_dates, original_forecast_missing_dates, actual_missing_dates = _history_health(
+        energy_daily,
+        today_jst_iso=today_jst_iso,
+    )
+    if reconstructed_dates:
+        add(
+            "history_forecast_reconstructed",
+            "info",
+            "履歴予測は再構成値",
+            "当時保存された予測ではなく、履歴入力から後日再構成した推定値を表示している日があります。",
+            {"dates": reconstructed_dates, "source": _RECONSTRUCTED_FORECAST_SOURCE},
+        )
+    if original_forecast_missing_dates:
+        add(
+            "history_original_forecast_missing",
+            "warning",
+            "履歴予測の原本証拠が不足",
+            "直近の完了日に、当時保存されたPV/消費予測の原本証拠が不足している日があります。",
+            {"dates": original_forecast_missing_dates},
+        )
+    if actual_missing_dates:
+        add(
+            "history_actual_missing",
+            "warning",
+            "履歴実績が不完全",
+            "直近の完了日に、完全なPV/消費実績を構成できない日があります。",
+            {"dates": actual_missing_dates},
         )
 
     completed = bool(latest_schedule.get("settings_completed"))
