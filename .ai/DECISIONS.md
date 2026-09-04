@@ -42,6 +42,23 @@ This task is a dashboard/history-data repair. Do not change battery control or o
 - If only `sunshine_daily` contains trustworthy contemporaneous PV forecast evidence, preserve it as a lower-resolution source with an explicit source label.
 - If no trustworthy forecast evidence exists, leave the original forecast missing. The retained 14-day load estimate is explicitly labeled `legacy_rolling_14d_estimate`, never as a historical prediction.
 
+## Predicted SOC display contract
+
+The 02:30 forecast-only owner is allowed to persist **display metadata** needed to render predicted SOC, but this must not restore control-plan persistence or create device ownership.
+
+Permanent contract:
+
+- `forecast_plans/{date}` may persist `planned_target_soc_percent` and `planned_night_charge_kwh` extracted from the forecast-only plan result;
+- these fields are display/read-path evidence only and do not authorize any settings/device write;
+- do not write forecast-only metadata to `night_charge_plans/latest` or any control-owner namespace;
+- dashboard forecast reads may join `forecast_plans` metadata by the same target date and expose it as `forecast_target_soc_percent` / `forecast_night_charge_kwh` on hourly evidence;
+- the dashboard may use that metadata to restore `latest_schedule.planned_target_soc_percent` only when stronger existing control-plan metadata is absent;
+- inconsistent forecast-only SOC metadata fails closed instead of choosing a value;
+- existing control-plan/applied-setting evidence always wins over forecast-only display metadata;
+- the frontend predicted-SOC algorithm remains unchanged: this repair restores its missing finite SOC anchor rather than introducing a new SOC model.
+
+This closes the regression where PR #36 intentionally removed forecast-only control-plan persistence, leaving the dashboard with complete PV/load forecast rows but no finite SOC target and therefore an all-null `予想SOC(%)` series.
+
 ## Later reconstruction semantic class
 
 A later model replay is permitted only after original forecast evidence has been searched and found absent. It is a separate semantic class, not an original forecast.
@@ -69,19 +86,31 @@ Allowed reconstruction bases are deliberately narrow: `historical_archive`, `his
 - The dashboard emits recent-history health warnings when original forecast evidence or complete actual evidence is missing.
 - Reconstruction is a repair mechanism for historical gaps, not a replacement for future original forecast persistence.
 
+## Dashboard-only production deployment contract
+
+Dashboard-only rollout is a non-control production operation.
+
+- `DeploymentScope=dashboard` may build/update only the dashboard Cloud Run service.
+- It must not deploy or execute 23/03/07, the 02:30 forecast job, Scheduler, KP-NET import, Drive backup, or inverter settings operations.
+- The protected settings round-trip is therefore `skipped_not_applicable`, not `skipped_manual`.
+- `runner` and `full` deployments continue to require the existing protected 50% settings round-trip, 60-second hold, exact snapshot restoration/read-back, zero Cloud Run retries, and no Scheduler.
+- Dashboard-only acceptance is production API/browser evidence plus proof that control resources/device state were not changed.
+
+This is an applicability correction, not a weakening of the device-contract test. Running the settings round-trip solely for a dashboard revision would itself violate the non-control boundary.
+
 ## HISTORICAL_FAILURE_LOCK
 
-`tests/test_dashboard_history_contract.py` is a named permanent regression contract.
+`tests/test_dashboard_history_contract.py` is a named permanent regression contract. `tests/test_dashboard_forecast_soc_contract.py` and `tests/test_dashboard_only_deployment_contract.py` extend that named operational contract for predicted SOC and dashboard-only deployment.
 
 `HISTORICAL_FAILURE_LOCK (2026-09-04): do not weaken without an explicit migration decision.`
 
-The integration pre-release gate runs this test module explicitly before the broader validation flow. Any intentional change to these semantics requires an explicit migration decision in this file and corresponding contract-test changes. Do not silently relax the lock as part of unrelated dashboard/control work.
+The integration pre-release gate runs the historical contract within the broader validation flow. Any intentional change to these semantics requires an explicit migration decision in this file and corresponding contract-test changes. Do not silently relax the lock as part of unrelated dashboard/control work.
 
 ## Repair strategy
 
 - Prefer restoring the dashboard read path from existing immutable/raw evidence before performing persistent production backfills.
 - A backfill is allowed only when it copies or deterministically aggregates proven historical evidence, is idempotent, and is separately validated before mutation.
-- Keep current-day/future forecast behavior unchanged.
+- Keep current-day/future forecast behavior unchanged except for restoring the missing predicted-SOC display metadata contract described above.
 - Preserve dashboard pagination and existing chart/UI semantics unless a small provenance indicator is needed to distinguish restored sources.
 
 ## Validation
@@ -99,6 +128,9 @@ At minimum require tests for:
 9. original mutable/snapshot forecast takes precedence over reconstruction;
 10. incomplete reconstruction is rejected;
 11. dashboard API and warnings contain restored historical PV/load values and provenance;
-12. current forecast-only owner and protected 23/03/07 tests remain green.
+12. current forecast-only owner and protected 23/03/07 tests remain green;
+13. forecast-only persistence stores SOC display metadata without creating `night_charge_plans`;
+14. forecast metadata restores a finite predicted-SOC anchor but never overrides stronger control-plan evidence;
+15. dashboard-only deployment skips settings round-trip only as `skipped_not_applicable`, while runner/full retain the mandatory round-trip.
 
-Run the named historical lock, the standard repository quality workflow, and production read-only verification before deployment/merge.
+Run the named historical/SOC/deployment locks, the standard repository quality workflow, and production read-only verification before deployment/merge.
