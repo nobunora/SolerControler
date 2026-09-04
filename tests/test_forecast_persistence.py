@@ -122,6 +122,10 @@ def test_valid_forecast_persists_only_forecast_collections(tmp_path: Path) -> No
     assert forecast_plan["hourly_row_count"] == 24
     assert forecast_plan["planned_target_soc_percent"] == pytest.approx(67.5)
     assert forecast_plan["planned_night_charge_kwh"] == pytest.approx(3.25)
+    mutable_rows = list(client.data["forecast_hourly"].values())
+    assert forecast_plan["forecast_run_id"]
+    assert {row["forecast_run_id"] for row in mutable_rows} == {forecast_plan["forecast_run_id"]}
+    assert {row["updated_at"] for row in mutable_rows} == {forecast_plan["updated_at"]}
     assert "night_charge_plans" not in client.data
 
 
@@ -151,8 +155,14 @@ def test_target_date_mismatch_refuses_persistence(tmp_path: Path) -> None:
 def test_snapshot_is_idempotent_and_new_vintage_updates_mutable_rows(tmp_path: Path) -> None:
     client = _Client(); path = _write_plan(tmp_path, _plan())
     assert persist_forecast_only_plan(client, plan_path=path, target_date="2026-09-03", timezone_name="Asia/Tokyo") == 24
+    first_run_id = client.data["forecast_plans"]["2026-09-03"]["forecast_run_id"]
     assert persist_forecast_only_plan(client, plan_path=path, target_date="2026-09-03", timezone_name="Asia/Tokyo") == 0
     path = _write_plan(tmp_path, _plan(issued_at="2026-09-03T02:31:00+09:00"))
     assert persist_forecast_only_plan(client, plan_path=path, target_date="2026-09-03", timezone_name="Asia/Tokyo") == 24
     assert len(client.data["forecast_hourly_snapshots"]) == 48
     assert len(client.data["forecast_hourly"]) == 24
+    latest_plan = client.data["forecast_plans"]["2026-09-03"]
+    assert latest_plan["forecast_run_id"] != first_run_id
+    assert {row["forecast_run_id"] for row in client.data["forecast_hourly"].values()} == {
+        latest_plan["forecast_run_id"]
+    }
