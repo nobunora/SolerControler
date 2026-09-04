@@ -65,7 +65,7 @@ def _forecast_plan_metadata_by_date(
     *,
     start_date: str,
     end_date_iso: str,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, Any]]:
     """Read forecast-only display metadata without consulting control-plan documents."""
     try:
         query = (
@@ -77,27 +77,58 @@ def _forecast_plan_metadata_by_date(
     except Exception:
         return {}
 
-    by_date: dict[str, dict[str, float]] = {}
+    by_date: dict[str, dict[str, Any]] = {}
     for document in documents:
         row = document.to_dict() or {}
         target_date = str(row.get("date") or "")
         if not target_date:
             continue
-        metadata: dict[str, float] = {}
+        metadata: dict[str, Any] = {}
         target_soc = to_float(row.get("planned_target_soc_percent"))
         night_charge = to_float(row.get("planned_night_charge_kwh"))
         if target_soc is not None and 0.0 <= target_soc <= 100.0:
             metadata["forecast_target_soc_percent"] = target_soc
         if night_charge is not None and night_charge >= 0.0:
             metadata["forecast_night_charge_kwh"] = night_charge
-        if metadata:
-            by_date[target_date] = metadata
+        if not metadata:
+            continue
+        run_id = str(row.get("forecast_run_id") or "").strip()
+        updated_at = str(row.get("updated_at") or "").strip()
+        issued_at = str(row.get("forecast_issued_at") or "").strip()
+        if run_id:
+            metadata["_forecast_run_id"] = run_id
+        if updated_at:
+            metadata["_forecast_updated_at"] = updated_at
+        if issued_at:
+            metadata["_forecast_issued_at"] = issued_at
+        by_date[target_date] = metadata
     return by_date
+
+
+def _metadata_matches_forecast_row(row: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    """Require display metadata to belong to the same mutable/snapshot forecast vintage."""
+    source = str(row.get("source") or "")
+    metadata_run_id = str(metadata.get("_forecast_run_id") or "").strip()
+    if source == "forecast_hourly_snapshot":
+        row_run_id = str(row.get("forecast_run_id") or "").strip()
+        return bool(metadata_run_id and row_run_id == metadata_run_id)
+
+    # The base mutable Firestore reader intentionally exposes updated_at but not
+    # forecast_run_id. New forecast-only persistence writes the same updated_at to
+    # forecast_hourly and forecast_plans atomically, which is a stable same-run join key.
+    metadata_updated_at = str(metadata.get("_forecast_updated_at") or "").strip()
+    row_updated_at = str(row.get("updated_at") or "").strip()
+    if metadata_updated_at or row_updated_at:
+        return bool(metadata_updated_at and row_updated_at == metadata_updated_at)
+
+    # Legacy unit/data fixtures can lack both identity fields. They are accepted only
+    # when neither side claims a run identity; new production writes always carry one.
+    return not metadata_run_id and not str(row.get("forecast_run_id") or "").strip()
 
 
 def _with_forecast_plan_metadata(
     rows: list[dict[str, Any]],
-    metadata_by_date: dict[str, dict[str, float]],
+    metadata_by_date: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if not metadata_by_date:
         return rows
@@ -105,9 +136,10 @@ def _with_forecast_plan_metadata(
     for row in rows:
         item = dict(row)
         metadata = metadata_by_date.get(str(item.get("date") or ""))
-        if metadata:
-            for key, value in metadata.items():
-                item.setdefault(key, value)
+        if metadata and _metadata_matches_forecast_row(item, metadata):
+            for key in ("forecast_target_soc_percent", "forecast_night_charge_kwh"):
+                if key in metadata:
+                    item.setdefault(key, metadata[key])
         enriched.append(item)
     return enriched
 
@@ -209,8 +241,8 @@ def firestore_forecast_hourly_with_reconstruction(
 
     The original reader already enforces complete mutable rows and one eligible immutable
     snapshot run. Reconstructed rows are considered only for dates absent from that
-    original-evidence result. Forecast-only SOC metadata is joined by date strictly for
-    dashboard display; no control-plan collection is read or modified here.
+    original-evidence result. Forecast-only SOC metadata is joined only to the matching
+    original forecast vintage; later reconstruction rows never inherit original SOC data.
     """
     original_rows = _firestore_forecast_hourly_between(
         client,
@@ -233,7 +265,6 @@ def firestore_forecast_hourly_with_reconstruction(
     if not reconstructed_rows:
         return original_rows
 
-    reconstructed_rows = _with_forecast_plan_metadata(reconstructed_rows, metadata_by_date)
     reconstructed_dates = {
         str(row.get("date")) for row in reconstructed_rows if row.get("date")
     }
