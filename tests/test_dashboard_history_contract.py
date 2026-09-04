@@ -14,6 +14,8 @@ from app.dashboard.history_reconstruction import (
     RECONSTRUCTED_FORECAST_SOURCE,
     firestore_forecast_hourly_with_reconstruction,
 )
+from app.dashboard.models import DashboardRawData
+from app.dashboard.slice_assembler import build_dashboard_slice
 from app.dashboard.warnings import build_dashboard_warnings
 from app.operations.historical_forecast_reconstruction import build_reconstructed_forecast_rows
 
@@ -225,6 +227,38 @@ def test_complete_reconstruction_is_used_only_when_original_is_absent(monkeypatc
     assert all(row["is_reconstructed"] is True for row in rows)
 
 
+def test_reconstructed_read_path_strips_original_vintage_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    day = "2026-09-02"
+    reconstructed = _hourly_rows(
+        day=day,
+        source=RECONSTRUCTED_FORECAST_SOURCE,
+        reconstruction_id="recon-a",
+    )
+    for row in reconstructed:
+        row["forecast_run_id"] = "forged-original-run"
+        row["issued_at"] = "2026-09-02T02:30:00+09:00"
+        row["forecast_issued_at"] = "2026-09-02T02:30:00+09:00"
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: [],
+    )
+    client = _Client({"forecast_hourly_reconstructed": reconstructed, "monitoring_samples": []})
+
+    rows = firestore_forecast_hourly_with_reconstruction(
+        client,
+        start_date=day,
+        end_date_iso=day,
+    )
+
+    assert len(rows) == 24
+    assert all("forecast_run_id" not in row for row in rows)
+    assert all("issued_at" not in row for row in rows)
+    assert all("forecast_issued_at" not in row for row in rows)
+    assert all(row["source"] == RECONSTRUCTED_FORECAST_SOURCE for row in rows)
+    assert all(row["is_reconstructed"] is True for row in rows)
+
+
 def test_partial_reconstruction_is_never_presented_as_daily_forecast(monkeypatch: pytest.MonkeyPatch) -> None:
     day = "2026-09-02"
     reconstructed = _hourly_rows(
@@ -294,6 +328,62 @@ def test_energy_daily_keeps_reconstructed_pv_and_load_as_one_pair() -> None:
     assert rows[0]["forecast_is_reconstructed"] is True
     assert rows[0]["forecast_provenance_kind"] == "reconstructed"
     assert rows[0]["forecast_reconstruction_id"] == "recon-a"
+
+
+def test_dashboard_slice_preserves_historical_energy_api_fields_and_provenance() -> None:
+    day = "2026-09-02"
+    energy_row = {
+        "date": day,
+        "forecast_pv_kwh": 6.25,
+        "actual_pv_kwh": 5.75,
+        "forecast_load_kwh": 18.5,
+        "actual_load_kwh": 19.0,
+        "forecast_pv_source": RECONSTRUCTED_FORECAST_SOURCE,
+        "forecast_load_source": RECONSTRUCTED_FORECAST_SOURCE,
+        "forecast_provenance_kind": "reconstructed",
+        "forecast_is_reconstructed": True,
+        "forecast_reconstruction_id": "recon-api-lock",
+        "forecast_reconstructed_at": "2026-09-04T12:00:00+00:00",
+        "forecast_reconstruction_model_version": "test-model",
+        "forecast_reconstruction_basis": "historical_model_replay",
+    }
+    raw = DashboardRawData(
+        pv_daily=[],
+        cost_daily=[],
+        cost_monthly=[],
+        battery_daily=[],
+        model_parameters=[],
+        battery_flow_daily=[],
+        energy_daily=[energy_row],
+        forecast_hourly=[],
+        latest_schedule={},
+        global_oldest=day,
+        global_newest=day,
+    )
+
+    sliced = build_dashboard_slice(
+        raw,
+        end_date_iso=day,
+        window_days=1,
+        today_jst_iso="2026-09-04",
+    )
+    api_row = sliced.data.energy_daily[0]
+
+    for field in (
+        "forecast_pv_kwh",
+        "actual_pv_kwh",
+        "forecast_load_kwh",
+        "actual_load_kwh",
+        "forecast_pv_source",
+        "forecast_load_source",
+        "forecast_provenance_kind",
+        "forecast_is_reconstructed",
+        "forecast_reconstruction_id",
+        "forecast_reconstructed_at",
+        "forecast_reconstruction_model_version",
+        "forecast_reconstruction_basis",
+    ):
+        assert api_row[field] == energy_row[field]
 
 
 def test_dashboard_warning_makes_reconstructed_history_visible_to_user() -> None:
