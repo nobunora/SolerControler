@@ -9,6 +9,7 @@ from app.parsing.numbers import to_float
 
 
 _RECONSTRUCTED_FORECAST_SOURCE = "historical_reconstructed_estimate"
+_LEGACY_LOAD_SOURCE = "legacy_rolling_14d_estimate"
 
 
 def _to_date_or_none(raw: str | None) -> date | None:
@@ -141,6 +142,27 @@ def _rolling_load_forecast(
     return sum(values) / len(values)
 
 
+def _forecast_provenance_kind(
+    *,
+    pv_source: str | None,
+    load_source: str | None,
+) -> str:
+    if _RECONSTRUCTED_FORECAST_SOURCE in {pv_source, load_source}:
+        return "reconstructed"
+    pv_original = bool(pv_source)
+    load_original = bool(load_source) and load_source != _LEGACY_LOAD_SOURCE
+    load_legacy = load_source == _LEGACY_LOAD_SOURCE
+    if pv_original and load_original:
+        return "original"
+    if pv_original and load_legacy:
+        return "mixed_original_legacy"
+    if pv_original or load_original:
+        return "partial_original"
+    if load_legacy:
+        return "legacy_derived"
+    return "missing"
+
+
 def _build_energy_daily(
     *,
     start_date: str,
@@ -193,48 +215,51 @@ def _build_energy_daily(
     for day in sorted(dates):
         actual = actual_by_day.get(day, {})
         pv = pv_by_day.get(day)
+        sunshine_forecast_pv = _forecast_pv_kwh(pv)
         hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
         paired_hourly = (
             hourly_source in {"forecast_hourly_snapshot", _RECONSTRUCTED_FORECAST_SOURCE}
             and day in hourly_pv_by_day
             and day in hourly_load_by_day
         )
-        forecast_pv = hourly_pv_by_day.get(day) if paired_hourly else _forecast_pv_kwh(pv)
+        forecast_pv = hourly_pv_by_day.get(day) if paired_hourly else sunshine_forecast_pv
         if forecast_pv is None:
             forecast_pv = hourly_pv_by_day.get(day)
+        pv_source = (
+            hourly_source
+            if paired_hourly
+            else "sunshine_daily"
+            if sunshine_forecast_pv is not None
+            else hourly_source_by_day.get(day)
+            if day in hourly_pv_by_day
+            else None
+        )
         rolling_load = None if day in hourly_load_by_day else _rolling_load_forecast(day, actual_by_day)
         forecast_load = hourly_load_by_day.get(day, rolling_load)
-        is_reconstructed = (
-            hourly_source == _RECONSTRUCTED_FORECAST_SOURCE and day in hourly_load_by_day
+        load_source = (
+            hourly_source
+            if day in hourly_load_by_day
+            else _LEGACY_LOAD_SOURCE
+            if rolling_load is not None
+            else None
         )
-        if is_reconstructed:
-            provenance_kind = "reconstructed"
-        elif day in hourly_load_by_day or _forecast_pv_kwh(pv) is not None:
-            provenance_kind = "original"
-        elif rolling_load is not None:
-            provenance_kind = "legacy_derived"
-        else:
-            provenance_kind = "missing"
+        is_reconstructed = _RECONSTRUCTED_FORECAST_SOURCE in {pv_source, load_source}
+        provenance_kind = _forecast_provenance_kind(
+            pv_source=pv_source,
+            load_source=load_source,
+        )
         out.append(
             {
                 "date": day,
                 "forecast_pv_kwh": forecast_pv,
-                "forecast_pv_source": (
-                    hourly_source
-                    if paired_hourly
-                    else "sunshine_daily"
-                    if _forecast_pv_kwh(pv) is not None
-                    else hourly_source_by_day.get(day)
-                ),
+                "forecast_pv_source": pv_source,
                 "forecast_pv_morning_kwh": (pv or {}).get("forecast_pv_morning_kwh"),
                 "forecast_pv_midday_kwh": (pv or {}).get("forecast_pv_midday_kwh"),
                 "forecast_pv_evening_kwh": (pv or {}).get("forecast_pv_evening_kwh"),
                 "forecast_pv_calibration_factor": (pv or {}).get("forecast_pv_calibration_factor"),
                 "actual_pv_kwh": actual.get("actual_pv_kwh"),
                 "forecast_load_kwh": forecast_load,
-                "forecast_load_source": (
-                    hourly_source if day in hourly_load_by_day else "legacy_rolling_14d_estimate"
-                ),
+                "forecast_load_source": load_source,
                 "forecast_run_id": hourly_run_id_by_day.get(day),
                 "forecast_issued_at": hourly_issued_at_by_day.get(day),
                 "forecast_provenance_kind": provenance_kind,
