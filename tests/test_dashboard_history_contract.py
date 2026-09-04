@@ -125,6 +125,29 @@ def test_reconstructed_persistence_rows_can_never_masquerade_as_original(tmp_pat
     assert summary["hourly_row_count"] == 24
 
 
+@pytest.mark.parametrize(
+    "missing_map",
+    ["hourly_pv_forecast_kwh", "hourly_load_forecast_kwh"],
+)
+def test_reconstruction_requires_complete_24_hour_pv_and_load_source_maps(
+    tmp_path: Path,
+    missing_map: str,
+) -> None:
+    plan = _plan("2026-09-02")
+    plan["daytime_soc_optimization"][missing_map].pop("23")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must contain hours 0 through 23"):
+        build_reconstructed_forecast_rows(
+            plan_path=plan_path,
+            target_date="2026-09-02",
+            reconstruction_model_version="master@abc123",
+            reconstruction_basis="historical_model_replay",
+            input_provenance="historical weather archive + historical load inputs",
+        )
+
+
 def test_reconstruction_identity_is_idempotent_across_retry_timestamp(tmp_path: Path) -> None:
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(_plan("2026-09-02")), encoding="utf-8")
@@ -226,6 +249,30 @@ def test_partial_reconstruction_is_never_presented_as_daily_forecast(monkeypatch
     assert rows == []
 
 
+def test_inconsistent_reconstruction_provenance_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    day = "2026-09-02"
+    reconstructed = _hourly_rows(
+        day=day,
+        source=RECONSTRUCTED_FORECAST_SOURCE,
+        reconstruction_id="recon-a",
+    )
+    reconstructed[-1]["forecast_reconstruction_model_version"] = "different-model"
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: [],
+    )
+    client = _Client({"forecast_hourly_reconstructed": reconstructed, "monitoring_samples": []})
+
+    rows = firestore_forecast_hourly_with_reconstruction(
+        client,
+        start_date=day,
+        end_date_iso=day,
+    )
+
+    assert rows == []
+
+
 def test_energy_daily_keeps_reconstructed_pv_and_load_as_one_pair() -> None:
     day = "2026-09-02"
     rows = _build_energy_daily(
@@ -272,6 +319,21 @@ def test_dashboard_warning_makes_reconstructed_history_visible_to_user() -> None
     assert "history_forecast_reconstructed" in codes
     assert "history_original_forecast_missing" in codes
     assert "history_actual_missing" not in codes
+
+
+def test_recent_completed_day_warns_when_original_forecast_and_actual_are_missing() -> None:
+    warnings = build_dashboard_warnings(
+        latest_schedule={},
+        battery_daily=[],
+        energy_daily=[{"date": "2026-09-03"}],
+        forecast_hourly=[],
+        end_date_iso="2026-09-03",
+        today_jst_iso="2026-09-04",
+    )
+
+    codes = {warning["code"] for warning in warnings}
+    assert "history_original_forecast_missing" in codes
+    assert "history_actual_missing" in codes
 
 
 def test_daily_actual_reconstruction_contract_remains_48_unique_half_hours() -> None:
