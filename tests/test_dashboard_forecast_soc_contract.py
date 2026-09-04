@@ -53,8 +53,8 @@ class _Client:
         return _Collection(self.rows.get(name, []))
 
 
-def _hourly(day: str) -> list[dict[str, Any]]:
-    return [
+def _hourly(day: str, *, updated_at: str | None = None) -> list[dict[str, Any]]:
+    rows = [
         {
             "date": day,
             "hour": hour,
@@ -64,6 +64,10 @@ def _hourly(day: str) -> list[dict[str, Any]]:
         }
         for hour in range(24)
     ]
+    if updated_at is not None:
+        for row in rows:
+            row["updated_at"] = updated_at
+    return rows
 
 
 def test_forecast_plan_metadata_restores_predicted_soc_anchor_without_control_plan() -> None:
@@ -126,14 +130,15 @@ def test_inconsistent_forecast_soc_metadata_fails_closed() -> None:
     assert "planned_target_soc_percent" not in merged
 
 
-def test_firestore_history_read_joins_forecast_only_soc_metadata(
+def test_firestore_history_read_joins_same_mutable_vintage_forecast_soc_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     day = "2026-09-05"
+    updated_at = "2026-09-04T17:30:00Z"
     monkeypatch.setattr(
         history_reconstruction,
         "_firestore_forecast_hourly_between",
-        lambda client, start_date, end_date_iso: _hourly(day),
+        lambda client, start_date, end_date_iso: _hourly(day, updated_at=updated_at),
     )
     monkeypatch.setattr(
         history_reconstruction,
@@ -145,6 +150,8 @@ def test_firestore_history_read_joins_forecast_only_soc_metadata(
             "forecast_plans": [
                 {
                     "date": day,
+                    "forecast_run_id": "run-a",
+                    "updated_at": updated_at,
                     "planned_target_soc_percent": 68.5,
                     "planned_night_charge_kwh": 2.75,
                 }
@@ -161,6 +168,172 @@ def test_firestore_history_read_joins_forecast_only_soc_metadata(
     assert len(rows) == 24
     assert {row["forecast_target_soc_percent"] for row in rows} == {68.5}
     assert {row["forecast_night_charge_kwh"] for row in rows} == {2.75}
+
+
+def test_later_mutable_forecast_metadata_does_not_attach_to_older_mutable_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = "2026-09-05"
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: _hourly(day, updated_at="2026-09-04T17:30:00Z"),
+    )
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_selected_reconstructed_rows_between",
+        lambda client, start_date, end_date_iso, original_dates: [],
+    )
+    client = _Client(
+        {
+            "forecast_plans": [
+                {
+                    "date": day,
+                    "forecast_run_id": "run-late",
+                    "updated_at": "2026-09-04T22:30:00Z",
+                    "planned_target_soc_percent": 77.0,
+                }
+            ]
+        }
+    )
+
+    rows = firestore_forecast_hourly_with_reconstruction(client, start_date=day, end_date_iso=day)
+
+    assert all("forecast_target_soc_percent" not in row for row in rows)
+
+
+def test_snapshot_soc_metadata_requires_same_forecast_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = "2026-09-05"
+    snapshot_rows = [
+        {
+            "date": day,
+            "hour": hour,
+            "forecast_pv_kwh": 0.2,
+            "forecast_load_kwh": 0.3,
+            "source": "forecast_hourly_snapshot",
+            "forecast_run_id": "run-early",
+        }
+        for hour in range(24)
+    ]
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: snapshot_rows,
+    )
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_selected_reconstructed_rows_between",
+        lambda client, start_date, end_date_iso, original_dates: [],
+    )
+    client = _Client(
+        {
+            "forecast_plans": [
+                {
+                    "date": day,
+                    "forecast_run_id": "run-late",
+                    "updated_at": "2026-09-04T22:30:00Z",
+                    "planned_target_soc_percent": 77.0,
+                }
+            ]
+        }
+    )
+
+    rows = firestore_forecast_hourly_with_reconstruction(client, start_date=day, end_date_iso=day)
+
+    assert all("forecast_target_soc_percent" not in row for row in rows)
+
+
+def test_matching_snapshot_run_can_restore_soc_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    day = "2026-09-05"
+    snapshot_rows = [
+        {
+            "date": day,
+            "hour": hour,
+            "forecast_pv_kwh": 0.2,
+            "forecast_load_kwh": 0.3,
+            "source": "forecast_hourly_snapshot",
+            "forecast_run_id": "run-a",
+        }
+        for hour in range(24)
+    ]
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: snapshot_rows,
+    )
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_selected_reconstructed_rows_between",
+        lambda client, start_date, end_date_iso, original_dates: [],
+    )
+    client = _Client(
+        {
+            "forecast_plans": [
+                {
+                    "date": day,
+                    "forecast_run_id": "run-a",
+                    "planned_target_soc_percent": 68.5,
+                }
+            ]
+        }
+    )
+
+    rows = firestore_forecast_hourly_with_reconstruction(client, start_date=day, end_date_iso=day)
+
+    assert {row["forecast_target_soc_percent"] for row in rows} == {68.5}
+
+
+def test_reconstructed_history_never_inherits_original_forecast_soc_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = "2026-08-30"
+    reconstructed = [
+        {
+            "date": day,
+            "hour": hour,
+            "forecast_pv_kwh": 0.2,
+            "forecast_load_kwh": 0.3,
+            "source": "historical_reconstructed_estimate",
+            "is_reconstructed": True,
+            "forecast_reconstruction_id": "recon-a",
+            "forecast_reconstructed_at": "2026-09-05T00:00:00Z",
+            "forecast_reconstruction_model_version": "v1",
+        }
+        for hour in range(24)
+    ]
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_firestore_forecast_hourly_between",
+        lambda client, start_date, end_date_iso: [],
+    )
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_selected_reconstructed_rows_between",
+        lambda client, start_date, end_date_iso, original_dates: reconstructed,
+    )
+    monkeypatch.setattr(
+        history_reconstruction,
+        "_monitoring_rows_for_reconstructed_dates",
+        lambda client, dates: [],
+    )
+    client = _Client(
+        {
+            "forecast_plans": [
+                {
+                    "date": day,
+                    "forecast_run_id": "original-run",
+                    "planned_target_soc_percent": 80.0,
+                }
+            ]
+        }
+    )
+
+    rows = firestore_forecast_hourly_with_reconstruction(client, start_date=day, end_date_iso=day)
+
+    assert len(rows) == 24
+    assert all("forecast_target_soc_percent" not in row for row in rows)
 
 
 def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
