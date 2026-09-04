@@ -406,7 +406,7 @@ def test_production_deploy_auto_scope_skips_irrelevant_cloud_work() -> None:
         encoding="utf-8"
     )
 
-    assert "[ValidateSet('auto', 'full', 'runner', 'dashboard')]" in script
+    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]" in script
     assert "function Resolve-DeploymentScope" in script
     assert "Get-LastCompletedDeploymentCommit" in script
     assert "No deployable runner or dashboard source changed" in script
