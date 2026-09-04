@@ -17,6 +17,10 @@ from app.dashboard.slice_assembler import (
 from app.dashboard.sqlite_repository import SQLiteDashboardRepository, load_sqlite_query_snapshot
 from app.dashboard.postgres_repository import PostgresDashboardRepository
 from app.dashboard.firestore_repository import FirestoreDashboardRepository
+from app.dashboard.history_reconstruction import (
+    firestore_forecast_hourly_with_reconstruction,
+    get_global_bounds_firestore_with_reconstruction,
+)
 from app.dashboard.aggregation import (
     _accounting_month_label,
     _accounting_period_bounds,
@@ -118,10 +122,10 @@ def _load_firestore_slice(
         window_days=window_days,
         include_static=include_static,
         client_factory=_open_dashboard_firestore_client,
-        bounds_reader=_get_global_bounds_firestore,
+        bounds_reader=get_global_bounds_firestore_with_reconstruction,
         rows_reader=_firestore_rows_between,
         monitoring_reader=_firestore_monitoring_daily,
-        hourly_reader=_firestore_forecast_hourly_between,
+        hourly_reader=firestore_forecast_hourly_with_reconstruction,
     )
 
 
