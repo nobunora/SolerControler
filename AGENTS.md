@@ -61,3 +61,112 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Skill authoring rules: read `docs/current/agent/skill_creation_rules.md` before creating or modifying a reusable Skill.
 - Report template: read `docs/current/agent/report_template.md` only after the user explicitly asks for a report.
 - Do not create milestone reports or files under `docs/completed/reports/` unless the user explicitly asks.
+
+## Bounded Verification Mode
+
+Use **Bounded Verification Mode** defined in `AGENTS.md`.
+
+This is primarily a verification task, not an implementation or architecture task.
+
+### Goal
+
+Execute, test, observe, measure, diagnose, and report the current implementation.
+
+Do not independently redesign the implementation.
+
+### Discovery
+
+1. Start with:
+   - `git status --short`
+   - `git diff --name-only`
+   - relevant `git diff`
+2. Identify the changed or failing symbols.
+3. Use **CodebaseMemory first** as a routing map for those symbols:
+   - definition
+   - direct callers
+   - direct callees
+   - directly associated tests
+   - immediate dependency boundary
+4. Keep CodebaseMemory exploration to the target symbols plus **one graph hop** unless concrete failure evidence requires more.
+5. Do not dump large graph neighborhoods or read the raw graph database merely for context.
+
+CodebaseMemory queries do **not** consume the additional source-file read budget.
+
+### Source read budget
+
+After changed files and directly relevant tests, read at most **3 additional source/config files**.
+
+Only open an additional file when justified by evidence such as:
+
+- failing test
+- stack trace
+- compiler diagnostic
+- runtime error
+- direct import
+- direct call
+- relevant CodebaseMemory edge
+
+Use targeted ranges rather than full-file reads whenever possible.
+
+If more than 3 additional files are required, stop and report `INCONCLUSIVE` with the exact files/symbols needed next.
+
+### Evidence hierarchy
+
+Use:
+
+1. runtime behavior / measurements
+2. test results
+3. compiler / type / lint diagnostics
+4. targeted source inspection
+5. CodebaseMemory
+
+CodebaseMemory is navigation evidence, not final proof.
+
+### Modification
+
+Do not perform:
+
+- architecture changes
+- refactoring
+- cleanup
+- dependency upgrades
+- unrelated fixes
+- formatting sweeps
+
+unless explicitly authorized.
+
+If a local fix is explicitly permitted, keep it minimal and rerun the failing check immediately afterward.
+
+### Report
+
+Return:
+
+#### Result
+
+`PASS`, `FAIL`, or `INCONCLUSIVE`
+
+#### Checks performed
+
+#### Expected
+
+#### Observed
+
+#### Failure evidence
+
+#### CodebaseMemory queries
+
+Only the relevant queries/results used for navigation.
+
+#### Additional files read
+
+Files beyond changed files and directly relevant tests.
+
+#### Files modified
+
+#### Residual risks
+
+#### Recommended next action
+
+Exactly the smallest useful next action.
+
+Keep logs and quoted code to the minimum necessary to support the result.
