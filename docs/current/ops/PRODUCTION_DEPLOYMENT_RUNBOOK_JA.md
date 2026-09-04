@@ -5,6 +5,7 @@
 ## 適用範囲
 
 - Cloud Run Job（23時、03時、07時）のビルド・更新
+- 02:30 forecast-only Cloud Run Job の限定更新
 - Cloud Scheduler の確認
 - 本番設定の検証
 - dashboard Cloud Run service のビルド・更新
@@ -43,7 +44,7 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 低レベルスクリプトや独自の `gcloud` 更新コマンドへ置き換えません。
 デプロイラッパーは工程ごとに状態を書き込みます。`running` のまま終了した工程は成功扱いにしません。
 
-### 2.0 dashboard-only の非制御デプロイ契約
+### 2.0 非制御scope: dashboard-only / forecast-only
 
 `-DeploymentScope dashboard` は dashboard Cloud Run service だけを更新する正式な非制御経路です。このscopeではrunner、23/03/07、02:30 forecast job、Scheduler、KP-NET import、Drive backup、機器settingsを変更しません。
 
@@ -54,19 +55,30 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
   -StatePath artifacts/deployment_state/production-<開始時刻>.json
 ```
 
-runner/control経路を変更しないため、実機settings round-tripは実行せず、stateの `settings_roundtrip.status` を `skipped_not_applicable` として記録します。これは手動skipではなく、dashboard-only scopeで制御系を触らないための標準契約です。`skipped_manual`、`running`、`failed` をこれと同一視しません。
+`-DeploymentScope forecast` は共有runner imageを1回buildし、`solar-forecast-daily`だけを新しいimageへ更新する正式な非制御経路です。23/03/07 Job revision、settings-roundtrip Job revision、dashboard、forecast Scheduler、KP-NET import、Drive backup、機器settingsを更新しません。下位のcanonical deploy scriptが既存23/03/07 Scheduler定義を再assertする場合があるため、forecast-onlyの合格判定ではdeploy前後のschedule/time-zone/targetをread-only比較し、**実効変更が0**であることを必須とします。
 
-この例外はdashboard-onlyに限ります。`runner`または`full` scopeでは、以下のsettings round-tripを従来どおり必須とし、省略・warning化・任意化しません。
+```powershell
+pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
+  -DeploymentScope forecast `
+  -SkipPreRelease `
+  -StatePath artifacts/deployment_state/production-<開始時刻>.json
+```
+
+この`forecast` scopeは明示指定専用です。`auto`が`app/`差分をrunner/fullと判定した場合でも、レビューで変更がforecast-only ownerに限定され、23/03/07を更新しないことが証明できる場合にのみ使用します。
+
+`dashboard`と`forecast`はいずれもdeployed control ownerを変更しないため、実機settings round-tripは実行せず、stateの `settings_roundtrip.status` を `skipped_not_applicable` として記録します。これは手動skipではなく、非制御scopeで制御系を触らないための標準契約です。`skipped_manual`、`running`、`failed` をこれと同一視しません。
+
+この例外は`dashboard`と`forecast`に限ります。`runner`または`full` scopeでは、以下のsettings round-tripを従来どおり必須とし、省略・warning化・任意化しません。
 
 runner/full本番デプロイ後は、設定テストを必ず実行します。この工程はSchedulerを持たない専用Cloud Run Jobで、実機が受け付ける最大`SocChargeMode`である**50%**と強制充電モードを設定し、read-backで強制充電の設定を確認します。保持時間は**60秒固定**で、その後デプロイ直前のcontrolled settings全項目へ復元してread-backします。計画SOCが50%を超えても、これは機器設定の離散値であり、03時ジョブが連続値の計画SOC到達で待機へ切り替えます。強制充電設定、変更、または復元のいずれかが失敗した場合は、復元後に工程を失敗として停止します。
 
-`-DeploymentScope auto`（既定）は、最後に成功した本番コミットとの差分から対象を選びます。runnerだけ、dashboardだけ、両方、またはデプロイ対象なしを判定し、対象外のCloud Build・Cloud Run更新・KP-NET取込・Driveバックアップを開始しません。対象なしは本番デプロイではないため実機設定テストも実行しません。runner/control Cloud Runを更新する`runner`/`full`ではsettings round-tripを必須とし、dashboard-onlyでは上記の非制御契約に従って`skipped_not_applicable`とします。
+`-DeploymentScope auto`（既定）は、最後に成功した本番コミットとの差分からrunnerだけ、dashboardだけ、両方、または対象なしを判定します。forecast-onlyは安全性のため自動推定せず明示指定します。runner/control Cloud Runを更新する`runner`/`full`ではsettings round-tripを必須とし、`dashboard`/`forecast`では上記の非制御契約に従って`skipped_not_applicable`とします。
 
 実測から、事前ゲートの待機上限は**5分**、完全デプロイの待機上限は**25分**とします。外側の短い対話タイムアウトで本番工程を終了させず、状態ファイルを監視して完了または失敗を確認します。
 
 ### 2.1 短縮経路（検証を維持する場合）
 
-通常経路ではジョブ更新中にも07時ジョブのDryRunを実行します。デプロイ後の公式DryRunを別途実施する場合は、次のオプションで重複実行を避けられます。
+通常のrunner/full経路ではジョブ更新中にも07時ジョブのDryRunを実行します。デプロイ後の公式DryRunを別途実施する場合は、次のオプションで重複実行を避けられます。
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
@@ -75,7 +87,7 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 ```
 
-`-SkipInlineSmokeTest` は検証を省略する指定ではなく、デプロイ工程内の重複待機を省略する指定です。runner/fullの合格判定には、必ず後段の公式DryRunとCloud Run executionの4条件確認を使用します。dashboard-onlyでは07 DryRunを新規実行せず、dashboard API/browserのread-only受入確認を使用します。
+`-SkipInlineSmokeTest` は検証を省略する指定ではなく、runner/fullのデプロイ工程内の重複待機を省略する指定です。runner/fullの合格判定には、必ず後段の公式DryRunとCloud Run executionの4条件確認を使用します。dashboard/forecastの非制御scopeでは07 DryRunを新規実行しません。
 
 runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキャッシュ候補として再利用し、用途別のignoreファイルで不要なテスト・文書・生成物を送信しません。依存関係を変更した場合はキャッシュ効果が下がるため、通常より長くなることがあります。
 
@@ -86,13 +98,14 @@ runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキ�
 - `-SkipInlineSmokeTest` は、runner/fullで直後に公式07時DryRunを実行する場合だけ使う。設定往復テストと07時DryRunの双方のCloud Run終端条件を確認するまで合格にしない。
 - 設定往復テストはrunner/fullで専用Jobだけから明示実行する。Schedulerを追加せず、Cloud Runの再試行は0回とし、失敗時に同じ設定変更を自動で重ねない。
 - dashboard-onlyではsettings round-tripを起動せず、`skipped_not_applicable`をstateに残し、23/03/07・02:30・Scheduler・機器settingsが変更されていないことをread-onlyで確認する。
+- forecast-onlyではsettings round-tripを起動せず、23/03/07 Job revisionとsettings-roundtrip Job revisionが不変であること、23/03/07 Schedulerの実効設定が前後一致することをread-onlyで確認する。
 - `failed`または`running`の工程を手動で成功へ書き換えない。実機設定が復元済みであることをログから確認した後にのみ、同じ状態ファイルの`-Resume`で未成功工程を再実行する。
 
 ## 3. Windowsで途中終了した場合の再開
 
-`artifacts/deployment_state/production-*.json` の `status=complete` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。dashboard-onlyの `settings_roundtrip=skipped_not_applicable` は、そのscopeでのみ正規の非該当状態です。
+`artifacts/deployment_state/production-*.json` の `status=complete` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。dashboard/forecast scopeの `settings_roundtrip=skipped_not_applicable` は、そのscopeでのみ正規の非該当状態です。
 
-同じcommitの状態ファイルを明示して再開します。`-Resume` はJSON内で明示的に `success` となった工程だけをスキップし、Cloud側の現在状態から成功を推測しません。dashboard-onlyのsettings round-tripだけはscope契約に基づき再度`skipped_not_applicable`として扱います。
+同じcommitの状態ファイルを明示して再開します。`-Resume` はJSON内で明示的に `success` となった工程だけをスキップし、Cloud側の現在状態から成功を推測しません。非制御scopeのsettings round-tripだけはscope契約に基づき再度`skipped_not_applicable`として扱います。
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
@@ -174,6 +187,19 @@ pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 
 非同期実行の受付だけで成功扱いにせず、最新executionの `Completed=True`、`ResourcesAvailable=True`、`Started=True`、`ContainerReady=True` を確認します。読み取り専用の診断で識別子を取得しても、報告やチャットには記載しません。
 
+### forecast-only
+
+次のすべてを確認します。
+
+- stateの `jobs.status=success`
+- stateの `settings_roundtrip.status=skipped_not_applicable`
+- `solar-forecast-daily`だけが今回buildしたrunner imageへ更新されている
+- 23/03/07 Job revisionとsettings-roundtrip Job revisionがdeploy前後で不変
+- forecast Schedulerを明示skipした場合、そのschedule/time-zone/targetが不変
+- 23/03/07 Schedulerはdeploy前後のschedule/time-zone/targetが一致し、実効変更0
+- 機器settings/device stateを変更していない
+- Secret値を出力していない
+
 ### dashboard-only
 
 次のすべてを確認します。
@@ -210,4 +236,4 @@ git status --short
 - DryRunの受付だけで本番検証成功と判断する
 - 失敗したビルドや状態不明のイメージをジョブへ反映する
 - 状態ファイルの `running` または `failed` を手動で `success` に書き換える
-- dashboard-onlyでsettings round-tripや23/03/07の手動実行を追加して「検証」を代替する
+- dashboard/forecastの非制御scopeでsettings round-tripや23/03/07の手動実行を追加して「検証」を代替する
