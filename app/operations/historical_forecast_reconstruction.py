@@ -76,8 +76,11 @@ def _normalized_hourly_rows(data: dict[str, Any], *, target_date: str) -> list[d
         row = dict(raw)
         if str(row.get("date") or "") != target_date:
             raise ValueError("reconstruction rows must all match the target date")
+        raw_hour = row.get("hour")
+        if not isinstance(raw_hour, (str, int, float)):
+            raise ValueError("reconstruction row hour is invalid")
         try:
-            hour = int(row.get("hour"))
+            hour = int(raw_hour)
         except (TypeError, ValueError) as exc:
             raise ValueError("reconstruction row hour is invalid") from exc
         hours.add(hour)

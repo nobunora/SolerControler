@@ -18,8 +18,8 @@ from app.dashboard.sqlite_repository import SQLiteDashboardRepository, load_sqli
 from app.dashboard.postgres_repository import PostgresDashboardRepository
 from app.dashboard.firestore_repository import FirestoreDashboardRepository
 from app.dashboard.history_reconstruction import (
-    firestore_forecast_hourly_with_reconstruction,
-    get_global_bounds_firestore_with_reconstruction,
+    firestore_forecast_hourly_with_reconstruction as _firestore_forecast_hourly_between,
+    get_global_bounds_firestore_with_reconstruction as _get_global_bounds_firestore_with_reconstruction,
 )
 from app.dashboard.aggregation import (
     _accounting_month_label,
@@ -122,10 +122,13 @@ def _load_firestore_slice(
         window_days=window_days,
         include_static=include_static,
         client_factory=_open_dashboard_firestore_client,
-        bounds_reader=get_global_bounds_firestore_with_reconstruction,
+        bounds_reader=lambda client: _get_global_bounds_firestore_with_reconstruction(
+            client,
+            original_bounds=_get_global_bounds_firestore(client),
+        ),
         rows_reader=_firestore_rows_between,
         monitoring_reader=_firestore_monitoring_daily,
-        hourly_reader=firestore_forecast_hourly_with_reconstruction,
+        hourly_reader=_firestore_forecast_hourly_between,
     )
 
 
@@ -164,7 +167,6 @@ from app.dashboard.firestore_repository import (
     _dashboard_firestore_config,
     _daily_metric_is_complete as _daily_metric_is_complete,
     _firestore_bounds,
-    _firestore_forecast_hourly_between,
     _firestore_monitoring_daily,
     _firestore_rows_between,
     _get_global_bounds_firestore as _repository_global_bounds_firestore,

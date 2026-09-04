@@ -42,6 +42,8 @@ def _complete_reconstruction_run(rows: list[dict[str, Any]]) -> bool:
     hours: set[int] = set()
     for row in rows:
         raw_hour = row.get("hour")
+        if not isinstance(raw_hour, (str, int, float)):
+            return False
         try:
             hour = int(raw_hour)
         except (TypeError, ValueError):
@@ -190,9 +192,11 @@ def firestore_forecast_hourly_with_reconstruction(
 
 def get_global_bounds_firestore_with_reconstruction(
     client: Any,
+    *,
+    original_bounds: tuple[str | None, str | None] | None = None,
 ) -> tuple[str | None, str | None]:
     """Extend dashboard date bounds without changing the original collection contract."""
-    candidates: list[str | None] = [*_get_global_bounds_firestore(client)]
+    candidates: list[str | None] = [*(original_bounds or _get_global_bounds_firestore(client))]
     try:
         candidates.extend(_firestore_bounds(client, RECONSTRUCTED_FORECAST_COLLECTION, "date"))
     except Exception:
