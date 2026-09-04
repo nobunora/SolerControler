@@ -96,7 +96,11 @@ def _plan(*, date: str = "2026-09-03", issued_at: str = "2026-09-03T02:30:00+09:
         "forecast": {"date": date, "sun_hours": 4.0, "temp_c": 25.0, "weather_code": 1, "hourly_weather": [{"hour": hour} for hour in range(24)]},
         "daytime_soc_optimization": {"hourly_pv_forecast_kwh": {str(hour): 0.1 for hour in range(24)}, "hourly_load_forecast_kwh": {str(hour): 0.2 for hour in range(24)}},
         "pv_array_forecast": {"source": "test", "totals": {"total_kwh": 2.4, "morning_kwh": 0.8, "midday_kwh": 1.2, "evening_kwh": 0.4}},
-        "result": {"final_pv_forecast_source": "test"},
+        "result": {
+            "final_pv_forecast_source": "test",
+            "target_soc_7_percent": 67.5,
+            "required_night_charge_kwh": 3.25,
+        },
     }
 
 
@@ -114,7 +118,10 @@ def test_valid_forecast_persists_only_forecast_collections(tmp_path: Path) -> No
     assert len(client.data["forecast_hourly"]) == 24
     assert len(client.data["forecast_hourly_snapshots"]) == 24
     assert client.data["sunshine_daily"]["2026-09-03"]["forecast_pv_total_kwh"] == pytest.approx(2.4)
-    assert client.data["forecast_plans"]["2026-09-03"]["hourly_row_count"] == 24
+    forecast_plan = client.data["forecast_plans"]["2026-09-03"]
+    assert forecast_plan["hourly_row_count"] == 24
+    assert forecast_plan["planned_target_soc_percent"] == pytest.approx(67.5)
+    assert forecast_plan["planned_night_charge_kwh"] == pytest.approx(3.25)
     assert "night_charge_plans" not in client.data
 
 
