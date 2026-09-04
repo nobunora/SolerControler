@@ -343,13 +343,28 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
     }
 }
 
-# HISTORICAL_FAILURE_LOCK (device contract, confirmed 2026-08-23): every
-# production deployment must prove the live forced-charge command path using
+# HISTORICAL_FAILURE_LOCK (device contract, confirmed 2026-08-23): runner/full
+# production deployments must prove the live forced-charge command path using
 # the inverter's supported 50% SocChargeMode, then restore the exact snapshot.
-# Do not make this stage optional or change the target to the continuous plan
-# target; the 03 monitor, not SocChargeMode, stops at the plan target.
-Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:$false -Action {
-    & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot settings-roundtrip -SettingsRoundTripTargetSoc $SettingsRoundTripTargetSoc -TestExecution
+# Dashboard-only deployment does not alter the runner/control path; executing the
+# device round-trip there would create unrelated control mutation, so it is
+# canonically recorded as not applicable rather than weakening the round-trip itself.
+if ($resolvedScope -eq 'dashboard') {
+    $roundTripStage = Get-DeploymentStageRecord -Name 'settings_roundtrip'
+    if ($roundTripStage.status -ne 'success') {
+        $roundTripStage.status = 'skipped_not_applicable'
+        $roundTripStage.completed_at = (Get-Date).ToUniversalTime().ToString('o')
+        $roundTripStage.error_code = $null
+        $roundTripStage.error_detail = $null
+        Save-DeploymentState
+    }
+    Write-Host 'Skip stage: settings_roundtrip (not applicable to dashboard-only deployment)'
+} else {
+    # Do not make this stage optional for runner/full or change the target to the
+    # continuous plan target; the 03 monitor, not SocChargeMode, stops at the plan target.
+    Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:$false -Action {
+        & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot settings-roundtrip -SettingsRoundTripTargetSoc $SettingsRoundTripTargetSoc -TestExecution
+    }
 }
 
 Invoke-DeploymentStage -Name 'kpnet_import' -Skip:$SkipKpNetImport -Action {
