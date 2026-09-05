@@ -23,7 +23,8 @@ from app.operations.historical_forecast_replay import (
 
 # HISTORICAL_FAILURE_LOCK (2026-09-05): historical replay must remain forecast-only
 # and immune to target-day/future actual leakage. Single Runs requests must use
-# run + forecast_hours; start_date/end_date are rejected by the live endpoint.
+# run + forecast_hours; start_date/end_date are rejected by the live endpoint;
+# explicit run overrides must not be later than the conservative D-1 12Z vintage.
 
 
 class _Response:
@@ -220,6 +221,39 @@ def test_single_runs_request_uses_run_horizon_not_rejected_date_range() -> None:
     assert params["forecast_hours"] == 48
     assert "start_date" not in params
     assert "end_date" not in params
+
+
+def test_single_runs_safe_offset_run_is_normalized_to_utc() -> None:
+    params = _single_run_params(
+        settings=_settings(),
+        target_date="2026-08-30",
+        model="jma_msm",
+        run="2026-08-29T21:00+09:00",
+        hourly="temperature_2m",
+    )
+    assert params["run"] == "2026-08-29T12:00"
+
+
+def test_single_runs_rejects_hindsight_run_override() -> None:
+    with pytest.raises(ValueError, match="later than the conservative pre-decision cutoff"):
+        _single_run_params(
+            settings=_settings(),
+            target_date="2026-08-30",
+            model="jma_msm",
+            run="2026-08-29T15:00Z",
+            hourly="temperature_2m",
+        )
+
+
+def test_single_runs_rejects_invalid_run_timestamp() -> None:
+    with pytest.raises(ValueError, match="ISO-8601"):
+        _single_run_params(
+            settings=_settings(),
+            target_date="2026-08-30",
+            model="jma_msm",
+            run="not-a-run",
+            hourly="temperature_2m",
+        )
 
 
 def test_single_runs_48_hour_horizon_contains_exact_target_day() -> None:
