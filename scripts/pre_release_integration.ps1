@@ -7,7 +7,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
 Write-Host "Run HISTORICAL_FAILURE_LOCK contract..."
-python -m pytest .\tests\test_dashboard_history_contract.py -q
+python -m pytest .\tests\test_dashboard_history_contract.py .\tests\test_historical_forecast_replay_contract.py -q
 if ($LASTEXITCODE -ne 0) { throw "dashboard historical failure lock failed" }
 
 Write-Host "Run predicted-SOC and dashboard-only deployment failure locks..."
