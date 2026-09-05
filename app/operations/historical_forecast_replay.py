@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, cast
 from zoneinfo import ZoneInfo
@@ -76,6 +76,34 @@ def default_single_run_for_target(target_date: str) -> str:
     return f"{run_day.isoformat()}T12:00"
 
 
+def _validated_single_run_for_target(*, target_date: str, run: str) -> str:
+    """Normalize a Single Runs vintage to UTC and reject hindsight vintages.
+
+    Historical replay intentionally uses D-1 12:00 UTC as the latest
+    conservative model initialization that this workflow treats as defensibly
+    available before the original 02:30 JST decision window. A caller may use
+    an older run, but a later run needs a separate evidence contract and must
+    not silently enter this replay path.
+    """
+    text = run.strip()
+    if not text:
+        raise ValueError("single-runs run must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("single-runs run must be an ISO-8601 timestamp") from exc
+    run_utc = parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    latest_safe_utc = datetime.fromisoformat(default_single_run_for_target(target_date)).replace(
+        tzinfo=timezone.utc
+    )
+    if run_utc > latest_safe_utc:
+        raise ValueError(
+            "historical replay run is later than the conservative pre-decision cutoff: "
+            f"{run_utc.isoformat()} > {latest_safe_utc.isoformat()}"
+        )
+    return run_utc.strftime("%Y-%m-%dT%H:%M")
+
+
 def filter_pre_target_history(
     rows: list[dict[str, Any]],
     *,
@@ -126,14 +154,14 @@ def _single_run_params(
     # Single Runs selects an archived forecast by `run`. Its live API rejects
     # start_date/end_date when a run is requested, so bound the returned horizon
     # with forecast_hours and let _target_hour_indexes select the exact target day.
-    _target_day(target_date)
+    normalized_run = _validated_single_run_for_target(target_date=target_date, run=run)
     params: dict[str, str | float] = {
         "latitude": settings.latitude,
         "longitude": settings.longitude,
         "timezone": settings.timezone,
         "forecast_hours": SINGLE_RUN_FORECAST_HOURS,
         "models": model,
-        "run": run,
+        "run": normalized_run,
         "hourly": hourly,
     }
     if tilt is not None:
@@ -265,7 +293,7 @@ def fetch_single_run_weather(
             "endpoint_family": "single-runs-api",
             "endpoint": "single-runs-api.open-meteo.com",
             "model": model,
-            "run": run,
+            "run": _validated_single_run_for_target(target_date=target_date, run=run),
             "run_timezone": "UTC",
             "target_timezone": settings.timezone,
             "requested_forecast_hours": SINGLE_RUN_FORECAST_HOURS,
@@ -429,7 +457,7 @@ def fetch_single_run_pv_forecast(
         "provider": "open-meteo",
         "endpoint_family": "single-runs-api",
         "model": model,
-        "run": run,
+        "run": _validated_single_run_for_target(target_date=target_date, run=run),
         "target_date": target_date,
         "target_timezone": settings.timezone,
         "requested_forecast_hours": SINGLE_RUN_FORECAST_HOURS,
@@ -486,7 +514,10 @@ def build_historical_replay_plan(
     settings = forecast_settings or ForecastSettings.from_env()
     history_settings = historical_settings or HistoricalInputSettings.from_env()
     selected_arrays = arrays if arrays is not None else load_pv_array_configs()
-    selected_run = run or default_single_run_for_target(target_date)
+    selected_run = _validated_single_run_for_target(
+        target_date=target_date,
+        run=run or default_single_run_for_target(target_date),
+    )
     eligible_rows = filter_pre_target_history(rows, target_date=target_date)
     if not eligible_rows:
         raise RuntimeError(f"historical replay has no pre-target history: {target_date}")
