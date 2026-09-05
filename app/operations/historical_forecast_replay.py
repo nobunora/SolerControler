@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from zoneinfo import ZoneInfo
 
 import requests
@@ -94,7 +94,11 @@ def filter_pre_target_history(
 
 
 def _history_bounds(rows: list[dict[str, Any]]) -> tuple[str | None, str | None]:
-    timestamps = [row.get("dt") for row in rows if isinstance(row.get("dt"), datetime)]
+    timestamps: list[datetime] = []
+    for row in rows:
+        timestamp = row.get("dt")
+        if isinstance(timestamp, datetime):
+            timestamps.append(timestamp)
     if not timestamps:
         return None, None
     return min(timestamps).isoformat(), max(timestamps).isoformat()
@@ -164,7 +168,7 @@ def _target_hour_indexes(hourly: dict[str, Any], *, target_date: str) -> list[tu
 def _list_value(values: object, index: int) -> object | None:
     if not isinstance(values, list) or index >= len(values):
         return None
-    return values[index]
+    return cast(object, values[index])
 
 
 def fetch_single_run_weather(
