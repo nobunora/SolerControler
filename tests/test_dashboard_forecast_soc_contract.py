@@ -7,12 +7,36 @@ import pytest
 
 from app.dashboard import history_reconstruction
 from app.dashboard.history_reconstruction import firestore_forecast_hourly_with_reconstruction
-from app.dashboard.slice_assembler import merge_forecast_metadata_into_schedule
+from app.dashboard.slice_assembler import (
+    merge_display_plan_into_battery_daily,
+    merge_forecast_metadata_into_schedule,
+)
 
 
 # HISTORICAL_FAILURE_LOCK (2026-09-04): predicted SOC must not silently disappear
 # when control-plan persistence is intentionally absent. The dedicated forecast-only
 # path owns display metadata only and must never write or require control-plan state.
+
+
+def test_latest_forecast_plan_restores_battery_chart_without_control_write() -> None:
+    rows = merge_display_plan_into_battery_daily(
+        [{"date": "2026-09-05", "pv_charge_end_soc_percent": 44.0}],
+        {
+            "plan_date": "2026-09-05",
+            "planned_target_soc_percent": 100.0,
+            "planned_night_charge_kwh": 6.39,
+        },
+    )
+
+    assert rows == [
+        {
+            "date": "2026-09-05",
+            "pv_charge_end_soc_percent": 44.0,
+            "setting_soc_target_percent": 100.0,
+            "night_charge_kwh": 6.39,
+            "plan_display_source": "forecast_plans",
+        }
+    ]
 
 
 class _Doc:

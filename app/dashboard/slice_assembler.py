@@ -98,6 +98,35 @@ def merge_forecast_metadata_into_schedule(
     return merged
 
 
+def merge_display_plan_into_battery_daily(
+    battery_daily: list[dict[str, Any]],
+    schedule: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Expose the latest forecast-only plan in the battery planning chart.
+
+    Existing applied/control evidence always wins. Forecast-only values are display
+    metadata and never create a control-plan or settings write.
+    """
+    plan_date = str(schedule.get("plan_date") or "").strip()
+    target_soc = to_float(schedule.get("planned_target_soc_percent"))
+    night_charge = to_float(schedule.get("planned_night_charge_kwh"))
+    if not plan_date or (target_soc is None and night_charge is None):
+        return battery_daily
+    merged_rows = [dict(row) for row in battery_daily]
+    row = next((item for item in merged_rows if str(item.get("date")) == plan_date), None)
+    if row is None:
+        row = {"date": plan_date}
+        merged_rows.append(row)
+    if row.get("setting_soc_target_percent") is None and target_soc is not None:
+        row["setting_soc_target_percent"] = target_soc
+        row["plan_display_source"] = "forecast_plans"
+    if row.get("night_charge_kwh") is None and night_charge is not None:
+        row["night_charge_kwh"] = night_charge
+        row["plan_display_source"] = "forecast_plans"
+    merged_rows.sort(key=lambda item: str(item.get("date") or ""))
+    return merged_rows
+
+
 def empty_dashboard_slice(*, window_days: int, schedule: dict[str, Any], global_oldest: str | None = None, global_newest: str | None = None) -> DashboardSlice:
     return DashboardSlice(data=DashboardData([], [], [], [], [], latest_schedule=schedule), meta={"window_days": window_days, "oldest_loaded_date": None, "newest_loaded_date": None, "global_oldest_date": global_oldest, "global_newest_date": global_newest, "has_more_before": False})
 
@@ -115,8 +144,9 @@ def dashboard_meta(*, window_days: int, global_oldest_date: str | None, global_n
 
 def build_dashboard_slice(raw: DashboardRawData, *, end_date_iso: str, window_days: int, pv_forecast_diagnostics: dict[str, Any] | None = None, daily_review: dict[str, Any] | None = None, daily_reviews: list[dict[str, Any]] | None = None, today_jst_iso: str | None = None) -> DashboardSlice:
     latest_schedule = merge_forecast_metadata_into_schedule(raw.latest_schedule, raw.forecast_hourly, plan_date=end_date_iso)
-    if latest_schedule != raw.latest_schedule:
-        raw = replace(raw, latest_schedule=latest_schedule)
+    battery_daily = merge_display_plan_into_battery_daily(raw.battery_daily, latest_schedule)
+    if latest_schedule != raw.latest_schedule or battery_daily != raw.battery_daily:
+        raw = replace(raw, latest_schedule=latest_schedule, battery_daily=battery_daily)
     meta = dashboard_meta(window_days=window_days, global_oldest_date=raw.global_oldest, global_newest_date=raw.global_newest, pv_daily=raw.pv_daily, cost_daily=raw.cost_daily, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, forecast_hourly=raw.forecast_hourly, battery_flow_daily=raw.battery_flow_daily)
     return assemble_dashboard_slice(raw, meta=meta, warnings=dashboard_warnings(latest_schedule=raw.latest_schedule, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, forecast_hourly=raw.forecast_hourly, end_date_iso=end_date_iso, today_jst_iso=today_jst_iso), pv_forecast_diagnostics=pv_forecast_diagnostics, daily_review=daily_review, daily_reviews=daily_reviews)
 
