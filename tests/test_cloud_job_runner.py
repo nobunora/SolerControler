@@ -36,9 +36,10 @@ class _Clock:
 
 
 class _Device:
-    def __init__(self, soc: list[float | None], *, fail_forced: bool = False) -> None:
+    def __init__(self, soc: list[float | None], *, fail_forced: bool = False, fail_standby: bool = False) -> None:
         self.soc = iter(soc)
         self.fail_forced = fail_forced
+        self.fail_standby = fail_standby
         self.calls: list[str] = []
         self.soc_read_count = 0
 
@@ -50,6 +51,8 @@ class _Device:
         self.calls.append(profile)
         if profile == "forced" and self.fail_forced:
             raise RuntimeError("KP-NET forced readback mismatch")
+        if profile == "standby" and self.fail_standby:
+            raise RuntimeError("KP-NET standby readback mismatch")
 
 
 def _plan(path: Path, target: float, required_kwh: float = 1.0) -> Path:
@@ -62,6 +65,11 @@ def _plan(path: Path, target: float, required_kwh: float = 1.0) -> Path:
 def _json_plan(path: Path, payload: dict[str, object]) -> Path:
     path.write_bytes(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     return path
+
+
+def _terminal_audits(output: str) -> list[dict[str, object]]:
+    records = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+    return [record for record in records if record.get("message") == "03-terminal-audit"]
 
 
 @pytest.mark.parametrize("target", [0, 30, 50, 80, 100])
@@ -106,6 +114,60 @@ def test_03_target_stop_log_records_target_source_and_reason(tmp_path: Path, cap
     assert "source=fake" in stdout
     assert "reason=target_reached" in stdout
     assert "latest=100.00%" in stdout
+    audits = _terminal_audits(stdout)
+    assert len(audits) == 1
+    payload = audits[0]
+    assert payload["terminal_event_type"] == "03_monitor_terminal"
+    assert payload["stop_reason"] == "target_reached"
+    assert payload["plan_date"] == "2099-01-01"
+    assert payload["plan_hash"]
+    assert payload["standby_outcome"] == "success"
+
+
+def test_03_soc_unavailable_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=_Device([None])
+    )
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "soc_unavailable"
+
+
+def test_03_cutoff_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 6, 54, 59, tzinfo=JST)), device_port=_Device([20])
+    )
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "monitor_cutoff"
+
+
+def test_03_monitor_failure_emits_terminal_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr("app.runtime.cloud_job.estimate_forced_charge_rate_percent_per_hour", lambda _paths: (_ for _ in ()).throw(RuntimeError("estimator failure")))
+    with pytest.raises(RuntimeError, match="estimator failure"):
+        _monitor_partial_forced_and_stop(
+            _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=_Device([20])
+        )
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "monitor_failure"
+
+
+def test_03_standby_failure_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(RuntimeError, match="standby readback mismatch"):
+        _monitor_partial_forced_and_stop(
+            _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=_Device([100], fail_standby=True)
+        )
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "standby_failure"
+
+
+def test_03_terminal_audit_emit_failure_is_ignored() -> None:
+    cloud_job._emit_03_terminal_audit(
+        {"plan_hash": object()}, stop_reason="monitor_failure", latest=None,
+        standby_attempted=False, standby_outcome="not_attempted",
+    )
 
 
 def test_03_plan_provenance_logs_cost_base_100_final_91(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -218,13 +280,16 @@ def test_03_plan_provenance_does_not_add_external_persistence() -> None:
         assert forbidden not in source
 
 
-def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    device = _Device([20.0], fail_forced=True)
+def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    device = _Device([20.0], fail_forced=True, fail_standby=True)
     with pytest.raises(RuntimeError, match="readback mismatch"):
         _monitor_partial_forced_and_stop(
             _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=device
         )
     assert device.calls == ["forced", "standby"]
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "forced_failure"
     calls: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: calls.append(kwargs))
     _run_day_07()
