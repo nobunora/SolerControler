@@ -42,6 +42,7 @@ REPLAY_SOURCE = "historical_reconstructed_estimate"
 REPLAY_MODEL_VERSION = "historical-forecast-replay-v1"
 SINGLE_RUN_ENDPOINT = "https://single-runs-api.open-meteo.com/v1/forecast"
 DEFAULT_SINGLE_RUN_MODEL = "jma_msm"
+SINGLE_RUN_FORECAST_HOURS = 48
 
 HttpGet = Callable[..., Any]
 WeatherHistoryLoader = Callable[..., WeatherHistoryFetchResult]
@@ -122,12 +123,15 @@ def _single_run_params(
     tilt: float | None = None,
     azimuth: float | None = None,
 ) -> dict[str, str | float]:
+    # Single Runs selects an archived forecast by `run`. Its live API rejects
+    # start_date/end_date when a run is requested, so bound the returned horizon
+    # with forecast_hours and let _target_hour_indexes select the exact target day.
+    _target_day(target_date)
     params: dict[str, str | float] = {
         "latitude": settings.latitude,
         "longitude": settings.longitude,
         "timezone": settings.timezone,
-        "start_date": target_date,
-        "end_date": target_date,
+        "forecast_hours": SINGLE_RUN_FORECAST_HOURS,
         "models": model,
         "run": run,
         "hourly": hourly,
@@ -264,6 +268,7 @@ def fetch_single_run_weather(
             "run": run,
             "run_timezone": "UTC",
             "target_timezone": settings.timezone,
+            "requested_forecast_hours": SINGLE_RUN_FORECAST_HOURS,
             "target_hourly_count": 24,
         },
     }
@@ -427,6 +432,7 @@ def fetch_single_run_pv_forecast(
         "run": run,
         "target_date": target_date,
         "target_timezone": settings.timezone,
+        "requested_forecast_hours": SINGLE_RUN_FORECAST_HOURS,
         "calibration": calibration_summary,
         "arrays": array_summaries,
     }
