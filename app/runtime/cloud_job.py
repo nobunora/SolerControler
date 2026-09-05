@@ -110,8 +110,17 @@ def _read_plan_meta(path: Path) -> dict[str, Any]:
     raw = json.loads(raw_bytes)
     result = raw.get("result", {})
     from app.energy_plan.night_plan import build_night_plan_provenance
+    from app.runtime.night_soc_controller import make_plan_snapshot
+    try:
+        snapshot = make_plan_snapshot(raw)
+    except (TypeError, ValueError):
+        snapshot = None
 
     return {
+        "plan_date": None if snapshot is None else snapshot.plan_date,
+        "plan_revision": None if snapshot is None else snapshot.revision,
+        "plan_id": None if snapshot is None else snapshot.plan_id,
+        "plan_hash": None if snapshot is None else snapshot.content_hash,
         "target_soc_7_percent": float(result["target_soc_7_percent"]),
         "required_night_charge_kwh": float(result.get("required_night_charge_kwh", 0.0)),
         "effective_capacity_kwh": float(result.get("effective_capacity_kwh", 0.0)),
@@ -153,6 +162,34 @@ class _RunnerMonitorDevicePort:
             raise RuntimeError(f"KP-NET mode-only read-back failed for {label}")
 
 
+def _emit_03_terminal_audit(
+    plan: dict[str, Any], *, stop_reason: str, latest: SocReading | None,
+    standby_attempted: bool, standby_outcome: str,
+) -> None:
+    """Emit one secret-free terminal record; logging must never affect control."""
+    try:
+        reading = latest
+        source = None if reading is None else reading.source
+        if source not in {"realtime", "csv", "fake", "unavailable", "unknown"}:
+            source = "unknown"
+        payload = {
+            "message": "03-terminal-audit",
+            "terminal_event_type": "03_monitor_terminal",
+            "plan_date": plan.get("plan_date"), "plan_id": plan.get("plan_id"),
+            "plan_revision": plan.get("plan_revision"), "plan_hash": plan.get("plan_hash"),
+            "target_soc_percent": plan.get("target_soc_7_percent"),
+            "required_night_charge_kwh": plan.get("required_night_charge_kwh"),
+            "stop_reason": stop_reason,
+            "last_soc_percent": None if reading is None else reading.value_percent,
+            "last_soc_source": source,
+            "last_soc_observed_at": None if reading is None or reading.observed_at is None else reading.observed_at.isoformat(),
+            "standby_attempted": standby_attempted, "standby_outcome": standby_outcome,
+        }
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")), flush=True)
+    except Exception:
+        return
+
+
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): this is
 # the sole public 03 controller.  Do not add forced reapply, lease, terminal
 # persistence, Firestore, DB, or manual hand-off.  The sequence is forced=3,
@@ -173,8 +210,19 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     )
     print(f"[cloud_job_runner] 03-monitor contract target={target:.2f}% exact_target_stop=true configured_stop_margin={settings.stop_soc_margin_percent:.2f}% applied_stop_margin=0.00%", flush=True)
     paths = _latest_kpnet_csv_paths(Path(os.getenv("ARTIFACTS_DIR", "artifacts")))
+    standby_attempted = False
+    standby_outcome = "not_attempted"
+    failure_phase = "initial_soc"
     def standby(label: str) -> None:
-        if may_start_final_standby(now()): device.apply_profile(profile="standby", dynamic_forced_profile=False, label=label)
+        nonlocal standby_attempted, standby_outcome
+        if not may_start_final_standby(now()): return
+        standby_attempted = True
+        try:
+            device.apply_profile(profile="standby", dynamic_forced_profile=False, label=label)
+            standby_outcome = "success"
+        except Exception:
+            standby_outcome = "failed"
+            raise
     def log_soc(reading: SocReading) -> None:
         latest = reading.value_percent
         action = "soc_unavailable" if latest is None else "target_reached" if latest >= target else "continue"
@@ -187,38 +235,58 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         # Literal contract: every configured target begins the forced/readback path.
         # No new KP settings write may start after 06:50: reserve the final
         # five minutes for an already-running operation to terminate cleanly.
-        if not may_start_03_io(now()) or must_stop_forced_monitoring(now()): return
+        if not may_start_03_io(now()) or must_stop_forced_monitoring(now()):
+            _emit_03_terminal_audit(plan, stop_reason="monitor_cutoff", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
+            return
+        failure_phase = "forced"
         device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
+        failure_phase = "monitor"
         if latest is None:
             print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
-            standby("03-immediate-standby"); return
+            standby("03-immediate-standby"); _emit_03_terminal_audit(plan, stop_reason="soc_unavailable", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
         if latest >= target:
             print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
-            standby("03-immediate-standby"); return
+            standby("03-immediate-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
         if must_stop_forced_monitoring(now()):
-            standby("03-immediate-standby"); return
+            standby("03-immediate-standby")
+            _emit_03_terminal_audit(plan, stop_reason="monitor_cutoff", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
+            return
     except Exception as error:
         try: standby("03-forced-error-standby")
-        except Exception as standby_error: print(f"[cloud_job_runner] 03 standby failure: {standby_error}", flush=True)
+        except Exception: print("[cloud_job_runner] 03 standby failure", flush=True)
+        if failure_phase == "forced":
+            stop_reason = "forced_failure"
+        elif standby_outcome == "failed":
+            stop_reason = "standby_failure"
+        else:
+            stop_reason = "monitor_failure"
+        _emit_03_terminal_audit(plan, stop_reason=stop_reason, latest=initial if "initial" in locals() else None, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
         raise error
     # Empirical 14-day CSV trend/EWMA selects ETA; env fallback is used only by
     # that estimator when no valid charged interval exists.
-    rate_info = estimate_forced_charge_rate_percent_per_hour(paths)
-    estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
-    while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
-        reading = device.read_soc(paths); latest = reading.value_percent
-        log_soc(reading)
-        if latest is None:
-            print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
-            standby("03-target-reached-standby"); return
-        if latest >= target:
-            print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
-            standby("03-target-reached-standby"); return
-        delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
-        if delay <= 0: break
-        clock.sleep(delay)
-    print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
-    standby("03-monitor-cutoff-standby")
+    latest_reading = initial
+    try:
+        rate_info = estimate_forced_charge_rate_percent_per_hour(paths)
+        estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
+        while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
+            reading = device.read_soc(paths); latest = reading.value_percent
+            latest_reading = reading
+            log_soc(reading)
+            if latest is None:
+                print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
+                standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="soc_unavailable", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
+            if latest >= target:
+                print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
+                standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
+            delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
+            if delay <= 0: break
+            clock.sleep(delay)
+        print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
+        standby("03-monitor-cutoff-standby")
+        _emit_03_terminal_audit(plan, stop_reason="monitor_cutoff", latest=latest_reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
+    except Exception:
+        _emit_03_terminal_audit(plan, stop_reason="standby_failure" if standby_outcome == "failed" else "monitor_failure", latest=latest_reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
+        raise
 
 
 def _run_settings_profile_with_retry(*, profile: str, dynamic_forced_profile: bool, label: str | None = None) -> None:

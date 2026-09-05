@@ -21,6 +21,7 @@
 | `app/runtime/night_soc_controller.py::build_device_soc_guard`、`app/kpnet/profile_builder.py::_build_dynamic_forced_profile` | `d1d7792`、2026-08-23実機確認 | 実機の `SocChargeMode` は最大50%までで、計画SOCは50%を超え得る。このとき50%候補で強制充電を開始し、03時監視が連続値の計画SOC到達で待機へ遷移する | 最大候補未満を強制開始エラーに戻さない。`SocChargeMode` を停止閾値に使わず、連続目標と停止閾値を03時監視に残す。変更時は50%強制開始・read-back・60秒後の復元と待機遷移を再検証する |
 | `app/runtime/slot_orchestration.py::_run_night_23` / `_run_adjust_03` / `_run_day_07`、`app/runtime/night_soc_time_contract.py` | 2026-08-29 利用者承認による `d1d7792` / `f2cfa51` の cross-slot ownership 置換 | 03の失敗・再試行や遅い03書込みが07 greenを止め、または07後にgreenを上書きする | 23はstandby一回、07はgreen一回を無条件read-backし、03は06:45 realtime監視停止・06:50最終standby開始停止・06:55 I/O停止の単独所有とする。時刻は `night_soc_time_contract.py` を唯一の実行根拠とし、23/07へcross-slot依存を戻さない。|
 | `app/runtime/plan_persistence.py::acquire_night_soc_lease` | `79361c4`, `f910b98`, `0a804f4` | Firestore transaction の呼び出し順・generator互換性・既存リース判定の不整合で、所有権取得を誤って拒否または上書きする | このlegacy persistence契約はslot controlの外側だけに適用する。23/03/07のdevice controlへlease判定を戻さない。transaction は read 前に開始し、plan_id・owner・有効期限を維持する。 |
+
 | `scripts/deploy_production_from_env.ps1::Get-DeploymentStageRecord`、`Invoke-DeploymentStage` | `0bc046b`, `92c32d0`, `5e46ff8` | 実行済みCloud操作が状態ファイルへ保存されず、再実行で不要な再ビルド・再実行や手戻りが発生する | OrderedDictionary と PSCustomObject の両方を明示的に扱う。成功した段階だけを resume でスキップし、stage状態の動的メンバー解決に戻さない |
 | `app/forecasting/pv_physical.py::HOURS`、`OUTPUT_HOURS`、補正スケール | `4af0d59`, `f35a74f` | 05:00の物理PV出力を追加する際に、既存の07:00以降のSOC計画・校正スケールまで変わる | 出力時間窓の拡張と、既存計画時間の校正を分離する。時間窓・EWMA/実績比率の意味を変更する場合は同一入力の前後比較を行う |
 | `app/energy_plan/monthly_projection.py::previous_billing_period_for_target`、本番の月次料金環境値 | `541cd60` | 当月前半の観測だけ、または根拠のない第3段階ペナルティを使い、SOC目標に余計なバイアスを加える | 前月の実績を基準にし、料金・売電・ペナルティの未確認契約値を発明しない。料金入力はCSV読込から目的関数まで通し、raw集計と計画値を比較する |
@@ -29,6 +30,8 @@
 | `app/kpnet/workflow.py::_preserve_night_soc_fields` (`EVIDENCE_20260829_SLOT23_PRESERVE`) | 2026-08-28 23:00実機読戻しでgreen=1のまま | `batteryOperatingMode`までpreserveするとstandby=5をgreen=1で上書きし、23:00成功ログ後も物理的にgreenのままになる | modeをpreserveへ追加せず、12個のSOC/時刻フィールドだけを維持する。局所lock検査とgreen1→standby5回帰テストを必須とする。 |
 | `app/kpnet/profile_builder.py::_pick_battery_operating_mode_code` (`EVIDENCE_20260829_STANDBY_CANDIDATE`) | 2026-08-29実機候補値（0=economy, 1=green, 3=forced, 5=standby） | 旧standby=0 fallbackは経済モードを書き、待機read-backの意味を壊す | standbyは候補ラベルから5を選び、候補不在はfail closedする。実候補4値の回帰テストを必須とする。 |
 | `scripts/deploy_gcp_jobs.ps1` 03 Job `--max-retries 0` (`EVIDENCE_20260829_JOB03_RETRY`) | 2026-08-29 Cloud Run再試行で別plan_id生成後にlease拒否 | retry=1以上は二回目のlease拒否で一次KP-NET read-back不一致を覆い隠し、07:00用終端を残さない | platform retryを0に固定し、内部KP retryは維持する。局所マーカーと03 deploy行のsemantic testを必須とする。 |
+
+`app/runtime/cloud_job.py::_monitor_partial_forced_and_stop` は、03制御結果の監査用として、単独のJSON stdout行（`message="03-terminal-audit"`）を最大1件出力してよい。この出力はbest-effortで、失敗しても制御・exit code・07へ影響してはならない。Firestore、DB、lease、owner、cross-slot hand-off、terminal-state保存は引き続き禁止する。
 
 ## 履歴の扱い
 
