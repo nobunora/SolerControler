@@ -127,15 +127,24 @@ def _firestore_monitoring_daily(
         ],
     )
     daily_by_date = {str(row.get("date")): row for row in daily_rows if row.get("date")}
-    actual_fields = ("actual_pv_kwh", "actual_load_kwh")
-    needed_fields_by_date = {
-        day: {
-            field
-            for field in actual_fields
-            if daily_by_date.get(day, {}).get(field) is None
-        }
-        for day in _dates_inclusive(start_date, end_date_iso)
-    }
+    summable_fields = (
+        "actual_pv_kwh",
+        "actual_load_kwh",
+        "buy_kwh",
+        "sell_kwh",
+        "charge_kwh",
+        "discharge_kwh",
+    )
+    needed_fields_by_date: dict[str, set[str]] = {}
+    for day in _dates_inclusive(start_date, end_date_iso):
+        daily = daily_by_date.get(day, {})
+        # Preserve the historical contract: complete authoritative PV/load avoids
+        # an extra raw scan. When either actual is absent, use the same complete
+        # 48-slot evidence to recover every available energy-flow field.
+        if daily.get("actual_pv_kwh") is None or daily.get("actual_load_kwh") is None:
+            needed_fields_by_date[day] = {
+                field for field in summable_fields if daily.get(field) is None
+            }
     needed_fields_by_date = {
         day: fields for day, fields in needed_fields_by_date.items() if fields
     }
@@ -167,7 +176,7 @@ def _firestore_monitoring_daily(
                     "sample_slots": set(),
                     "first_sample_at": ts,
                     "latest_sample_at": ts,
-                    "field_slots": {field: {} for field in actual_fields},
+                    "field_slots": {field: {} for field in summable_fields},
                 },
             )
             acc["sample_slots"].add(half_hour)
@@ -176,6 +185,10 @@ def _firestore_monitoring_daily(
             for source, target in (
                 ("pv_kwh", "actual_pv_kwh"),
                 ("load_kwh", "actual_load_kwh"),
+                ("buy_kwh", "buy_kwh"),
+                ("sell_kwh", "sell_kwh"),
+                ("charge_kwh", "charge_kwh"),
+                ("discharge_kwh", "discharge_kwh"),
             ):
                 value = to_float(row.get(source))
                 if target in needed_fields and value is not None:

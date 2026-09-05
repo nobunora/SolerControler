@@ -391,6 +391,23 @@ def test_production_deploy_supports_non_mutating_validation() -> None:
     assert "No deployment was performed" in script
 
 
+def test_forecast_scheduler_access_repair_is_scoped_and_verifiable() -> None:
+    script = (ROOT / "scripts" / "repair_forecast_scheduler_access_from_env.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Import-ProductionEnv" in script
+    assert "solar-forecast-daily-0230" in script
+    assert "solar-forecast-daily" in script
+    assert "roles/run.invoker" in script
+    assert "[switch]$ValidateOnly" in script
+    assert "get-iam-policy" in script
+    assert "add-iam-policy-binding" in script
+    assert "solar-battery-23" not in script
+    assert "solar-battery-03" not in script
+    assert "solar-battery-07" not in script
+
+
 def test_production_deploy_skips_duplicate_legacy_capacity_subprocess() -> None:
     script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(
         encoding="utf-8"
@@ -406,7 +423,7 @@ def test_production_deploy_auto_scope_skips_irrelevant_cloud_work() -> None:
         encoding="utf-8"
     )
 
-    assert "[ValidateSet('auto', 'full', 'runner', 'dashboard')]" in script
+    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]" in script
     assert "function Resolve-DeploymentScope" in script
     assert "Get-LastCompletedDeploymentCommit" in script
     assert "No deployable runner or dashboard source changed" in script

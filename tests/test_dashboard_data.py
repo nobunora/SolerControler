@@ -927,7 +927,7 @@ def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samp
     assert merged[2]["actual_soc_percent"] == pytest.approx(51)
 
 
-def test_soc_target_warning_uses_exact_0700_soc_not_pv_charge_end_soc() -> None:
+def test_soc_target_warning_uses_last_pre_green_soc_not_pv_charge_end_soc() -> None:
     warnings = _build_dashboard_warnings(
         latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
         battery_daily=[
@@ -941,10 +941,16 @@ def test_soc_target_warning_uses_exact_0700_soc_not_pv_charge_end_soc() -> None:
         forecast_hourly=[
             {
                 "date": "2026-08-29",
+                "hour": 6,
+                "latest_sample_at": "2026-08-29T06:30:00",
+                "actual_soc_percent": 100,
+            },
+            {
+                "date": "2026-08-29",
                 "hour": 7,
                 "first_sample_at": "2026-08-29T07:00:00",
-                "opening_soc_percent": 100,
-            }
+                "opening_soc_percent": 92,
+            },
         ],
         end_date_iso="2026-08-29",
         today_jst_iso="2026-09-01",
@@ -953,7 +959,7 @@ def test_soc_target_warning_uses_exact_0700_soc_not_pv_charge_end_soc() -> None:
     assert "soc_target_unreached" not in {row["code"] for row in warnings}
 
 
-def test_soc_target_warning_fires_when_exact_0700_soc_is_below_target() -> None:
+def test_soc_target_warning_fires_when_last_pre_green_soc_is_below_target() -> None:
     warnings = _build_dashboard_warnings(
         latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
         battery_daily=[
@@ -967,9 +973,9 @@ def test_soc_target_warning_fires_when_exact_0700_soc_is_below_target() -> None:
         forecast_hourly=[
             {
                 "date": "2026-08-29",
-                "hour": 7,
-                "first_sample_at": "2026-08-29T07:00:00",
-                "opening_soc_percent": 93,
+                "hour": 6,
+                "latest_sample_at": "2026-08-29T06:30:00",
+                "actual_soc_percent": 93,
             }
         ],
         end_date_iso="2026-08-29",
@@ -981,12 +987,12 @@ def test_soc_target_warning_fires_when_exact_0700_soc_is_below_target() -> None:
         "date": "2026-08-29",
         "target_soc_percent": 100.0,
         "observed_soc_percent": 93.0,
-        "observed_at": "2026-08-29T07:00:00",
-        "source": "monitoring-sample-07:00",
+        "observed_at": "2026-08-29T06:30:00",
+        "source": "monitoring-sample-pre-07-green",
     }
 
 
-def test_soc_target_warning_does_not_substitute_0730_for_missing_0700_sample() -> None:
+def test_soc_target_warning_does_not_substitute_0700_after_green_for_missing_pre_green_sample() -> None:
     warnings = _build_dashboard_warnings(
         latest_schedule={"status": "fallback-default", "plan_date": "2026-08-29"},
         battery_daily=[{"date": "2026-08-29", "setting_soc_target_percent": 100}],
@@ -995,7 +1001,7 @@ def test_soc_target_warning_does_not_substitute_0730_for_missing_0700_sample() -
             {
                 "date": "2026-08-29",
                 "hour": 7,
-                "first_sample_at": "2026-08-29T07:30:00",
+                "first_sample_at": "2026-08-29T07:00:00",
                 "opening_soc_percent": 80,
             }
         ],
@@ -1529,7 +1535,7 @@ def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_war
         conn.execute(
             """
             INSERT INTO monitoring_samples(ts, pv_kwh, load_kwh, soc_percent, ingested_at)
-            VALUES ('2026-06-03T07:00:00', 1.0, 0.8, 70, '2026-06-03T23:10:00')
+            VALUES ('2026-06-03T06:30:00', 1.0, 0.8, 70, '2026-06-03T23:10:00')
             """
         )
         conn.execute(
@@ -1537,7 +1543,7 @@ def test_dashboard_warns_when_soc_target_is_unreached_without_false_schedule_war
             INSERT INTO forecast_hourly(
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh, source, updated_at
             )
-            VALUES ('2026-06-03', 7, 1.0, 1.0, 0.0, 'test', '2026-06-03T00:00:00')
+            VALUES ('2026-06-03', 6, 1.0, 1.0, 0.0, 'test', '2026-06-03T00:00:00')
             """
         )
         conn.commit()

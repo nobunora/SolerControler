@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -9,6 +9,9 @@ from app.parsing.numbers import to_float
 
 
 _JST = ZoneInfo("Asia/Tokyo")
+_RECONSTRUCTED_FORECAST_SOURCE = "historical_reconstructed_estimate"
+_NON_ORIGINAL_LOAD_SOURCES = {"", "legacy_rolling_14d_estimate", _RECONSTRUCTED_FORECAST_SOURCE}
+_NON_ORIGINAL_PV_SOURCES = {"", _RECONSTRUCTED_FORECAST_SOURCE}
 
 
 def _latest_row_by_date(rows: list[dict[str, Any]], *, date_key: str = "date") -> dict[str, Any] | None:
@@ -23,13 +26,16 @@ def _morning_target_soc_observation(
     *,
     date_iso: str,
 ) -> tuple[float, str] | None:
+    # HISTORICAL_FAILURE_LOCK (2026-09-05): the unconditional 07:00 green
+    # transition may discharge before the 07:00 monitoring sample is stored.
+    # Judge the night-charge target only from the final pre-green sample.
     for row in forecast_hourly:
-        if str(row.get("date") or "") != date_iso or to_float(row.get("hour")) != 7:
+        if str(row.get("date") or "") != date_iso or to_float(row.get("hour")) != 6:
             continue
-        opening_soc = to_float(row.get("opening_soc_percent"))
-        if opening_soc is None or not 0.0 <= opening_soc <= 100.0:
+        observed_soc = to_float(row.get("actual_soc_percent"))
+        if observed_soc is None or not 0.0 <= observed_soc <= 100.0:
             continue
-        timestamp_text = str(row.get("first_sample_at") or "").strip()
+        timestamp_text = str(row.get("latest_sample_at") or "").strip()
         if not timestamp_text:
             continue
         try:
@@ -40,9 +46,9 @@ def _morning_target_soc_observation(
             timestamp = timestamp.astimezone(_JST)
         if timestamp.date().isoformat() != date_iso:
             continue
-        if (timestamp.hour, timestamp.minute, timestamp.second, timestamp.microsecond) != (7, 0, 0, 0):
+        if (timestamp.hour, timestamp.minute, timestamp.second, timestamp.microsecond) != (6, 30, 0, 0):
             continue
-        return opening_soc, timestamp_text
+        return observed_soc, timestamp_text
     return None
 
 
@@ -57,6 +63,70 @@ def _has_plan_specific_settings_event(latest_schedule: dict[str, Any]) -> bool:
         "03-dynamic",
         "03-no-charge",
     }
+
+
+def _recent_completed_energy_rows(
+    energy_daily: list[dict[str, Any]],
+    *,
+    today_jst_iso: str,
+    lookback_days: int = 7,
+) -> list[dict[str, Any]]:
+    try:
+        today = date.fromisoformat(today_jst_iso)
+    except ValueError:
+        return []
+    yesterday = today - timedelta(days=1)
+    start = yesterday - timedelta(days=max(1, lookback_days) - 1)
+    return [
+        row
+        for row in energy_daily
+        if row.get("date")
+        and start.isoformat() <= str(row.get("date")) <= yesterday.isoformat()
+    ]
+
+
+def _is_reconstructed_forecast(row: dict[str, Any]) -> bool:
+    pv_source = str(row.get("forecast_pv_source") or "")
+    load_source = str(row.get("forecast_load_source") or "")
+    return bool(row.get("forecast_is_reconstructed")) or (
+        pv_source == _RECONSTRUCTED_FORECAST_SOURCE
+        or load_source == _RECONSTRUCTED_FORECAST_SOURCE
+    )
+
+
+def _history_health(
+    energy_daily: list[dict[str, Any]],
+    *,
+    today_jst_iso: str,
+) -> tuple[list[str], list[str], list[str]]:
+    # Reconstruction provenance is user-visible for every displayed date, including
+    # older history. Missing-evidence health alerts are restricted to recent completed
+    # days so browsing a historical window does not produce stale operational alarms.
+    reconstructed_dates = sorted(
+        {
+            str(row.get("date"))
+            for row in energy_daily
+            if row.get("date") and _is_reconstructed_forecast(row)
+        }
+    )
+    original_forecast_missing_dates: list[str] = []
+    actual_missing_dates: list[str] = []
+    for row in _recent_completed_energy_rows(energy_daily, today_jst_iso=today_jst_iso):
+        day = str(row.get("date"))
+        pv_source = str(row.get("forecast_pv_source") or "")
+        load_source = str(row.get("forecast_load_source") or "")
+        if pv_source in _NON_ORIGINAL_PV_SOURCES or load_source in _NON_ORIGINAL_LOAD_SOURCES:
+            original_forecast_missing_dates.append(day)
+        if (
+            to_float(row.get("actual_pv_kwh")) is None
+            or to_float(row.get("actual_load_kwh")) is None
+        ):
+            actual_missing_dates.append(day)
+    return (
+        reconstructed_dates,
+        sorted(set(original_forecast_missing_dates)),
+        sorted(set(actual_missing_dates)),
+    )
 
 
 # readable-code-audit: skip STRUCT-04 — the warning list intentionally evaluates schedule, completion, and freshness together so related user-visible warnings are not suppressed independently
@@ -101,13 +171,13 @@ def build_dashboard_warnings(
                 "soc_target_unreached",
                 "warning",
                 "朝7時目標SOC未達",
-                f"{latest_battery.get('date')} 07:00のSOCが目標より低いです。",
+                f"{latest_battery.get('date')} 07時制御前のSOCが目標より低いです。",
                 {
                     "date": latest_battery.get("date"),
                     "target_soc_percent": target_soc,
                     "observed_soc_percent": morning_observation[0],
                     "observed_at": morning_observation[1],
-                    "source": "monitoring-sample-07:00",
+                    "source": "monitoring-sample-pre-07-green",
                 },
             )
         schedule_plan_date = str(latest_schedule.get("plan_date") or "")
@@ -148,6 +218,35 @@ def build_dashboard_warnings(
             "CSV実績未更新",
             "表示終了日の実績CSVがまだ反映されていない可能性があります。",
             {"latest_actual_date": latest_actual, "display_end_date": end_date_iso},
+        )
+
+    reconstructed_dates, original_forecast_missing_dates, actual_missing_dates = _history_health(
+        energy_daily,
+        today_jst_iso=today_jst_iso,
+    )
+    if reconstructed_dates:
+        add(
+            "history_forecast_reconstructed",
+            "info",
+            "履歴予測は再構成値",
+            "当時保存された予測ではなく、履歴入力から後日再構成した推定値を表示している日があります。",
+            {"dates": reconstructed_dates, "source": _RECONSTRUCTED_FORECAST_SOURCE},
+        )
+    if original_forecast_missing_dates:
+        add(
+            "history_original_forecast_missing",
+            "warning",
+            "履歴予測の原本証拠が不足",
+            "直近の完了日に、当時保存されたPV/消費予測の原本証拠が不足している日があります。",
+            {"dates": original_forecast_missing_dates},
+        )
+    if actual_missing_dates:
+        add(
+            "history_actual_missing",
+            "warning",
+            "履歴実績が不完全",
+            "直近の完了日に、完全なPV/消費実績を構成できない日があります。",
+            {"dates": actual_missing_dates},
         )
 
     completed = bool(latest_schedule.get("settings_completed"))

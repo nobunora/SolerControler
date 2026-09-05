@@ -139,7 +139,9 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
-                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at
+                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at,
+                       fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
+                       fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis
                 FROM forecast_hourly fh
                 LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
                 LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
@@ -149,20 +151,44 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []
         if _sqlite_table_exists(conn, "monitoring_samples"):
-            monitoring_daily = _rows_to_dicts(conn.execute("""
+            raw_monitoring_daily = _rows_to_dicts(conn.execute("""
                 SELECT substr(ts,1,10) AS date,
                        COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
-                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
-                FROM monitoring_samples WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
-                GROUP BY substr(ts,1,10) ORDER BY date
-                """, (history_start, end_date_iso)).fetchall())
-            battery_flow_daily = _rows_to_dicts(conn.execute("""
-                SELECT substr(ts,1,10) AS date,
+                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
                        COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
                        COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
                 FROM monitoring_samples WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
                 GROUP BY substr(ts,1,10) ORDER BY date
-                """, (start_date, end_date_iso)).fetchall())
+                """, (history_start, end_date_iso)).fetchall())
+            authoritative_daily: list[dict[str, Any]] = []
+            if _sqlite_table_exists(conn, "dashboard_daily_metrics"):
+                authoritative_daily = _rows_to_dicts(conn.execute("""
+                    SELECT date, actual_pv_kwh, actual_load_kwh, charge_kwh, discharge_kwh
+                    FROM dashboard_daily_metrics
+                    WHERE date >= ? AND date <= ? ORDER BY date
+                    """, (history_start, end_date_iso)).fetchall())
+            raw_by_date = {str(row["date"]): row for row in raw_monitoring_daily}
+            authoritative_by_date = {str(row["date"]): row for row in authoritative_daily}
+            monitoring_daily = []
+            for day in sorted(set(raw_by_date) | set(authoritative_by_date)):
+                authoritative = authoritative_by_date.get(day, {})
+                raw = raw_by_date.get(day, {})
+                monitoring_daily.append({
+                    "date": day,
+                    "actual_pv_kwh": authoritative.get("actual_pv_kwh") if authoritative.get("actual_pv_kwh") is not None else raw.get("actual_pv_kwh"),
+                    "actual_load_kwh": authoritative.get("actual_load_kwh") if authoritative.get("actual_load_kwh") is not None else raw.get("actual_load_kwh"),
+                    "charge_kwh": authoritative.get("charge_kwh") if authoritative.get("charge_kwh") is not None else raw.get("charge_kwh"),
+                    "discharge_kwh": authoritative.get("discharge_kwh") if authoritative.get("discharge_kwh") is not None else raw.get("discharge_kwh"),
+                })
+            battery_flow_daily = [
+                {
+                    "date": row["date"],
+                    "charge_kwh": row.get("charge_kwh"),
+                    "discharge_kwh": row.get("discharge_kwh"),
+                }
+                for row in monitoring_daily
+                if start_date <= str(row.get("date", "")) <= end_date_iso
+            ]
 
         all_cost_daily: list[dict[str, Any]] = []
         model_parameters: list[dict[str, Any]] = []

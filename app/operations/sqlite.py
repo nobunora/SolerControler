@@ -177,6 +177,27 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS dashboard_daily_metrics (
+            date TEXT PRIMARY KEY,
+            actual_pv_kwh REAL,
+            actual_load_kwh REAL,
+            buy_kwh REAL,
+            sell_kwh REAL,
+            charge_kwh REAL,
+            discharge_kwh REAL,
+            day_buy_kwh REAL,
+            night_buy_kwh REAL,
+            review_night_charge_kwh REAL,
+            morning_soc_percent REAL,
+            soc_min_percent REAL,
+            soc_max_percent REAL,
+            day_soc_max_percent REAL,
+            sample_count INTEGER,
+            first_sample_at TEXT,
+            latest_sample_at TEXT,
+            updated_at TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS model_parameters (
             name TEXT PRIMARY KEY,
             mean_value REAL NOT NULL,
@@ -211,6 +232,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             forecast_dew_point_c REAL,
             forecast_wind_speed_10m REAL,
             source TEXT,
+            is_reconstructed INTEGER,
+            forecast_reconstruction_id TEXT,
+            forecast_reconstructed_at TEXT,
+            forecast_reconstruction_model_version TEXT,
+            forecast_reconstruction_basis TEXT,
             updated_at TEXT NOT NULL,
             PRIMARY KEY(date, hour)
         );
@@ -247,6 +273,11 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "forecast_relative_humidity_percent": "REAL",
             "forecast_dew_point_c": "REAL",
             "forecast_wind_speed_10m": "REAL",
+            "is_reconstructed": "INTEGER",
+            "forecast_reconstruction_id": "TEXT",
+            "forecast_reconstructed_at": "TEXT",
+            "forecast_reconstruction_model_version": "TEXT",
+            "forecast_reconstruction_basis": "TEXT",
         },
     )
     _ensure_sqlite_columns(

@@ -24,7 +24,7 @@
 | `scripts/deploy_production_from_env.ps1::Get-DeploymentStageRecord`、`Invoke-DeploymentStage` | `0bc046b`, `92c32d0`, `5e46ff8` | 実行済みCloud操作が状態ファイルへ保存されず、再実行で不要な再ビルド・再実行や手戻りが発生する | OrderedDictionary と PSCustomObject の両方を明示的に扱う。成功した段階だけを resume でスキップし、stage状態の動的メンバー解決に戻さない |
 | `app/forecasting/pv_physical.py::HOURS`、`OUTPUT_HOURS`、補正スケール | `4af0d59`, `f35a74f` | 05:00の物理PV出力を追加する際に、既存の07:00以降のSOC計画・校正スケールまで変わる | 出力時間窓の拡張と、既存計画時間の校正を分離する。時間窓・EWMA/実績比率の意味を変更する場合は同一入力の前後比較を行う |
 | `app/energy_plan/monthly_projection.py::previous_billing_period_for_target`、本番の月次料金環境値 | `541cd60` | 当月前半の観測だけ、または根拠のない第3段階ペナルティを使い、SOC目標に余計なバイアスを加える | 前月の実績を基準にし、料金・売電・ペナルティの未確認契約値を発明しない。料金入力はCSV読込から目的関数まで通し、raw集計と計画値を比較する |
-| `app/kpnet/settings_roundtrip.py::run_settings_roundtrip`、`scripts/deploy_gcp_jobs.ps1` の設定テストJob | `ee84e43`, `bf48f42`, `5e46ff8` | 実機設定を変更したまま戻らない、または実行済みテストがデプロイ状態に記録されない | 実行時だけ有効、保持時間は60秒固定、初期スナップショットへ復元してread-back確認、Cloud Run retryは0回、Schedulerは作らない。復元処理と状態記録を削除・省略しない |
+| `app/kpnet/settings_roundtrip.py::run_settings_roundtrip`、`scripts/deploy_gcp_jobs.ps1` の設定テストJob、`scripts/deploy_production_from_env.ps1` の `settings_roundtrip` stage | `ee84e43`, `bf48f42`, `5e46ff8`、2026-09-04 非制御scope境界 | 実機設定を変更したまま戻らない、実行済みテストがデプロイ状態に記録されない、またはdashboard/forecast-only検証のためだけに無関係な実機設定変更を発生させる | runner/fullではsettings round-tripを必須とし、実行時だけ有効、保持時間60秒固定、初期スナップショットへ復元してread-back確認、Cloud Run retryは0回、Schedulerは作らない。復元処理と状態記録を削除・省略しない。dashboard-onlyと、control Job revisionを変更しない明示`forecast` scopeでは実機round-tripを起動せず、stageを`skipped_not_applicable`として記録する。これらのscopeで`skipped_manual`へ緩めたり、逆に実機round-tripを追加したりしない。 |
 | `app/settings/forced_charge.py::ForcedChargeSettings.from_env`、03 Job target | 2026-08-29 利用者承認 | 計画値と実機制御値の差を隠す | 0/30/50/80/100 を連続した実効目標とし、0は直ちにstandbyへ遷移する。|
 | `app/kpnet/workflow.py::_preserve_night_soc_fields` (`EVIDENCE_20260829_SLOT23_PRESERVE`) | 2026-08-28 23:00実機読戻しでgreen=1のまま | `batteryOperatingMode`までpreserveするとstandby=5をgreen=1で上書きし、23:00成功ログ後も物理的にgreenのままになる | modeをpreserveへ追加せず、12個のSOC/時刻フィールドだけを維持する。局所lock検査とgreen1→standby5回帰テストを必須とする。 |
 | `app/kpnet/profile_builder.py::_pick_battery_operating_mode_code` (`EVIDENCE_20260829_STANDBY_CANDIDATE`) | 2026-08-29実機候補値（0=economy, 1=green, 3=forced, 5=standby） | 旧standby=0 fallbackは経済モードを書き、待機read-backの意味を壊す | standbyは候補ラベルから5を選び、候補不在はfail closedする。実候補4値の回帰テストを必須とする。 |
@@ -37,5 +37,7 @@
 ## 03時の実機確認基準
 
 時刻境界の自動テストは、締切後に新しいHTTP要求・再試行・retry sleepを開始しないことを確認する。既にKP-NETへ送出済みの非同期要求をクライアントだけで取り消せる保証ではない。本番反映後は、03実行ログとKP-NETのread-backで、06:45以後にSOC realtime要求がないこと、06:50前に開始した最終standbyが候補5でread-backされること、07:00のgreenが候補1でread-backされることを確認する。
+
+ダッシュボードの朝SOC目標判定は、07:00のgreen切替後に同時刻の放電が反映される競合を避けるため、green切替前の最終30分実績（通常06:30）のみを使う。06:30実績がない場合に07:00以後のSOCで代用してはならない。変更時は、06:30で目標到達後に07:00で低下しても未達警告を出さないことと、06:30で真に未達なら警告することを回帰テストで固定する。
 
 `docs/current/architecture/NIGHT_SOC_SINGLE_OWNER_IMPLEMENTATION_SPEC_JA.md` は退役済みの歴史的設計であり、現行指示として扱わない。現行の23/03/07責務と時刻境界は `app/runtime/night_soc_time_contract.py` のみを根拠とする。退役文書の旧ゲート、手動スロットskip、再適用を現行契約へ戻してはならない。
