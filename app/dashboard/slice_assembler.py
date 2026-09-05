@@ -113,7 +113,9 @@ def merge_display_plan_into_battery_daily(
     if not plan_date or (target_soc is None and night_charge is None):
         return battery_daily
     merged_rows = [dict(row) for row in battery_daily]
-    row = next((item for item in merged_rows if str(item.get("date")) == plan_date), None)
+    row: dict[str, Any] | None = next(
+        (item for item in merged_rows if str(item.get("date")) == plan_date), None
+    )
     if row is None:
         row = {"date": plan_date}
         merged_rows.append(row)
