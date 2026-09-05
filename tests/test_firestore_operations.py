@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.operations.firestore import recalc_cost_daily
+from app.operations.firestore import recalc_battery_pv_charge_end_soc, recalc_cost_daily
 
 
 class _Document:
@@ -77,3 +77,32 @@ def test_firestore_daily_cost_maps_domain_result_to_existing_document() -> None:
         )
     ]
     assert client.commits == 1
+
+
+def test_pv_charge_end_recalculation_creates_missing_daily_metric() -> None:
+    client = _Client()
+    client.monitoring = [
+        _Document(
+            "2026-05-01T12:30:00+09:00",
+            {"pv_kwh": 0.5, "charge_kwh": 0.2, "soc_percent": 63.0},
+        )
+    ]
+
+    updated = recalc_battery_pv_charge_end_soc(
+        client,
+        updated_at="2026-05-02T00:00:00Z",
+    )
+
+    assert updated == 1
+    assert client.writes == [
+        (
+            "2026-05-01",
+            {
+                "date": "2026-05-01",
+                "pv_charge_end_soc_percent": 63.0,
+                "pv_charge_end_at": "2026-05-01T12:30:00+09:00",
+                "updated_at": "2026-05-02T00:00:00Z",
+            },
+            True,
+        )
+    ]

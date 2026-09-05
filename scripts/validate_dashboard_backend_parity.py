@@ -23,7 +23,31 @@ DATASETS = (
     "energy_daily",
     "forecast_hourly",
 )
-IGNORED_FIELDS = {"battery_daily": {"updated_at"}}
+IGNORED_FIELDS = {
+    "battery_daily": {"updated_at"},
+    # SQLite is a flattened validation read model. Reconstruction metadata is
+    # retained there for daily aggregation, but original hourly rows expose the
+    # nullable schema columns while Firestore omits absent document fields.
+    "forecast_hourly": {
+        "updated_at",
+        "is_reconstructed",
+        "forecast_reconstruction_id",
+        "forecast_reconstructed_at",
+        "forecast_reconstruction_model_version",
+        "forecast_reconstruction_basis",
+        "forecast_reconstruction_input_provenance",
+        "source_plan_sha256",
+        "forecast_weather_code",
+        "forecast_precipitation_mm",
+        "forecast_precipitation_probability",
+        "forecast_cloud_cover",
+        "forecast_shortwave_radiation_w_m2",
+        "forecast_temp_c",
+        "forecast_relative_humidity_percent",
+        "forecast_dew_point_c",
+        "forecast_wind_speed_10m",
+    },
+}
 
 
 def _same_value(left: Any, right: Any) -> bool:

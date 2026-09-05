@@ -166,6 +166,21 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 
 ## 4. 本番反映の合格条件
 
+### 予測Schedulerの認可修復
+
+02:30 forecast SchedulerがHTTP 403で失敗し、予測Job本体の手動実行が成功する場合は、
+Scheduler用service accountの`roles/run.invoker`欠損を疑う。認可状態の検証と修復には、
+`.env`を直接展開せず次の専用ラッパーだけを使用する。
+
+```powershell
+pwsh -NoProfile -File scripts/repair_forecast_scheduler_access_from_env.ps1 -ValidateOnly
+pwsh -NoProfile -File scripts/repair_forecast_scheduler_access_from_env.ps1
+```
+
+修復後は`-ValidateOnly`を再実行し、Schedulerを1回実行してCloud Run executionの
+`Completed=True`、`ResourcesAvailable=True`、`Started=True`、`ContainerReady=True`と
+failed task 0を確認する。この修復は23/03/07 Job、機器settings、control collectionを変更しない。
+
 ### runner / full
 
 次のすべてを確認します。

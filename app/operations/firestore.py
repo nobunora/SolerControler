@@ -454,12 +454,10 @@ def recalc_battery_pv_charge_end_soc(client: Any, *, updated_at: str) -> int:
     updated = 0
     for day, (ts, soc) in latest_by_day.items():
         ref = client.collection("battery_daily_metrics").document(day)
-        snap = ref.get()
-        if not snap.exists:
-            continue
         batch.set(
             ref,
             {
+                "date": day,
                 "pv_charge_end_soc_percent": soc,
                 "pv_charge_end_at": ts,
                 "updated_at": updated_at,

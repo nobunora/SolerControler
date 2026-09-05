@@ -8,7 +8,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.dashboard.aggregation import _build_energy_daily
-from app.dashboard.firestore_repository import _EXPECTED_HALF_HOUR_SLOTS, _snapshot_cutoff
+from app.dashboard.firestore_repository import (
+    _EXPECTED_HALF_HOUR_SLOTS,
+    _firestore_monitoring_daily,
+    _snapshot_cutoff,
+)
 from app.dashboard import history_reconstruction
 from app.dashboard.history_reconstruction import (
     RECONSTRUCTED_FORECAST_SOURCE,
@@ -18,6 +22,9 @@ from app.dashboard.models import DashboardRawData
 from app.dashboard.slice_assembler import build_dashboard_slice
 from app.dashboard.warnings import build_dashboard_warnings
 from app.operations.historical_forecast_reconstruction import build_reconstructed_forecast_rows
+from app.operations import sqlite as sqlite_ops
+from app.operations.sync import _sqlite_upsert_row
+from app.dashboard.data import load_dashboard_slice
 
 
 # HISTORICAL_FAILURE_LOCK (2026-09-04): do not weaken without an explicit migration decision.
@@ -330,6 +337,38 @@ def test_energy_daily_keeps_reconstructed_pv_and_load_as_one_pair() -> None:
     assert rows[0]["forecast_reconstruction_id"] == "recon-a"
 
 
+def test_sqlite_validation_read_model_preserves_reconstruction_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    day = "2026-09-04"
+    db_path = tmp_path / "reconstruction.db"
+    conn = sqlite_ops.open_db(db_path)
+    sqlite_ops.ensure_schema(conn)
+    with conn:
+        for row in _hourly_rows(
+            day=day,
+            source=RECONSTRUCTED_FORECAST_SOURCE,
+            reconstruction_id="recon-sqlite",
+        ):
+            row["updated_at"] = row["forecast_reconstructed_at"]
+            _sqlite_upsert_row(conn, "forecast_hourly", row)
+    conn.close()
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+
+    sliced = load_dashboard_slice(
+        db_path,
+        end_date=day,
+        window_days=1,
+        include_static=False,
+    ).data
+
+    assert sliced.energy_daily[0]["forecast_is_reconstructed"] is True
+    assert sliced.energy_daily[0]["forecast_reconstruction_id"] == "recon-sqlite"
+    assert sliced.energy_daily[0]["forecast_pv_kwh"] == pytest.approx(24.0)
+    assert sliced.energy_daily[0]["forecast_load_kwh"] == pytest.approx(48.0)
+
+
 def test_dashboard_slice_preserves_historical_energy_api_fields_and_provenance() -> None:
     day = "2026-09-02"
     energy_row = {
@@ -431,6 +470,56 @@ def test_daily_actual_reconstruction_contract_remains_48_unique_half_hours() -> 
     assert _EXPECTED_HALF_HOUR_SLOTS == {
         f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in (0, 30)
     }
+
+
+def test_complete_raw_day_restores_energy_flow_fields_without_daily_metric() -> None:
+    day = "2026-09-04"
+    monitoring = []
+    for hour in range(24):
+        for minute in (0, 30):
+            monitoring.append(
+                {
+                    "ts": f"{day}T{hour:02d}:{minute:02d}:00+09:00",
+                    "pv_kwh": 0.1,
+                    "load_kwh": 0.2,
+                    "buy_kwh": 0.15,
+                    "sell_kwh": 0.01,
+                    "charge_kwh": 0.05,
+                    "discharge_kwh": 0.04,
+                }
+            )
+    client = _Client({"dashboard_daily_metrics": [], "monitoring_samples": monitoring})
+
+    row = _firestore_monitoring_daily(client, start_date=day, end_date_iso=day)[0]
+
+    assert row["sample_count"] == 48
+    assert row["actual_pv_kwh"] == pytest.approx(4.8)
+    assert row["actual_load_kwh"] == pytest.approx(9.6)
+    assert row["buy_kwh"] == pytest.approx(7.2)
+    assert row["sell_kwh"] == pytest.approx(0.48)
+    assert row["charge_kwh"] == pytest.approx(2.4)
+    assert row["discharge_kwh"] == pytest.approx(1.92)
+
+
+def test_incomplete_raw_energy_flow_field_remains_missing() -> None:
+    day = "2026-09-04"
+    monitoring = [
+        {
+            "ts": f"{day}T{hour:02d}:{minute:02d}:00+09:00",
+            "pv_kwh": 0.1,
+            "load_kwh": 0.2,
+            "charge_kwh": None if (hour, minute) == (23, 30) else 0.05,
+            "discharge_kwh": 0.04,
+        }
+        for hour in range(24)
+        for minute in (0, 30)
+    ]
+    client = _Client({"dashboard_daily_metrics": [], "monitoring_samples": monitoring})
+
+    row = _firestore_monitoring_daily(client, start_date=day, end_date_iso=day)[0]
+
+    assert "charge_kwh" not in row
+    assert row["discharge_kwh"] == pytest.approx(1.92)
 
 
 def test_legacy_snapshot_hindsight_cutoff_remains_0700_jst() -> None:

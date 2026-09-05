@@ -86,6 +86,29 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "updated_at",
         ),
     },
+    "dashboard_daily_metrics": {
+        "key_cols": ("date",),
+        "columns": (
+            "date",
+            "actual_pv_kwh",
+            "actual_load_kwh",
+            "buy_kwh",
+            "sell_kwh",
+            "charge_kwh",
+            "discharge_kwh",
+            "day_buy_kwh",
+            "night_buy_kwh",
+            "review_night_charge_kwh",
+            "morning_soc_percent",
+            "soc_min_percent",
+            "soc_max_percent",
+            "day_soc_max_percent",
+            "sample_count",
+            "first_sample_at",
+            "latest_sample_at",
+            "updated_at",
+        ),
+    },
     "model_parameters": {
         "key_cols": ("name",),
         "columns": ("name", "mean_value", "variance", "sample_count", "hit_rate", "updated_at"),
@@ -112,6 +135,11 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "forecast_dew_point_c",
             "forecast_wind_speed_10m",
             "source",
+            "is_reconstructed",
+            "forecast_reconstruction_id",
+            "forecast_reconstructed_at",
+            "forecast_reconstruction_model_version",
+            "forecast_reconstruction_basis",
             "updated_at",
         ),
     },
@@ -120,6 +148,17 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
 JSON_TEXT_COLUMNS = {
     "settings_events": {"changed_fields_json", "detail_json"},
 }
+
+
+class _SyncDocument:
+    """Small adapter for normalized dashboard-read rows during Firestore sync."""
+
+    def __init__(self, row: dict[str, Any]) -> None:
+        self._row = row
+        self.id = f"{row.get('date', '')}-{row.get('hour', '')}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self._row)
 
 
 def _json_text(value: Any) -> Any:
@@ -251,8 +290,10 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                 forecast_temp_c, forecast_relative_humidity_percent,
                 forecast_dew_point_c, forecast_wind_speed_10m,
-                source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source, is_reconstructed, forecast_reconstruction_id,
+                forecast_reconstructed_at, forecast_reconstruction_model_version,
+                forecast_reconstruction_basis, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.get("date"),
@@ -270,7 +311,12 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_dew_point_c")),
                 _as_float(row.get("forecast_wind_speed_10m")),
                 row.get("source"),
-                row.get("updated_at"),
+                1 if row.get("is_reconstructed") is True else 0 if row.get("is_reconstructed") is False else None,
+                row.get("forecast_reconstruction_id"),
+                row.get("forecast_reconstructed_at"),
+                row.get("forecast_reconstruction_model_version"),
+                row.get("forecast_reconstruction_basis"),
+                row.get("updated_at") or row.get("forecast_reconstructed_at"),
             ),
         )
         return
@@ -320,8 +366,10 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                 forecast_temp_c, forecast_relative_humidity_percent,
                 forecast_dew_point_c, forecast_wind_speed_10m,
-                source, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                source, is_reconstructed, forecast_reconstruction_id,
+                forecast_reconstructed_at, forecast_reconstruction_model_version,
+                forecast_reconstruction_basis, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
@@ -336,6 +384,11 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_dew_point_c=excluded.forecast_dew_point_c,
                 forecast_wind_speed_10m=excluded.forecast_wind_speed_10m,
                 source=excluded.source,
+                is_reconstructed=excluded.is_reconstructed,
+                forecast_reconstruction_id=excluded.forecast_reconstruction_id,
+                forecast_reconstructed_at=excluded.forecast_reconstructed_at,
+                forecast_reconstruction_model_version=excluded.forecast_reconstruction_model_version,
+                forecast_reconstruction_basis=excluded.forecast_reconstruction_basis,
                 updated_at=excluded.updated_at
             """,
             (
@@ -354,7 +407,12 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_dew_point_c")),
                 _as_float(row.get("forecast_wind_speed_10m")),
                 row.get("source"),
-                row.get("updated_at"),
+                1 if row.get("is_reconstructed") is True else 0 if row.get("is_reconstructed") is False else None,
+                row.get("forecast_reconstruction_id"),
+                row.get("forecast_reconstructed_at"),
+                row.get("forecast_reconstruction_model_version"),
+                row.get("forecast_reconstruction_basis"),
+                row.get("updated_at") or row.get("forecast_reconstructed_at"),
             ),
         )
         return
@@ -386,7 +444,16 @@ def sync_firestore_to_sqlite(*, sqlite_path: Path | None = None, project_id: str
                 if table_name == "settings_events":
                     docs = client.collection(table_name).order_by("recorded_at").stream()
                 elif table_name == "forecast_hourly":
-                    docs = client.collection(table_name).order_by("date").stream()
+                    from app.dashboard.history_reconstruction import (
+                        firestore_forecast_hourly_with_reconstruction,
+                    )
+
+                    rows = firestore_forecast_hourly_with_reconstruction(
+                        client,
+                        start_date="0001-01-01",
+                        end_date_iso="9998-12-31",
+                    )
+                    docs = (_SyncDocument(row) for row in rows)
                 else:
                     docs = client.collection(table_name).stream()
                 count = 0
@@ -430,6 +497,8 @@ def sync_sqlite_to_firestore(*, sqlite_path: Path | None = None, project_id: str
                 batch_count = 0
                 count = 0
                 for row in rows:
+                    if table_name == "forecast_hourly" and row.get("is_reconstructed"):
+                        continue
                     if table_name == "settings_events":
                         doc_id = str(row.get("source_doc_id") or row.get("event_id") or "").strip()
                         if not doc_id:
