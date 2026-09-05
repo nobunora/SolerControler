@@ -1,5 +1,10 @@
 const assert = require("node:assert/strict");
-const { minuteOf, allocateNightGridCharge, plannedBatteryValues } = require("../static/dashboard_calculations.js");
+const {
+  minuteOf,
+  allocateNightGridCharge,
+  plannedBatteryValues,
+  forecastSocFromLatestActual,
+} = require("../static/dashboard_calculations.js");
 
 assert.equal(minuteOf("02:43"), 163);
 assert.equal(minuteOf("04:00"), 240);
@@ -42,4 +47,21 @@ assert.deepEqual(
     { soc_charge_mode: "0" }
   ),
   { targetSocPercent: 65, nightChargeKwh: 2.5 }
+);
+
+const socFallback = forecastSocFromLatestActual(
+  [
+    { hour: 16, actual_soc_percent: 20, forecast_pv_kwh: 0, forecast_load_kwh: 1 },
+    { hour: 17, actual_soc_percent: 10, forecast_pv_kwh: 0, forecast_load_kwh: 1 },
+    { hour: 18, actual_soc_percent: null, forecast_pv_kwh: 2, forecast_load_kwh: 1 },
+    { hour: 19, actual_soc_percent: null, forecast_pv_kwh: 0, forecast_load_kwh: 1 },
+  ],
+  10,
+  1,
+  1,
+);
+assert.deepEqual(socFallback, [20, 10, 10, 20]);
+assert.deepEqual(
+  forecastSocFromLatestActual([{ hour: 18, forecast_pv_kwh: 1, forecast_load_kwh: 1 }], 10, 1, 1),
+  [null],
 );

@@ -3,7 +3,7 @@
     const CHUNK_DAYS = 120;
     // バックエンドと同じ既定締め日を使い、集計月の境界が画面ごとにずれないようにする。
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
-    const { allocateNightGridCharge, plannedBatteryValues } = window.DashboardCalculations;
+    const { allocateNightGridCharge, plannedBatteryValues, forecastSocFromLatestActual } = window.DashboardCalculations;
     const dashboardDates = window.DashboardDates;
     const dashboardApi = window.DashboardApi;
 
@@ -24,15 +24,6 @@
       return c * p;
     }
 
-    function maxAbs(values) {
-      let m = 0;
-      for (const v of values) {
-        const x = Math.abs(n(v));
-        if (x > m) m = x;
-      }
-      return m;
-    }
-
     function maxPos(values) {
       let m = 0;
       for (const v of values) {
@@ -40,6 +31,16 @@
         if (x > m) m = x;
       }
       return m;
+    }
+
+    function minMaxBounds(values, fallbackMin = 0, fallbackMax = 1) {
+      const finite = values.map(Number).filter(Number.isFinite);
+      if (!finite.length) return { min: fallbackMin, max: fallbackMax };
+      const min = Math.min(...finite);
+      const max = Math.max(...finite);
+      if (min !== max) return { min, max };
+      const padding = Math.max(1, Math.abs(min) * 0.1);
+      return { min: min - padding, max: max + padding };
     }
 
     function formatChartValue(value) {
@@ -50,36 +51,23 @@
     }
 
     function dualScales(leftValues, rightValues, options = {}) {
-      const rightCanBeNegative = !!options.rightCanBeNegative;
       const leftUnit = options.leftUnit || "";
       const rightUnit = options.rightUnit || "";
-      const tickCount = 6;
-      const intervals = tickCount - 1;
-      const leftRawMax = Math.max(1, maxPos(leftValues));
-      const leftStep = Math.max(0.1, niceCeil(leftRawMax / intervals));
-      const leftMax = leftStep * intervals;
-      let rightMin = 0;
-      let rightStep = Math.max(1, niceCeil(Math.max(1, maxPos(rightValues)) / intervals));
-      let rightMax = rightStep * intervals;
-      if (rightCanBeNegative) {
-        const absMax = Math.max(1, maxAbs(rightValues));
-        rightStep = Math.max(0.1, niceCeil(absMax / (intervals / 2)));
-        rightMax = rightStep * (intervals / 2);
-        rightMin = -rightMax;
-      }
+      const leftBounds = minMaxBounds(leftValues);
+      const rightBounds = minMaxBounds(rightValues);
       return {
         y: {
-          min: 0,
-          max: leftMax,
-          ticks: { count: tickCount, stepSize: leftStep, callback: (v) => `${v}${leftUnit}` },
+          min: leftBounds.min,
+          max: leftBounds.max,
+          ticks: { callback: (v) => `${v}${leftUnit}` },
           title: { display: !!leftUnit, text: leftUnit.replace(/[()]/g, "") },
           grid: { color: "#d8e6f2" },
         },
         y2: {
-          min: rightMin,
-          max: rightMax,
+          min: rightBounds.min,
+          max: rightBounds.max,
           position: "right",
-          ticks: { count: tickCount, stepSize: rightStep, callback: (v) => `${v}${rightUnit}` },
+          ticks: { callback: (v) => `${v}${rightUnit}` },
           title: { display: !!rightUnit, text: rightUnit.replace(/[()]/g, "") },
           grid: { drawOnChartArea: false },
         },
@@ -923,10 +911,9 @@
       chart.data.datasets[1].data = actual;
       chart.data.datasets[2].data = diff;
       const values = [...forecast, ...actual, ...diff].filter((v) => v != null);
-      const axisMax = niceCeil(Math.max(1, maxPos(values)));
-      const axisMin = Math.min(-axisMax, Math.floor(Math.min(...diff.filter((v) => v != null), 0)));
-      chart.options.scales.y.min = axisMin;
-      chart.options.scales.y.max = axisMax;
+      const bounds = minMaxBounds(values);
+      chart.options.scales.y.min = bounds.min;
+      chart.options.scales.y.max = bounds.max;
       chart.options.scales.y.grid = {
         color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
         lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
@@ -1028,11 +1015,15 @@
       const sch = store.latestSchedule || {};
       const batteryRow = date ? store.battery.get(date) : null;
       const targetSocRaw = plannedBatteryValues(batteryRow, sch).targetSocPercent;
-      if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);
       const capacityKwh = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
       const roundTripEff = Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9)));
       const chargeEff = Math.sqrt(roundTripEff);
       const dischargeEff = Math.sqrt(roundTripEff);
+      // HISTORICAL_FAILURE_LOCK (2026-09-05): a missing persisted plan must not
+      // make the predicted-SOC series disappear when hourly actual SOC exists.
+      if (!Number.isFinite(targetSocRaw)) {
+        return forecastSocFromLatestActual(rows, capacityKwh, chargeEff, dischargeEff);
+      }
       const targetSoc = Math.max(0, Math.min(100, targetSocRaw));
       const targetEnergyKwh = targetSoc / 100 * capacityKwh;
       const hourlyNightGridCharge = estimateHourlyNightGridCharge(rows, date);
@@ -1307,8 +1298,6 @@
       };
       charts.battery.options.scales.y2 = {
         ...batteryDual.y2,
-        min: 0,
-        max: 100,
         ticks: { ...batteryDual.y2.ticks, color: "#147efb", callback: (v) => `${Math.round(v)}%` },
         border: { color: "#147efb" },
         title: { display: true, text: "SOC(%)", color: "#147efb" },

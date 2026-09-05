@@ -67,8 +67,22 @@ const context = {
           { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
           { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
         ],
-        energy_daily: [{ date: "2026-07-17", actual_load_kwh: 1 }], cost_daily: [], cost_monthly: [],
-        battery_daily: [], battery_flow_daily: [], model_parameters: [],
+        energy_daily: [
+          { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
+          { date: "2026-07-18", forecast_pv_kwh: 7, actual_pv_kwh: 9, forecast_load_kwh: 4, actual_load_kwh: 6 },
+        ],
+        cost_daily: [
+          { date: "2026-07-17", self_consumption_kwh: 2, savings_yen: 100 },
+          { date: "2026-07-18", self_consumption_kwh: 4, savings_yen: 300 },
+        ],
+        cost_monthly: [
+          { month: "2026-06", self_consumption_kwh: 40, savings_yen: 1000 },
+          { month: "2026-07", self_consumption_kwh: 60, savings_yen: 1800 },
+        ],
+        battery_daily: [
+          { date: "2026-07-17", setting_soc_target_percent: 55, night_charge_kwh: 2, pv_charge_end_soc_percent: 60 },
+          { date: "2026-07-18", setting_soc_target_percent: 75, night_charge_kwh: 4, pv_charge_end_soc_percent: 80 },
+        ], battery_flow_daily: [], model_parameters: [],
         latest_schedule: {
           plan_date: "2026-07-20",
           soc_charge_mode: "0",
@@ -125,6 +139,22 @@ setImmediate(() => {
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
   const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "予想SOC(%)"));
   assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77]);
+  const pvChart = ChartStub.instances[1];
+  assert.deepEqual({ min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max }, { min: 1, max: 9 });
+  const loadChart = ChartStub.instances[2];
+  assert.deepEqual({ min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max }, { min: -2, max: 6 });
+  const dailyKwhChart = ChartStub.instances[3];
+  assert.deepEqual({ min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max }, { min: 0, max: 4 });
+  assert.deepEqual({ min: dailyKwhChart.options.scales.y2.min, max: dailyKwhChart.options.scales.y2.max }, { min: 2, max: 6 });
+  const dailyYenChart = ChartStub.instances[4];
+  assert.deepEqual({ min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max }, { min: 0, max: 300 });
+  assert.deepEqual({ min: dailyYenChart.options.scales.y2.min, max: dailyYenChart.options.scales.y2.max }, { min: 100, max: 400 });
+  const monthlyChart = ChartStub.instances[5];
+  assert.deepEqual({ min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max }, { min: 54, max: 66 });
+  assert.deepEqual({ min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max }, { min: 1620, max: 1980 });
+  const batteryChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label.includes("夜間充電計画")));
+  assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max }, { min: 2, max: 4 });
+  assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max }, { min: 55, max: 80 });
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");

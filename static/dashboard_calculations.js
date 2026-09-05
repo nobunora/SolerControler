@@ -56,5 +56,38 @@
     };
   }
 
-  return { minuteOf, allocateNightGridCharge, plannedBatteryValues };
+  function forecastSocFromLatestActual(rows, capacityKwh, chargeEfficiency, dischargeEfficiency) {
+    const capacity = Math.max(0.1, Number(capacityKwh) || 0.1);
+    const chargeEff = Math.max(0.01, Number(chargeEfficiency) || 0.01);
+    const dischargeEff = Math.max(0.01, Number(dischargeEfficiency) || 0.01);
+    const actualSoc = rows.map((row) => {
+      if (row.actual_soc_percent == null || row.actual_soc_percent === "") return null;
+      const value = Number(row.actual_soc_percent);
+      return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+    });
+    let anchorIndex = -1;
+    for (let index = 0; index < actualSoc.length; index += 1) {
+      if (actualSoc[index] != null) anchorIndex = index;
+    }
+    if (anchorIndex < 0) return rows.map(() => null);
+
+    let energyKwh = actualSoc[anchorIndex] / 100 * capacity;
+    return rows.map((row, index) => {
+      if (index <= anchorIndex) return actualSoc[index];
+      const socAtHourStart = Math.max(0, Math.min(100, energyKwh / capacity * 100));
+      const pvKwh = row.forecast_pv_kwh == null ? null : Number(row.forecast_pv_kwh);
+      const loadKwh = row.forecast_load_kwh == null ? null : Number(row.forecast_load_kwh);
+      const chargeKwh = row.forecast_charge_kwh == null ? null : Number(row.forecast_charge_kwh);
+      if (Number.isFinite(chargeKwh) && chargeKwh > 0) {
+        energyKwh += chargeKwh * chargeEff;
+      } else if (Number.isFinite(pvKwh) && Number.isFinite(loadKwh)) {
+        const net = pvKwh - loadKwh;
+        energyKwh += net >= 0 ? net * chargeEff : net / dischargeEff;
+      }
+      energyKwh = Math.max(0, Math.min(capacity, energyKwh));
+      return Math.round(socAtHourStart * 10) / 10;
+    });
+  }
+
+  return { minuteOf, allocateNightGridCharge, plannedBatteryValues, forecastSocFromLatestActual };
 });

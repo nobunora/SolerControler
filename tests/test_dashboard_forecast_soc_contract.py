@@ -364,6 +364,8 @@ def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
     source = (Path(__file__).parents[1] / "static" / "dashboard.js").read_text(encoding="utf-8")
 
     assert "plannedBatteryValues(batteryRow, sch).targetSocPercent" in source
-    assert "if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);" in source
+    assert "HISTORICAL_FAILURE_LOCK (2026-09-05)" in source
+    assert "forecastSocFromLatestActual(rows, capacityKwh, chargeEff, dischargeEff)" in source
+    assert "if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);" not in source
     assert 'label: "予想SOC(%)"' in source
     assert "const soc = estimateHourlyForecastSoc(rows, date);" in source
