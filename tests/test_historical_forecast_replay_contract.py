@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -37,30 +38,43 @@ class _Response:
         return self._payload
 
 
-def _times(day: str, count: int = 24) -> list[str]:
-    return [f"{day}T{hour:02d}:00" for hour in range(count)]
-
-
-def _target_from_run_params(params: dict[str, Any]) -> str:
+def _single_run_times(params: dict[str, Any]) -> list[str]:
     assert "start_date" not in params
     assert "end_date" not in params
     assert params["forecast_hours"] == SINGLE_RUN_FORECAST_HOURS
+    run_utc = datetime.fromisoformat(str(params["run"])).replace(tzinfo=timezone.utc)
+    local_start = run_utc.astimezone(ZoneInfo(str(params["timezone"])))
+    return [
+        (local_start + timedelta(hours=offset)).strftime("%Y-%m-%dT%H:%M")
+        for offset in range(SINGLE_RUN_FORECAST_HOURS)
+    ]
+
+
+def _target_from_run_params(params: dict[str, Any]) -> str:
     run_day = datetime.fromisoformat(str(params["run"])).date()
     return (run_day + timedelta(days=1)).isoformat()
 
 
+def _hour_values(times: list[str], *, daylight_value: float, night_value: float) -> list[float]:
+    values: list[float] = []
+    for text in times:
+        hour = int(text.split("T", 1)[1].split(":", 1)[0])
+        values.append(daylight_value if 6 <= hour <= 18 else night_value)
+    return values
+
+
 def _http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
     del timeout
-    day = _target_from_run_params(params)
-    times = _times(day)
+    times = _single_run_times(params)
     if "global_tilted_irradiance" in str(params.get("hourly")):
-        gti = [0.0 if hour < 6 or hour > 18 else 500.0 for hour in range(24)]
         return _Response(
             {
                 "hourly": {
                     "time": times,
-                    "global_tilted_irradiance": gti,
-                    "temperature_2m": [25.0] * 24,
+                    "global_tilted_irradiance": _hour_values(
+                        times, daylight_value=500.0, night_value=0.0
+                    ),
+                    "temperature_2m": [25.0] * len(times),
                 }
             }
         )
@@ -68,15 +82,19 @@ def _http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
         {
             "hourly": {
                 "time": times,
-                "temperature_2m": [28.0] * 24,
-                "relative_humidity_2m": [60.0] * 24,
-                "dew_point_2m": [19.0] * 24,
-                "precipitation": [0.0] * 24,
-                "weather_code": [1] * 24,
-                "cloud_cover": [20.0] * 24,
-                "shortwave_radiation": [0.0 if h < 6 or h > 18 else 600.0 for h in range(24)],
-                "sunshine_duration": [0.0 if h < 6 or h > 18 else 3600.0 for h in range(24)],
-                "wind_speed_10m": [5.0] * 24,
+                "temperature_2m": [28.0] * len(times),
+                "relative_humidity_2m": [60.0] * len(times),
+                "dew_point_2m": [19.0] * len(times),
+                "precipitation": [0.0] * len(times),
+                "weather_code": [1] * len(times),
+                "cloud_cover": [20.0] * len(times),
+                "shortwave_radiation": _hour_values(
+                    times, daylight_value=600.0, night_value=0.0
+                ),
+                "sunshine_duration": _hour_values(
+                    times, daylight_value=3600.0, night_value=0.0
+                ),
+                "wind_speed_10m": [5.0] * len(times),
             }
         }
     )
@@ -84,22 +102,23 @@ def _http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
 
 def _incomplete_http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
     del timeout
-    day = _target_from_run_params(params)
-    times = _times(day, 23)
+    target = _target_from_run_params(params)
+    missing_time = f"{target}T12:00"
+    times = [text for text in _single_run_times(params) if text != missing_time]
     return _Response(
         {
             "hourly": {
                 "time": times,
-                "temperature_2m": [28.0] * 23,
-                "relative_humidity_2m": [60.0] * 23,
-                "dew_point_2m": [19.0] * 23,
-                "precipitation": [0.0] * 23,
-                "weather_code": [1] * 23,
-                "cloud_cover": [20.0] * 23,
-                "shortwave_radiation": [500.0] * 23,
-                "sunshine_duration": [3600.0] * 23,
-                "wind_speed_10m": [5.0] * 23,
-                "global_tilted_irradiance": [500.0] * 23,
+                "temperature_2m": [28.0] * len(times),
+                "relative_humidity_2m": [60.0] * len(times),
+                "dew_point_2m": [19.0] * len(times),
+                "precipitation": [0.0] * len(times),
+                "weather_code": [1] * len(times),
+                "cloud_cover": [20.0] * len(times),
+                "shortwave_radiation": [500.0] * len(times),
+                "sunshine_duration": [3600.0] * len(times),
+                "wind_speed_10m": [5.0] * len(times),
+                "global_tilted_irradiance": [500.0] * len(times),
             }
         }
     )
@@ -201,6 +220,23 @@ def test_single_runs_request_uses_run_horizon_not_rejected_date_range() -> None:
     assert params["forecast_hours"] == 48
     assert "start_date" not in params
     assert "end_date" not in params
+
+
+def test_single_runs_48_hour_horizon_contains_exact_target_day() -> None:
+    params = _single_run_params(
+        settings=_settings(),
+        target_date="2026-08-30",
+        model="jma_msm",
+        run="2026-08-29T12:00",
+        hourly="temperature_2m",
+    )
+    times = _single_run_times(params)
+    target_times = [text for text in times if text.startswith("2026-08-30T")]
+    assert len(times) == 48
+    assert times[0] == "2026-08-29T21:00"
+    assert len(target_times) == 24
+    assert target_times[0] == "2026-08-30T00:00"
+    assert target_times[-1] == "2026-08-30T23:00"
 
 
 def test_filter_pre_target_history_rejects_target_day_and_future_rows() -> None:
