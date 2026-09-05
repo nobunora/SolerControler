@@ -26,13 +26,16 @@ def _morning_target_soc_observation(
     *,
     date_iso: str,
 ) -> tuple[float, str] | None:
+    # HISTORICAL_FAILURE_LOCK (2026-09-05): the unconditional 07:00 green
+    # transition may discharge before the 07:00 monitoring sample is stored.
+    # Judge the night-charge target only from the final pre-green sample.
     for row in forecast_hourly:
-        if str(row.get("date") or "") != date_iso or to_float(row.get("hour")) != 7:
+        if str(row.get("date") or "") != date_iso or to_float(row.get("hour")) != 6:
             continue
-        opening_soc = to_float(row.get("opening_soc_percent"))
-        if opening_soc is None or not 0.0 <= opening_soc <= 100.0:
+        observed_soc = to_float(row.get("actual_soc_percent"))
+        if observed_soc is None or not 0.0 <= observed_soc <= 100.0:
             continue
-        timestamp_text = str(row.get("first_sample_at") or "").strip()
+        timestamp_text = str(row.get("latest_sample_at") or "").strip()
         if not timestamp_text:
             continue
         try:
@@ -43,9 +46,9 @@ def _morning_target_soc_observation(
             timestamp = timestamp.astimezone(_JST)
         if timestamp.date().isoformat() != date_iso:
             continue
-        if (timestamp.hour, timestamp.minute, timestamp.second, timestamp.microsecond) != (7, 0, 0, 0):
+        if (timestamp.hour, timestamp.minute, timestamp.second, timestamp.microsecond) != (6, 30, 0, 0):
             continue
-        return opening_soc, timestamp_text
+        return observed_soc, timestamp_text
     return None
 
 
@@ -168,13 +171,13 @@ def build_dashboard_warnings(
                 "soc_target_unreached",
                 "warning",
                 "朝7時目標SOC未達",
-                f"{latest_battery.get('date')} 07:00のSOCが目標より低いです。",
+                f"{latest_battery.get('date')} 07時制御前のSOCが目標より低いです。",
                 {
                     "date": latest_battery.get("date"),
                     "target_soc_percent": target_soc,
                     "observed_soc_percent": morning_observation[0],
                     "observed_at": morning_observation[1],
-                    "source": "monitoring-sample-07:00",
+                    "source": "monitoring-sample-pre-07-green",
                 },
             )
         schedule_plan_date = str(latest_schedule.get("plan_date") or "")
