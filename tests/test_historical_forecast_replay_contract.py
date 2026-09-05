@@ -11,6 +11,8 @@ from app.energy_plan.weather import WeatherHistoryFetchResult
 from app.forecasting.pv_array import PVArrayConfig
 from app.operations.historical_forecast_reconstruction import build_reconstructed_forecast_rows
 from app.operations.historical_forecast_replay import (
+    SINGLE_RUN_FORECAST_HOURS,
+    _single_run_params,
     build_historical_replay_plan,
     default_single_run_for_target,
     filter_pre_target_history,
@@ -19,7 +21,8 @@ from app.operations.historical_forecast_replay import (
 
 
 # HISTORICAL_FAILURE_LOCK (2026-09-05): historical replay must remain forecast-only
-# and immune to target-day/future actual leakage.
+# and immune to target-day/future actual leakage. Single Runs requests must use
+# run + forecast_hours; start_date/end_date are rejected by the live endpoint.
 
 
 class _Response:
@@ -38,9 +41,17 @@ def _times(day: str, count: int = 24) -> list[str]:
     return [f"{day}T{hour:02d}:00" for hour in range(count)]
 
 
+def _target_from_run_params(params: dict[str, Any]) -> str:
+    assert "start_date" not in params
+    assert "end_date" not in params
+    assert params["forecast_hours"] == SINGLE_RUN_FORECAST_HOURS
+    run_day = datetime.fromisoformat(str(params["run"])).date()
+    return (run_day + timedelta(days=1)).isoformat()
+
+
 def _http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
     del timeout
-    day = str(params["start_date"])
+    day = _target_from_run_params(params)
     times = _times(day)
     if "global_tilted_irradiance" in str(params.get("hourly")):
         gti = [0.0 if hour < 6 or hour > 18 else 500.0 for hour in range(24)]
@@ -73,7 +84,7 @@ def _http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
 
 def _incomplete_http_get(_url: str, *, params: dict[str, Any], timeout: int) -> _Response:
     del timeout
-    day = str(params["start_date"])
+    day = _target_from_run_params(params)
     times = _times(day, 23)
     return _Response(
         {
@@ -178,6 +189,20 @@ def test_default_replay_run_is_conservatively_available_before_0230_jst() -> Non
     assert default_single_run_for_target("2026-08-30") == "2026-08-29T12:00"
 
 
+def test_single_runs_request_uses_run_horizon_not_rejected_date_range() -> None:
+    params = _single_run_params(
+        settings=_settings(),
+        target_date="2026-08-30",
+        model="jma_msm",
+        run="2026-08-29T12:00",
+        hourly="temperature_2m",
+    )
+    assert params["run"] == "2026-08-29T12:00"
+    assert params["forecast_hours"] == 48
+    assert "start_date" not in params
+    assert "end_date" not in params
+
+
 def test_filter_pre_target_history_rejects_target_day_and_future_rows() -> None:
     rows = _history_rows("2026-08-28", 4)
     filtered = filter_pre_target_history(rows, target_date="2026-08-30")
@@ -248,6 +273,7 @@ def test_historical_replay_emits_complete_pair_and_reconstruction_accepts_it(tmp
     assert set(map(int, optimization["hourly_load_forecast_kwh"])) == set(range(24))
     assert replay.plan["forecast"]["historical_forecast"]["model"] == "jma_msm"
     assert replay.plan["forecast"]["historical_forecast"]["run"] == "2026-08-29T12:00"
+    assert replay.plan["forecast"]["historical_forecast"]["requested_forecast_hours"] == 48
 
     plan_path = tmp_path / "replay.json"
     write_historical_replay_plan(replay, plan_path)
