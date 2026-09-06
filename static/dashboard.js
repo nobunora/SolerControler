@@ -14,33 +14,56 @@
     }
 
     function niceCeil(v) {
-      if (v <= 1) return 1;
+      if (!Number.isFinite(v) || v <= 0) return 1;
       const p = Math.pow(10, Math.floor(Math.log10(v)));
       const m = v / p;
       let c = 10;
       if (m <= 1) c = 1;
       else if (m <= 2) c = 2;
+      else if (m <= 2.5) c = 2.5;
       else if (m <= 5) c = 5;
       return c * p;
     }
 
-    function maxPos(values) {
-      let m = 0;
-      for (const v of values) {
-        const x = n(v);
-        if (x > m) m = x;
-      }
-      return m;
+    function cleanAxisNumber(value) {
+      return Number(Number(value).toPrecision(12));
     }
 
-    function minMaxBounds(values, fallbackMin = 0, fallbackMax = 1) {
+    function minMaxBounds(values, options = {}) {
+      const intervals = Math.max(2, Math.round(n(options.intervals, 5)));
+      const paddingRatio = Math.max(0, n(options.paddingRatio, 0.1));
+      const minZero = options.minZero === true;
       const finite = values.map(Number).filter(Number.isFinite);
-      if (!finite.length) return { min: fallbackMin, max: fallbackMax };
-      const min = Math.min(...finite);
-      const max = Math.max(...finite);
-      if (min !== max) return { min, max };
-      const padding = Math.max(1, Math.abs(min) * 0.1);
-      return { min: min - padding, max: max + padding };
+      if (!finite.length) return { min: 0, max: 1, stepSize: 1 / intervals, intervals };
+
+      const dataMin = minZero ? 0 : Math.min(...finite);
+      const dataMax = Math.max(...finite);
+      let paddedMin;
+      let paddedMax;
+      if (dataMin === dataMax) {
+        const padding = Math.max(1, Math.abs(dataMax) * paddingRatio);
+        paddedMin = minZero ? 0 : dataMin - padding;
+        paddedMax = dataMax + padding;
+      } else {
+        const padding = (dataMax - dataMin) * paddingRatio;
+        paddedMin = minZero ? 0 : dataMin - padding;
+        paddedMax = dataMax + padding;
+      }
+
+      let stepSize = niceCeil((paddedMax - paddedMin) / intervals);
+      let axisMin = minZero ? 0 : Math.floor(paddedMin / stepSize) * stepSize;
+      let axisMax = axisMin + stepSize * intervals;
+      while (axisMax < paddedMax) {
+        stepSize = niceCeil(stepSize * (1 + 1e-9));
+        axisMin = minZero ? 0 : Math.floor(paddedMin / stepSize) * stepSize;
+        axisMax = axisMin + stepSize * intervals;
+      }
+      return {
+        min: cleanAxisNumber(axisMin),
+        max: cleanAxisNumber(axisMax),
+        stepSize: cleanAxisNumber(stepSize),
+        intervals,
+      };
     }
 
     function formatChartValue(value) {
@@ -53,13 +76,25 @@
     function dualScales(leftValues, rightValues, options = {}) {
       const leftUnit = options.leftUnit || "";
       const rightUnit = options.rightUnit || "";
-      const leftBounds = minMaxBounds(leftValues);
-      const rightBounds = minMaxBounds(rightValues);
+      const intervals = Math.max(2, Math.round(n(options.intervals, 5)));
+      const fixedBounds = (max) => ({ min: 0, max, stepSize: cleanAxisNumber(max / intervals), intervals });
+      const leftBounds = options.leftMax == null
+        ? minMaxBounds(leftValues, {
+            intervals,
+            minZero: options.minZero === true || options.leftMinZero === true,
+          })
+        : fixedBounds(n(options.leftMax));
+      const rightBounds = options.rightMax == null
+        ? minMaxBounds(rightValues, {
+            intervals,
+            minZero: options.minZero === true || options.rightMinZero === true,
+          })
+        : fixedBounds(n(options.rightMax));
       return {
         y: {
           min: leftBounds.min,
           max: leftBounds.max,
-          ticks: { callback: (v) => `${v}${leftUnit}` },
+          ticks: { count: intervals + 1, stepSize: leftBounds.stepSize, callback: (v) => `${v}${leftUnit}` },
           title: { display: !!leftUnit, text: leftUnit.replace(/[()]/g, "") },
           grid: { color: "#d8e6f2" },
         },
@@ -67,7 +102,7 @@
           min: rightBounds.min,
           max: rightBounds.max,
           position: "right",
-          ticks: { callback: (v) => `${v}${rightUnit}` },
+          ticks: { count: intervals + 1, stepSize: rightBounds.stepSize, callback: (v) => `${v}${rightUnit}` },
           title: { display: !!rightUnit, text: rightUnit.replace(/[()]/g, "") },
           grid: { drawOnChartArea: false },
         },
@@ -905,20 +940,28 @@
       return n(actual) - n(forecast);
     }
 
-    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit) {
+    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit, axisMax) {
       chart.data.labels = labels;
       chart.data.datasets[0].data = forecast;
       chart.data.datasets[1].data = actual;
       chart.data.datasets[2].data = diff;
       const values = [...forecast, ...actual, ...diff].filter((v) => v != null);
       const bounds = minMaxBounds(values);
-      chart.options.scales.y.min = bounds.min;
-      chart.options.scales.y.max = bounds.max;
+      const stepSize = cleanAxisNumber(axisMax / bounds.intervals);
+      const roundedMin = Math.floor(bounds.min / stepSize) * stepSize;
+      const axisMin = roundedMin < 0 ? roundedMin : 0;
+      const tickCount = Math.round((axisMax - axisMin) / stepSize) + 1;
+      chart.options.scales.y.min = axisMin;
+      chart.options.scales.y.max = axisMax;
       chart.options.scales.y.grid = {
         color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
         lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
       };
-      chart.options.scales.y.ticks = { callback: (v) => `${v}${unit}` };
+      chart.options.scales.y.ticks = {
+        count: tickCount,
+        stepSize,
+        callback: (v) => `${v}${unit}`,
+      };
       chart.update("none");
     }
 
@@ -971,14 +1014,22 @@
       chart.data.datasets[2].data = load;
       chart.data.datasets[3].data = nightGridCharge;
       chart.data.datasets[4].data = soc;
-      const axisMax = niceCeil(Math.max(1, maxPos([...pv, ...charge, ...load, ...nightGridCharge].filter((v) => v != null))));
-      chart.options.scales.y.min = 0;
-      chart.options.scales.y.max = axisMax;
-      chart.options.scales.y.ticks = { callback: (v) => `${v}kWh` };
-      chart.options.scales.y2.min = 0;
-      chart.options.scales.y2.max = 100;
-      chart.options.scales.y2.ticks = { color: "#9a7a00", callback: (v) => `${v}%` };
-      chart.options.scales.y2.title = { display: true, text: "予想SOC(%)", color: "#9a7a00" };
+      chart.options.scales.y = {
+        min: 0,
+        max: 5,
+        ticks: { count: 6, stepSize: 1, callback: (v) => `${v}kWh/h` },
+        title: { display: true, text: "kWh/h" },
+        grid: { color: "#d8e6f2" },
+      };
+      chart.options.scales.y2 = {
+        min: 0,
+        max: 100,
+        position: "right",
+        ticks: { count: 6, stepSize: 20, color: "#9a7a00", callback: (v) => `${v}%` },
+        title: { display: true, text: "予想SOC(%)", color: "#9a7a00" },
+        grid: { drawOnChartArea: false },
+        border: { color: "#9a7a00" },
+      };
       if (note) {
         const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
         const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
@@ -1199,12 +1250,12 @@
       const pvForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_pv_kwh"));
       const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
-      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh");
+      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh", 30);
 
       const loadForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_load_kwh"));
       const loadActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_load_kwh"));
       const loadDiff = labels.map((_d, i) => diffOrNull(loadActual[i], loadForecast[i]));
-      updateForecastActualChart(charts.load, labels, loadForecast, loadActual, loadDiff, "kWh");
+      updateForecastActualChart(charts.load, labels, loadForecast, loadActual, loadDiff, "kWh", 100);
 
       const dailySelf = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "self_consumption_kwh")));
       const dailyYen = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "savings_yen")));
@@ -1226,7 +1277,13 @@
       charts.dailyKwh.data.datasets[0].label = `${bucketLabel} 自家消費(kWh)`;
       charts.dailyKwh.data.datasets[0].data = dailySelf;
       charts.dailyKwh.data.datasets[1].data = cumKwh;
-      const dailyKwhDual = dualScales(dailySelf, cumKwh, { leftUnit: "kWh", rightUnit: "kWh" });
+      const dailyKwhDual = dualScales(dailySelf, cumKwh, {
+        leftUnit: "kWh",
+        rightUnit: "kWh",
+        leftMax: isWeekly ? 240 : 30,
+        rightMinZero: true,
+        intervals: 6,
+      });
       charts.dailyKwh.options.scales.y = {
         ...dailyKwhDual.y,
         ticks: { ...dailyKwhDual.y.ticks, color: "#147efb" },
@@ -1250,7 +1307,13 @@
       charts.dailyYen.data.datasets[0].label = `${bucketLabel} 節約額(円)`;
       charts.dailyYen.data.datasets[0].data = dailyYen;
       charts.dailyYen.data.datasets[1].data = cumYen;
-      const dailyYenDual = dualScales(dailyYen, cumYen, { leftUnit: "円", rightUnit: "円" });
+      const dailyYenDual = dualScales(dailyYen, cumYen, {
+        leftUnit: "円",
+        rightUnit: "円",
+        leftMax: isWeekly ? 12000 : 1500,
+        rightMinZero: true,
+        intervals: 6,
+      });
       charts.dailyYen.options.scales.y = {
         ...dailyYenDual.y,
         ticks: { ...dailyYenDual.y.ticks, color: "#ef8e1d" },
@@ -1289,7 +1352,13 @@
         ...batteryPvChargeEndSoc.filter((v) => v != null),
       ];
       const batteryKwh = batteryNight.filter((v) => v != null);
-      const batteryDual = dualScales(batteryKwh, batterySoc, { leftUnit: "kWh", rightUnit: "%"});
+      const batteryDual = dualScales(batteryKwh, batterySoc, {
+        leftUnit: "kWh",
+        rightUnit: "%",
+        leftMax: 15,
+        rightMax: 100,
+        intervals: 5,
+      });
       charts.battery.options.scales.y = {
         ...batteryDual.y,
         ticks: { ...batteryDual.y.ticks, color: "#14b86f" },
@@ -1324,7 +1393,13 @@
       charts.monthly.data.labels = monthLabels;
       charts.monthly.data.datasets[0].data = monthKwh;
       charts.monthly.data.datasets[1].data = monthYen;
-      const scales = dualScales(monthKwh, monthYen, { leftUnit: "kWh", rightUnit: "円" });
+      const scales = dualScales(monthKwh, monthYen, {
+        leftUnit: "kWh",
+        rightUnit: "円",
+        leftMax: 800,
+        rightMax: 40000,
+        intervals: 4,
+      });
       charts.monthly.options.scales.y = {
         ...scales.y,
         ticks: { ...scales.y.ticks, color: "#147efb" },

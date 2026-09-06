@@ -139,22 +139,36 @@ setImmediate(() => {
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
   const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "予想SOC(%)"));
   assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77]);
+  assert.deepEqual({ min: hourlyChart.options.scales.y.min, max: hourlyChart.options.scales.y.max }, { min: 0, max: 5 });
+  assert.deepEqual({ min: hourlyChart.options.scales.y2.min, max: hourlyChart.options.scales.y2.max }, { min: 0, max: 100 });
+  assert.equal(hourlyChart.options.scales.y.ticks.count, hourlyChart.options.scales.y2.ticks.count);
   const pvChart = ChartStub.instances[1];
-  assert.deepEqual({ min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max }, { min: 1, max: 9 });
+  assert.deepEqual(
+    { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 30, step: 6 },
+  );
   const loadChart = ChartStub.instances[2];
-  assert.deepEqual({ min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max }, { min: -2, max: 6 });
+  assert.deepEqual(
+    { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
+    { min: -20, max: 100, step: 20 },
+  );
+  assert.equal(Number.isInteger(loadChart.options.scales.y.min / loadChart.options.scales.y.ticks.stepSize), true);
   const dailyKwhChart = ChartStub.instances[3];
-  assert.deepEqual({ min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max }, { min: 0, max: 4 });
-  assert.deepEqual({ min: dailyKwhChart.options.scales.y2.min, max: dailyKwhChart.options.scales.y2.max }, { min: 2, max: 6 });
+  assert.deepEqual({ min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max, step: dailyKwhChart.options.scales.y.ticks.stepSize }, { min: 0, max: 30, step: 5 });
+  assert.deepEqual({ min: dailyKwhChart.options.scales.y2.min, max: dailyKwhChart.options.scales.y2.max, step: dailyKwhChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 12, step: 2 });
+  assert.equal(dailyKwhChart.options.scales.y.ticks.count, dailyKwhChart.options.scales.y2.ticks.count);
   const dailyYenChart = ChartStub.instances[4];
-  assert.deepEqual({ min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max }, { min: 0, max: 300 });
-  assert.deepEqual({ min: dailyYenChart.options.scales.y2.min, max: dailyYenChart.options.scales.y2.max }, { min: 100, max: 400 });
+  assert.deepEqual({ min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max, step: dailyYenChart.options.scales.y.ticks.stepSize }, { min: 0, max: 1500, step: 250 });
+  assert.deepEqual({ min: dailyYenChart.options.scales.y2.min, max: dailyYenChart.options.scales.y2.max, step: dailyYenChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 600, step: 100 });
+  assert.equal(dailyYenChart.options.scales.y.ticks.count, dailyYenChart.options.scales.y2.ticks.count);
   const monthlyChart = ChartStub.instances[5];
-  assert.deepEqual({ min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max }, { min: 54, max: 66 });
-  assert.deepEqual({ min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max }, { min: 1620, max: 1980 });
+  assert.deepEqual({ min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max, step: monthlyChart.options.scales.y.ticks.stepSize }, { min: 0, max: 800, step: 200 });
+  assert.deepEqual({ min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max, step: monthlyChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 40000, step: 10000 });
+  assert.equal(monthlyChart.options.scales.y.ticks.count, monthlyChart.options.scales.y2.ticks.count);
   const batteryChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label.includes("夜間充電計画")));
-  assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max }, { min: 2, max: 4 });
-  assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max }, { min: 55, max: 80 });
+  assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize }, { min: 0, max: 15, step: 3 });
+  assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 100, step: 20 });
+  assert.equal(batteryChart.options.scales.y.ticks.count, batteryChart.options.scales.y2.ticks.count);
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
