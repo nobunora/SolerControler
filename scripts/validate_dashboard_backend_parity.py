@@ -24,7 +24,7 @@ DATASETS = (
     "forecast_hourly",
 )
 IGNORED_FIELDS = {
-    "battery_daily": {"updated_at"},
+    "battery_daily": {"updated_at", "plan_display_source"},
     # SQLite is a flattened validation read model. Reconstruction metadata is
     # retained there for daily aggregation, but original hourly rows expose the
     # nullable schema columns while Firestore omits absent document fields.
@@ -46,6 +46,8 @@ IGNORED_FIELDS = {
         "forecast_relative_humidity_percent",
         "forecast_dew_point_c",
         "forecast_wind_speed_10m",
+        "forecast_target_soc_percent",
+        "forecast_night_charge_kwh",
     },
 }
 
