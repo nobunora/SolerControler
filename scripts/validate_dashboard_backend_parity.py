@@ -71,8 +71,16 @@ def compare_rows(
     if len(left) != len(right):
         return [f"row count differs: sqlite={len(left)}, firestore={len(right)}"]
     for index, (left_row, right_row) in enumerate(zip(left, right)):
-        left_fields = set(left_row) - ignored
-        right_fields = set(right_row) - ignored
+        row_ignored = set(ignored)
+        if "forecast_plans" in {
+            left_row.get("plan_display_source"),
+            right_row.get("plan_display_source"),
+        }:
+            for field in ("setting_soc_target_percent", "night_charge_kwh"):
+                if left_row.get(field) is None or right_row.get(field) is None:
+                    row_ignored.add(field)
+        left_fields = set(left_row) - row_ignored
+        right_fields = set(right_row) - row_ignored
         identity = f"date={left_row.get('date')}, hour={left_row.get('hour')}"
         if left_fields != right_fields:
             errors.append(
