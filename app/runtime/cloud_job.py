@@ -140,6 +140,13 @@ class _RunnerMonitorDevicePort:
         operation_start = time.monotonic()
         monitor_cutoff = operation_start + seconds_until_forced_monitor_cutoff(now)
         deadline = min(monitor_cutoff, operation_start + SOC_OPERATION_MAX_SECONDS)
+        # HISTORICAL_FAILURE_LOCK (2026-09-06 SOC 100% target stopped at 65%):
+        # 変更禁止:
+        # - 03 control must use the live KP-NET visualization SOC.
+        # - allow_csv_fallback=False を削除、可変化、True化しない。
+        # - 遅れて公開される計測CSVをSOC到達・停止判定へ使用しない。
+        # CSVは充電速度推定専用であり、現在SOCの制御入力ではない。
+        # Guarded by test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable.
         return read_soc_with_fallback(
             csv_paths,
             latest_realtime=lambda: latest_realtime_soc_percent(deadline_monotonic=deadline),
@@ -148,6 +155,7 @@ class _RunnerMonitorDevicePort:
             env_float=lambda name, default: _env_float(name, default),
             deadline_monotonic=deadline,
             allow_realtime=deadline - operation_start >= SOC_OPERATION_MAX_SECONDS,
+            allow_csv_fallback=False,
         )
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
@@ -265,6 +273,15 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     # Empirical 14-day CSV trend/EWMA selects ETA; env fallback is used only by
     # that estimator when no valid charged interval exists.
     latest_reading = initial
+    # HISTORICAL_FAILURE_LOCK (2026-09-06 transient direct-SOC read failure):
+    # 変更禁止:
+    # - 単発の取得失敗でstandbyへ遷移しない。
+    # - 正常値を取得したら連続失敗回数を0へ戻す。
+    # - max_consecutive_soc_failures到達前に強制充電を終了しない。
+    # ただし06:45/06:50/06:55の時刻所有権は常に優先する。
+    # Guarded by test_03_single_monitor_soc_failure_keeps_forced_charge_until_direct_soc_recovers
+    # and test_03_three_consecutive_monitor_soc_failures_switch_to_standby.
+    consecutive_soc_failures = 0
     try:
         rate_info = estimate_forced_charge_rate_percent_per_hour(paths)
         estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
@@ -273,8 +290,35 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
             latest_reading = reading
             log_soc(reading)
             if latest is None:
-                print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
-                standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="soc_unavailable", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
+                consecutive_soc_failures += 1
+                print(
+                    "[cloud_job_runner] 03-monitor direct SOC unavailable "
+                    f"failure={consecutive_soc_failures}/{settings.max_consecutive_soc_failures} "
+                    f"target={target:.2f}% action=retry",
+                    flush=True,
+                )
+                if consecutive_soc_failures >= settings.max_consecutive_soc_failures:
+                    print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
+                    standby("03-soc-unavailable-standby")
+                    _emit_03_terminal_audit(
+                        plan,
+                        stop_reason="soc_unavailable",
+                        latest=reading,
+                        standby_attempted=standby_attempted,
+                        standby_outcome=standby_outcome,
+                    )
+                    return
+                delay = estimator.next_check_seconds(
+                    target_soc=target,
+                    latest_soc=None,
+                    fallback_poll_seconds=settings.poll_interval_seconds,
+                    cutoff_seconds=seconds_until_control_cutoff(now()),
+                )
+                if delay <= 0:
+                    break
+                clock.sleep(delay)
+                continue
+            consecutive_soc_failures = 0
             if latest >= target:
                 print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
                 standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return

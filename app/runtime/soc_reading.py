@@ -81,6 +81,7 @@ def read_soc_with_fallback(
     sleep: Callable[[float], None] = time.sleep,
     deadline_monotonic: float | None = None,
     allow_realtime: bool = True,
+    allow_csv_fallback: bool = True,
 ) -> SocReading:
     attempts = env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3)
     delay_seconds = env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 2.0)
@@ -107,6 +108,10 @@ def read_soc_with_fallback(
                 sleep_seconds = min(delay_seconds, max(0.0, operation_deadline - time.monotonic()))
                 if sleep_seconds > 0:
                     sleep(sleep_seconds)
+
+    if not allow_csv_fallback:
+        errors.append("CSV SOC fallback disabled")
+        return SocReading(None, "unavailable", "; ".join(errors), None)
 
     csv_value, csv_observed_at = latest_csv(csv_paths)
     if csv_value is not None and csv_observed_at is not None:

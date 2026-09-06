@@ -133,6 +133,42 @@ def test_03_soc_unavailable_emits_terminal_audit(tmp_path: Path, capsys: pytest.
     assert audits[0]["stop_reason"] == "soc_unavailable"
 
 
+def test_03_single_monitor_soc_failure_keeps_forced_charge_until_direct_soc_recovers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    device = _Device([20.0, None, 60.0, None, 80.0])
+
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80),
+        clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+        device_port=device,
+    )
+
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert device.calls == ["forced", "standby"]
+    assert device.soc_read_count == 5
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "target_reached"
+
+
+def test_03_three_consecutive_monitor_soc_failures_switch_to_standby(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    device = _Device([20.0, None, None, None])
+
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 80),
+        clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+        device_port=device,
+    )
+
+    audits = _terminal_audits(capsys.readouterr().out)
+    assert device.calls == ["forced", "standby"]
+    assert device.soc_read_count == 4
+    assert len(audits) == 1
+    assert audits[0]["stop_reason"] == "soc_unavailable"
+
+
 def test_03_cutoff_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _monitor_partial_forced_and_stop(
         _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 6, 54, 59, tzinfo=JST)), device_port=_Device([20])

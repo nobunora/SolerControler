@@ -67,7 +67,30 @@ def test_runner_allocates_one_deadline_and_threads_it_to_realtime_client(monkeyp
     assert session_requests == [("get", 30.0)]
 
 
-def test_runner_064459_skips_realtime_and_uses_csv_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock()
+    csv_reads: list[str] = []
+    monkeypatch.setattr(cloud_job, "_tokyo_now", lambda: datetime(2099, 1, 1, 3, 0, tzinfo=JST))
+    monkeypatch.setattr(time_module, "monotonic", clock.monotonic)
+    monkeypatch.setenv("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", "1")
+    monkeypatch.setattr(cloud_job, "latest_realtime_soc_percent", lambda **_kwargs: None)
+
+    def delayed_csv(_paths: list[object]) -> tuple[float, datetime]:
+        csv_reads.append("csv")
+        return 65.0, datetime.now(JST).replace(tzinfo=None)
+
+    monkeypatch.setattr(cloud_job, "latest_csv_soc_reading", delayed_csv)
+
+    reading = cloud_job._RunnerMonitorDevicePort().read_soc([])
+
+    assert reading.value_percent is None
+    assert reading.source == "unavailable"
+    assert csv_reads == []
+
+
+def test_runner_064459_skips_realtime_without_using_delayed_csv(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = _Clock()
     client_created: list[object] = []
     now = datetime(2099, 1, 1, 6, 44, 59, tzinfo=JST)
@@ -79,12 +102,15 @@ def test_runner_064459_skips_realtime_and_uses_csv_fallback(monkeypatch: pytest.
             client_created.append(self)
 
     monkeypatch.setattr("app.kpnet.client.KpNetClient", Client)
-    monkeypatch.setattr(cloud_job, "latest_csv_soc_reading", lambda _paths: (35.0, datetime.now(JST).replace(tzinfo=None)))
+    def delayed_csv(_paths: list[object]) -> tuple[float, datetime]:
+        raise AssertionError("03 SOC control must not read delayed CSV")
+
+    monkeypatch.setattr(cloud_job, "latest_csv_soc_reading", delayed_csv)
 
     reading = cloud_job._RunnerMonitorDevicePort().read_soc([])
 
-    assert reading.value_percent == 35.0
-    assert reading.source == "csv"
+    assert reading.value_percent is None
+    assert reading.source == "unavailable"
     assert client_created == []
 
 

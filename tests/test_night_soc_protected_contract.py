@@ -44,6 +44,20 @@ def test_protected_boundaries_have_local_20260829_locks() -> None:
         assert "Guarded by" in window or "guarded by" in window
 
 
+def test_03_direct_soc_path_has_local_20260906_regression_lock() -> None:
+    source = (ROOT / "app/runtime/cloud_job.py").read_text(encoding="utf-8")
+    window = _local_window(source, "allow_csv_fallback=False", size=1200)
+
+    assert "HISTORICAL_FAILURE_LOCK" in window
+    assert "2026-09-06" in window
+    assert "live KP-NET visualization SOC" in window
+    assert "変更禁止" in window
+    assert "allow_csv_fallback=False" in window
+    assert "単発の取得失敗でstandbyへ遷移しない" in source
+    assert "正常値を取得したら連続失敗回数を0へ戻す" in source
+    assert "test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable" in window
+
+
 def test_07_entrypoint_is_ast_limited_to_one_green_call() -> None:
     tree = ast.parse((ROOT / "app/runtime/slot_orchestration.py").read_text(encoding="utf-8"))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run_day_07")
