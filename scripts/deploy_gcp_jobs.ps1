@@ -698,13 +698,12 @@ $secretEnvArg = [string]::Join(",", $secretEnvList)
 Write-Host "Deploy Cloud Run jobs..."
 if (-not $SkipJobDeploy) {
     if (-not $SkipJob23Deploy) { Invoke-GCloud run jobs deploy $Job23Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=23,SHEETS_EXPORT_ENABLED=false" --set-secrets $secretEnvArg }
-    # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
-    # not raise --max-retries above 0 or extend 14100 seconds.
-    # A retry can regenerate a plan into the 07:00 owner; an overlong task can
-    # overwrite green.  The process stops realtime monitoring at 06:45 and
-    # fences settings I/O at 06:55. Guarded
-    # by test_deploy_job03_time_ownership_semantics.
-    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 14100 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=0,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg } # HISTORICAL_FAILURE_LOCK 2026-08-29: do not alter 14100/0; Guarded by test_deploy_job03_time_ownership_semantics.
+    # HISTORICAL_FAILURE_LOCK (2026-09-09 user-authorized retry replacement;
+    # replaces the 2026-08-29 no-platform-retry rule):
+    # permit three Cloud Run retries.  The runner waits 300 seconds before a
+    # retry reaches the unchanged 03 I/O fences; do not extend 14100 seconds.
+    # Guarded by test_deploy_job03_time_ownership_semantics.
+    if (-not $SkipJob03Deploy) { Invoke-GCloud run jobs deploy $Job03Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 14100 --max-retries 3 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=03,ADJUST03_REGENERATE_PLAN=true,ADJUST03_SUN_EPSILON_H=0.05,ADJUST03_TEMP_EPSILON_C=0.2,ADJUST03_SOC_EPSILON_PERCENT=1.0,ADJUST03_KWH_EPSILON=0.2,ADJUST03_MIN_TARGET_SOC_PERCENT=0,ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR=40,ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR=25,ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR=50,ADJUST03_FORCE_MONITOR_POLL_SECONDS=180,ADJUST03_FORCE_STOP_SOC_MARGIN_PERCENT=1.0,ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES=5,ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" --set-secrets $secretEnvArg }
     if (-not $SkipJob07Deploy) { Invoke-GCloud run jobs deploy $Job07Name --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 1 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=07" --set-secrets $secretEnvArg }
     # Dedicated forecast owner: no CLOUD_JOB_SLOT and no control entrypoint.
     # 600 seconds is bounded well inside the 02:30-03:00 JST isolation window.

@@ -18,6 +18,7 @@ from app.kpnet.settings_roundtrip import run_settings_roundtrip
 from app.kpnet.workflow import run_kpnet_mode_only_profile
 from app.runtime.command_adapter import _env_float, _env_int, _run, _run_operation_with_retry
 from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator, estimate_forced_charge_rate_percent_per_hour
+from app.runtime.night_soc_operational_contract import SLOT03_PLATFORM_RETRY_DELAY_SECONDS
 from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS, may_start_final_standby, must_stop_forced_monitoring, may_start_03_io, seconds_until_control_cutoff, seconds_until_forced_monitor_cutoff
 from app.runtime.soc_reading import SocReading, latest_csv_soc_reading, latest_realtime_soc_percent, read_soc_with_fallback
 from app.settings.forced_charge import ForcedChargeSettings
@@ -347,11 +348,47 @@ def _run_03_prep_fail_safe_standby() -> bool:
     return True
 
 
+def _wait_for_03_platform_retry() -> None:
+    """Delay a Cloud Run task retry without widening the 03 I/O window."""
+    attempt_text = os.getenv("CLOUD_RUN_TASK_ATTEMPT", "0").strip()
+    try:
+        attempt = int(attempt_text)
+    except ValueError:
+        print(
+            "[cloud_job_runner] 03-platform-retry "
+            + json.dumps(
+                {"attempt": attempt_text, "event": "retry_attempt_unavailable"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+        return
+    if attempt <= 0:
+        return
+    print(
+        "[cloud_job_runner] 03-platform-retry "
+        + json.dumps(
+            {
+                "attempt": attempt,
+                "delay_seconds": SLOT03_PLATFORM_RETRY_DELAY_SECONDS,
+                "event": "retry_wait_started",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    time.sleep(SLOT03_PLATFORM_RETRY_DELAY_SECONDS)
+
+
 def main() -> int:
     from app.runtime.slot_orchestration import _run_adjust_03, _run_day_07, _run_night_23
     slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
     if slot in {"23", "night", "night23"}: _run_night_23()
-    elif slot in {"3", "03", "adjust", "adjust03"}: _run_adjust_03(plan_refresh_only="--plan-refresh-only" in sys.argv[1:])
+    elif slot in {"3", "03", "adjust", "adjust03"}:
+        _wait_for_03_platform_retry()
+        _run_adjust_03(plan_refresh_only="--plan-refresh-only" in sys.argv[1:])
     elif slot in {"7", "07", "day", "day07"}: _run_day_07()
     elif slot in {"settings-roundtrip", "settings_roundtrip"}:
         target_soc = _env_float("SETTINGS_ROUNDTRIP_TARGET_SOC", 50.0)

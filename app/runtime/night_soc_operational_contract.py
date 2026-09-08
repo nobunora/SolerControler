@@ -47,16 +47,15 @@ DAY_TRANSITION_ALLOWED_STATES: Final[frozenset[str]] = frozenset(
 FAIL_SAFE_STANDBY_ACKED_STATE: Final[str] = "STANDBY_ACKED"
 FAIL_SAFE_STANDBY_UNCONFIRMED_STATE: Final[str] = "STANDBY_UNCONFIRMED"
 
-# HISTORICAL_FAILURE_LOCK (2026-08-29 03:00 production retry evidence): this
-# is the deployment contract for the Cloud Run 03 job, not the internal KP-NET
-# retry budget.  Do not change it to 1.  A platform retry regenerates plan_id;
-# the second attempt then fails its deliberately strict lease check and obscures
-# the original device read-back mismatch.  The physical effect is that no
-# verified terminal record remains for 07:00, so green transition correctly
-# blocks even when SOC happens to be 100%.  scripts/deploy_gcp_jobs.ps1 must
-# remain equal to this value.  Guarded by test_night_soc_protected_contract.py
-# and test_production_deploy_scripts.py.
-SLOT03_CLOUD_RUN_MAX_RETRIES: Final[int] = 0
+# HISTORICAL_FAILURE_LOCK (2026-09-09 user-authorized retry replacement): a
+# failed 03 task may retry at most three times, but every retry waits five
+# minutes before it can enter the existing 03 controller.  Do not add retries
+# inside the controller: its 06:45/06:50/06:55 ownership fences remain the
+# sole authority for device I/O, and a late retry must fail before a new write.
+# scripts/deploy_gcp_jobs.ps1 must remain equal to this value.  Guarded by
+# test_night_soc_protected_contract.py and test_production_deploy_scripts.py.
+SLOT03_CLOUD_RUN_MAX_RETRIES: Final[int] = 3
+SLOT03_PLATFORM_RETRY_DELAY_SECONDS: Final[int] = 300
 
 
 def is_day_transition_allowed_state(state: object) -> bool:

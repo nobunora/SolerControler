@@ -430,5 +430,24 @@ def test_slot07_has_no_cross_slot_import_or_call() -> None:
 def test_deploy_job03_time_ownership_semantics() -> None:
     source = Path("scripts/deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
     line = next(value for value in source.splitlines() if "run jobs deploy $Job03Name" in value)
-    assert "--task-timeout 14100" in line and "--max-retries 0" in line
+    assert "--task-timeout 14100" in line and "--max-retries 3" in line
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM" not in line
+
+
+def test_03_platform_retry_waits_five_minutes_and_logs_before_controller(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    from app.runtime import slot_orchestration
+
+    waits: list[int] = []
+    calls: list[bool] = []
+    monkeypatch.setenv("CLOUD_JOB_SLOT", "03")
+    monkeypatch.setenv("CLOUD_RUN_TASK_ATTEMPT", "1")
+    monkeypatch.setattr(cloud_job.time, "sleep", waits.append)
+    monkeypatch.setattr(slot_orchestration, "_run_adjust_03", lambda *, plan_refresh_only: calls.append(plan_refresh_only))
+
+    assert cloud_job.main() == 0
+
+    assert waits == [300]
+    assert calls == [False]
+    assert '"attempt":1' in capsys.readouterr().out

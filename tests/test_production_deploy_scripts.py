@@ -316,7 +316,7 @@ def test_production_adjust03_has_independent_time_ownership() -> None:
     assert '-SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *"' in script
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM" not in script
     assert "ADJUST03_POST_CHARGE_HOLD_PROFILE=standby" in script
-    assert "--task-timeout 14100 --max-retries 0" in script
+    assert "--task-timeout 14100 --max-retries 3" in script
     assert (FORCED_MONITOR_CUTOFF.hour, FORCED_MONITOR_CUTOFF.minute) == (6, 45)
     assert (FINAL_STANDBY_START_CUTOFF.hour, FINAL_STANDBY_START_CUTOFF.minute) == (6, 50)
     assert (CONTROL_HARD_CUTOFF.hour, CONTROL_HARD_CUTOFF.minute) == (6, 55)

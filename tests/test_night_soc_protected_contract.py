@@ -3,7 +3,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from app.runtime.night_soc_operational_contract import SLOT03_CLOUD_RUN_MAX_RETRIES, SLOT23_PRESERVED_FIELDS
+from app.runtime.night_soc_operational_contract import (
+    SLOT03_CLOUD_RUN_MAX_RETRIES,
+    SLOT03_PLATFORM_RETRY_DELAY_SECONDS,
+    SLOT23_PRESERVED_FIELDS,
+)
 from app.runtime.night_soc_time_contract import CONTROL_HARD_CUTOFF, FINAL_STANDBY_START_CUTOFF, FORCED_MONITOR_CUTOFF, GREEN_START
 
 
@@ -16,7 +20,8 @@ def _local_window(source: str, marker: str, size: int = 4000) -> str:
 
 
 def test_independent_time_ownership_contract_is_immutable() -> None:
-    assert SLOT03_CLOUD_RUN_MAX_RETRIES == 0
+    assert SLOT03_CLOUD_RUN_MAX_RETRIES == 3
+    assert SLOT03_PLATFORM_RETRY_DELAY_SECONDS == 300
     assert "batteryOperatingMode" not in SLOT23_PRESERVED_FIELDS
     assert len(SLOT23_PRESERVED_FIELDS) == 12
     assert (FORCED_MONITOR_CUTOFF.hour, FORCED_MONITOR_CUTOFF.minute) == (6, 45)
