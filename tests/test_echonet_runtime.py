@@ -1,29 +1,35 @@
+from __future__ import annotations
+
 import asyncio
 import time
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from app.echonet.adapter import GatewayError
 from app.echonet.runtime import GatewayRuntime, RuntimeState
 
+T = TypeVar("T")
+
 
 class FakeRuntimeGateway:
-    def __init__(self):
-        self._connected = False
-        self._last_message_at = None
-        self.connect_failures = 0
-        self.list_failures = 0
-        self.connect_calls = 0
-        self.close_calls = 0
-        self.list_calls = 0
+    def __init__(self) -> None:
+        self._connected: bool = False
+        self._last_message_at: float | None = None
+        self.connect_failures: int = 0
+        self.list_failures: int = 0
+        self.connect_calls: int = 0
+        self.close_calls: int = 0
+        self.list_calls: int = 0
 
     @property
-    def connected(self):
+    def connected(self) -> bool:
         return self._connected
 
     @property
-    def last_message_at(self):
+    def last_message_at(self) -> float | None:
         return self._last_message_at
 
-    async def connect(self):
+    async def connect(self) -> None:
         self.connect_calls += 1
         if self.connect_failures:
             self.connect_failures -= 1
@@ -31,11 +37,11 @@ class FakeRuntimeGateway:
         self._connected = True
         self._last_message_at = time.monotonic()
 
-    async def close(self):
+    async def close(self) -> None:
         self.close_calls += 1
         self._connected = False
 
-    async def list_devices(self):
+    async def list_devices(self) -> list[dict[str, object]]:
         self.list_calls += 1
         if self.list_failures:
             self.list_failures -= 1
@@ -44,12 +50,12 @@ class FakeRuntimeGateway:
         return []
 
 
-def run(coro):
+def run(coro: Awaitable[T]) -> T:
     return asyncio.run(coro)
 
 
-def test_runtime_connects_and_becomes_write_healthy():
-    async def scenario():
+def test_runtime_connects_and_becomes_write_healthy() -> None:
+    async def scenario() -> tuple[FakeRuntimeGateway, bool, RuntimeState, RuntimeState]:
         gateway = FakeRuntimeGateway()
         runtime = GatewayRuntime(
             gateway,
@@ -72,8 +78,8 @@ def test_runtime_connects_and_becomes_write_healthy():
     assert final_state is RuntimeState.STOPPED
 
 
-def test_runtime_recovers_after_initial_connect_failure():
-    async def scenario():
+def test_runtime_recovers_after_initial_connect_failure() -> None:
+    async def scenario() -> tuple[int, RuntimeState, bool]:
         gateway = FakeRuntimeGateway()
         gateway.connect_failures = 1
         runtime = GatewayRuntime(
@@ -95,8 +101,8 @@ def test_runtime_recovers_after_initial_connect_failure():
     assert healthy is True
 
 
-def test_runtime_closes_and_reconnects_after_health_failure():
-    async def scenario():
+def test_runtime_closes_and_reconnects_after_health_failure() -> None:
+    async def scenario() -> tuple[int, int, RuntimeState]:
         gateway = FakeRuntimeGateway()
         gateway.list_failures = 1
         runtime = GatewayRuntime(
