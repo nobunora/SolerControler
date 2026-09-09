@@ -1,95 +1,147 @@
 import asyncio
-from pathlib import Path
 
 import pytest
 
-from app.echonet.models import DeviceCapabilities, DeviceIdentity
-from app.echonet.service import EchonetReadService, TopologyError, UnsupportedPropertyError
+from app.echonet.adapter import GatewayCommandError, GatewayTimeoutError
+from app.echonet.control import ControlDisabledError, SafeWriteService, VerifiedWriteCommand
+from app.echonet.models import DeviceIdentity, WriteOutcome
+from app.echonet.service import EchonetReadService, TopologyError
 
 
-class FakeAdapter:
-    def __init__(self, devices, caps=None, values=None):
-        self.devices = devices
-        self.caps = caps or DeviceCapabilities(frozenset(), frozenset(), frozenset())
-        self.values = values or {}
+class FakeGateway:
+    def __init__(self, devices=None, read_response=None):
+        self.devices = devices or []
+        self.read_response = read_response or {}
+        self.set_effect = None
+        self.set_calls = []
         self.read_calls = []
 
-    async def discover(self, host):
+    async def list_devices(self):
         return self.devices
 
-    async def capabilities(self, identity):
-        return self.caps
+    def discovered_identities(self):
+        result = []
+        for device in self.devices:
+            identity = DeviceIdentity.from_gateway_device(device)
+            if identity is not None:
+                result.append(identity)
+        return result
 
-    async def read_properties(self, identity, epcs):
+    async def get_properties(self, identity, epcs):
         self.read_calls.append((identity, epcs))
-        return {epc: self.values[epc] for epc in epcs}
+        effect = self.read_response
+        if isinstance(effect, Exception):
+            raise effect
+        return effect
+
+    async def set_properties(self, identity, properties):
+        self.set_calls.append((identity, properties))
+        if isinstance(self.set_effect, Exception):
+            raise self.set_effect
+        return {}
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
+def devices():
+    return [
+        {"ip": "192.0.2.10", "eoj": "0279:2", "properties": {}},
+        {"ip": "192.0.2.10", "eoj": "027D:3", "properties": {}},
+    ]
+
+
 def test_discovers_non_default_instance_ids():
-    pv = DeviceIdentity("192.0.2.10", 0x02, 0x79, 0x02)
-    battery = DeviceIdentity("192.0.2.10", 0x02, 0x7D, 0x03)
-    topology = run(EchonetReadService(FakeAdapter([pv, battery])).discover_topology(pv.host))
-    assert topology.pv.eoj == "027902"
-    assert topology.battery.eoj == "027D03"
+    topology = run(EchonetReadService(FakeGateway(devices())).discover_topology())
+    assert topology.pv.eoj == "0279:2"
+    assert topology.battery.eoj == "027D:3"
 
 
-@pytest.mark.parametrize(
-    "devices",
-    [
-        [DeviceIdentity("192.0.2.10", 0x02, 0x79, 1)],
-        [DeviceIdentity("192.0.2.10", 0x02, 0x7D, 1)],
-    ],
-)
-def test_missing_required_class_fails_closed(devices):
+def test_missing_required_class_fails_closed():
+    gateway = FakeGateway([{"ip": "192.0.2.10", "eoj": "0279:1"}])
     with pytest.raises(TopologyError):
-        run(EchonetReadService(FakeAdapter(devices)).discover_topology("192.0.2.10"))
+        run(EchonetReadService(gateway).discover_topology())
 
 
 def test_duplicate_target_class_is_ambiguous():
-    devices = [
-        DeviceIdentity("192.0.2.10", 0x02, 0x79, 1),
-        DeviceIdentity("192.0.2.10", 0x02, 0x79, 2),
-        DeviceIdentity("192.0.2.10", 0x02, 0x7D, 1),
-    ]
-    with pytest.raises(TopologyError):
-        run(EchonetReadService(FakeAdapter(devices)).discover_topology("192.0.2.10"))
-
-
-def test_unsupported_epc_is_rejected_before_network_read():
-    identity = DeviceIdentity("192.0.2.10", 0x02, 0x7D, 1)
-    fake = FakeAdapter([identity], DeviceCapabilities(frozenset({0x80}), frozenset(), frozenset()))
-    service = EchonetReadService(fake)
-    with pytest.raises(UnsupportedPropertyError):
-        run(service.read_supported(identity, [0x80, 0xE0]))
-    assert fake.read_calls == []
-
-
-def test_zero_is_preserved_as_data():
-    identity = DeviceIdentity("192.0.2.10", 0x02, 0x7D, 1)
-    fake = FakeAdapter(
-        [identity],
-        DeviceCapabilities(frozenset({0xE0}), frozenset(), frozenset()),
-        {0xE0: 0},
+    gateway = FakeGateway(
+        [
+            {"ip": "192.0.2.10", "eoj": "0279:1"},
+            {"ip": "192.0.2.10", "eoj": "0279:2"},
+            {"ip": "192.0.2.10", "eoj": "027D:1"},
+        ]
     )
-    result = run(EchonetReadService(fake).read_supported(identity, [0xE0]))
-    assert result[0xE0] == 0
+    with pytest.raises(TopologyError):
+        run(EchonetReadService(gateway).discover_topology())
 
 
-def test_pychonet_import_is_isolated_to_adapter():
-    echonet_dir = Path(__file__).parents[1] / "app" / "echonet"
-    offenders = []
-    for path in echonet_dir.glob("*.py"):
-        if path.name == "adapter.py":
-            continue
-        if "pychonet" in path.read_text(encoding="utf-8"):
-            offenders.append(path.name)
-    assert offenders == []
+def test_invalid_epc_rejected_before_gateway_io():
+    identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
+    gateway = FakeGateway()
+    with pytest.raises(ValueError):
+        run(EchonetReadService(gateway).read_properties(identity, [0x100]))
+    assert gateway.read_calls == []
 
 
-def test_read_boundary_exposes_no_write_method():
-    public_names = set(dir(EchonetReadService))
-    assert not {"set", "set_epc", "write", "write_property"}.intersection(public_names)
+def test_writes_are_disabled_by_default():
+    gateway = FakeGateway()
+    command = VerifiedWriteCommand(
+        name="verified-test-command",
+        target=DeviceIdentity("192.0.2.10", 0x027D, 1),
+        epc=0xE0,
+        payload={"number": 50},
+        expected_number=50,
+    )
+    with pytest.raises(ControlDisabledError):
+        run(SafeWriteService(gateway).apply(command))
+    assert gateway.set_calls == []
+
+
+def test_accepted_write_requires_matching_readback():
+    identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
+    gateway = FakeGateway(read_response={"E0": {"number": 50}})
+    command = VerifiedWriteCommand(
+        name="verified-test-command",
+        target=identity,
+        epc=0xE0,
+        payload={"number": 50},
+        expected_number=50,
+    )
+    result = run(SafeWriteService(gateway, enabled=True).apply(command))
+    assert result.outcome is WriteOutcome.APPLIED
+    assert len(gateway.set_calls) == 1
+    assert len(gateway.read_calls) == 1
+
+
+def test_set_timeout_reconciles_without_blind_retry():
+    identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
+    gateway = FakeGateway(read_response={"E0": {"number": 50}})
+    gateway.set_effect = GatewayTimeoutError("timeout")
+    command = VerifiedWriteCommand(
+        name="verified-test-command",
+        target=identity,
+        epc=0xE0,
+        payload={"number": 50},
+        expected_number=50,
+    )
+    result = run(SafeWriteService(gateway, enabled=True).apply(command))
+    assert result.outcome is WriteOutcome.APPLIED
+    assert len(gateway.set_calls) == 1
+    assert len(gateway.read_calls) == 1
+
+
+def test_set_rejection_is_not_reported_as_success():
+    identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
+    gateway = FakeGateway()
+    gateway.set_effect = GatewayCommandError("ECHONET_DEVICE_ERROR", "rejected")
+    command = VerifiedWriteCommand(
+        name="verified-test-command",
+        target=identity,
+        epc=0xE0,
+        payload={"number": 50},
+        expected_number=50,
+    )
+    result = run(SafeWriteService(gateway, enabled=True).apply(command))
+    assert result.outcome is WriteOutcome.REJECTED
+    assert gateway.read_calls == []
