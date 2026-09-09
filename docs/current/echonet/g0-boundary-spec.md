@@ -2,30 +2,29 @@
 
 ## Ideal specification
 
-- `pychonet` is replaceable infrastructure, never a domain model.
-- One adapter owns all `pychonet` calls and translates library exceptions/data into project-owned types.
-- EOJ instance IDs are discovered; only class codes `0x0279` and `0x027D` are required.
-- Device property maps are the runtime capability source of truth.
-- Read and write paths are separate. G0–G2 are structurally read-only.
-- Raw identity (`host`, EOJ, EPC) remains available for diagnosis while normalized state has project-owned names/units.
+- `echonet-list` is the sole owner of ECHONET Lite transport/device-discovery mechanics.
+- SolarControler owns semantic energy decisions, write eligibility, stale/offline policy, reconciliation, and audit.
+- The boundary is WebSocket JSON with requestId correlation and explicit error codes.
+- Gateway replacement must not change optimizer/domain contracts.
+- Raspberry Pi process separation is treated as fault containment, not accidental complexity.
 
 ## Forbidden specification
 
-- Hard-code `027901`/`027D01` as the only valid EOJs.
-- Let `energy_plan`, `domain`, dashboard views, or KP-NET code call `pychonet` directly.
-- Infer unsupported EPCs from the ECHONET standard instead of the device property map.
-- Convert timeout/missing/malformed values to zero.
-- Add SET/SETC as a generic raw HTTP/UI endpoint.
-- Hide raw protocol identity from logs/errors, or log credentials/secrets.
+- Reimplement UDP 3610, multicast discovery, TID/frame parsing, or ECHONET retry machinery inside SolarControler.
+- Let `energy_plan`, `domain`, dashboard, or KP-NET code send `set_properties` directly.
+- Treat gateway availability as device availability.
+- Treat `command_result.success=true` as proof that the physical target now has the requested state.
+- Auto-retry a write whose delivery outcome is uncertain.
+- Expose arbitrary EPC/EDT write APIs to upper layers.
 
 ## Normal flow
 
-`RC-307A -> pychonet -> adapter -> normalized service -> consumer`. The adapter returns typed observations plus capability metadata. Consumers never interpret EDT bytes.
+`optimizer -> semantic command -> safety service -> EchonetListGateway -> echonet-list -> RC-307A`; reads return through the same boundary and are normalized above the gateway client.
 
 ## Abnormal flow
 
-Protocol timeout, unsupported EPC, decode failure, duplicate/missing target EOJ, or library incompatibility is explicit and attributable to the adapter boundary. Last-known values may be retained only with `stale=true`; they are never represented as fresh.
+Gateway disconnect, malformed JSON, request timeout, device timeout, target-not-found, device error, offline notification and schema drift are distinct failures. Unknown state fails closed.
 
 ## Exit criteria
 
-Architecture, dependency direction, ownership, read-only boundary, and error semantics are reviewable and covered by G0 tests.
+Ownership, dependency direction, failure containment and write-safety invariants are covered by static/unit tests and approved before hardware control work.
