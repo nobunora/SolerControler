@@ -1,20 +1,33 @@
+from __future__ import annotations
+
 import asyncio
 import json
+from collections.abc import Awaitable
+from typing import Any, TypeVar
 
 from app.echonet.adapter import EchonetListGateway
 from app.echonet.models import DeviceIdentity
 
+T = TypeVar("T")
 
-def run(coro):
+
+def run(coro: Awaitable[T]) -> T:
     return asyncio.run(coro)
 
 
-def test_gateway_websocket_contract_without_hardware():
-    async def scenario():
-        from websockets.asyncio.server import serve
+def test_gateway_websocket_contract_without_hardware() -> None:
+    async def scenario() -> tuple[
+        list[dict[str, Any]],
+        list[DeviceIdentity],
+        DeviceIdentity,
+        dict[str, Any],
+        dict[str, Any],
+        bool,
+    ]:
+        from websockets.asyncio.server import ServerConnection, serve
 
-        async def handler(socket):
-            devices = {
+        async def handler(socket: ServerConnection) -> None:
+            devices: dict[str, dict[str, Any]] = {
                 "192.0.2.10 0279:1": {
                     "ip": "192.0.2.10",
                     "eoj": "0279:1",
@@ -28,20 +41,26 @@ def test_gateway_websocket_contract_without_hardware():
             }
             await socket.send(json.dumps({"type": "initial_state", "payload": {"devices": devices}}))
             async for raw in socket:
-                request = json.loads(raw)
-                request_id = request["requestId"]
-                message_type = request["type"]
+                request: dict[str, Any] = json.loads(raw)
+                request_id = str(request["requestId"])
+                message_type = str(request["type"])
                 payload = request["payload"]
+                if not isinstance(payload, dict):
+                    payload = {}
                 if message_type == "list_devices":
-                    data = {"devices": devices}
+                    data: dict[str, Any] = {"devices": devices}
                 elif message_type == "get_properties":
-                    target = payload["targets"][0]
-                    epc = payload["epcs"][0]
+                    targets = payload.get("targets", [])
+                    epcs = payload.get("epcs", [])
+                    target = str(targets[0])
+                    epc = str(epcs[0])
                     data = {"devices": {target: {"properties": {epc: devices[target]["properties"][epc]}}}}
                 elif message_type == "set_properties":
-                    target = payload["target"]
-                    for epc, value in payload["properties"].items():
-                        devices[target]["properties"][epc] = value
+                    target = str(payload["target"])
+                    properties = payload.get("properties", {})
+                    if isinstance(properties, dict):
+                        for epc, value in properties.items():
+                            devices[target]["properties"][str(epc)] = value
                     data = {}
                 else:
                     data = {}
@@ -59,14 +78,14 @@ def test_gateway_websocket_contract_without_hardware():
             port = server.sockets[0].getsockname()[1]
             gateway = EchonetListGateway(f"ws://127.0.0.1:{port}", request_timeout=1.0)
             await gateway.connect()
-            devices = await gateway.list_devices()
+            device_list = [dict(device) for device in await gateway.list_devices()]
             identities = gateway.discovered_identities()
             battery = next(identity for identity in identities if identity.class_code == 0x027D)
-            before = await gateway.get_properties(battery, (0xE0,))
+            before = dict(await gateway.get_properties(battery, (0xE0,)))
             await gateway.set_properties(battery, {0xE0: {"number": 60}})
-            after = await gateway.get_properties(battery, (0xE0,))
+            after = dict(await gateway.get_properties(battery, (0xE0,)))
             await gateway.close()
-            return devices, identities, battery, before, after, gateway.connected
+            return device_list, identities, battery, before, after, gateway.connected
 
     devices, identities, battery, before, after, connected = run(scenario())
     assert len(devices) == 2
