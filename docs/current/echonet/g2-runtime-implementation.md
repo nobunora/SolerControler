@@ -2,20 +2,30 @@
 
 ## Process model
 
-On Raspberry Pi, run echonet-list and SolarControler as separate systemd units. SolarControler depends on network-online and the local gateway endpoint, but must tolerate gateway restarts after startup. Do not merge the two processes merely to reduce service count.
+On Raspberry Pi, run echonet-list and SolarControler as separate systemd units. SolarControler must tolerate echonet-list restarts after startup. Do not merge the two processes merely to reduce service count.
 
-## SolarControler connection owner
+## Implemented SolarControler runtime owner
 
-A single runtime owner creates `EchonetListGateway`, performs connect, waits for initial_state, validates topology, and exposes readiness. On disconnect it marks gateway unavailable, suspends control, closes pending requests, then reconnects with capped exponential backoff and jitter.
+`app/echonet/runtime.py::GatewayRuntime` owns exactly one gateway lifecycle. It:
+
+- connects and requires successful `list_devices` before ONLINE
+- performs periodic read-only health requests
+- marks write readiness false unless state is ONLINE and freshness is within `stale_after`
+- closes a failed connection before reconnecting
+- reconnects with capped exponential backoff
+- never replays a write command during reconnect
+- performs cancellation-safe shutdown
+
+The WebSocket adapter itself invalidates connection state and fails pending request futures if its receiver loop dies.
+
+## Still deferred to deployment validation
+
+Backoff jitter, structured production logging, systemd unit tuning, process watchdog policy and final freshness thresholds require target-host evidence. These are not reasons to block hardware-free unit/protocol tests.
 
 ## Restart safety
 
-No unresolved write command is automatically replayed after process/gateway restart. Recovery begins with read-only reconciliation and fresh topology/state acquisition.
-
-## Observability
-
-Log connection state, gateway error code, target EOJ, request type, correlation/request ID where useful, and elapsed time. Do not log TLS private material, full environment, or unnecessary raw device payloads.
+No unresolved write command is automatically replayed after process/gateway restart. Recovery begins with read-only gateway/topology acquisition. `SafeWriteService` receives runtime readiness as an interlock.
 
 ## Deployment
 
-Prefer WSS for LAN endpoints. If SolarControler and echonet-list are on the same Raspberry Pi, loopback WS may be allowed by explicit deployment configuration; never bind an unauthenticated write-capable endpoint broadly by accident.
+Prefer WSS for remote LAN endpoints. If SolarControler and echonet-list are on the same Raspberry Pi, loopback WS may be allowed by explicit deployment configuration; never bind an unauthenticated write-capable endpoint broadly by accident.
