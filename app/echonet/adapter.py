@@ -8,7 +8,7 @@ from .models import DeviceCapabilities, DeviceIdentity
 
 
 class PychonetCompatibilityError(RuntimeError):
-    """Installed pychonet state/API shape is incompatible with this adapter."""
+    """Installed pychonet API/state shape is incompatible with this adapter."""
 
 
 class PychonetCommunicationError(RuntimeError):
@@ -31,7 +31,6 @@ class PychonetReadAdapter:
         loop = asyncio.get_running_loop()
         self._udp.run(listen_address, 3610, loop=loop)
         self._client = ECHONETAPIClient(server=self._udp)
-        # pychonet uses 0.1-second ticks.
         self._client.configure(message_timeout=max(1, round(timeout_seconds * 10)))
 
     async def discover(self, host: str) -> list[DeviceIdentity]:
@@ -57,7 +56,6 @@ class PychonetReadAdapter:
                 f"property-map read timed out for {identity.host} EOJ {identity.eoj}"
             )
         state = self._instance_state(identity)
-        # ECHONET superclass EPCs: 0x9D STATMAP, 0x9E SETMAP, 0x9F GETMAP.
         return DeviceCapabilities(
             gettable=frozenset(state.get(0x9F, ())),
             settable=frozenset(state.get(0x9E, ())),
@@ -102,8 +100,8 @@ class PychonetReadAdapter:
 
     def _identities_from_state(self, host: str) -> list[DeviceIdentity]:
         try:
-            instances = self._client._state[host]["instances"]
-            result = [
+            instances = self._client.state[host]["instances"]
+            return [
                 DeviceIdentity(host, int(gc), int(cc), int(ci))
                 for gc, classes in instances.items()
                 for cc, instance_map in classes.items()
@@ -113,11 +111,10 @@ class PychonetReadAdapter:
             raise PychonetCompatibilityError(
                 f"unexpected pychonet discovery state shape for {host}"
             ) from exc
-        return result
 
     def _instance_state(self, identity: DeviceIdentity) -> Mapping[int, Any]:
         try:
-            state = self._client._state[identity.host]["instances"][identity.eojgc][
+            state = self._client.state[identity.host]["instances"][identity.eojgc][
                 identity.eojcc
             ][identity.eojci]
         except (AttributeError, KeyError, TypeError) as exc:
