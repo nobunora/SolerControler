@@ -1,20 +1,14 @@
 # G0 — Test specification and cases
 
-## Strategy
-
-Static/unit tests only. No RC-307A and no UDP required.
-
 | ID | Case | Expected |
 |---|---|---|
-| G0-01 | construct identity with instance != 1 | EOJ preserves discovered instance |
-| G0-02 | zero observation | zero remains valid, not missing |
-| G0-03 | missing observation | represented as `None`, never zero |
-| G0-04 | capabilities | get/set/notify remain distinct immutable sets |
-| G0-05 | service with fake adapter | no `pychonet` object escapes service contract |
-| G0-06 | adapter failure | project-owned error preserves diagnostic context |
-| G0-07 | source dependency search | `pychonet` import exists only in adapter boundary |
-| G0-08 | write surface search | no SET/SETC/raw-write method exists before G3 |
+| G0-01 | optimizer/service imports | no direct WebSocket or `set_properties` JSON outside adapter/control boundary |
+| G0-02 | invalid EOJ device payload | ignored/fails explicitly; never fabricated identity |
+| G0-03 | malformed gateway message | protocol error, not synthetic data |
+| G0-04 | missing numeric value | remains missing, never zero |
+| G0-05 | write disabled | rejected before gateway I/O |
+| G0-06 | SET timeout | no blind second SET |
+| G0-07 | gateway success + read-back mismatch | not reported as success |
+| G0-08 | dependency search | no pychonet dependency/import remains |
 
-## Gate decision
-
-PASS only when G0-01..08 pass. A missing dependency-boundary check is INCONCLUSIVE, not PASS.
+PASS requires G0-01..08 plus review of dependency direction.
