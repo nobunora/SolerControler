@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -76,3 +77,19 @@ def test_zero_is_preserved_as_data():
     )
     result = run(EchonetReadService(fake).read_supported(identity, [0xE0]))
     assert result[0xE0] == 0
+
+
+def test_pychonet_import_is_isolated_to_adapter():
+    echonet_dir = Path(__file__).parents[1] / "app" / "echonet"
+    offenders = []
+    for path in echonet_dir.glob("*.py"):
+        if path.name == "adapter.py":
+            continue
+        if "pychonet" in path.read_text(encoding="utf-8"):
+            offenders.append(path.name)
+    assert offenders == []
+
+
+def test_read_boundary_exposes_no_write_method():
+    public_names = set(dir(EchonetReadService))
+    assert not {"set", "set_epc", "write", "write_property"}.intersection(public_names)
