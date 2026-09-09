@@ -143,6 +143,19 @@ def test_accepted_write_requires_matching_readback_and_audit():
     assert audit.results == [result]
 
 
+def test_device_keyed_readback_uses_gateway_target_string():
+    identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
+    gateway = FakeGateway(
+        read_response={
+            "devices": {
+                identity.target: {"properties": {"E0": {"number": 50}}},
+            }
+        }
+    )
+    result = run(SafeWriteService(gateway, enabled=True).apply(command(identity)))
+    assert result.outcome is WriteOutcome.APPLIED
+
+
 def test_set_timeout_reconciles_without_blind_retry():
     identity = DeviceIdentity("192.0.2.10", 0x027D, 1)
     gateway = FakeGateway(read_response={"E0": {"number": 50}})
