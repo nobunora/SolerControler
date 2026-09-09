@@ -1,16 +1,18 @@
-"""Project-owned ECHONET Lite boundary.
+"""Project-owned ECHONET gateway boundary."""
 
-Protocol I/O belongs in :mod:`app.echonet.adapter`; consumers should depend on
-project-owned models/services instead of pychonet objects.
-"""
-
-from .models import DeviceCapabilities, DeviceIdentity, PropertyObservation, SystemTopology
+from .adapter import EchonetListGateway
+from .control import ControlDisabledError, SafeWriteService, VerifiedWriteCommand
+from .models import DeviceIdentity, SystemTopology, WriteOutcome, WriteResult
 from .service import EchonetReadService
 
 __all__ = [
-    "DeviceCapabilities",
+    "ControlDisabledError",
     "DeviceIdentity",
+    "EchonetListGateway",
     "EchonetReadService",
-    "PropertyObservation",
+    "SafeWriteService",
     "SystemTopology",
+    "VerifiedWriteCommand",
+    "WriteOutcome",
+    "WriteResult",
 ]
