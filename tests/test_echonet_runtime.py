@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable
-from typing import TypeVar
+from collections.abc import Awaitable, Mapping
+from typing import Any, TypeVar
 
 from app.echonet.adapter import GatewayError
 from app.echonet.runtime import GatewayRuntime, RuntimeState
@@ -41,7 +41,7 @@ class FakeRuntimeGateway:
         self.close_calls += 1
         self._connected = False
 
-    async def list_devices(self) -> list[dict[str, object]]:
+    async def list_devices(self) -> list[Mapping[str, Any]]:
         self.list_calls += 1
         if self.list_failures:
             self.list_failures -= 1
