@@ -1,46 +1,53 @@
-"""Read-only RC-307A ECHONET topology/property-map probe.
-
-Usage: python scripts/echonet_probe.py 192.168.x.x
-No SET/SETC operation is exposed by this script.
-"""
+"""Read-only echonet-list probe for the RC-307A node exposed to SolarControler."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import ssl
 
-from app.echonet.adapter import PychonetReadAdapter
+from app.echonet.adapter import EchonetListGateway
 from app.echonet.service import EchonetReadService
 
 
-def _hex_set(values: frozenset[int]) -> list[str]:
-    return [f"0x{value:02X}" for value in sorted(values)]
-
-
-async def _run(host: str, listen_address: str, timeout: float) -> None:
-    adapter = PychonetReadAdapter(listen_address=listen_address, timeout_seconds=timeout)
-    service = EchonetReadService(adapter)
-    topology = await service.discover_topology(host)
-    result = {"host": host, "devices": {}}
-    for label, identity in (("pv", topology.pv), ("battery", topology.battery)):
-        caps = await service.capabilities(identity)
-        result["devices"][label] = {
-            "eoj": identity.eoj,
-            "get": _hex_set(caps.gettable),
-            "set": _hex_set(caps.settable),
-            "notify": _hex_set(caps.notify),
-        }
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+async def _run(url: str, timeout: float, insecure_tls: bool) -> None:
+    ssl_context = None
+    if url.startswith("wss://"):
+        ssl_context = ssl.create_default_context()
+        if insecure_tls:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+    gateway = EchonetListGateway(url, request_timeout=timeout, ssl=ssl_context)
+    await gateway.connect()
+    try:
+        service = EchonetReadService(gateway)
+        topology = await service.discover_topology()
+        print(
+            json.dumps(
+                {
+                    "pv": {"host": topology.pv.host, "eoj": topology.pv.eoj},
+                    "battery": {"host": topology.battery.host, "eoj": topology.battery.eoj},
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    finally:
+        await gateway.close()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Read-only RC-307A ECHONET probe")
-    parser.add_argument("host", help="RC-307A IPv4 address")
-    parser.add_argument("--listen-address", default="0.0.0.0")
-    parser.add_argument("--timeout", type=float, default=5.0)
+    parser = argparse.ArgumentParser(description="Read-only RC-307A probe via echonet-list")
+    parser.add_argument("url", help="echonet-list WebSocket URL, e.g. ws://127.0.0.1:8080/ws")
+    parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--insecure-tls",
+        action="store_true",
+        help="development only: disable TLS certificate verification",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args.host, args.listen_address, args.timeout))
+    asyncio.run(_run(args.url, args.timeout, args.insecure_tls))
 
 
 if __name__ == "__main__":
