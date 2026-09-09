@@ -1,8 +1,15 @@
 """Project-owned ECHONET gateway boundary."""
 
 from .adapter import EchonetListGateway
-from .control import ControlDisabledError, SafeWriteService, VerifiedWriteCommand
+from .audit import JsonlAuditSink
+from .control import (
+    ControlDisabledError,
+    SafeWriteService,
+    SafetyInterlockError,
+    VerifiedWriteCommand,
+)
 from .models import DeviceIdentity, SystemTopology, WriteOutcome, WriteResult
+from .runtime import GatewayRuntime, RuntimeState
 from .service import EchonetReadService
 
 __all__ = [
@@ -10,7 +17,11 @@ __all__ = [
     "DeviceIdentity",
     "EchonetListGateway",
     "EchonetReadService",
+    "GatewayRuntime",
+    "JsonlAuditSink",
+    "RuntimeState",
     "SafeWriteService",
+    "SafetyInterlockError",
     "SystemTopology",
     "VerifiedWriteCommand",
     "WriteOutcome",
