@@ -1,24 +1,24 @@
 # G1 — Detailed implementation specification
 
-## pychonet integration
+## Connection
 
-Use `UDPServer`, `ECHONETAPIClient`, `discover(host)`, `register_multicast(host)`, `getAllPropertyMaps(...)`, and `Factory(...)`. Bind UDP/3610 on a configured local address. `pychonet` is pinned because upstream declares maintenance mode.
+Use `websockets` asyncio client. One `EchonetListGateway` owns a persistent socket, one receive loop, pending request futures keyed by UUID requestId, and a cache populated from `initial_state` plus notifications.
 
-## Discovery adapter
+## Requests
 
-1. Start listener once.
-2. `discover(gateway_ip)` when configured.
-3. Read pychonet's discovered instance registry; convert entries to project `DeviceIdentity`.
-4. Filter by `(eojgc,eojcc) == (0x02,0x79)` and `(0x02,0x7D)`.
-5. For selected identities call `getAllPropertyMaps` and expose copied capability sets.
-6. Construct device via `Factory` only inside adapter.
+- `list_devices`: cache-oriented topology/device retrieval.
+- `get_properties`: explicit live device read.
+- `set_properties`: transport primitive used only by `SafeWriteService`.
+- `get_property_description`: schema/reference metadata only; it does not by itself prove runtime writability.
 
-Because pychonet internal registry shape is an external-library detail, keep its parsing in one private helper and fail closed on an unknown shape.
+## Device identity
 
-## Read API
+Parse echonet-list EOJ strings as `<4 hex class>:<decimal instance>`, e.g. `027D:1`. Preserve host and instance. Initial topology requires exactly one `0x0279` and one `0x027D`; ambiguity fails closed.
 
-`read_properties(identity, epcs)` first intersects requested EPCs with `gettable`; unsupported requests are rejected before network I/O. Returned values are copied into project-owned observations. No consumer receives a pychonet instance.
+## Error translation
 
-## Initial mapping policy
+Connection failure, gateway protocol/schema error, request timeout and command-result error are separate project exceptions. Unknown command_result requestIds are ignored as stale/foreign responses; malformed matched responses fail explicitly.
 
-Do not encode RC-307A EPC mappings from memory. First implementation provides topology and property-map probing plus a narrow read primitive. Verified mappings discovered by Codex/real hardware are added as a separate reviewed patch with fixture bytes and source/reference.
+## Write boundary
+
+The gateway client may implement `set_properties`, but no upper layer may call it directly. `SafeWriteService` owns all production write transactions.
