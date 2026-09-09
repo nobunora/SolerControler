@@ -1,21 +1,21 @@
-# G2 — Detailed implementation specification
+# G2 — Detailed runtime implementation specification
 
-## Runtime owner
+## Process model
 
-A future `app/echonet/runtime.py` owns exactly one adapter/service lifecycle. It receives configuration; it does not read `.env` directly. Configuration parsing remains in `app/configuration`.
+On Raspberry Pi, run echonet-list and SolarControler as separate systemd units. SolarControler depends on network-online and the local gateway endpoint, but must tolerate gateway restarts after startup. Do not merge the two processes merely to reduce service count.
 
-## State machine
+## SolarControler connection owner
 
-`STARTING -> ONLINE -> DEGRADED -> OFFLINE -> RECOVERING -> ONLINE`; shutdown from any state -> `STOPPING -> STOPPED`. State transitions are logged once with reason; measurements are independent and become stale by age.
+A single runtime owner creates `EchonetListGateway`, performs connect, waits for initial_state, validates topology, and exposes readiness. On disconnect it marks gateway unavailable, suspends control, closes pending requests, then reconnects with capped exponential backoff and jitter.
 
-## Scheduling
+## Restart safety
 
-Use one asyncio polling task. No next poll starts until the prior poll finishes. Default cadence is configuration, not protocol logic. Retry delay is capped; successful traffic resets failure count. Push callbacks only update cached state/signal refresh and must not launch unbounded work.
-
-## OS boundary
-
-Windows Service/Task Scheduler and systemd unit files are deployment wrappers, not application dependencies. Reference process accepts SIGINT/normal cancellation; platform-specific stop handling belongs at entrypoint.
+No unresolved write command is automatically replayed after process/gateway restart. Recovery begins with read-only reconciliation and fresh topology/state acquisition.
 
 ## Observability
 
-Structured fields: component, host, EOJ/EPC when applicable, state transition, attempt, elapsed_ms. Never log `.env`, credentials, full environment, or opaque external payloads unnecessarily.
+Log connection state, gateway error code, target EOJ, request type, correlation/request ID where useful, and elapsed time. Do not log TLS private material, full environment, or unnecessary raw device payloads.
+
+## Deployment
+
+Prefer WSS for LAN endpoints. If SolarControler and echonet-list are on the same Raspberry Pi, loopback WS may be allowed by explicit deployment configuration; never bind an unauthenticated write-capable endpoint broadly by accident.
