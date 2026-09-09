@@ -1,29 +1,21 @@
-# G1 — Read-only specification
+# G1 — Gateway compatibility specification
 
 ## Ideal specification
 
-- Prefer configured RC-307A IPv4 unicast discovery; multicast is an explicit fallback, not an assumption.
-- Discover EOJ instances dynamically and require exactly one usable `0x0279` and one usable `0x027D` for the initial system profile.
-- Fetch property maps before reads and request only gettable EPCs.
-- Normalize only EPCs whose semantics are verified; unknown EPCs remain raw/capability metadata, never guessed.
-- A snapshot is atomic at service level: timestamp, PV section, battery section, errors.
+- SolarControler connects to echonet-list via persistent WebSocket and waits for `initial_state` before declaring gateway-ready.
+- `requestId` correlates every command_result with exactly one request.
+- `list_devices` is the stable cache source; `get_properties` is explicit live I/O.
+- Target classes `0279:*` and `027D:*` are discovered dynamically; instance numbers are never hard-coded.
+- `device_offline`, `device_online`, `device_added`, and `property_changed` update local gateway state without inventing freshness.
+- Gateway error codes remain distinguishable at the project boundary.
 
 ## Forbidden specification
 
-- Guess EPC meaning, scale, sign, or sentinel handling.
-- Read every standard EPC blindly.
-- Treat a partial response as a fully healthy snapshot.
-- Collapse communication failure, unsupported property, and decode failure into one zero/default.
-- Require multicast when a fixed gateway IP is available.
-
-## Normal flow
-
-Configured host -> discover -> select `0x0279xx`/`0x027Dxx` -> property maps -> supported read set -> normalized snapshot. Initial implementation exposes discovery/capabilities safely even before all device-specific EPC mappings are verified.
-
-## Abnormal flow
-
-No gateway: connection error. Missing target class: topology error. Multiple target instances: ambiguity error unless configuration selects one. Unsupported EPC: omitted with capability evidence. Timeout/decode failure: error + stale/missing observation, never fabricated data.
+- Assume initial_state/list_devices/get_properties have identical freshness semantics.
+- Guess undocumented response shapes without fixture coverage.
+- Treat WebSocket connected as RC-307A online.
+- Hide TARGET_NOT_FOUND, ECHONET_TIMEOUT, ECHONET_DEVICE_ERROR, or communication errors behind one generic zero/default.
 
 ## Exit criteria
 
-Deterministic fake-adapter tests pass; Codex then verifies discovery/property maps against RC-307A without sending write services.
+Protocol-fixture tests pass against the documented echonet-list message format, then Raspberry Pi integration confirms actual RC-307A device identities and live reads.
