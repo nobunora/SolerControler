@@ -1,28 +1,25 @@
 # G3 — Detailed implementation specification
 
-## Future ownership
+## Current implementation
 
-Create a dedicated control adapter/service; do not add write methods to the read service. Project-owned command types encode semantic intent (for example a verified charge-power command), not raw EPC/EDT.
+`SafeWriteService` is the sole production write-transaction owner. It receives `VerifiedWriteCommand` definitions and calls the gateway `set_properties` primitive exactly once per transaction.
 
-## Command transaction
+## Transaction
 
-1. Check global write opt-in.
-2. Reconfirm target identity and current Set Property Map.
-3. Validate command against verified model/firmware contract and numeric/domain range.
-4. Encode EDT in one command-specific encoder.
-5. Send exactly one SET request.
-6. Classify response as accepted/rejected/unknown.
-7. Read back the authoritative property/state.
-8. Return `APPLIED`, `REJECTED`, `MISMATCH`, or `UNKNOWN`; only `APPLIED` is success.
+1. Require explicit `enabled=True` supplied by runtime configuration after gate approval.
+2. Validate semantic command name, target, EPC and exactly one read-back expectation.
+3. Send one `set_properties` request.
+4. If gateway rejects it, return REJECTED.
+5. If SET response times out, classify delivery as uncertain and issue only live GET reconciliation.
+6. After accepted SET, issue live GET read-back.
+7. Matching read-back -> APPLIED.
+8. Accepted SET + mismatch -> MISMATCH.
+9. Uncertain SET + nonmatching/unavailable read-back -> UNKNOWN.
 
-## Retry semantics
+## Concrete command definitions
 
-Transport retries are allowed only before a write is sent. Once send outcome is uncertain, reconcile by GET. Never issue a second write solely because the first response timed out.
+This PR intentionally does not invent RC-307A writable EPC semantics. `VerifiedWriteCommand` is infrastructure, not permission to create arbitrary user input. Concrete constructors such as future battery-mode/charge-target commands must live in a reviewed RC-307A profile module and encode only verified values.
 
-## Audit
+## Required next hardening
 
-Record timestamp, target EOJ, semantic command name, requested normalized value, outcome, read-back value, and correlation ID. Do not store credentials or unnecessary raw payloads.
-
-## Compatibility
-
-Writable contracts are keyed by evidence, not guessed firmware branching. Unknown firmware/capability drift fails closed.
+Before automatic control: add current Set Property Map evidence from echonet-list/RC-307A, firmware/profile identity checks, command serialization lock, persistent audit record/correlation ID, stale-state precondition checks, and restart reconciliation policy.
