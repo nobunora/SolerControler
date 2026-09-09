@@ -2,17 +2,15 @@
 
 | ID | Case | Expected |
 |---|---|---|
-| G2-01 | normal start/stop | one listener/task; clean shutdown |
-| G2-02 | poll slower than interval | no overlap |
-| G2-03 | 3 consecutive timeouts | degraded/offline transition; stale data |
-| G2-04 | gateway returns | recovery -> online; failure counter reset |
-| G2-05 | cancellation during I/O | cancellation propagates; resources close |
-| G2-06 | notification burst | bounded work/cache updates; no task explosion |
-| G2-07 | UDP/3610 already bound | explicit startup failure |
-| G2-08 | Windows 10/11 soak | 1 h read-only run, stable task/socket count |
-| G2-09 | Raspberry Pi OS soak | 1 h read-only run, stable task/socket count |
-| G2-10 | gateway reboot during soak | automatic bounded recovery |
-| G2-11 | network interface interruption | stale/offline then recovery |
-| G2-12 | logs | no secrets/environment dump; state transitions diagnosable |
+| G2-01 | SolarControler starts before echonet-list | bounded reconnect; control disabled |
+| G2-02 | echonet-list restarts | pending requests fail; fresh initial_state required |
+| G2-03 | RC-307A goes offline | stale/offline state; no write allowed |
+| G2-04 | RC-307A returns | fresh topology/read before control resumes |
+| G2-05 | SolarControler restart after uncertain write | no write replay; read-only reconciliation first |
+| G2-06 | notification burst | bounded receive loop; no task explosion |
+| G2-07 | Raspberry Pi 1 h soak | stable RSS/task count and reconnect behavior |
+| G2-08 | LAN interruption | backoff, no busy loop, recovery after network return |
+| G2-09 | Windows diagnostic client | same protocol contract works without OS-specific domain code |
+| G2-10 | WSS certificate failure | fail closed; no insecure fallback |
 
-For soak tests record start/end RSS, task count, socket count, successful polls, timeouts and recovery latency. Thresholds must be agreed from observed baseline rather than invented.
+Hardware/runtime cases are executed after the Raspberry Pi is available.
