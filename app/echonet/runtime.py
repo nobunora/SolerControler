@@ -96,6 +96,7 @@ class GatewayRuntime:
                     await self._gateway.list_devices()
                 except GatewayError:
                     self._state = RuntimeState.OFFLINE
+                    await self._gateway.close()
                     await asyncio.sleep(delay)
                     delay = min(self._reconnect_max, delay * 2)
                     continue
