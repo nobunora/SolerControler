@@ -2,21 +2,20 @@
 
 ## Ownership
 
-- `app/echonet/models.py`: project-owned immutable identities, capabilities, observations, snapshots. No external I/O.
-- `app/echonet/adapter.py`: the only production module allowed to import/call `pychonet`.
-- `app/echonet/service.py`: discovery selection, normalization orchestration, stale/error semantics. Depends on an adapter protocol, not concrete `pychonet` classes.
-- Runtime scheduling belongs outside these modules.
+- `app/echonet/adapter.py`: only echonet-list WebSocket protocol implementation; requestId matching, connection state, gateway error translation, raw gateway cache.
+- `app/echonet/models.py`: project-owned immutable identity/result types; no I/O.
+- `app/echonet/service.py`: read/topology orchestration; no WebSocket details.
+- `app/echonet/control.py`: write enable gate, one-shot transaction ownership, read-back reconciliation and outcome classification.
+- Optimization/runtime code may call services but must not know `set_properties` JSON.
 
-## Contracts
+## Dependency direction
 
-`DeviceIdentity(host, eojgc, eojcc, eojci)` preserves EOJ identity and exposes a six-hex-digit EOJ string. `DeviceCapabilities(gettable,settable,notify)` uses immutable integer sets. `PropertyObservation` distinguishes `value=None` from numeric zero and records freshness/source. `SystemSnapshot` contains optional PV/battery sections plus explicit errors.
+`energy_plan/runtime -> app.echonet.control/service -> app.echonet.adapter -> websockets`. `domain/configuration/parsing` remain independent of gateway/network code.
 
-Adapter methods are async and narrow: discover target devices, load capability maps, read requested EPCs. No generic write method exists before G3.
+## Gateway contract
 
-## Dependency guard
+Use echonet-list documented `initial_state`, `list_devices`, `get_properties`, `set_properties`, `property_changed`, `device_offline`, `device_online`, and `command_result`. Unknown message types may be ignored only when they do not satisfy a pending command; malformed required fields fail explicitly.
 
-`models` imports stdlib only. `service` imports project models and typing only. `adapter` may import `pychonet`. Existing upper layers may consume the service later; reverse imports are forbidden.
+## Security
 
-## Diagnostics
-
-Errors include host/EOJ/EPC where applicable but never raw environment variables. Exceptions crossing the adapter boundary use project-owned exception classes with original exception chaining.
+Production uses loopback/LAN-restricted WSS and validated certificates. `--insecure-tls` is probe-only development behavior. No external Internet exposure is part of this design.
