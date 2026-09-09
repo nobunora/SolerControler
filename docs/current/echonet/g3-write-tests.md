@@ -2,17 +2,18 @@
 
 | ID | Case | Expected |
 |---|---|---|
-| G3-01 | writes disabled | command rejected before I/O |
-| G3-02 | EPC absent from Set map | rejected before I/O |
-| G3-03 | invalid semantic value/range | rejected before I/O |
-| G3-04 | valid command + matching read-back | APPLIED |
-| G3-05 | SET rejected | REJECTED; no success |
-| G3-06 | timeout before send | safe transport retry allowed |
-| G3-07 | timeout after possible send | UNKNOWN -> GET reconciliation; no blind second SET |
-| G3-08 | read-back mismatch | MISMATCH; no blind retry |
-| G3-09 | firmware/capability drift | control disabled/fail closed |
-| G3-10 | concurrent commands same target | serialized or rejected per command-owner contract |
-| G3-11 | audit record | correlation + semantic values/outcome, no secrets |
-| G3-12 | packet capture on RC-307A | exactly expected write/read-back sequence |
+| G3-01 | writes disabled | rejected before gateway I/O |
+| G3-02 | malformed/unverified command | rejected before gateway I/O |
+| G3-03 | valid SET + matching live GET | APPLIED |
+| G3-04 | gateway SET rejection | REJECTED |
+| G3-05 | accepted SET + mismatching GET | MISMATCH |
+| G3-06 | SET timeout + matching GET | APPLIED after reconciliation; exactly one SET |
+| G3-07 | SET timeout + mismatching/unavailable GET | UNKNOWN; exactly one SET |
+| G3-08 | restart after UNKNOWN | no automatic replay; read-only reconciliation first |
+| G3-09 | stale/offline prerequisite | command blocked before SET |
+| G3-10 | firmware/profile drift | command blocked/fail closed |
+| G3-11 | concurrent writes same target | serialized by single command owner before auto-control release |
+| G3-12 | audit | command identity/request/outcome/read-back recorded without secrets |
+| G3-13 | safe RC-307A hardware write | expected SET then live GET sequence verified |
 
-Hardware write tests require an explicitly safe operating window and user authorization. This PR intentionally contains no G3 production write code.
+Current unit tests cover disabled writes, accepted+read-back, rejection, and timeout reconciliation/no blind retry. G3-09..13 are release blockers to be completed after the Raspberry Pi and RC-307A test environment are available.
