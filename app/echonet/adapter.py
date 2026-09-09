@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -47,10 +48,26 @@ class EchonetListGateway:
         self._devices: dict[str, Mapping[str, Any]] = {}
         self._state_ready = asyncio.Event()
         self._send_lock = asyncio.Lock()
+        self._last_message_at: float | None = None
+        self._disconnect_error: GatewayError | None = None
+
+    @property
+    def connected(self) -> bool:
+        return self._socket is not None and self._receiver_task is not None and not self._receiver_task.done()
+
+    @property
+    def last_message_at(self) -> float | None:
+        """Monotonic time of the most recent valid gateway message."""
+        return self._last_message_at
+
+    @property
+    def disconnect_error(self) -> GatewayError | None:
+        return self._disconnect_error
 
     async def connect(self) -> None:
-        if self._socket is not None:
+        if self.connected:
             return
+        await self.close()
         try:
             from websockets.asyncio.client import connect
         except ImportError as exc:
@@ -59,6 +76,7 @@ class EchonetListGateway:
             self._socket = await connect(self._url, ssl=self._ssl)
         except Exception as exc:
             raise GatewayError(f"failed to connect to echonet-list: {self._url}") from exc
+        self._disconnect_error = None
         self._receiver_task = asyncio.create_task(self._receiver(), name="echonet-list-receiver")
         try:
             await asyncio.wait_for(self._state_ready.wait(), timeout=self._request_timeout)
@@ -73,18 +91,17 @@ class EchonetListGateway:
         self._socket = None
         self._state_ready.clear()
         if socket is not None:
-            await socket.close()
-        if task is not None:
+            try:
+                await socket.close()
+            except Exception:
+                pass
+        if task is not None and task is not asyncio.current_task():
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-        error = GatewayError("echonet-list connection closed")
-        for future in self._pending.values():
-            if not future.done():
-                future.set_exception(error)
-        self._pending.clear()
+        self._fail_pending(GatewayError("echonet-list connection closed"))
 
     async def list_devices(self) -> list[Mapping[str, Any]]:
         data = await self.request("list_devices", {"targets": []})
@@ -115,7 +132,7 @@ class EchonetListGateway:
         return await self.request("get_property_description", {"classCode": class_code, "lang": "en"})
 
     async def request(self, message_type: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        if self._socket is None:
+        if not self.connected or self._socket is None:
             raise GatewayError("echonet-list is not connected")
         request_id = uuid.uuid4().hex
         loop = asyncio.get_running_loop()
@@ -128,31 +145,45 @@ class EchonetListGateway:
             return await asyncio.wait_for(future, timeout=self._request_timeout)
         except TimeoutError as exc:
             raise GatewayTimeoutError(f"gateway request timed out: {message_type}") from exc
+        except GatewayError:
+            raise
+        except Exception as exc:
+            raise GatewayError(f"gateway send failed: {message_type}") from exc
         finally:
             self._pending.pop(request_id, None)
 
     async def _receiver(self) -> None:
-        assert self._socket is not None
+        socket = self._socket
+        assert socket is not None
+        failure: GatewayError | None = None
         try:
-            async for raw in self._socket:
+            async for raw in socket:
                 self._handle_message(raw)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            error = GatewayError("echonet-list receive loop stopped")
-            error.__cause__ = exc
-            for future in self._pending.values():
-                if not future.done():
-                    future.set_exception(error)
+            failure = GatewayError("echonet-list receive loop stopped")
+            failure.__cause__ = exc
+        finally:
+            if self._socket is socket:
+                self._socket = None
+                self._receiver_task = None
+                self._state_ready.clear()
+            if failure is not None:
+                self._disconnect_error = failure
+                self._fail_pending(failure)
 
     def _handle_message(self, raw: str | bytes) -> None:
         try:
             message = json.loads(raw)
             message_type = message["type"]
             payload = message["payload"]
+            if not isinstance(payload, Mapping):
+                raise TypeError("payload must be a mapping")
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise GatewayProtocolError("malformed echonet-list message") from exc
 
+        self._last_message_at = time.monotonic()
         if message_type == "initial_state":
             devices = payload.get("devices", {})
             if not isinstance(devices, Mapping):
@@ -206,6 +237,12 @@ class EchonetListGateway:
 
     def cached_device(self, identity: DeviceIdentity) -> Mapping[str, Any] | None:
         return self._devices.get(identity.target)
+
+    def _fail_pending(self, error: GatewayError) -> None:
+        for future in tuple(self._pending.values()):
+            if not future.done():
+                future.set_exception(error)
+        self._pending.clear()
 
     def _cache_device(self, device: Mapping[str, Any]) -> None:
         identity = DeviceIdentity.from_gateway_device(device)
