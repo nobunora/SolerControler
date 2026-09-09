@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 from .adapter import GatewayError
 
@@ -26,7 +27,7 @@ class GatewayRuntimePort(Protocol):
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
-    async def list_devices(self): ...
+    async def list_devices(self) -> list[Mapping[str, Any]]: ...
 
 
 class GatewayRuntime:
@@ -90,7 +91,11 @@ class GatewayRuntime:
         self._state = RuntimeState.STARTING
         while not self._stop.is_set():
             if not self._gateway.connected:
-                self._state = RuntimeState.RECOVERING if self._last_success_at is not None else RuntimeState.STARTING
+                self._state = (
+                    RuntimeState.RECOVERING
+                    if self._last_success_at is not None
+                    else RuntimeState.STARTING
+                )
                 try:
                     await self._gateway.connect()
                     await self._gateway.list_devices()
