@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from .adapter import GatewayCommandError, GatewayError, GatewayTimeoutError
 from .audit import AuditSink, NullAuditSink
@@ -83,7 +83,6 @@ class SafeWriteService:
 
         lock = self._target_locks.setdefault(command.target.target, asyncio.Lock())
         async with lock:
-            # Re-check after waiting: freshness may have expired while another command ran.
             if not self._ready_for_write():
                 raise SafetyInterlockError("write readiness was lost before transaction start")
             result = await self._apply_locked(command)
@@ -168,20 +167,23 @@ class SafeWriteService:
         response: Mapping[str, Any], command: VerifiedWriteCommand
     ) -> Mapping[str, Any] | None:
         epc = f"{command.epc:02X}"
-        if epc in response and isinstance(response[epc], Mapping):
-            return response[epc]
+        direct = response.get(epc)
+        if isinstance(direct, Mapping):
+            return cast(Mapping[str, Any], direct)
+
         devices = response.get("devices")
         if isinstance(devices, Mapping):
-            device = devices.get(command.target)
+            device = devices.get(command.target.target)
             if isinstance(device, Mapping):
                 properties = device.get("properties")
                 if isinstance(properties, Mapping):
                     value = properties.get(epc)
                     if isinstance(value, Mapping):
-                        return value
+                        return cast(Mapping[str, Any], value)
+
         properties = response.get("properties")
         if isinstance(properties, Mapping):
             value = properties.get(epc)
             if isinstance(value, Mapping):
-                return value
+                return cast(Mapping[str, Any], value)
         return None
