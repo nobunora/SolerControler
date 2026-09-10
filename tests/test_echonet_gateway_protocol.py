@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable
-from typing import Any, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar, cast
 
 from app.echonet.adapter import EchonetListGateway
 from app.echonet.models import DeviceIdentity
@@ -11,7 +11,7 @@ from app.echonet.models import DeviceIdentity
 T = TypeVar("T")
 
 
-def run(coro: Awaitable[T]) -> T:
+def run(coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run(coro)
 
 
@@ -41,25 +41,24 @@ def test_gateway_websocket_contract_without_hardware() -> None:
             }
             await socket.send(json.dumps({"type": "initial_state", "payload": {"devices": devices}}))
             async for raw in socket:
-                request: dict[str, Any] = json.loads(raw)
+                request = cast(dict[str, Any], json.loads(raw))
                 request_id = str(request["requestId"])
                 message_type = str(request["type"])
-                payload = request["payload"]
-                if not isinstance(payload, dict):
-                    payload = {}
+                payload_obj = request.get("payload")
+                payload: dict[str, Any] = payload_obj if isinstance(payload_obj, dict) else {}
                 if message_type == "list_devices":
                     data: dict[str, Any] = {"devices": devices}
                 elif message_type == "get_properties":
-                    targets = payload.get("targets", [])
-                    epcs = payload.get("epcs", [])
+                    targets = cast(list[Any], payload.get("targets", []))
+                    epcs = cast(list[Any], payload.get("epcs", []))
                     target = str(targets[0])
                     epc = str(epcs[0])
                     data = {"devices": {target: {"properties": {epc: devices[target]["properties"][epc]}}}}
                 elif message_type == "set_properties":
                     target = str(payload["target"])
-                    properties = payload.get("properties", {})
-                    if isinstance(properties, dict):
-                        for epc, value in properties.items():
+                    properties_obj = payload.get("properties", {})
+                    if isinstance(properties_obj, dict):
+                        for epc, value in properties_obj.items():
                             devices[target]["properties"][str(epc)] = value
                     data = {}
                 else:
@@ -75,7 +74,11 @@ def test_gateway_websocket_contract_without_hardware() -> None:
                 )
 
         async with serve(handler, "127.0.0.1", 0) as server:
-            port = server.sockets[0].getsockname()[1]
+            server_socket = next(iter(server.sockets))
+            sockname = server_socket.getsockname()
+            if not isinstance(sockname, tuple) or len(sockname) < 2:
+                raise AssertionError(f"unexpected server socket name: {sockname!r}")
+            port = int(sockname[1])
             gateway = EchonetListGateway(f"ws://127.0.0.1:{port}", request_timeout=1.0)
             await gateway.connect()
             device_list = [dict(device) for device in await gateway.list_devices()]
