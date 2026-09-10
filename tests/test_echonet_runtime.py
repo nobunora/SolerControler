@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Mapping
+from collections.abc import Coroutine, Mapping
 from typing import Any, TypeVar
 
 from app.echonet.adapter import GatewayError
@@ -50,7 +50,7 @@ class FakeRuntimeGateway:
         return []
 
 
-def run(coro: Awaitable[T]) -> T:
+def run(coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run(coro)
 
 
