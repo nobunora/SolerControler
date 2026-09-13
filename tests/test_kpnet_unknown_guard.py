@@ -75,6 +75,49 @@ def test_guard_promotes_workflow_unknown_to_task_terminal() -> None:
         guarded()
 
 
+def test_guard_promotes_failure_after_write_started() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.write_calls = 0
+
+        def write_setting(self) -> dict[str, bool]:
+            self.write_calls += 1
+            return {"changed": True}
+
+    client = Client()
+
+    def original(*, client: Client) -> None:
+        client.write_setting()
+        raise RuntimeError("read-back mismatch")
+
+    guarded = guard_unknown_write_terminal(original)
+
+    with pytest.raises(KpNetUnknownTaskTerminal):
+        guarded(client=client)
+    assert client.write_calls == 1
+
+
+def test_guard_keeps_failure_before_write_started_retryable() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.write_calls = 0
+
+        def write_setting(self) -> None:
+            self.write_calls += 1
+
+    client = Client()
+
+    def original(*, client: Client) -> None:
+        del client
+        raise RuntimeError("pre-write failure")
+
+    guarded = guard_unknown_write_terminal(original)
+
+    with pytest.raises(RuntimeError, match="pre-write failure"):
+        guarded(client=client)
+    assert client.write_calls == 0
+
+
 def test_task_terminal_intentionally_bypasses_exception_handlers() -> None:
     assert issubclass(KpNetUnknownTaskTerminal, BaseException)
     assert not issubclass(KpNetUnknownTaskTerminal, Exception)
