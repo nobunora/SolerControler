@@ -30,6 +30,11 @@ def extract_alert_message(html: str) -> str:
     return node.get_text(" ", strip=True) if node else ""
 
 
+def extract_error(html: str) -> str:
+    """Return the provider error shown on a settings confirmation page."""
+    return extract_alert_message(html)
+
+
 def extract_title(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     return soup.title.string.strip() if soup.title and soup.title.string else ""

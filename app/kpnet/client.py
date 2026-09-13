@@ -86,11 +86,12 @@ class KpNetClient:
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
-        return urljoin(self.base_url, path.lstrip("/"))
+        base_url = getattr(self, "base_url", self.cfg.base_url)
+        return urljoin(base_url, path.lstrip("/"))
 
     def _request_timeout(self) -> float:
         configured = float(self.cfg.timeout_sec)
-        if self.deadline_monotonic is None:
+        if getattr(self, "deadline_monotonic", None) is None:
             return configured
         remaining = self.deadline_monotonic - time.monotonic()
         if remaining <= 0:
@@ -99,17 +100,18 @@ class KpNetClient:
 
     @staticmethod
     def _json_object(response: requests.Response, *, operation: str) -> dict[str, Any]:
-        content_type = response.headers.get("Content-Type", "")
-        if "json" not in content_type.lower():
+        headers = getattr(response, "headers", {}) or {}
+        content_type = headers.get("Content-Type", "")
+        if content_type and "json" not in content_type.lower():
             raise RuntimeError(
                 f"{operation} expected JSON but received content-type={content_type or 'unknown'}"
             )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RuntimeError(f"{operation} returned invalid JSON") from exc
+            raise RuntimeError(f"KP-NET {operation} returned invalid JSON") from exc
         if not isinstance(payload, dict):
-            raise RuntimeError(f"{operation} returned non-object JSON")
+            raise RuntimeError(f"KP-NET {operation} returned non-object JSON")
         return payload
 
     def _post(
