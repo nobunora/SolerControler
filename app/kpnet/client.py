@@ -91,9 +91,10 @@ class KpNetClient:
 
     def _request_timeout(self) -> float:
         configured = float(self.cfg.timeout_sec)
-        if getattr(self, "deadline_monotonic", None) is None:
+        deadline = self.deadline_monotonic
+        if deadline is None:
             return configured
-        remaining = self.deadline_monotonic - time.monotonic()
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("KP-NET operation deadline exceeded")
         return max(0.001, min(configured, remaining))
@@ -184,7 +185,9 @@ class KpNetClient:
             allow_redirects=True,
             stage="login-submit",
         )
-        if "login" in response.url.lower() and "processLogin" not in response.url:
+        response_url = str(getattr(response, "url", "") or "")
+        response_url_lower = response_url.lower()
+        if response_url and "login" in response_url_lower and "processlogin" not in response_url_lower:
             raise RuntimeError("KP-NET login failed")
         top = self._get("remotevisualization/simplevisualization/enduser", stage="login-top")
         self.csrf_top = _extract_csrf(top.text)
@@ -195,7 +198,9 @@ class KpNetClient:
         try:
             self._get("logout", stage="logout")
         finally:
-            self.session.close()
+            close_session = getattr(self.session, "close", None)
+            if callable(close_session):
+                close_session()
 
     def read_realtime_soc_percent(self) -> float | None:
         html = self._get(
