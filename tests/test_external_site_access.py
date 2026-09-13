@@ -11,6 +11,7 @@ import pytest
 import requests
 
 from app.forecasting.correction import fetch_hourly_weather
+from app.kpnet.client import KpNetUnknownWriteError
 from app.kpnet.workflow import KpNetClient
 from app.forecasting.pv_array import (
     PVArrayConfig,
@@ -309,7 +310,7 @@ def test_kpnet_uncertain_write_does_not_issue_a_second_set() -> None:
 
     client._post = fail_once
 
-    with pytest.raises(requests.Timeout):
+    with pytest.raises(KpNetUnknownWriteError):
         client.write_setting("unused")
 
     assert calls == ["remotesetting/pcssetting/write/request"]

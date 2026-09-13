@@ -55,7 +55,7 @@ def _setup_logging() -> None:
     )
 
 # readable-code-audit: skip STRUCT-04 — profile fields are resolved together so the KP-NET command cannot mix settings from different rule versions
-from app.kpnet.client import KpNetClient
+from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 
 _load_night_charge_plan = load_night_charge_plan
 
@@ -157,8 +157,21 @@ def _apply_settings_profile(
         )
         return current
 
-    write_result = client.write_setting(confirm_html)
-    readback = client.read_current_settings()
+    write_result: dict[str, Any] | None = None
+    reconciliation = None
+    try:
+        write_result = client.write_setting(confirm_html)
+        readback = client.read_current_settings()
+    except KpNetUnknownWriteError:
+        reconciliation = "UNKNOWN"
+        try:
+            readback = client.read_current_settings()
+        except Exception:
+            try:
+                client.logout(); client.login(); client.open_settings_page()
+                readback = client.read_current_settings()
+            except Exception:
+                readback = {}
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -174,11 +187,20 @@ def _apply_settings_profile(
         }
         for field in mismatches
     }
+    if reconciliation == "UNKNOWN":
+        reconciliation = "APPLIED_RECONCILED" if readback_ok else "UNKNOWN"
+        print(
+            json.dumps(
+                {"message": "kpnet-write-reconciliation", "operation_id": getattr(client, "operation_id", None), "slot": os.getenv("CLOUD_JOB_SLOT", "") or None, "profile": profile.name, "result": reconciliation, "mismatch_fields": list(mismatches)},
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
     summary["setting_results"].append(
         {
             "profile": profile.name,
             "changed_fields": changed_fields,
-            "status": "applied",
+            "status": "applied" if reconciliation is None else reconciliation.lower(),
             "write_result": write_result,
             "readback_match": readback_ok,
             "readback_mismatch_fields": list(mismatches),
@@ -190,6 +212,8 @@ def _apply_settings_profile(
             "confirm_path": str(confirm_path),
         }
     )
+    if reconciliation == "UNKNOWN":
+        return readback
     if readback_required and not readback_ok:
         mismatch_details = ", ".join(
             f"{field}(requested={values['requested']} observed={values['observed']})"

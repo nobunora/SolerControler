@@ -21,6 +21,12 @@ from app.kpnet.client_support import (
     extract_title as _extract_title,
 )
 from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
+
+
+class KpNetUnknownWriteError(RuntimeError):
+    """The provider may have accepted a settings write, but completion is unknown."""
+
+
 class KpNetClient:
     def __init__(self, cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
         self.cfg = cfg
@@ -338,15 +344,19 @@ class KpNetClient:
             "Referer": self._url("remotesetting/pcssettingconfirm/batterysetting"),
         }
 
-        req_response = self._post("remotesetting/pcssetting/write/request", data=form_data, headers=headers)
-        req = self._json_object(req_response, operation="settings write request")
-        comm = req.get("data", {})
-        self._poll_json(
-            "remotesetting/pcssetting/write/response",
-            {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
-            headers=headers,
-            max_wait_sec=90.0,
-        )
+        try:
+            req_response = self._post("remotesetting/pcssetting/write/request", data=form_data, headers=headers)
+            req = self._json_object(req_response, operation="settings write request")
+            comm = req.get("data", {})
+            self._poll_json(
+                "remotesetting/pcssetting/write/response",
+                {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
+                headers=headers,
+                max_wait_sec=90.0,
+            )
+        except (requests.RequestException, RuntimeError, TimeoutError) as exc:
+            self._emit_http_event(stage="settings-write-terminal", method="POST", path="remotesetting/pcssetting/write", elapsed_ms=0.0, exception_class=type(exc).__name__, classification="unknown_write")
+            raise KpNetUnknownWriteError("KP-NET settings write outcome is unknown") from exc
 
         self._post("remotesetting/pcssettingcomplete/", data={"_csrf": csrf})
         self._post("remotesetting/pcssetting/write/requestdevicedetail", headers=headers)
