@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import time as time_module
 from zoneinfo import ZoneInfo
 
@@ -137,6 +138,56 @@ def test_soc_retry_sleep_is_clamped_to_monitor_deadline(monkeypatch: pytest.Monk
     assert clock.sleeps == [1.0]
     assert result.source == "unavailable"
     assert "SOC deadline expired" in (result.error or "")
+
+
+def test_soc_default_retries_wait_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _Clock()
+    calls: list[str] = []
+    monkeypatch.setattr(time_module, "monotonic", clock.monotonic)
+
+    def realtime() -> float | None:
+        calls.append("realtime")
+        return None
+
+    result = read_soc_with_fallback(
+        [],
+        latest_realtime=realtime,
+        latest_csv=lambda _paths: (None, None),
+        env_int=lambda _name, default: default,
+        env_float=lambda _name, default: default,
+        sleep=clock.sleep,
+        deadline_monotonic=10_000.0,
+    )
+
+    assert calls == ["realtime", "realtime", "realtime"]
+    assert clock.sleeps == [300.0, 300.0]
+    assert result.source == "unavailable"
+
+
+def test_soc_failed_read_attempts_emit_secret_free_structured_logs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = _Clock()
+    monkeypatch.setattr(time_module, "monotonic", clock.monotonic)
+
+    result = read_soc_with_fallback(
+        [],
+        latest_realtime=lambda: None,
+        latest_csv=lambda _paths: (None, None),
+        env_int=lambda _name, default: default,
+        env_float=lambda _name, default: default,
+        sleep=clock.sleep,
+        deadline_monotonic=10_000.0,
+    )
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+
+    assert result.source == "unavailable"
+    assert events == [
+        {"message": "03-soc-read-attempt", "attempt": 1, "max_attempts": 3, "outcome": "no_value", "retry_delay_seconds": 300.0},
+        {"message": "03-soc-read-attempt", "attempt": 2, "max_attempts": 3, "outcome": "no_value", "retry_delay_seconds": 300.0},
+        {"message": "03-soc-read-attempt", "attempt": 3, "max_attempts": 3, "outcome": "no_value", "retry_delay_seconds": 0.0},
+    ]
 
 
 def test_soc_realtime_uses_the_given_deadline_without_a_second_60_second_budget(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import time
 from collections.abc import Callable
@@ -21,6 +22,26 @@ class SocReading:
     source: str
     error: str | None
     observed_at: datetime | None
+
+
+def _emit_03_soc_read_attempt(*, attempt: int, max_attempts: int, outcome: str, retry_delay_seconds: float) -> None:
+    """Emit a secret-free best-effort Cloud Logging event for a failed SOC read."""
+    try:
+        print(
+            json.dumps(
+                {
+                    "message": "03-soc-read-attempt",
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "outcome": outcome,
+                    "retry_delay_seconds": retry_delay_seconds,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+    except Exception:
+        pass
 
 
 def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:
@@ -84,7 +105,7 @@ def read_soc_with_fallback(
     allow_csv_fallback: bool = True,
 ) -> SocReading:
     attempts = env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3)
-    delay_seconds = env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 2.0)
+    delay_seconds = env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 300.0)
     errors: list[str] = []
     operation_start = time.monotonic()
     operation_deadline = deadline_monotonic if deadline_monotonic is not None else operation_start + SOC_OPERATION_MAX_SECONDS
@@ -102,12 +123,21 @@ def read_soc_with_fallback(
                 if value is not None:
                     return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
                 errors.append("realtime returned no SOC")
+                outcome = "no_value"
             except Exception as exc:
                 errors.append(str(exc))
+                outcome = "error"
+            sleep_seconds = 0.0
             if attempt < attempts and delay_seconds > 0:
                 sleep_seconds = min(delay_seconds, max(0.0, operation_deadline - time.monotonic()))
-                if sleep_seconds > 0:
-                    sleep(sleep_seconds)
+            _emit_03_soc_read_attempt(
+                attempt=attempt,
+                max_attempts=attempts,
+                outcome=outcome,
+                retry_delay_seconds=sleep_seconds,
+            )
+            if sleep_seconds > 0:
+                sleep(sleep_seconds)
 
     if not allow_csv_fallback:
         errors.append("CSV SOC fallback disabled")
