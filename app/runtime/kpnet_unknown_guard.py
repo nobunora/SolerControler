@@ -9,38 +9,24 @@ _ResultT = TypeVar("_ResultT")
 
 
 class KpNetUnknownTaskTerminal(BaseException):
-    """Abort the current Cloud Run control task after an ambiguous KP-NET write.
-
-    This intentionally inherits directly from BaseException so the existing
-    03:00 controller's broad ``except Exception`` fail-safe does not attempt a
-    standby SET after a write whose provider/device outcome is still unknown.
-    The Cloud Run entrypoint catches this sentinel at the outermost boundary and
-    exits successfully to suppress a platform retry of the ambiguous mutation.
-    """
+    """Abort the current Cloud Run control task after an ambiguous KP-NET write."""
 
 
 def guard_unknown_write_terminal(
     original: Callable[..., _ResultT],
 ) -> Callable[..., _ResultT]:
-    """Make every exception after a started settings write terminal for this task.
-
-    ``_apply_settings_profile`` has a safe pre-write region (payload/confirm) and
-    a mutation region beginning when ``client.write_setting`` is invoked. Once
-    that mutation region starts, *any* later exception must not cause another
-    automatic SET: the provider may already have accepted the write, a
-    completion/detail request may have failed after success, or read-back may be
-    stale. The caller therefore loses write ownership for the remainder of the
-    Cloud Run task and platform retry is suppressed at the outermost runner.
-
-    Errors before ``write_setting`` is called remain ordinary ``Exception``
-    failures and retain the existing retry behavior.
-    """
+    """Promote unresolved or post-write failures to the task-terminal boundary."""
 
     @wraps(original)
     def guarded(*args: Any, **kwargs: Any) -> _ResultT:
         client = kwargs.get("client")
         if client is None or not hasattr(client, "write_setting"):
-            return original(*args, **kwargs)
+            try:
+                return original(*args, **kwargs)
+            except workflow.KpNetUnknownWriteTerminal as exc:
+                raise KpNetUnknownTaskTerminal(
+                    "KP-NET write remains unknown; abort remaining writes in this task"
+                ) from exc
 
         original_write = client.write_setting
         write_started = False
