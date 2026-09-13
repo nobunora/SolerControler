@@ -7,19 +7,18 @@ import uuid
 from email.message import Message
 from email.utils import collapse_rfc2231_value
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-from app.kpnet.config import LOGGER, KpNetConfig
 from app.kpnet.client_support import (
-    clean_filename as _clean_filename,
-    extract_alert_message as _extract_alert_message,
     extract_csrf as _extract_csrf,
+    extract_error as _extract_error,
     extract_title as _extract_title,
 )
+from app.kpnet.config import KpNetConfig
 from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 
 
@@ -30,26 +29,33 @@ class KpNetUnknownWriteError(RuntimeError):
 class KpNetClient:
     def __init__(self, cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
         self.cfg = cfg
-        self.deadline_monotonic = deadline_monotonic
+        self.base_url = cfg.base_url.rstrip("/") + "/"
         self.session = requests.Session()
         self.session.headers.update(
             {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/136.0.0.0 Safari/537.36"
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
                 )
             }
         )
+        self.deadline_monotonic = deadline_monotonic
         self.csrf_top = ""
         self.csrf_setting = ""
         self.pcsid = ""
         self.operation_id = uuid.uuid4().hex
 
     def _emit_http_event(
-        self, *, stage: str, method: str, path: str, elapsed_ms: float,
-        http_status: int | None = None, content_type: str | None = None,
-        provider_status: object | None = None, exception_class: str | None = None,
+        self,
+        *,
+        stage: str,
+        method: str,
+        path: str,
+        elapsed_ms: float,
+        http_status: int | None = None,
+        content_type: str | None = None,
+        provider_status: object | None = None,
+        exception_class: str | None = None,
         classification: str | None = None,
     ) -> None:
         """Best-effort, secret-free Cloud Logging telemetry at the HTTP boundary."""
@@ -65,8 +71,10 @@ class KpNetClient:
                 "task_attempt": os.getenv("CLOUD_RUN_TASK_ATTEMPT", "0").strip() or "0",
             }
             for key, value in {
-                "http_status": http_status, "content_type": content_type,
-                "provider_status": provider_status, "exception_class": exception_class,
+                "http_status": http_status,
+                "content_type": content_type,
+                "provider_status": provider_status,
+                "exception_class": exception_class,
                 "classification": classification,
             }.items():
                 if value is not None:
@@ -78,46 +86,65 @@ class KpNetClient:
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
-        return urljoin(self.cfg.base_url.rstrip("/") + "/", path.lstrip("/"))
-
-    def _ajax_headers(self, referer_path: str) -> dict[str, str]:
-        return {
-            "X-Requested-With": "XMLHttpRequest",
-            "X-CSRF-TOKEN": self.csrf_setting,
-            "Referer": self._url(referer_path),
-        }
+        return urljoin(self.base_url, path.lstrip("/"))
 
     def _request_timeout(self) -> float:
-        """Return a bounded request timeout without starting after deadline."""
-        deadline = cast(float | None, getattr(self, "deadline_monotonic", None))
-        if deadline is None:
-            return float(self.cfg.timeout_sec)
-        remaining = deadline - time.monotonic()
+        configured = float(self.cfg.timeout_sec)
+        if self.deadline_monotonic is None:
+            return configured
+        remaining = self.deadline_monotonic - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("KP-NET operation deadline expired before request")
-        return min(float(self.cfg.timeout_sec), remaining)
+            raise TimeoutError("KP-NET operation deadline exceeded")
+        return max(0.001, min(configured, remaining))
 
     @staticmethod
     def _json_object(response: requests.Response, *, operation: str) -> dict[str, Any]:
+        content_type = response.headers.get("Content-Type", "")
+        if "json" not in content_type.lower():
+            raise RuntimeError(
+                f"{operation} expected JSON but received content-type={content_type or 'unknown'}"
+            )
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RuntimeError(f"KP-NET {operation} returned invalid JSON") from exc
+            raise RuntimeError(f"{operation} returned invalid JSON") from exc
         if not isinstance(payload, dict):
-            raise RuntimeError(f"KP-NET {operation} returned a non-object JSON payload")
+            raise RuntimeError(f"{operation} returned non-object JSON")
         return payload
 
-    # readable-code-audit: skip NAME-02 — kwargs are deliberately passed through to requests for provider-specific HTTP options
-    def _post(self, path: str, data: dict[str, Any] | None = None, *, stage: str | None = None, **kwargs: Any) -> requests.Response:
+    def _post(
+        self,
+        path: str,
+        data: dict[str, Any] | None = None,
+        *,
+        stage: str | None = None,
+        **kwargs: Any,
+    ) -> requests.Response:
         started = time.monotonic()
         stage = stage or f"post:{path.lstrip('/')}"
         try:
-            resp = self.session.post(self._url(path), data=data, timeout=self._request_timeout(), **kwargs)
+            resp = self.session.post(
+                self._url(path), data=data, timeout=self._request_timeout(), **kwargs
+            )
             resp.raise_for_status()
         except requests.RequestException as exc:
-            self._emit_http_event(stage=stage, method="POST", path=path, elapsed_ms=(time.monotonic() - started) * 1000, exception_class=type(exc).__name__, classification="unknown_write" if "write/" in path else "failed")
+            self._emit_http_event(
+                stage=stage,
+                method="POST",
+                path=path,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                exception_class=type(exc).__name__,
+                classification="unknown_write" if "write/" in path else "failed",
+            )
             raise
-        self._emit_http_event(stage=stage, method="POST", path=path, elapsed_ms=(time.monotonic() - started) * 1000, http_status=getattr(resp, "status_code", None), content_type=getattr(resp, "headers", {}).get("Content-Type"))
+        self._emit_http_event(
+            stage=stage,
+            method="POST",
+            path=path,
+            elapsed_ms=(time.monotonic() - started) * 1000,
+            http_status=getattr(resp, "status_code", None),
+            content_type=getattr(resp, "headers", {}).get("Content-Type"),
+        )
         return resp
 
     def _get(self, path: str, *, stage: str | None = None, **kwargs: Any) -> requests.Response:
@@ -127,104 +154,105 @@ class KpNetClient:
             resp = self.session.get(self._url(path), timeout=self._request_timeout(), **kwargs)
             resp.raise_for_status()
         except requests.RequestException as exc:
-            self._emit_http_event(stage=stage, method="GET", path=path, elapsed_ms=(time.monotonic() - started) * 1000, exception_class=type(exc).__name__, classification="failed")
+            self._emit_http_event(
+                stage=stage,
+                method="GET",
+                path=path,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                exception_class=type(exc).__name__,
+                classification="failed",
+            )
             raise
-        self._emit_http_event(stage=stage, method="GET", path=path, elapsed_ms=(time.monotonic() - started) * 1000, http_status=getattr(resp, "status_code", None), content_type=getattr(resp, "headers", {}).get("Content-Type"))
+        self._emit_http_event(
+            stage=stage,
+            method="GET",
+            path=path,
+            elapsed_ms=(time.monotonic() - started) * 1000,
+            http_status=getattr(resp, "status_code", None),
+            content_type=getattr(resp, "headers", {}).get("Content-Type"),
+        )
         return resp
 
     def login(self) -> None:
-        login_page = self._get("login")
-        csrf = _extract_csrf(login_page.text)
-        self._post(
+        page = self._get("login", stage="login-page")
+        csrf = _extract_csrf(page.text)
+        response = self._post(
             "processLogin",
-            data={
-                "_csrf": csrf,
-                "loginid": self.cfg.username,
-                "loginpassword": self.cfg.password,
-            },
+            data={"_csrf": csrf, "loginid": self.cfg.username, "loginpassword": self.cfg.password},
+            allow_redirects=True,
+            stage="login-submit",
         )
-
-        top = self._get("remotevisualization/simplevisualization/enduser")
+        if "login" in response.url.lower() and "processLogin" not in response.url:
+            raise RuntimeError("KP-NET login failed")
+        top = self._get("remotevisualization/simplevisualization/enduser", stage="login-top")
         self.csrf_top = _extract_csrf(top.text)
-        if "ログイン" in _extract_title(top.text) and "ユーザID" in top.text:
-            raise RuntimeError("ログインに失敗しました。ユーザIDまたはパスワードをご確認ください。")
-        LOGGER.info("Login success")
-
-    def read_realtime_soc_percent(self) -> float | None:
-        resp = self._get("remotevisualization/simplevisualization/enduser")
-        return _extract_simple_visualization_soc_percent(resp.text)
+        if not self.csrf_top:
+            raise RuntimeError("KP-NET login/session validation failed")
 
     def logout(self) -> None:
-        csrf = self.csrf_setting or self.csrf_top
-        if not csrf:
-            return
-        self._post("logout", data={"_csrf": csrf})
-        LOGGER.info("Logout success")
+        try:
+            self._get("logout", stage="logout")
+        finally:
+            self.session.close()
+
+    def read_realtime_soc_percent(self) -> float | None:
+        html = self._get(
+            "remotevisualization/simplevisualization/enduser", stage="realtime-soc"
+        ).text
+        return _extract_simple_visualization_soc_percent(html)
 
     def open_csv_measure_page(self) -> tuple[list[str], str]:
-        self._post("remotevisualization/variousdataoutputselect", data={"_csrf": self.csrf_top})
+        response = self._post(
+            "remotevisualization/variousdataoutputselect",
+            data={"_csrf": self.csrf_top},
+            stage="csv-select",
+        )
+        soup = BeautifulSoup(response.text, "html.parser")
+        available: list[str] = []
+        for node in soup.select("select option"):
+            value = str(node.get("value", "")).strip()
+            if value and value not in available:
+                available.append(value)
+        pcsclass_node = soup.select_one("input[name='pcsclass']")
+        pcsclass = str(pcsclass_node.get("value", "")) if pcsclass_node else ""
+        return available, pcsclass
+
+    def download_csv(self, *, month: str, pcsclass: str, out_dir: Path) -> Path:
         measure = self._post(
             "remotevisualization/variousdataoutputselect/measureoutput",
-            data={"_csrf": self.csrf_top},
+            data={"_csrf": self.csrf_top, "measuremonth": month, "pcsclass": pcsclass},
+            stage="csv-measure",
         )
-        soup = BeautifulSoup(measure.text, "html.parser")
-        month_options = [
-            str(node.get("value", "")).strip()
-            for node in soup.select("select[name='collectDate'] option")
-            if str(node.get("value", "")).strip()
-        ]
-        pcsclass = "5"
-        pcsclass_input = soup.select_one("input[name='pcsclass']")
-        if pcsclass_input and pcsclass_input.get("value"):
-            pcsclass = str(pcsclass_input["value"]).strip()
-        return month_options, pcsclass
-
-    def download_csv(self, month: str, pcsclass: str, out_dir: Path) -> Path:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        resp = self._post(
+        download = self._post(
             "remotevisualization/variousdataoutputselect/measureoutput/download",
-            data={
-                "_csrf": self.csrf_top,
-                "pcsclass": pcsclass,
-                "outputFormat": self.cfg.csv_output_format,
-                "aggrType": self.cfg.csv_aggr_type,
-                "collectDate": month,
-            },
+            data={"_csrf": _extract_csrf(measure.text), "measuremonth": month, "pcsclass": pcsclass},
+            stage="csv-download",
         )
-        disp = resp.headers.get("Content-Disposition", "")
-        msg = Message()
-        if disp:
-            msg["Content-Disposition"] = disp
-        filename = msg.get_param("filename", header="Content-Disposition")
-        if not filename:
-            filename = f"measure_{month.replace('-', '')}.csv"
-        elif isinstance(filename, tuple):
-            filename = collapse_rfc2231_value(filename)
-        path = out_dir / _clean_filename(filename)
-        path.write_bytes(resp.content)
-        LOGGER.info("CSV downloaded month=%s path=%s", month, path)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        filename = self._response_filename(download, fallback=f"kpnet-{month}.csv")
+        path = out_dir / filename
+        path.write_bytes(download.content)
         return path
 
-    def open_settings_page(self) -> None:
-        gw = self._post("remotesetting/gwpcsmanage", data={"_csrf": self.csrf_top})
-        soup = BeautifulSoup(gw.text, "html.parser")
-        pcs_btn = soup.select_one("form[action='/settingcontrol/remotesetting/pcsselect/pcs'] button[name='pcsid']")
-        if not pcs_btn or not pcs_btn.get("value"):
-            raise RuntimeError("pcsid を取得できませんでした")
-        self.pcsid = str(pcs_btn["value"]).strip()
-
-        self._post("remotesetting/pcsselect/pcs", data={"_csrf": self.csrf_top, "pcsid": self.pcsid})
-        setting = self._post(
-            "remotesetting/pcssetting",
-            data={"_csrf": self.csrf_top, "pcsid": self.pcsid, "pcsCategory": "BatterySetting"},
-        )
-        self.csrf_setting = _extract_csrf(setting.text)
-        LOGGER.info("Settings page opened pcsid=%s", self.pcsid)
+    @staticmethod
+    def _response_filename(response: requests.Response, *, fallback: str) -> str:
+        disposition = response.headers.get("Content-Disposition", "")
+        if not disposition:
+            return fallback
+        message = Message()
+        message["Content-Disposition"] = disposition
+        filename = message.get_param("filename", header="Content-Disposition")
+        if filename is None:
+            return fallback
+        if isinstance(filename, tuple):
+            return str(collapse_rfc2231_value(filename))
+        return str(filename)
 
     def _poll_json(
         self,
         path: str,
         payload: dict[str, Any],
+        *,
         headers: dict[str, str],
         max_wait_sec: float = 60.0,
     ) -> dict[str, Any]:
@@ -244,7 +272,14 @@ class KpNetClient:
                     classification=classification,
                 )
                 raise
-            self._emit_http_event(stage=f"poll:{path.lstrip('/')}", method="POST", path=path, elapsed_ms=0.0, provider_status=data.get("status"), classification="complete" if data.get("status") == 1 else "pending")
+            self._emit_http_event(
+                stage=f"poll:{path.lstrip('/')}",
+                method="POST",
+                path=path,
+                elapsed_ms=0.0,
+                provider_status=data.get("status"),
+                classification="complete" if data.get("status") == 1 else "pending",
+            )
             if data.get("status") == 1:
                 return data
             if self.deadline_monotonic is not None:
@@ -264,69 +299,113 @@ class KpNetClient:
         )
         raise TimeoutError(f"Polling timeout: {path}")
 
-    def read_current_settings(self) -> dict[str, Any]:
-        headers = self._ajax_headers("remotesetting/pcssetting")
-        req_response = self._post(
-            "remotesetting/pcssetting/read/request",
-            data={"_csrf": self.csrf_setting, "pcsCategory": "BatterySetting", "pcsid": self.pcsid},
-            headers=headers,
+    def open_settings_page(self) -> None:
+        gw = self._post(
+            "remotesetting/gwpcsmanage",
+            data={"_csrf": self.csrf_top},
+            stage="settings-gateway",
         )
-        req = self._json_object(req_response, operation="settings read request")
+        soup = BeautifulSoup(gw.text, "html.parser")
+        pcs_node = soup.select_one("input[name='pcsid'], select[name='pcsid'] option")
+        if pcs_node is None:
+            raise RuntimeError("KP-NET pcsid not found")
+        self.pcsid = str(pcs_node.get("value", "")).strip()
+        if not self.pcsid:
+            raise RuntimeError("KP-NET pcsid is empty")
+        select = self._post(
+            "remotesetting/pcsselect/pcs",
+            data={"_csrf": _extract_csrf(gw.text), "pcsid": self.pcsid},
+            stage="settings-pcs-select",
+        )
+        settings = self._post(
+            "remotesetting/pcssetting",
+            data={"_csrf": _extract_csrf(select.text), "pcsid": self.pcsid, "pcsCategory": "BatterySetting"},
+            stage="settings-page",
+        )
+        self.csrf_setting = _extract_csrf(settings.text)
+        if not self.csrf_setting:
+            raise RuntimeError("KP-NET settings CSRF token not found")
+
+    def _ajax_headers(self) -> dict[str, str]:
+        return {
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-TOKEN": self.csrf_setting,
+            "Referer": self._url("remotesetting/pcssetting"),
+        }
+
+    def read_current_settings(self) -> dict[str, Any]:
+        headers = self._ajax_headers()
+        request = self._post(
+            "remotesetting/pcssetting/read/request",
+            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+            headers=headers,
+            stage="settings-read-request",
+        )
+        req = self._json_object(request, operation="settings read request")
         comm = req.get("data", {})
         result = self._poll_json(
             "remotesetting/pcssetting/read/response",
             {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
             headers=headers,
         )
-        data = result.get("data", {})
-        return data if isinstance(data, dict) else {}
-
-    def candidate_map(self, candidate_type: str, value_list_path: str) -> dict[str, str]:
-        headers = self._ajax_headers("remotesetting/pcssetting")
-        req_response = self._post(
-            "remotesetting/pcssetting/read/request/candidate",
-            data={"candidateType": candidate_type},
-            headers=headers,
-        )
-        req = self._json_object(req_response, operation="candidate read request")
-        comm = req.get("data", {})
-        self._poll_json(
-            "remotesetting/pcssetting/read/response/candidate",
-            {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
-            headers=headers,
-        )
-        list_response = self._post(
-            value_list_path,
-            headers=headers,
-        )
-        list_resp = self._json_object(list_response, operation="candidate value list")
-        result: dict[str, str] = {}
-        for item in list_resp.get("data", []):
-            code = str(item.get("code", ""))
-            value = str(item.get("value", ""))
-            if code:
-                result[code] = value
-        return result
+        data = result.get("data")
+        if not isinstance(data, dict):
+            raise RuntimeError("settings read response did not contain an object")
+        return data
 
     def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
-        targets = {
-            "BatteryOperatingMode": "remotesetting/pcssetting/valueList/batteryoperatingmode",
-            "SocSafetyMode": "remotesetting/pcssetting/valueList/socsafetymode",
-            "SocEconomyMode": "remotesetting/pcssetting/valueList/soceconomymode",
-            "SocContactInput": "remotesetting/pcssetting/valueList/soccontactinput",
-            "SocChargeMode": "remotesetting/pcssetting/valueList/socchargemode",
-            "OnPowerOutageChargePowerW": "remotesetting/pcssetting/valueList/onpoweroutagechargepower",
-            "AgreementAmpere": "remotesetting/pcssetting/valueList/agreementampere",
-        }
-        return {k: self.candidate_map(k, v) for k, v in targets.items()}
+        headers = self._ajax_headers()
+        candidate_request = self._post(
+            "remotesetting/pcssetting/candidate/request",
+            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+            headers=headers,
+            stage="settings-candidate-request",
+        )
+        candidate_req = self._json_object(candidate_request, operation="settings candidate request")
+        candidate_comm = candidate_req.get("data", {})
+        candidate_result = self._poll_json(
+            "remotesetting/pcssetting/candidate/response",
+            {
+                "communicationSequenceno": candidate_comm.get("communicationSequenceno", ""),
+                "value": candidate_comm.get("value", ""),
+            },
+            headers=headers,
+        )
+        value_request = self._post(
+            "remotesetting/pcssetting/valuelist/request",
+            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+            headers=headers,
+            stage="settings-value-list-request",
+        )
+        value_req = self._json_object(value_request, operation="settings value list request")
+        value_comm = value_req.get("data", {})
+        value_result = self._poll_json(
+            "remotesetting/pcssetting/valuelist/response",
+            {
+                "communicationSequenceno": value_comm.get("communicationSequenceno", ""),
+                "value": value_comm.get("value", ""),
+            },
+            headers=headers,
+        )
+        result: dict[str, dict[str, str]] = {}
+        for source in (candidate_result.get("data"), value_result.get("data")):
+            if not isinstance(source, dict):
+                continue
+            for key, values in source.items():
+                if isinstance(values, dict):
+                    result[str(key)] = {str(code): str(label) for code, label in values.items()}
+        return result
 
     def confirm_setting(self, payload: dict[str, str]) -> tuple[bool, str, str, str]:
-        resp = self._post("remotesetting/pcssettingconfirm/batterysetting", data=payload)
-        html = resp.text
-        title = _extract_title(html)
-        err = _extract_alert_message(html)
-        has_complete_button = "id=\"pcs-input-complete\"" in html
-        return has_complete_button, title, err, html
+        response = self._post(
+            "remotesetting/pcssettingconfirm/batterysetting",
+            data=payload,
+            stage="settings-confirm",
+        )
+        title = _extract_title(response.text)
+        error = _extract_error(response.text)
+        ok = not error
+        return ok, title, error, response.text
 
     def _extract_form_data(self, html: str) -> tuple[dict[str, str], str]:
         soup = BeautifulSoup(html, "html.parser")
@@ -365,22 +444,35 @@ class KpNetClient:
         }
 
         try:
-            req_response = self._post("remotesetting/pcssetting/write/request", data=form_data, headers=headers)
+            req_response = self._post(
+                "remotesetting/pcssetting/write/request", data=form_data, headers=headers
+            )
             req = self._json_object(req_response, operation="settings write request")
             comm = req.get("data", {})
             self._poll_json(
                 "remotesetting/pcssetting/write/response",
-                {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
+                {
+                    "communicationSequenceno": comm.get("communicationSequenceno", ""),
+                    "value": comm.get("value", ""),
+                },
                 headers=headers,
                 max_wait_sec=90.0,
             )
+            # These provider-side completion/detail calls happen only after the
+            # mutation poll reports success. If either fails, the device may
+            # already have applied the setting, so the caller must reconcile
+            # with a read-only settings GET instead of retrying the SET.
+            self._post("remotesetting/pcssettingcomplete/", data={"_csrf": csrf})
+            self._post("remotesetting/pcssetting/write/requestdevicedetail", headers=headers)
         except (requests.RequestException, RuntimeError, TimeoutError) as exc:
-            self._emit_http_event(stage="settings-write-terminal", method="POST", path="remotesetting/pcssetting/write", elapsed_ms=0.0, exception_class=type(exc).__name__, classification="unknown_write")
+            self._emit_http_event(
+                stage="settings-write-terminal",
+                method="POST",
+                path="remotesetting/pcssetting/write",
+                elapsed_ms=0.0,
+                exception_class=type(exc).__name__,
+                classification="unknown_write",
+            )
             raise KpNetUnknownWriteError("KP-NET settings write outcome is unknown") from exc
 
-        self._post("remotesetting/pcssettingcomplete/", data={"_csrf": csrf})
-        self._post("remotesetting/pcssetting/write/requestdevicedetail", headers=headers)
         return {"changed": True}
-
-
-# readable-code-audit: skip STRUCT-04 — payload fields are serialized as one provider request contract and cannot be independently emitted
