@@ -528,13 +528,13 @@ def test_mode_only_unknown_write_stops_without_a_second_write(
 
     monkeypatch.setattr(kpnet_workflow, "_apply_settings_profile", apply_with_capture)
 
-    assert kpnet_workflow.run_kpnet_mode_only_profile(profile="green") == 0
+    with pytest.raises(kpnet_workflow.KpNetUnknownWriteTerminal):
+        kpnet_workflow.run_kpnet_mode_only_profile(profile="green")
     assert client.confirm_calls == 1
     assert client.write_calls == 1
     assert client.logout_calls == 1
     summary = captured["summary"]
     assert isinstance(summary, dict)
-    assert summary["terminal_classification"] == "unknown"
     assert summary["setting_results"][0]["status"] == "unknown"
 
 

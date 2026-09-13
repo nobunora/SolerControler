@@ -545,8 +545,10 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
         return 0
     except KpNetUnknownWriteTerminal:
-        summary["terminal_classification"] = "unknown"
-        return 0
+        # The Cloud Run entrypoint promotes this to a BaseException sentinel.
+        # Do not turn an ambiguous write into success here: a 03 caller would
+        # otherwise continue to its fail-safe standby SET.
+        raise
     except Exception:
         LOGGER.exception("KP-NET mode-only workflow failed"); return 1
     finally:

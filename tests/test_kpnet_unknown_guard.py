@@ -106,9 +106,11 @@ def test_03_unknown_forced_write_never_attempts_standby(tmp_path: Path) -> None:
     assert device.calls == ["forced"]
 
 
+@pytest.mark.parametrize("slot", ["23", "03", "07"])
 def test_runner_suppresses_platform_retry_only_for_unknown_terminal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    slot: str,
 ) -> None:
     monkeypatch.setattr(cloud_job_runner, "install_unknown_write_guard", lambda: None)
 
@@ -116,13 +118,13 @@ def test_runner_suppresses_platform_retry_only_for_unknown_terminal(
         raise KpNetUnknownTaskTerminal("still unknown")
 
     monkeypatch.setattr(cloud_job_runner, "main", unknown_main)
-    monkeypatch.setenv("CLOUD_JOB_SLOT", "03")
+    monkeypatch.setenv("CLOUD_JOB_SLOT", slot)
 
     assert cloud_job_runner._run_main() == 0
     record = json.loads(capsys.readouterr().out.strip())
     assert record == {
         "message": "kpnet-unknown-task-terminal",
-        "slot": "03",
+        "slot": slot,
         "classification": "unknown",
         "platform_retry": "suppressed",
     }
