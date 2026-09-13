@@ -46,6 +46,8 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 
 ### 2.0 非制御scope: dashboard-only / forecast-only
 
+`-DeploymentScope control-readonly` は、明示承認された監査・緊急反映専用である。23/03/07の3つのcontrol Job revisionだけを、検証済みcommitからbuildしたimmutable digestへ更新する。実機settings round-trip、Scheduler、IAM、Secret、legacy resource cleanup、KP-NET import、Drive backup、dashboard、forecast Jobは変更しない。反映後は公式07 DryRunと、3 Jobのdigest・既存設定・Schedulerのread-only比較を必須とする。
+
 `-DeploymentScope dashboard` は dashboard Cloud Run service だけを更新する正式な非制御経路です。このscopeではrunner、23/03/07、02:30 forecast job、Scheduler、KP-NET import、Drive backup、機器settingsを変更しません。
 
 ```powershell
