@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import math
 import os
+import json
 from datetime import date
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import requests
 
 from app.forecasting.correction import fetch_hourly_weather
+from app.kpnet.client import KpNetUnknownWriteError
 from app.kpnet.workflow import KpNetClient
 from app.forecasting.pv_array import (
     PVArrayConfig,
@@ -221,6 +224,122 @@ def test_kpnet_http_wrapper_uses_configured_timeout_and_checks_status() -> None:
 def test_kpnet_json_boundary_reports_provider_context(response: _Response, message: str) -> None:
     with pytest.raises(RuntimeError, match=f"KP-NET settings read .*{message}"):
         KpNetClient._json_object(response, operation="settings read")
+
+
+def test_kpnet_write_timeout_emits_secret_free_unknown_write_telemetry(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Session:
+        def post(self, *_args, **_kwargs):
+            raise requests.Timeout("password=must-not-appear")
+
+    client = object.__new__(KpNetClient)
+    client.cfg = SimpleNamespace(base_url="https://ctrl.kp-net.com/", timeout_sec=17)
+    client.session = Session()
+    client.operation_id = "test-operation"
+    client.deadline_monotonic = None
+
+    with pytest.raises(requests.Timeout):
+        client._post("remotesetting/pcssetting/write/request", data={"_csrf": "secret"})
+
+    event = json.loads(capsys.readouterr().out)
+    assert event["message"] == "kpnet-http"
+    assert event["stage"] == "post:remotesetting/pcssetting/write/request"
+    assert event["classification"] == "unknown_write"
+    assert event["exception_class"] == "Timeout"
+    assert "secret" not in json.dumps(event)
+
+
+@pytest.mark.parametrize(
+    ("path", "classification"),
+    [
+        ("remotesetting/pcssetting/read/response", "failed"),
+        ("remotesetting/pcssetting/write/response", "unknown_write"),
+    ],
+)
+def test_kpnet_poll_http_errors_are_classified_without_request_data(
+    path: str, classification: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Session:
+        def post(self, *_args, **_kwargs):
+            raise requests.HTTPError("HTTP 500")
+
+    client = object.__new__(KpNetClient)
+    client.cfg = SimpleNamespace(base_url="https://ctrl.kp-net.com/", timeout_sec=17)
+    client.session = Session()
+    client.operation_id = "test-operation"
+    client.deadline_monotonic = None
+
+    with pytest.raises(requests.HTTPError):
+        client._poll_json(path, {"value": "secret"}, headers={})
+
+    event = json.loads(capsys.readouterr().out)
+    assert event["classification"] == classification
+    assert "secret" not in json.dumps(event)
+
+
+def test_kpnet_provider_pending_status_is_logged_then_times_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client = object.__new__(KpNetClient)
+    client.operation_id = "test-operation"
+    client.deadline_monotonic = None
+    client._post = lambda *_args, **_kwargs: _Response({"status": 0})
+    times = iter([0.0, 0.0, 1.0])
+    monkeypatch.setattr("app.kpnet.client.time.time", lambda: next(times))
+    monkeypatch.setattr("app.kpnet.client.time.sleep", lambda _seconds: None)
+
+    with pytest.raises(TimeoutError, match="Polling timeout"):
+        client._poll_json("remotesetting/pcssetting/write/response", {}, headers={}, max_wait_sec=0.5)
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-2]["provider_status"] == 0
+    assert events[-2]["classification"] == "pending"
+    assert events[-1]["stage"].endswith(":terminal")
+    assert events[-1]["classification"] == "unknown_write"
+    assert events[-1]["exception_class"] == "TimeoutError"
+
+
+def test_kpnet_poll_invalid_json_has_terminal_telemetry(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = object.__new__(KpNetClient)
+    client.operation_id = "test-operation"
+    client.deadline_monotonic = None
+    client._post = lambda *_args, **_kwargs: _Response({}, json_error=ValueError("login HTML"))
+
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        client._poll_json("remotesetting/pcssetting/write/response", {}, headers={})
+
+    event = json.loads(capsys.readouterr().out)
+    assert event["stage"].endswith(":terminal")
+    assert event["classification"] == "unknown_write"
+    assert event["exception_class"] == "RuntimeError"
+
+
+def test_kpnet_uncertain_write_does_not_issue_a_second_set() -> None:
+    client = object.__new__(KpNetClient)
+    client.cfg = SimpleNamespace(base_url="https://ctrl.kp-net.com/", timeout_sec=17)
+    client.operation_id = "test-operation"
+    client._extract_form_data = lambda _html: ({"_csrf": "secret"}, "secret")
+    calls: list[str] = []
+
+    def fail_once(path: str, **_kwargs):
+        calls.append(path)
+        raise requests.Timeout("response lost")
+
+    client._post = fail_once
+
+    with pytest.raises(KpNetUnknownWriteError):
+        client.write_setting("unused")
+
+    assert calls == ["remotesetting/pcssetting/write/request"]
+
+
+def test_production_slot_modules_do_not_import_playwright() -> None:
+    root = Path(__file__).resolve().parents[1]
+    for relative_path in ("app/runtime/cloud_job.py", "app/runtime/slot_orchestration.py", "app/kpnet/workflow.py"):
+        assert "playwright" not in (root / relative_path).read_text(encoding="utf-8").lower()
 
 
 @pytest.mark.external

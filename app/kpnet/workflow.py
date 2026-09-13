@@ -55,7 +55,11 @@ def _setup_logging() -> None:
     )
 
 # readable-code-audit: skip STRUCT-04 — profile fields are resolved together so the KP-NET command cannot mix settings from different rule versions
-from app.kpnet.client import KpNetClient
+from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
+
+
+class KpNetUnknownWriteTerminal(RuntimeError):
+    """Stop this task after reconciliation without permitting another settings write."""
 
 _load_night_charge_plan = load_night_charge_plan
 
@@ -157,8 +161,21 @@ def _apply_settings_profile(
         )
         return current
 
-    write_result = client.write_setting(confirm_html)
-    readback = client.read_current_settings()
+    write_result: dict[str, Any] | None = None
+    reconciliation = None
+    try:
+        write_result = client.write_setting(confirm_html)
+        readback = client.read_current_settings()
+    except KpNetUnknownWriteError:
+        reconciliation = "UNKNOWN"
+        try:
+            readback = client.read_current_settings()
+        except Exception:
+            try:
+                client.logout(); client.login(); client.open_settings_page()
+                readback = client.read_current_settings()
+            except Exception:
+                readback = {}
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
@@ -174,11 +191,20 @@ def _apply_settings_profile(
         }
         for field in mismatches
     }
+    if reconciliation == "UNKNOWN":
+        reconciliation = "APPLIED_RECONCILED" if readback_ok else "UNKNOWN"
+        print(
+            json.dumps(
+                {"message": "kpnet-write-reconciliation", "operation_id": getattr(client, "operation_id", None), "slot": os.getenv("CLOUD_JOB_SLOT", "") or None, "profile": profile.name, "result": reconciliation, "mismatch_fields": list(mismatches)},
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
     summary["setting_results"].append(
         {
             "profile": profile.name,
             "changed_fields": changed_fields,
-            "status": "applied",
+            "status": "applied" if reconciliation is None else reconciliation.lower(),
             "write_result": write_result,
             "readback_match": readback_ok,
             "readback_mismatch_fields": list(mismatches),
@@ -190,6 +216,8 @@ def _apply_settings_profile(
             "confirm_path": str(confirm_path),
         }
     )
+    if reconciliation == "UNKNOWN":
+        raise KpNetUnknownWriteTerminal("KP-NET write remains unknown after read-only reconciliation")
     if readback_required and not readback_ok:
         mismatch_details = ", ".join(
             f"{field}(requested={values['requested']} observed={values['observed']})"
@@ -490,9 +518,14 @@ def run_kpnet_workflow() -> int:
 def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | None = None) -> int:
     operation_start = time.monotonic()
     requested_end = operation_start + MODE_OPERATION_START_BUDGET_SECONDS
-    operation_end = min(deadline_monotonic, requested_end) if deadline_monotonic is not None else requested_end
-    if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
-        raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
+    if deadline_monotonic is None:
+        # The requested end is our own deadline.  Re-subtracting the two
+        # floats can round the 300-second window below its exact budget.
+        operation_end = requested_end
+    else:
+        operation_end = min(deadline_monotonic, requested_end)
+        if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
+            raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
     io_deadline = operation_end - MODE_OPERATION_RELEASE_RESERVE_SECONDS
     load_dotenv_if_present(); _setup_logging(); cfg = KpNetConfig.from_env(); client = KpNetClient(cfg, deadline_monotonic=io_deadline)
     run_dir = cfg.artifacts_dir / datetime.now().strftime("%Y%m%d-%H%M%S"); run_dir.mkdir(parents=True, exist_ok=True)
@@ -516,6 +549,11 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         else: raise ValueError(f"unknown mode-only profile: {profile}")
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
         return 0
+    except KpNetUnknownWriteTerminal:
+        # The Cloud Run entrypoint promotes this to a BaseException sentinel.
+        # Do not turn an ambiguous write into success here: a 03 caller would
+        # otherwise continue to its fail-safe standby SET.
+        raise
     except Exception:
         LOGGER.exception("KP-NET mode-only workflow failed"); return 1
     finally:

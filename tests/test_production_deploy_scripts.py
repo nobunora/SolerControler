@@ -100,6 +100,21 @@ def test_production_deployment_runbook_documents_safe_resume_and_verification() 
         assert required in runbook
 
 
+def test_control_readonly_scope_updates_only_immutable_control_job_revisions() -> None:
+    wrapper = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "'control-readonly'" in wrapper
+    assert "SkipSchedulerDeploy = ($resolvedScope -eq 'control-readonly')" in wrapper
+    assert "SkipLegacyResourceCleanup = ($resolvedScope -eq 'control-readonly')" in wrapper
+    assert "SkipArtifactPrune = ($resolvedScope -eq 'control-readonly')" in wrapper
+    assert "$SkipSettingsRoundTripJobDeploy = $true" in wrapper
+    assert "$SkipKpNetImport = $true" in wrapper
+    assert "$SkipDriveBackup = $true" in wrapper
+    assert "[switch]$SkipSchedulerDeploy" in deploy
+    assert "[switch]$SkipLegacyResourceCleanup" in deploy
+
+
 def test_manual_actual_import_cannot_overwrite_production_plan() -> None:
     script = (ROOT / "scripts" / "run_kpnet_import_from_env.ps1").read_text(
         encoding="utf-8"
@@ -423,7 +438,7 @@ def test_production_deploy_auto_scope_skips_irrelevant_cloud_work() -> None:
         encoding="utf-8"
     )
 
-    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]" in script
+    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard', 'control-readonly')]" in script
     assert "function Resolve-DeploymentScope" in script
     assert "Get-LastCompletedDeploymentCommit" in script
     assert "No deployable runner or dashboard source changed" in script

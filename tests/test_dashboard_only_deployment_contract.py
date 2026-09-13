@@ -12,12 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_non_control_scopes_record_settings_roundtrip_as_not_applicable() -> None:
     script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
 
-    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]" in script
+    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard', 'control-readonly')]" in script
     assert "if ($resolvedScope -eq 'dashboard')" in script
     assert "if ($resolvedScope -eq 'forecast')" in script
-    assert "if ($resolvedScope -in @('dashboard', 'forecast'))" in script
+    assert "if ($resolvedScope -in @('dashboard', 'forecast', 'control-readonly'))" in script
     assert "$roundTripStage.status = 'skipped_not_applicable'" in script
-    assert "Skip stage: settings_roundtrip (not applicable to $resolvedScope-only deployment)" in script
+    assert "Skip stage: settings_roundtrip (not applicable to $resolvedScope deployment)" in script
     assert "Invoke-DeploymentStage -Name 'settings_roundtrip' -Skip:$false" in script
     assert "-Slot settings-roundtrip" in script
     assert "-SettingsRoundTripTargetSoc $SettingsRoundTripTargetSoc -TestExecution" in script
@@ -46,6 +46,7 @@ def test_non_control_scope_runbook_is_explicit() -> None:
     assert "settings_roundtrip.status` を `skipped_not_applicable`" in runbook
     assert "`runner`または`full` scopeでは" in runbook
     assert "settings round-tripを従来どおり必須" in runbook
+    assert "control-readonly" in runbook
     assert "23/03/07 Schedulerはdeploy前後のschedule/time-zone/targetが一致" in runbook
     assert "browserで履歴forecast-vs-actualと予想SOCが表示される" in runbook
 
@@ -56,5 +57,5 @@ def test_protected_regions_keep_roundtrip_for_runner_full_only() -> None:
     ).read_text(encoding="utf-8")
 
     assert "runner/fullではsettings round-tripを必須" in protected
-    assert "dashboard-onlyと、control Job revisionを変更しない明示`forecast` scope" in protected
+    assert "control-readonly" in protected
     assert "`skipped_not_applicable`" in protected
