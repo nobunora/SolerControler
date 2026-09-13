@@ -292,9 +292,29 @@ def test_kpnet_provider_pending_status_is_logged_then_times_out(
     with pytest.raises(TimeoutError, match="Polling timeout"):
         client._poll_json("remotesetting/pcssetting/write/response", {}, headers={}, max_wait_sec=0.5)
 
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-2]["provider_status"] == 0
+    assert events[-2]["classification"] == "pending"
+    assert events[-1]["stage"].endswith(":terminal")
+    assert events[-1]["classification"] == "unknown_write"
+    assert events[-1]["exception_class"] == "TimeoutError"
+
+
+def test_kpnet_poll_invalid_json_has_terminal_telemetry(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = object.__new__(KpNetClient)
+    client.operation_id = "test-operation"
+    client.deadline_monotonic = None
+    client._post = lambda *_args, **_kwargs: _Response({}, json_error=ValueError("login HTML"))
+
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        client._poll_json("remotesetting/pcssetting/write/response", {}, headers={})
+
     event = json.loads(capsys.readouterr().out)
-    assert event["provider_status"] == 0
-    assert event["classification"] == "pending"
+    assert event["stage"].endswith(":terminal")
+    assert event["classification"] == "unknown_write"
+    assert event["exception_class"] == "RuntimeError"
 
 
 def test_kpnet_uncertain_write_does_not_issue_a_second_set() -> None:

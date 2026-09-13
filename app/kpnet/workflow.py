@@ -57,6 +57,10 @@ def _setup_logging() -> None:
 # readable-code-audit: skip STRUCT-04 — profile fields are resolved together so the KP-NET command cannot mix settings from different rule versions
 from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 
+
+class KpNetUnknownWriteTerminal(RuntimeError):
+    """Stop this task after reconciliation without permitting another settings write."""
+
 _load_night_charge_plan = load_night_charge_plan
 
 
@@ -213,7 +217,7 @@ def _apply_settings_profile(
         }
     )
     if reconciliation == "UNKNOWN":
-        return readback
+        raise KpNetUnknownWriteTerminal("KP-NET write remains unknown after read-only reconciliation")
     if readback_required and not readback_ok:
         mismatch_details = ", ".join(
             f"{field}(requested={values['requested']} observed={values['observed']})"
@@ -539,6 +543,9 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
             )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
+        return 0
+    except KpNetUnknownWriteTerminal:
+        summary["terminal_classification"] = "unknown"
         return 0
     except Exception:
         LOGGER.exception("KP-NET mode-only workflow failed"); return 1

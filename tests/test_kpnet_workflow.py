@@ -471,6 +471,73 @@ def test_readback_mismatch_records_requested_and_observed_controlled_values(
         assert secret_name not in str(summary["setting_results"][0]).lower()
 
 
+def test_mode_only_unknown_write_stops_without_a_second_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+        operation_id = "operation"
+
+        def __init__(self, _cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
+            self.write_calls = 0
+            self.confirm_calls = 0
+            self.logout_calls = 0
+
+        def login(self) -> None:
+            return None
+
+        def logout(self) -> None:
+            self.logout_calls += 1
+
+        def open_settings_page(self) -> None:
+            return None
+
+        def read_current_settings(self) -> dict[str, str]:
+            return {"batteryOperatingMode": "1"}
+
+        def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+            return {"BatteryOperatingMode": {"1": "green", "3": "forced"}}
+
+        def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            self.confirm_calls += 1
+            return True, "confirmed", "", "<html>confirmed</html>"
+
+        def write_setting(self, _confirm_html: str) -> dict[str, object]:
+            self.write_calls += 1
+            raise kpnet_workflow.KpNetUnknownWriteError("completion poll timed out")
+
+    client = FakeClient(_build_cfg(plan_path=tmp_path / "plan.json"))
+    cfg = KpNetConfig(
+        **{**_build_cfg(plan_path=tmp_path / "plan.json").__dict__, "dry_run": False, "artifacts_dir": tmp_path}
+    )
+    monkeypatch.setattr(kpnet_workflow.KpNetConfig, "from_env", staticmethod(lambda: cfg))
+    monkeypatch.setattr(kpnet_workflow, "KpNetClient", lambda _cfg, *, deadline_monotonic: client)
+    monkeypatch.setattr(
+        kpnet_workflow,
+        "_build_payload",
+        lambda **_kwargs: ({"batteryOperatingMode": "3"}, ["batteryOperatingMode"]),
+    )
+    captured: dict[str, object] = {}
+    original_apply = kpnet_workflow._apply_settings_profile
+
+    def apply_with_capture(**kwargs: object) -> dict[str, object]:
+        captured["summary"] = kwargs["summary"]
+        return original_apply(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kpnet_workflow, "_apply_settings_profile", apply_with_capture)
+
+    assert kpnet_workflow.run_kpnet_mode_only_profile(profile="green") == 0
+    assert client.confirm_calls == 1
+    assert client.write_calls == 1
+    assert client.logout_calls == 1
+    summary = captured["summary"]
+    assert isinstance(summary, dict)
+    assert summary["terminal_classification"] == "unknown"
+    assert summary["setting_results"][0]["status"] == "unknown"
+
+
 def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:
     class FakeClient:
         csrf_setting = "csrf"

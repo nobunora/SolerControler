@@ -229,9 +229,21 @@ class KpNetClient:
         max_wait_sec: float = 60.0,
     ) -> dict[str, Any]:
         start = time.time()
+        classification = "unknown_write" if "write/" in path else "failed"
         while time.time() - start < max_wait_sec:
             resp = self._post(path, data=payload, headers=headers)
-            data = self._json_object(resp, operation=path)
+            try:
+                data = self._json_object(resp, operation=path)
+            except RuntimeError as exc:
+                self._emit_http_event(
+                    stage=f"poll:{path.lstrip('/')}:terminal",
+                    method="POST",
+                    path=path,
+                    elapsed_ms=0.0,
+                    exception_class=type(exc).__name__,
+                    classification=classification,
+                )
+                raise
             self._emit_http_event(stage=f"poll:{path.lstrip('/')}", method="POST", path=path, elapsed_ms=0.0, provider_status=data.get("status"), classification="complete" if data.get("status") == 1 else "pending")
             if data.get("status") == 1:
                 return data
@@ -242,6 +254,14 @@ class KpNetClient:
                 time.sleep(min(0.6, remaining))
             else:
                 time.sleep(0.6)
+        self._emit_http_event(
+            stage=f"poll:{path.lstrip('/')}:terminal",
+            method="POST",
+            path=path,
+            elapsed_ms=0.0,
+            exception_class="TimeoutError",
+            classification=classification,
+        )
         raise TimeoutError(f"Polling timeout: {path}")
 
     def read_current_settings(self) -> dict[str, Any]:
