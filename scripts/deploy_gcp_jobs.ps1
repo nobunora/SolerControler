@@ -50,6 +50,8 @@
     [switch]$SkipForecastJobDeploy,
     [switch]$SkipForecastSchedulerDeploy,
     [switch]$SkipSettingsRoundTripJobDeploy,
+    [switch]$SkipSchedulerDeploy,
+    [switch]$SkipLegacyResourceCleanup,
     [switch]$FailOnCapacityOverage,
     [switch]$SkipBuild,
     [switch]$RunSmokeTest,
@@ -752,20 +754,23 @@ function Upsert-SchedulerRunJob {
     }
 }
 
-Write-Host "Create or update Cloud Scheduler jobs..."
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *" -TargetJobName $Job03Name
-Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
-if (-not $SkipForecastSchedulerDeploy) { Upsert-SchedulerRunJob -SchedulerName $ForecastSchedulerName -Schedule "30 2 * * *" -TargetJobName $ForecastJobName }
-Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
-Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
-Delete-RunJobIfExists -Name $SheetsJobName
-Delete-RunJobIfExists -Name $DriveBackupJobName
+if (-not $SkipSchedulerDeploy) {
+    Write-Host "Create or update Cloud Scheduler jobs..."
+    Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-23" -Schedule "0 23 * * *" -TargetJobName $Job23Name
+    Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *" -TargetJobName $Job03Name
+    Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
+    if (-not $SkipForecastSchedulerDeploy) { Upsert-SchedulerRunJob -SchedulerName $ForecastSchedulerName -Schedule "30 2 * * *" -TargetJobName $ForecastJobName }
+    Write-Host "Keep 23:00 scheduler enabled for battery mode control."
+    Resume-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
+}
+if (-not $SkipLegacyResourceCleanup) {
+    Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
+    Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
+    Delete-RunJobIfExists -Name $SheetsJobName
+    Delete-RunJobIfExists -Name $DriveBackupJobName
+}
 
-Write-Host "Keep 23:00 scheduler enabled for battery mode control."
-Resume-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
-
-if ($LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
+if ((-not $SkipSchedulerDeploy) -and $LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {
     Write-Host "Pause legacy Tokyo schedulers (keep resources, stop execution)..."
     Pause-SchedulerIfExists -Name "solar-battery-run-23" -Location $LegacySchedulerRegionToPause
     Pause-SchedulerIfExists -Name "solar-battery-run-03" -Location $LegacySchedulerRegionToPause

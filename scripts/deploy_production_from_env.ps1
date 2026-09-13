@@ -15,7 +15,7 @@ param(
     [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$SkipKpNetImport,
     [switch]$SkipDriveBackup,
-    [ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]
+    [ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard', 'control-readonly')]
     [string]$DeploymentScope = 'auto',
     [string]$StatePath = "",
     [switch]$Resume
@@ -125,6 +125,18 @@ if ($resolvedScope -eq 'none') {
     return
 }
 if ($resolvedScope -eq 'runner') { $SkipDashboardBuild = $true }
+if ($resolvedScope -eq 'control-readonly') {
+    # Explicit PR-approved exception: update only the three control Job
+    # revisions by immutable digest; do not mutate device settings, Scheduler,
+    # IAM, secrets, legacy resources, imports, or backups.
+    $SkipDashboardBuild = $true
+    $SkipForecastJobDeploy = $true
+    $SkipForecastSchedulerDeploy = $true
+    $SkipSettingsRoundTripJobDeploy = $true
+    $SkipInlineSmokeTest = $true
+    $SkipKpNetImport = $true
+    $SkipDriveBackup = $true
+}
 if ($resolvedScope -eq 'forecast') {
     # Dedicated forecast owner uses the shared runner image but has no device/control ownership.
     # Build one runner image and update only solar-forecast-daily. Keep control jobs, the
@@ -311,6 +323,8 @@ $jobDeployArgs = @{
     SkipCapacityCheck = $true
     SkipIamSetup = $true
     SkipSecretSetup = $true
+    SkipSchedulerDeploy = ($resolvedScope -eq 'control-readonly')
+    SkipLegacyResourceCleanup = ($resolvedScope -eq 'control-readonly')
 }
 if (-not $SkipInlineSmokeTest) { $jobDeployArgs.RunSmokeTest = $true }
 if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }
@@ -364,7 +378,7 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
 # Dashboard-only and forecast-only scopes do not alter any deployed control owner;
 # executing the device round-trip there would create unrelated control mutation, so
 # it is canonically recorded as not applicable rather than weakening the probe itself.
-if ($resolvedScope -in @('dashboard', 'forecast')) {
+if ($resolvedScope -in @('dashboard', 'forecast', 'control-readonly')) {
     $roundTripStage = Get-DeploymentStageRecord -Name 'settings_roundtrip'
     if ($roundTripStage.status -ne 'success') {
         $roundTripStage.status = 'skipped_not_applicable'
@@ -373,7 +387,7 @@ if ($resolvedScope -in @('dashboard', 'forecast')) {
         $roundTripStage.error_detail = $null
         Save-DeploymentState
     }
-    Write-Host "Skip stage: settings_roundtrip (not applicable to $resolvedScope-only deployment)"
+    Write-Host "Skip stage: settings_roundtrip (not applicable to $resolvedScope deployment)"
 } else {
     # Do not make this stage optional for runner/full or change the target to the
     # continuous plan target; the 03 monitor, not SocChargeMode, stops at the plan target.
