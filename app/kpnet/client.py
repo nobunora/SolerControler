@@ -62,7 +62,7 @@ class KpNetClient:
         try:
             payload: dict[str, object] = {
                 "message": "kpnet-http",
-                "operation_id": self.operation_id,
+                "operation_id": getattr(self, "operation_id", None),
                 "slot": os.getenv("CLOUD_JOB_SLOT", "").strip() or None,
                 "stage": stage,
                 "method": method,
@@ -91,7 +91,7 @@ class KpNetClient:
 
     def _request_timeout(self) -> float:
         configured = float(self.cfg.timeout_sec)
-        deadline = self.deadline_monotonic
+        deadline = getattr(self, "deadline_monotonic", None)
         if deadline is None:
             return configured
         remaining = deadline - time.monotonic()
@@ -289,8 +289,9 @@ class KpNetClient:
             )
             if data.get("status") == 1:
                 return data
-            if self.deadline_monotonic is not None:
-                remaining = self.deadline_monotonic - time.monotonic()
+            deadline = getattr(self, "deadline_monotonic", None)
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 time.sleep(min(0.6, remaining))
@@ -313,20 +314,26 @@ class KpNetClient:
             stage="settings-gateway",
         )
         soup = BeautifulSoup(gw.text, "html.parser")
-        pcs_node = soup.select_one("input[name='pcsid'], select[name='pcsid'] option")
-        if pcs_node is None:
+        pcs_node = soup.select_one(
+            "form[action='/settingcontrol/remotesetting/pcsselect/pcs'] button[name='pcsid'], "
+            "button[name='pcsid'], input[name='pcsid'], select[name='pcsid'] option"
+        )
+        if pcs_node is None or not pcs_node.get("value"):
             raise RuntimeError("KP-NET pcsid not found")
         self.pcsid = str(pcs_node.get("value", "")).strip()
         if not self.pcsid:
             raise RuntimeError("KP-NET pcsid is empty")
+
+        gateway_csrf = _extract_csrf(gw.text) or self.csrf_top
         select = self._post(
             "remotesetting/pcsselect/pcs",
-            data={"_csrf": _extract_csrf(gw.text), "pcsid": self.pcsid},
+            data={"_csrf": gateway_csrf, "pcsid": self.pcsid},
             stage="settings-pcs-select",
         )
+        select_csrf = _extract_csrf(select.text) or gateway_csrf
         settings = self._post(
             "remotesetting/pcssetting",
-            data={"_csrf": _extract_csrf(select.text), "pcsid": self.pcsid, "pcsCategory": "BatterySetting"},
+            data={"_csrf": select_csrf, "pcsid": self.pcsid, "pcsCategory": "BatterySetting"},
             stage="settings-page",
         )
         self.csrf_setting = _extract_csrf(settings.text)
@@ -344,7 +351,11 @@ class KpNetClient:
         headers = self._ajax_headers()
         request = self._post(
             "remotesetting/pcssetting/read/request",
-            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+            data={
+                "_csrf": self.csrf_setting,
+                "pcsCategory": "BatterySetting",
+                "pcsid": self.pcsid,
+            },
             headers=headers,
             stage="settings-read-request",
         )
@@ -352,7 +363,10 @@ class KpNetClient:
         comm = req.get("data", {})
         result = self._poll_json(
             "remotesetting/pcssetting/read/response",
-            {"communicationSequenceno": comm.get("communicationSequenceno", ""), "value": comm.get("value", "")},
+            {
+                "communicationSequenceno": comm.get("communicationSequenceno", ""),
+                "value": comm.get("value", ""),
+            },
             headers=headers,
         )
         data = result.get("data")
@@ -360,48 +374,54 @@ class KpNetClient:
             raise RuntimeError("settings read response did not contain an object")
         return data
 
-    def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+    def candidate_map(self, candidate_type: str, value_list_path: str) -> dict[str, str]:
         headers = self._ajax_headers()
-        candidate_request = self._post(
-            "remotesetting/pcssetting/candidate/request",
-            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+        request = self._post(
+            "remotesetting/pcssetting/read/request/candidate",
+            data={"candidateType": candidate_type},
             headers=headers,
-            stage="settings-candidate-request",
+            stage=f"settings-candidate-request:{candidate_type}",
         )
-        candidate_req = self._json_object(candidate_request, operation="settings candidate request")
-        candidate_comm = candidate_req.get("data", {})
-        candidate_result = self._poll_json(
-            "remotesetting/pcssetting/candidate/response",
+        req = self._json_object(request, operation="candidate read request")
+        comm = req.get("data", {})
+        self._poll_json(
+            "remotesetting/pcssetting/read/response/candidate",
             {
-                "communicationSequenceno": candidate_comm.get("communicationSequenceno", ""),
-                "value": candidate_comm.get("value", ""),
+                "communicationSequenceno": comm.get("communicationSequenceno", ""),
+                "value": comm.get("value", ""),
             },
             headers=headers,
         )
-        value_request = self._post(
-            "remotesetting/pcssetting/valuelist/request",
-            data={"_csrf": self.csrf_setting, "pcsid": self.pcsid},
+        response = self._post(
+            value_list_path,
             headers=headers,
-            stage="settings-value-list-request",
+            stage=f"settings-value-list:{candidate_type}",
         )
-        value_req = self._json_object(value_request, operation="settings value list request")
-        value_comm = value_req.get("data", {})
-        value_result = self._poll_json(
-            "remotesetting/pcssetting/valuelist/response",
-            {
-                "communicationSequenceno": value_comm.get("communicationSequenceno", ""),
-                "value": value_comm.get("value", ""),
-            },
-            headers=headers,
-        )
-        result: dict[str, dict[str, str]] = {}
-        for source in (candidate_result.get("data"), value_result.get("data")):
-            if not isinstance(source, dict):
+        payload = self._json_object(response, operation="candidate value list")
+        result: dict[str, str] = {}
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise RuntimeError(f"candidate value list was not an array: {candidate_type}")
+        for item in data:
+            if not isinstance(item, dict):
                 continue
-            for key, values in source.items():
-                if isinstance(values, dict):
-                    result[str(key)] = {str(code): str(label) for code, label in values.items()}
+            code = str(item.get("code", ""))
+            value = str(item.get("value", ""))
+            if code:
+                result[code] = value
         return result
+
+    def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+        targets = {
+            "BatteryOperatingMode": "remotesetting/pcssetting/valueList/batteryoperatingmode",
+            "SocSafetyMode": "remotesetting/pcssetting/valueList/socsafetymode",
+            "SocEconomyMode": "remotesetting/pcssetting/valueList/soceconomymode",
+            "SocContactInput": "remotesetting/pcssetting/valueList/soccontactinput",
+            "SocChargeMode": "remotesetting/pcssetting/valueList/socchargemode",
+            "OnPowerOutageChargePowerW": "remotesetting/pcssetting/valueList/onpoweroutagechargepower",
+            "AgreementAmpere": "remotesetting/pcssetting/valueList/agreementampere",
+        }
+        return {key: self.candidate_map(key, path) for key, path in targets.items()}
 
     def confirm_setting(self, payload: dict[str, str]) -> tuple[bool, str, str, str]:
         response = self._post(
@@ -411,7 +431,7 @@ class KpNetClient:
         )
         title = _extract_title(response.text)
         error = _extract_error(response.text)
-        ok = not error
+        ok = not error and "id=\"pcs-input-complete\"" in response.text
         return ok, title, error, response.text
 
     def _extract_form_data(self, html: str) -> tuple[dict[str, str], str]:
@@ -465,10 +485,6 @@ class KpNetClient:
                 headers=headers,
                 max_wait_sec=90.0,
             )
-            # These provider-side completion/detail calls happen only after the
-            # mutation poll reports success. If either fails, the device may
-            # already have applied the setting, so the caller must reconcile
-            # with a read-only settings GET instead of retrying the SET.
             self._post("remotesetting/pcssettingcomplete/", data={"_csrf": csrf})
             self._post("remotesetting/pcssetting/write/requestdevicedetail", headers=headers)
         except (requests.RequestException, RuntimeError, TimeoutError) as exc:
