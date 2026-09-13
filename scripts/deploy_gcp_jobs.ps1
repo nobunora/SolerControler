@@ -418,6 +418,16 @@ if (-not $SkipBuild) {
     Write-Host "Skip build (using existing image): $image"
 }
 
+# Resolve the just-built (or explicitly selected) tag before changing a control
+# job. Cloud Run revisions must retain immutable provenance, never `:latest`.
+$imageDigest = (Invoke-GCloud artifacts docker images describe $image --format='value(image_summary.digest)' --project $ProjectId) -join ""
+$imageDigest = $imageDigest.Trim()
+if ($imageDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+    throw "Runner image digest could not be established for $image."
+}
+$image = "$($image -replace ':latest$','')@$imageDigest"
+Write-Host "Resolved immutable runner image: $image"
+
 Write-Host "Prepare monitor credentials..."
 $envMap = Read-DotEnv -Path (Join-Path $repoRoot ".env")
 $sheetsExportEnabled = -not $DisableSheetsExport.IsPresent

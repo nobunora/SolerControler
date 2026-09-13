@@ -434,6 +434,17 @@ def test_deploy_job03_time_ownership_semantics() -> None:
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM" not in line
 
 
+def test_control_jobs_use_resolved_immutable_runner_digest() -> None:
+    source = Path("scripts/deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "artifacts docker images describe $image" in source
+    assert "^sha256:[0-9a-f]{64}$" in source
+    assert "$image -replace ':latest$',''" in source
+    for job in ("$Job23Name", "$Job03Name", "$Job07Name"):
+        line = next(value for value in source.splitlines() if f"run jobs deploy {job}" in value)
+        assert "--image $image" in line
+
+
 def test_03_platform_retry_waits_five_minutes_and_logs_before_controller(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
