@@ -91,9 +91,10 @@ class KpNetClient:
 
     def _request_timeout(self) -> float:
         configured = float(self.cfg.timeout_sec)
-        deadline = getattr(self, "deadline_monotonic", None)
-        if deadline is None:
+        deadline_value = getattr(self, "deadline_monotonic", None)
+        if deadline_value is None:
             return configured
+        deadline = float(deadline_value)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("KP-NET operation deadline exceeded")
