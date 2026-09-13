@@ -1,14 +1,14 @@
 """Evidence-only replay for missing dashboard configured-SOC history.
 
-This module is deliberately display/data-plane only.  It never talks to KP-NET and
-never changes battery settings.  Historical values are recovered only from retained
+This module is deliberately display/data-plane only. It never talks to KP-NET and
+never changes battery settings. Historical values are recovered only from retained
 ``forecast_plans`` evidence and only when the plan was issued no later than the
 07:00 JST target-day cutoff used by the dashboard history contract.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,7 @@ def candidate_from_forecast_plan(row: dict[str, Any]) -> PlanSocReplayCandidate 
     """Return a trustworthy replay candidate or fail closed.
 
     We require a valid date, one finite 0..100 target, and retained issuance/update
-    time proving the evidence existed by 07:00 JST on the target day.  This prevents
+    time proving the evidence existed by 07:00 JST on the target day. This prevents
     a later rerun/reconstruction from being mistaken for the historical setting plan.
     """
     day = str(row.get("date") or "").strip()
@@ -105,6 +105,43 @@ def build_missing_plan_soc_patch(
     return patch
 
 
+def _date_range(start_date: str, end_date: str) -> list[str]:
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if start > end:
+        raise ValueError("start_date must be <= end_date")
+    days: list[str] = []
+    cursor = start
+    while cursor <= end:
+        days.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return days
+
+
+def _documents_by_date(
+    client: Any,
+    collection_name: str,
+    *,
+    start_date: str,
+    end_date: str,
+) -> dict[str, dict[str, Any]]:
+    documents = (
+        client.collection(collection_name)
+        .where("date", ">=", start_date)
+        .where("date", "<=", end_date)
+        .stream()
+    )
+    result: dict[str, dict[str, Any]] = {}
+    for document in documents:
+        row = document.to_dict() or {}
+        day = str(row.get("date") or document.id or "").strip()
+        if not day:
+            continue
+        row.setdefault("date", day)
+        result[day] = row
+    return result
+
+
 def replay_missing_plan_soc_firestore(
     client: Any,
     *,
@@ -115,49 +152,83 @@ def replay_missing_plan_soc_firestore(
 ) -> dict[str, Any]:
     """Inventory or backfill missing configured-SOC dashboard rows.
 
-    ``apply=False`` is a read-only dry run.  ``apply=True`` writes only missing
+    ``apply=False`` is a read-only dry run. ``apply=True`` writes only missing
     ``battery_daily_metrics`` fields with ``merge=True``; it never overwrites an
-    existing configured SOC or night-charge value.
+    existing configured SOC or night-charge value. The report distinguishes every
+    missing day into recoverable and irrecoverable groups so a successful replay
+    cannot silently hide historical gaps that have no trustworthy planning evidence.
     """
-    if date.fromisoformat(start_date) > date.fromisoformat(end_date):
-        raise ValueError("start_date must be <= end_date")
+    days = _date_range(start_date, end_date)
     now = replayed_at or datetime.now(tz=_JST).isoformat()
-    plan_docs = (
-        client.collection("forecast_plans")
-        .where("date", ">=", start_date)
-        .where("date", "<=", end_date)
-        .stream()
+    plan_by_date = _documents_by_date(
+        client,
+        "forecast_plans",
+        start_date=start_date,
+        end_date=end_date,
     )
+    existing_by_date = _documents_by_date(
+        client,
+        "battery_daily_metrics",
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    candidates: dict[str, PlanSocReplayCandidate] = {}
+    rejected_plan_dates: set[str] = set()
+    for day, plan in plan_by_date.items():
+        candidate = candidate_from_forecast_plan(plan)
+        if candidate is None:
+            rejected_plan_dates.add(day)
+            continue
+        candidates[day] = candidate
+
+    missing_dates = [
+        day
+        for day in days
+        if to_float(existing_by_date.get(day, {}).get("setting_soc_target_percent")) is None
+    ]
+    recoverable_dates = [day for day in missing_dates if day in candidates]
+    irrecoverable_dates = [day for day in missing_dates if day not in candidates]
+
     report: dict[str, Any] = {
         "start_date": start_date,
         "end_date": end_date,
         "apply": apply,
-        "candidates": 0,
+        "candidate_count": len(candidates),
+        "missing_count": len(missing_dates),
+        "recoverable_count": len(recoverable_dates),
+        "irrecoverable_count": len(irrecoverable_dates),
         "would_write": 0,
         "written": 0,
-        "skipped_untrusted": 0,
+        "skipped_untrusted": len(rejected_plan_dates),
         "skipped_existing": 0,
-        "dates": [],
+        "missing_dates": missing_dates,
+        "recoverable_dates": recoverable_dates,
+        "irrecoverable_dates": irrecoverable_dates,
+        "items": [],
     }
-    for plan_doc in plan_docs:
-        plan = plan_doc.to_dict() or {}
-        if not plan.get("date"):
-            plan["date"] = plan_doc.id
-        candidate = candidate_from_forecast_plan(plan)
-        if candidate is None:
-            report["skipped_untrusted"] += 1
-            continue
-        report["candidates"] += 1
-        target_ref = client.collection("battery_daily_metrics").document(candidate.date)
-        snapshot = target_ref.get()
-        existing = snapshot.to_dict() or {} if snapshot.exists else {}
+
+    for day in sorted(candidates):
+        candidate = candidates[day]
+        existing = existing_by_date.get(day, {})
         patch = build_missing_plan_soc_patch(existing, candidate, replayed_at=now)
+        item: dict[str, Any] = {
+            "date": day,
+            "target_soc_percent": candidate.target_soc_percent,
+            "night_charge_kwh": candidate.night_charge_kwh,
+            "forecast_run_id": candidate.forecast_run_id,
+            "evidence_at": candidate.evidence_at,
+            "action": "skip_existing" if not patch else "would_write",
+        }
         if not patch:
             report["skipped_existing"] += 1
+            report["items"].append(item)
             continue
         report["would_write"] += 1
-        report["dates"].append(candidate.date)
         if apply:
-            target_ref.set(patch, merge=True)
+            client.collection("battery_daily_metrics").document(day).set(patch, merge=True)
             report["written"] += 1
+            item["action"] = "written"
+        report["items"].append(item)
+
     return report
