@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import time
+import uuid
 from email.message import Message
 from email.utils import collapse_rfc2231_value
 from pathlib import Path
@@ -35,6 +38,36 @@ class KpNetClient:
         self.csrf_top = ""
         self.csrf_setting = ""
         self.pcsid = ""
+        self.operation_id = uuid.uuid4().hex
+
+    def _emit_http_event(
+        self, *, stage: str, method: str, path: str, elapsed_ms: float,
+        http_status: int | None = None, content_type: str | None = None,
+        provider_status: object | None = None, exception_class: str | None = None,
+        classification: str | None = None,
+    ) -> None:
+        """Best-effort, secret-free Cloud Logging telemetry at the HTTP boundary."""
+        try:
+            payload: dict[str, object] = {
+                "message": "kpnet-http",
+                "operation_id": self.operation_id,
+                "slot": os.getenv("CLOUD_JOB_SLOT", "").strip() or None,
+                "stage": stage,
+                "method": method,
+                "endpoint": path.lstrip("/"),
+                "elapsed_ms": round(elapsed_ms, 1),
+                "task_attempt": os.getenv("CLOUD_RUN_TASK_ATTEMPT", "0").strip() or "0",
+            }
+            for key, value in {
+                "http_status": http_status, "content_type": content_type,
+                "provider_status": provider_status, "exception_class": exception_class,
+                "classification": classification,
+            }.items():
+                if value is not None:
+                    payload[key] = value
+            print(json.dumps(payload, separators=(",", ":")), flush=True)
+        except Exception:
+            pass
 
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
@@ -69,23 +102,28 @@ class KpNetClient:
         return payload
 
     # readable-code-audit: skip NAME-02 — kwargs are deliberately passed through to requests for provider-specific HTTP options
-    def _post(self, path: str, data: dict[str, Any] | None = None, **kwargs: Any) -> requests.Response:
-        resp = self.session.post(
-            self._url(path),
-            data=data,
-            timeout=self._request_timeout(),
-            **kwargs,
-        )
-        resp.raise_for_status()
+    def _post(self, path: str, data: dict[str, Any] | None = None, *, stage: str | None = None, **kwargs: Any) -> requests.Response:
+        started = time.monotonic()
+        stage = stage or f"post:{path.lstrip('/')}"
+        try:
+            resp = self.session.post(self._url(path), data=data, timeout=self._request_timeout(), **kwargs)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            self._emit_http_event(stage=stage, method="POST", path=path, elapsed_ms=(time.monotonic() - started) * 1000, exception_class=type(exc).__name__, classification="unknown_write" if "write/" in path else "failed")
+            raise
+        self._emit_http_event(stage=stage, method="POST", path=path, elapsed_ms=(time.monotonic() - started) * 1000, http_status=getattr(resp, "status_code", None), content_type=getattr(resp, "headers", {}).get("Content-Type"))
         return resp
 
-    def _get(self, path: str, **kwargs: Any) -> requests.Response:
-        resp = self.session.get(
-            self._url(path),
-            timeout=self._request_timeout(),
-            **kwargs,
-        )
-        resp.raise_for_status()
+    def _get(self, path: str, *, stage: str | None = None, **kwargs: Any) -> requests.Response:
+        started = time.monotonic()
+        stage = stage or f"get:{path.lstrip('/')}"
+        try:
+            resp = self.session.get(self._url(path), timeout=self._request_timeout(), **kwargs)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            self._emit_http_event(stage=stage, method="GET", path=path, elapsed_ms=(time.monotonic() - started) * 1000, exception_class=type(exc).__name__, classification="failed")
+            raise
+        self._emit_http_event(stage=stage, method="GET", path=path, elapsed_ms=(time.monotonic() - started) * 1000, http_status=getattr(resp, "status_code", None), content_type=getattr(resp, "headers", {}).get("Content-Type"))
         return resp
 
     def login(self) -> None:
@@ -188,6 +226,7 @@ class KpNetClient:
         while time.time() - start < max_wait_sec:
             resp = self._post(path, data=payload, headers=headers)
             data = self._json_object(resp, operation=path)
+            self._emit_http_event(stage=f"poll:{path.lstrip('/')}", method="POST", path=path, elapsed_ms=0.0, provider_status=data.get("status"), classification="complete" if data.get("status") == 1 else "pending")
             if data.get("status") == 1:
                 return data
             if self.deadline_monotonic is not None:
