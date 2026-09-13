@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import wraps
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, TypeVar
 
 from app.kpnet import workflow
 
@@ -64,7 +64,6 @@ def install_unknown_write_guard() -> None:
     current = workflow._apply_settings_profile
     if getattr(current, "__kpnet_unknown_task_guard__", False):
         return
-    workflow._apply_settings_profile = cast(
-        Callable[..., dict[str, Any]],
-        guard_unknown_write_terminal(current),
-    )
+    # Runtime monkey-patching is intentional here: the Cloud Run entrypoint installs
+    # the terminal boundary without making the core workflow depend on runtime code.
+    setattr(workflow, "_apply_settings_profile", guard_unknown_write_terminal(current))
