@@ -325,6 +325,7 @@ $jobDeployArgs = @{
     SkipSecretSetup = $true
     SkipSchedulerDeploy = ($resolvedScope -eq 'control-readonly')
     SkipLegacyResourceCleanup = ($resolvedScope -eq 'control-readonly')
+    SkipArtifactPrune = ($resolvedScope -eq 'control-readonly')
 }
 if (-not $SkipInlineSmokeTest) { $jobDeployArgs.RunSmokeTest = $true }
 if ($SkipJobBuild) { $jobDeployArgs.SkipBuild = $true }

@@ -107,6 +107,7 @@ def test_control_readonly_scope_updates_only_immutable_control_job_revisions() -
     assert "'control-readonly'" in wrapper
     assert "SkipSchedulerDeploy = ($resolvedScope -eq 'control-readonly')" in wrapper
     assert "SkipLegacyResourceCleanup = ($resolvedScope -eq 'control-readonly')" in wrapper
+    assert "SkipArtifactPrune = ($resolvedScope -eq 'control-readonly')" in wrapper
     assert "$SkipSettingsRoundTripJobDeploy = $true" in wrapper
     assert "$SkipKpNetImport = $true" in wrapper
     assert "$SkipDriveBackup = $true" in wrapper
