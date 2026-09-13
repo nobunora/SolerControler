@@ -324,13 +324,19 @@ class KpNetClient:
         if not self.pcsid:
             raise RuntimeError("KP-NET pcsid is empty")
 
-        gateway_csrf = _extract_csrf(gw.text) or self.csrf_top
+        try:
+            gateway_csrf = _extract_csrf(gw.text)
+        except RuntimeError:
+            gateway_csrf = self.csrf_top
         select = self._post(
             "remotesetting/pcsselect/pcs",
             data={"_csrf": gateway_csrf, "pcsid": self.pcsid},
             stage="settings-pcs-select",
         )
-        select_csrf = _extract_csrf(select.text) or gateway_csrf
+        try:
+            select_csrf = _extract_csrf(select.text)
+        except RuntimeError:
+            select_csrf = gateway_csrf
         settings = self._post(
             "remotesetting/pcssetting",
             data={"_csrf": select_csrf, "pcsid": self.pcsid, "pcsCategory": "BatterySetting"},
