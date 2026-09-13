@@ -518,9 +518,14 @@ def run_kpnet_workflow() -> int:
 def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | None = None) -> int:
     operation_start = time.monotonic()
     requested_end = operation_start + MODE_OPERATION_START_BUDGET_SECONDS
-    operation_end = min(deadline_monotonic, requested_end) if deadline_monotonic is not None else requested_end
-    if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
-        raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
+    if deadline_monotonic is None:
+        # The requested end is our own deadline.  Re-subtracting the two
+        # floats can round the 300-second window below its exact budget.
+        operation_end = requested_end
+    else:
+        operation_end = min(deadline_monotonic, requested_end)
+        if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
+            raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
     io_deadline = operation_end - MODE_OPERATION_RELEASE_RESERVE_SECONDS
     load_dotenv_if_present(); _setup_logging(); cfg = KpNetConfig.from_env(); client = KpNetClient(cfg, deadline_monotonic=io_deadline)
     run_dir = cfg.artifacts_dir / datetime.now().strftime("%Y%m%d-%H%M%S"); run_dir.mkdir(parents=True, exist_ok=True)
