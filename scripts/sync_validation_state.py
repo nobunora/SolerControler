@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.operations.dashboard_validation_projection import project_forecast_plan_battery_rows
 from app.operations.sync import sync_firestore_to_sqlite, sync_sqlite_to_firestore
 
 
@@ -36,6 +37,13 @@ def main() -> int:
             "[sync_validation_state] firestore->sqlite "
             + ", ".join(f"{table}={count}" for table, count in sorted(counts.items()))
         )
+        if args.direction == "firestore-to-sqlite":
+            projected = project_forecast_plan_battery_rows(
+                sqlite_path=sqlite_path,
+                project_id=args.project_id,
+                database_id=args.database_id,
+            )
+            print(f"[sync_validation_state] validation forecast-plan battery rows={projected}")
 
     if args.direction in {"sqlite-to-firestore", "both"}:
         counts = sync_sqlite_to_firestore(
