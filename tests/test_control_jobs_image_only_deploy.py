@@ -64,3 +64,9 @@ def test_postdeploy_probe_proves_readonly_prep_before_real_settings_roundtrip() 
     assert csv_pos < plan_pos < settings_pos
     assert "SETTINGS_ROUNDTRIP_TARGET_SOC" in source
     assert "roundtrip_restore_verified" in source
+
+
+def test_runner_image_includes_postdeploy_probe_entrypoint() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "postdeploy_probe_main.py" in dockerfile
