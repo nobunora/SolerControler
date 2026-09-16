@@ -12,10 +12,12 @@ def test_control_image_only_rollout_is_commit_pinned_and_image_only() -> None:
     )
 
     assert "[string]$ExpectedCommit" in script
+    assert "[switch]$SkipBuild" in script
     assert "git rev-parse HEAD" in script
     assert "HEAD $actualCommit does not match expected commit $ExpectedCommit" in script
     assert ":git-$actualCommit" in script
     assert "value(image_summary.digest)" in script
+    assert "Skip build (reusing exact commit image)" in script
     assert "^sha256:[0-9a-f]{64}$" in script
 
     for job_name in ("solar-battery-23", "solar-battery-03", "solar-battery-07"):

@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$ExpectedCommit,
+    [switch]$SkipBuild,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07'
@@ -47,16 +48,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $imageTag = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:git-$actualCommit"
-$ignoreFile = Join-Path $repoRoot '.gcloudignore-runner'
-& $gcloud builds submit `
-    --config (Join-Path $repoRoot 'cloudbuild.runner.yaml') `
-    --ignore-file $ignoreFile `
-    --region $region `
-    --project $projectId `
-    --substitutions "_RUNNER_IMAGE=$imageTag" `
-    $repoRoot
-if ($LASTEXITCODE -ne 0) {
-    throw 'Runner image build failed.'
+if (-not $SkipBuild) {
+    $ignoreFile = Join-Path $repoRoot '.gcloudignore-runner'
+    & $gcloud builds submit `
+        --config (Join-Path $repoRoot 'cloudbuild.runner.yaml') `
+        --ignore-file $ignoreFile `
+        --region $region `
+        --project $projectId `
+        --substitutions "_RUNNER_IMAGE=$imageTag" `
+        $repoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Runner image build failed.'
+    }
+} else {
+    Write-Host "Skip build (reusing exact commit image): $imageTag"
 }
 
 $digest = ((& $gcloud artifacts docker images describe $imageTag --project $projectId --format 'value(image_summary.digest)') -join '').Trim()
