@@ -38,7 +38,7 @@ def test_resilient_soc_parser_does_not_take_percentage_from_non_battery_table() 
 
 def test_resilient_soc_parser_rejects_out_of_range_soc() -> None:
     html = """
-    <table><tr><th>蓄電池</th><th>蓄電残量</th></tr><tr><td>充電</td><td>101%</td></tr></table>
+    <table><tr><th rowspan="2">蓄電池</th><th>蓄電残量</th></tr><tr><td>101%</td></tr></table>
     """
 
     with pytest.raises(ValueError, match="SOC out of range"):
