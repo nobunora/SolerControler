@@ -362,7 +362,9 @@ def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.M
     monkeypatch.setattr("app.runtime.cloud_job._run_03_prep_fail_safe_standby", lambda: writes.append({"profile": "standby"}))
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: writes.append(kwargs))
 
-    _run_adjust_03(); _run_day_07()
+    with pytest.raises(RuntimeError, match="csv failed"):
+        _run_adjust_03()
+    _run_day_07()
 
     assert [call["profile"] for call in writes] == ["standby", "green"]
 
@@ -385,7 +387,8 @@ def test_03_plan_generation_timeout_logs_failure_and_standby_once(
     monkeypatch.setattr(cloud_job, "_run_03_prep_fail_safe_standby", lambda: writes.append("standby"))
     monkeypatch.setattr(cloud_job, "_monitor_partial_forced_and_stop", lambda path: monitor_calls.append(path))
 
-    _run_adjust_03()
+    with pytest.raises(TimeoutError, match="secret detail"):
+        _run_adjust_03()
 
     output = capsys.readouterr().out
     prefix = "[cloud_job_runner] 03-prep "
@@ -398,6 +401,8 @@ def test_03_plan_generation_timeout_logs_failure_and_standby_once(
         "usable_plan_exists": False,
     }
     assert "secret detail" not in output
+    assert '"message":"03-prep-terminal-audit"' in output
+    assert '"platform_retry":"eligible"' in output
     assert writes == ["standby"]
     assert monitor_calls == []
 

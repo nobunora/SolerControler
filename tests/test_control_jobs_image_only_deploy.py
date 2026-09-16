@@ -59,7 +59,7 @@ def test_postdeploy_probe_proves_readonly_prep_before_real_settings_roundtrip() 
     source = (ROOT / "postdeploy_probe_main.py").read_text(encoding="utf-8")
 
     csv_pos = source.index("run_csv_workflow()")
-    plan_pos = source.index("_run_plan_generation()")
+    plan_pos = source.index("_run_plan_generation()", csv_pos)
     settings_pos = source.index("run_settings_roundtrip(target_soc_percent=target_soc)")
     assert csv_pos < plan_pos < settings_pos
     assert "SETTINGS_ROUNDTRIP_TARGET_SOC" in source
