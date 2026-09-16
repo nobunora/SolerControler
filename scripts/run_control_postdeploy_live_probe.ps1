@@ -49,9 +49,13 @@ function Assert-NoRunningExecution {
     $rows = @($json | ConvertFrom-Json)
     foreach ($row in $rows) {
         if (-not $row.status) { continue }
+        # Failed executions are still completed executions. completionTime is the
+        # authoritative discriminator; do not confuse an old Completed=False result
+        # with a task that is still running.
+        if ($row.status.completionTime) { continue }
         $conditions = @($row.status.conditions)
         $completed = $conditions | Where-Object { $_.type -eq 'Completed' } | Select-Object -First 1
-        if ($completed -and [string]$completed.status -ne 'True') {
+        if (-not $completed -or [string]$completed.status -ne 'True') {
             throw "Refusing live probe while control execution is active: $JobName"
         }
     }
