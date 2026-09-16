@@ -99,6 +99,11 @@ def _index_rows(
     return indexed, errors
 
 
+def _meaningful_fields(row: dict[str, Any], ignored: set[str]) -> set[str]:
+    """Treat an omitted Firestore field and a flattened SQLite NULL as equivalent."""
+    return {field for field, value in row.items() if field not in ignored and value is not None}
+
+
 def compare_rows(
     left: list[dict[str, Any]],
     right: list[dict[str, Any]],
@@ -121,17 +126,8 @@ def compare_rows(
     for identity in sorted(left_keys & right_keys):
         left_row = left_by_key[identity]
         right_row = right_by_key[identity]
-        row_ignored = set(ignored)
-        if "forecast_plans" in {
-            left_row.get("plan_display_source"),
-            right_row.get("plan_display_source"),
-        }:
-            for field in ("setting_soc_target_percent", "night_charge_kwh"):
-                if left_row.get(field) is None or right_row.get(field) is None:
-                    row_ignored.add(field)
-
-        left_fields = set(left_row) - row_ignored
-        right_fields = set(right_row) - row_ignored
+        left_fields = _meaningful_fields(left_row, ignored)
+        right_fields = _meaningful_fields(right_row, ignored)
         identity_text = _identity_text(identity)
         if left_fields != right_fields:
             errors.append(
