@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,35 @@ def _cloud_call(name: str, *args: Any, **kwargs: Any) -> Any:
     from app.runtime import cloud_job
 
     return getattr(cloud_job, name)(*args, **kwargs)
+
+
+def _emit_03_prep_terminal_audit(
+    *,
+    error: Exception,
+    plan_path: Path,
+    standby_attempted: bool,
+    standby_outcome: str,
+) -> None:
+    """Record a pre-control 03 failure without hiding task failure/retry semantics."""
+    try:
+        print(
+            json.dumps(
+                {
+                    "message": "03-prep-terminal-audit",
+                    "stage": "pre_control_prep",
+                    "exception_type": type(error).__name__,
+                    "usable_plan_exists": plan_path.exists(),
+                    "standby_attempted": standby_attempted,
+                    "standby_outcome": standby_outcome,
+                    "platform_retry": "eligible",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+    except Exception:
+        return
 
 
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
@@ -27,9 +57,9 @@ def _run_night_23() -> None:
 
 
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): 03:00 is
-# standalone.  Do not add lease/owner/manual hand-off/day-gate writes or Drive/
-# Sheets tail work.  Those cross-slot operations can run into 07:00 ownership
-# and previously blocked green after a harmless 03 failure.  Guarded by
+# standalone. Do not add lease/owner/manual hand-off/day-gate writes or Drive/
+# Sheets tail work. Those cross-slot operations can run into 07:00 ownership
+# and previously blocked green after a harmless 03 failure. Guarded by
 # test_slot03_has_no_cross_slot_or_export_tail_dependencies.
 def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
     plan_path = Path(_cloud_call("_night_plan_path"))
@@ -37,11 +67,36 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
         _cloud_call("_before_03_external_io")
         _cloud_call("_run_csv_with_retry", label="03-initial-csv")
         available = _cloud_call("_ensure_night_plan_available", plan_path)
-    except Exception:
+    except Exception as error:
         available = plan_path.exists()
         if not available:
-            _cloud_call("_run_03_prep_fail_safe_standby")
-            return
+            # This is still pre-control: no forced-mode mutation has started.
+            # Keep the historical fail-safe standby attempt, but do not convert
+            # the preparation failure into a successful Cloud Run task.  Raising
+            # after the safe standby makes the configured platform retry useful
+            # for transient CSV/plan failures while UNKNOWN-write handling still
+            # suppresses retries once a mutation outcome is ambiguous.
+            standby_attempted = False
+            standby_outcome = "not_attempted"
+            try:
+                standby_attempted = bool(_cloud_call("_run_03_prep_fail_safe_standby"))
+                standby_outcome = "success" if standby_attempted else "skipped_time_fence"
+            except Exception:
+                standby_outcome = "failed"
+                _emit_03_prep_terminal_audit(
+                    error=error,
+                    plan_path=plan_path,
+                    standby_attempted=True,
+                    standby_outcome=standby_outcome,
+                )
+                raise
+            _emit_03_prep_terminal_audit(
+                error=error,
+                plan_path=plan_path,
+                standby_attempted=standby_attempted,
+                standby_outcome=standby_outcome,
+            )
+            raise
     if not available:
         raise RuntimeError(f"night charge plan not found: {plan_path}")
     if plan_refresh_only:
@@ -51,9 +106,9 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
 
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
 # add Firestore, plan, lease, owner, SOC, manual-mode, or terminal-state checks
-# before this call.  At 07:00 this job owns the device and must issue exactly
-# one green candidate/read-back write regardless of every 03 outcome.  A gate
-# recreates the observed SOC=100 but non-green physical state.  Guarded by
+# before this call. At 07:00 this job owns the device and must issue exactly
+# one green candidate/read-back write regardless of every 03 outcome. A gate
+# recreates the observed SOC=100 but non-green physical state. Guarded by
 # test_slot07_is_unconditional_green_without_cross_slot_dependencies.
 def _run_day_07() -> None:
     _cloud_call(
