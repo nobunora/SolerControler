@@ -124,13 +124,21 @@ def test_03_target_stop_log_records_target_source_and_reason(tmp_path: Path, cap
     assert payload["standby_outcome"] == "success"
 
 
-def test_03_soc_unavailable_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _monitor_partial_forced_and_stop(
-        _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=_Device([None])
-    )
+def test_03_initial_soc_unavailable_fails_before_any_settings_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    device = _Device([None])
+    with pytest.raises(RuntimeError, match="initial realtime SOC unavailable"):
+        _monitor_partial_forced_and_stop(
+            _plan(tmp_path / "plan.json", 80),
+            clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+            device_port=device,
+        )
     audits = _terminal_audits(capsys.readouterr().out)
+    assert device.calls == []
     assert len(audits) == 1
-    assert audits[0]["stop_reason"] == "soc_unavailable"
+    assert audits[0]["stop_reason"] == "initial_soc_unavailable"
+    assert audits[0]["standby_attempted"] is False
 
 
 def test_03_single_monitor_soc_failure_keeps_forced_charge_until_direct_soc_recovers(

@@ -247,12 +247,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         if not may_start_03_io(now()) or must_stop_forced_monitoring(now()):
             _emit_03_terminal_audit(plan, stop_reason="monitor_cutoff", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
             return
+        if latest is None:
+            raise RuntimeError("initial realtime SOC unavailable")
         failure_phase = "forced"
         device.apply_profile(profile="forced", dynamic_forced_profile=True, label="03-forced-start")
         failure_phase = "monitor"
-        if latest is None:
-            print(f"[cloud_job_runner] 03-monitor stop reason=soc_unavailable target={target:.2f}%", flush=True)
-            standby("03-immediate-standby"); _emit_03_terminal_audit(plan, stop_reason="soc_unavailable", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
         if latest >= target:
             print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
             standby("03-immediate-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
@@ -261,9 +260,12 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
             _emit_03_terminal_audit(plan, stop_reason="monitor_cutoff", latest=initial, standby_attempted=standby_attempted, standby_outcome=standby_outcome)
             return
     except Exception as error:
-        try: standby("03-forced-error-standby")
-        except Exception: print("[cloud_job_runner] 03 standby failure", flush=True)
-        if failure_phase == "forced":
+        if failure_phase != "initial_soc":
+            try: standby("03-forced-error-standby")
+            except Exception: print("[cloud_job_runner] 03 standby failure", flush=True)
+        if failure_phase == "initial_soc":
+            stop_reason = "initial_soc_unavailable"
+        elif failure_phase == "forced":
             stop_reason = "forced_failure"
         elif standby_outcome == "failed":
             stop_reason = "standby_failure"
