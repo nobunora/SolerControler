@@ -60,17 +60,67 @@ def _same_value(left: Any, right: Any) -> bool:
     return str(left) == str(right)
 
 
+def _row_identity(row: dict[str, Any]) -> tuple[str, ...] | None:
+    day = str(row.get("date") or "").strip()
+    if not day:
+        return None
+    hour = row.get("hour")
+    if hour is None or str(hour).strip() == "":
+        return (day,)
+    try:
+        normalized_hour = str(int(float(str(hour))))
+    except (TypeError, ValueError):
+        normalized_hour = str(hour).strip()
+    return (day, normalized_hour)
+
+
+def _identity_text(identity: tuple[str, ...]) -> str:
+    if len(identity) == 1:
+        return f"date={identity[0]}"
+    return f"date={identity[0]}, hour={identity[1]}"
+
+
+def _index_rows(
+    rows: list[dict[str, Any]],
+    *,
+    backend: str,
+) -> tuple[dict[tuple[str, ...], dict[str, Any]], list[str]]:
+    indexed: dict[tuple[str, ...], dict[str, Any]] = {}
+    errors: list[str] = []
+    for index, row in enumerate(rows):
+        identity = _row_identity(row)
+        if identity is None:
+            errors.append(f"{backend} row {index} has no logical date identity")
+            continue
+        if identity in indexed:
+            errors.append(f"{backend} duplicate row identity: {_identity_text(identity)}")
+            continue
+        indexed[identity] = row
+    return indexed, errors
+
+
 def compare_rows(
     left: list[dict[str, Any]],
     right: list[dict[str, Any]],
     *,
     ignored_fields: set[str] | None = None,
 ) -> list[str]:
+    """Compare backend rows by logical identity rather than provider return order."""
     ignored = ignored_fields or set()
-    errors: list[str] = []
-    if len(left) != len(right):
-        return [f"row count differs: sqlite={len(left)}, firestore={len(right)}"]
-    for index, (left_row, right_row) in enumerate(zip(left, right)):
+    left_by_key, errors = _index_rows(left, backend="sqlite")
+    right_by_key, right_errors = _index_rows(right, backend="firestore")
+    errors.extend(right_errors)
+
+    left_keys = set(left_by_key)
+    right_keys = set(right_by_key)
+    for identity in sorted(left_keys - right_keys):
+        errors.append(f"missing from firestore: {_identity_text(identity)}")
+    for identity in sorted(right_keys - left_keys):
+        errors.append(f"missing from sqlite: {_identity_text(identity)}")
+
+    for identity in sorted(left_keys & right_keys):
+        left_row = left_by_key[identity]
+        right_row = right_by_key[identity]
         row_ignored = set(ignored)
         if "forecast_plans" in {
             left_row.get("plan_display_source"),
@@ -79,23 +129,25 @@ def compare_rows(
             for field in ("setting_soc_target_percent", "night_charge_kwh"):
                 if left_row.get(field) is None or right_row.get(field) is None:
                     row_ignored.add(field)
+
         left_fields = set(left_row) - row_ignored
         right_fields = set(right_row) - row_ignored
-        identity = f"date={left_row.get('date')}, hour={left_row.get('hour')}"
+        identity_text = _identity_text(identity)
         if left_fields != right_fields:
             errors.append(
-                f"row {index} ({identity}) fields differ: "
+                f"{identity_text} fields differ: "
                 f"sqlite_only={sorted(left_fields - right_fields)}, "
                 f"firestore_only={sorted(right_fields - left_fields)}"
             )
             continue
+
         differing = [
             field
             for field in sorted(left_fields)
             if not _same_value(left_row.get(field), right_row.get(field))
         ]
         if differing:
-            errors.append(f"row {index} ({identity}) values differ: {differing}")
+            errors.append(f"{identity_text} values differ: {differing}")
     return errors
 
 
