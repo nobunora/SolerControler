@@ -41,7 +41,7 @@ if ($actualCommit -notmatch '^[0-9a-f]{40}$') {
 }
 
 # A release is not considered valid until a real reversible device-setting probe
-# succeeds.  Restrict rollout to the daytime gap so the probe cannot race the 23,
+# succeeds. Restrict rollout to the daytime gap so the probe cannot race the 23,
 # protected 03, or unconditional 07 owners.
 $tokyo = [System.TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
 $nowJst = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
@@ -81,14 +81,32 @@ if ($LASTEXITCODE -ne 0 -or $digest -notmatch '^sha256:[0-9a-f]{64}$') {
 }
 $immutableImage = "$($imageTag -replace ':git-[0-9a-f]{40}$','')@$digest"
 
+function Get-ControlJobImage {
+    param([string]$JobName)
+    $formats = @(
+        'value(spec.template.spec.template.spec.containers[0].image)',
+        'value(template.template.containers[0].image)'
+    )
+    foreach ($format in $formats) {
+        $value = ((& $gcloud run jobs describe $JobName --region $region --project $projectId --format $format) -join '').Trim()
+        if ($LASTEXITCODE -eq 0 -and $value) {
+            return $value
+        }
+    }
+    throw "Could not resolve current image for production control Job: $JobName"
+}
+
 $jobs = @($Job23Name, $Job03Name, $Job07Name)
+$previousImages = @{}
 foreach ($jobName in $jobs) {
-    # Require the production Job to exist. Do not create or reconfigure it.
     & $gcloud run jobs describe $jobName --region $region --project $projectId | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Production control Job does not already exist: $jobName"
     }
+    $previousImages[$jobName] = Get-ControlJobImage -JobName $jobName
+}
 
+foreach ($jobName in $jobs) {
     # Image is the only mutable control-Job field in this rollout. Existing command,
     # args, environment, secrets, service account, retry count, timeout and task
     # settings remain untouched because they are not specified here.
@@ -98,18 +116,38 @@ foreach ($jobName in $jobs) {
     }
 }
 
-# Mandatory end-to-end release gate.  This proves the same live dependencies that
+# Mandatory end-to-end release gate. This proves the same live dependencies that
 # can otherwise fail only after release: CSV navigation/download, plan generation,
 # then an actual KP-NET settings mutation/readback followed by exact snapshot restore.
-& (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
-    -ExpectedCommit $actualCommit `
-    -ImmutableImage $immutableImage `
-    -ProbeJobName $ProbeJobName `
-    -Job23Name $Job23Name `
-    -Job03Name $Job03Name `
-    -Job07Name $Job07Name
-if ($LASTEXITCODE -ne 0) {
-    throw 'Control rollout failed mandatory live post-deploy verification.'
+$probeError = $null
+try {
+    & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
+        -ExpectedCommit $actualCommit `
+        -ImmutableImage $immutableImage `
+        -ProbeJobName $ProbeJobName `
+        -Job23Name $Job23Name `
+        -Job03Name $Job03Name `
+        -Job07Name $Job07Name
+    if ($LASTEXITCODE -ne 0) {
+        throw 'mandatory live probe returned a non-zero exit code'
+    }
+} catch {
+    $probeError = $_
+}
+
+if ($null -ne $probeError) {
+    $rollbackFailures = @()
+    foreach ($jobName in $jobs) {
+        $previousImage = [string]$previousImages[$jobName]
+        & $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $rollbackFailures += $jobName
+        }
+    }
+    if ($rollbackFailures.Count -gt 0) {
+        throw "LIVE PROBE FAILED and rollback also failed for: $($rollbackFailures -join ', '). Original probe error: $probeError"
+    }
+    throw "LIVE PROBE FAILED; 23/03/07 images were rolled back to their pre-release values. Probe error: $probeError"
 }
 
 Write-Host "Control rollout source SHA: $actualCommit"
