@@ -94,6 +94,7 @@ def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetim
 
 def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
     from app.kpnet.client import KpNetClient
+    from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
     from app.kpnet.workflow import KpNetConfig
 
     operation_start = time.monotonic()
@@ -103,7 +104,33 @@ def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> f
     client = KpNetClient(KpNetConfig.from_env(), deadline_monotonic=operation_deadline)
     client.login()
     try:
-        return client.read_realtime_soc_percent()
+        value = client.read_realtime_soc_percent()
+        if value is not None:
+            return value
+
+        # The normal parser intentionally remains the first path.  If KP-NET keeps
+        # the semantic labels but changes presentation-only CSS/icon markup, make one
+        # additional read-only request and parse only a clearly identified battery/SOC
+        # table.  This never opens the settings page and never crosses a mutation boundary.
+        response = client._get(
+            "remotevisualization/simplevisualization/enduser",
+            stage="realtime-soc-semantic-fallback",
+        )
+        fallback_value = extract_realtime_soc_percent_resilient(response.text)
+        try:
+            print(
+                json.dumps(
+                    {
+                        "message": "03-soc-parser-fallback",
+                        "result": "numeric" if fallback_value is not None else "no_value",
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+        except Exception:
+            pass
+        return fallback_value
     finally:
         try:
             client.logout()
