@@ -13,7 +13,7 @@ def test_compare_rows_accepts_float_storage_noise_and_ignored_metadata() -> None
 
 def test_compare_rows_reports_coverage_and_contract_differences() -> None:
     assert compare_rows([{"date": "2026-07-14"}], []) == [
-        "row count differs: sqlite=1, firestore=0"
+        "missing from firestore: date=2026-07-14"
     ]
     errors = compare_rows(
         [{"date": "2026-07-15", "actual_load_kwh": 1.0}],
