@@ -25,11 +25,14 @@ def test_control_image_only_rollout_is_commit_pinned_image_only_and_live_gated()
 
     update_lines = [line.strip() for line in script.splitlines() if "run jobs update" in line]
     assert update_lines == [
-        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null"
+        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null",
+        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage | Out-Null",
     ]
 
     assert "07:15 through 22:29 JST" in script
     assert "run_control_postdeploy_live_probe.ps1" in script
+    assert "$previousImages[$jobName] = Get-ControlJobImage -JobName $jobName" in script
+    assert "23/03/07 images were rolled back to their pre-release values" in script
     assert "Release accepted only after the live CSV/plan/settings round-trip probe passed." in script
     assert "Updated only the image field of the existing 23/03/07 control Jobs." in script
 
