@@ -525,7 +525,7 @@ class KpNetClient:
             raise KpNetUnknownWriteError("KP-NET settings write outcome is unknown") from exc
 
         housekeeping: dict[str, str] = {}
-        for name, path, kwargs in (
+        housekeeping_calls: tuple[tuple[str, str, dict[str, Any]], ...] = (
             (
                 "complete",
                 "remotesetting/pcssettingcomplete/",
@@ -536,7 +536,8 @@ class KpNetClient:
                 "remotesetting/pcssetting/write/requestdevicedetail",
                 {"headers": headers, "stage": "settings-post-write-housekeeping:device-detail"},
             ),
-        ):
+        )
+        for name, path, kwargs in housekeeping_calls:
             try:
                 self._post(path, **kwargs)
                 housekeeping[name] = "passed"
