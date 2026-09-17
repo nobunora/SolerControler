@@ -189,7 +189,10 @@ def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.Monk
         roundtrip.run_settings_roundtrip(target_soc_percent=50.0)
 
     assert raised.value.summary["error_type"] == "RuntimeError"
-    assert raised.value.summary["restore_after_failure"] == "passed"
+    assert raised.value.summary["failed_phase"] == "probe_write"
+    assert raised.value.summary["post_failure_readback"] == "attempted"
+    assert raised.value.summary["post_failure_snapshot_matches_initial"] is True
+    assert raised.value.summary["restore_after_failure"] == "not_needed_snapshot_matches"
 
 
 def test_roundtrip_emits_a_restore_audit_record() -> None:

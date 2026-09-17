@@ -170,6 +170,7 @@ def run_settings_roundtrip(
     current: dict[str, Any] | None = None
     restore_profile: ProfileOverrides | None = None
     restored_verified = False
+    phase = "initial_read"
     try:
         client.login()
         client.open_settings_page()
@@ -199,14 +200,17 @@ def run_settings_roundtrip(
             "charge_start_hhmm": f"{int(probe_profile.charge_start_h):02d}:{int(probe_profile.charge_start_m):02d}",
             "charge_end_hhmm": f"{int(probe_profile.charge_end_h):02d}:{int(probe_profile.charge_end_m):02d}",
         }
+        phase = "probe_write"
         _, probe_changed = _apply_and_verify(
             client=client, current=current, value_maps=value_maps, profile=probe_profile
         )
+        phase = "hold"
         hold_started = time.monotonic()
         time.sleep(hold_seconds)
         elapsed = time.monotonic() - hold_started
         if elapsed < hold_seconds:
             time.sleep(hold_seconds - elapsed)
+        phase = "restore_write"
         restored, restore_changed = _apply_and_verify(
             client=client,
             current=client.read_current_settings(),
@@ -214,6 +218,7 @@ def run_settings_roundtrip(
             profile=restore_profile,
             require_change=False,
         )
+        phase = "restore_readback"
         snapshot_ok, snapshot_mismatches = compare_setting_readback(current, restored, ROUNDTRIP_SETTING_FIELDS)
         if not snapshot_ok:
             raise RuntimeError(f"KP-NET restore did not match initial snapshot: {', '.join(snapshot_mismatches)}")
@@ -229,20 +234,35 @@ def run_settings_roundtrip(
         return summary
     except Exception as exc:
         summary["error_type"] = type(exc).__name__
+        summary["failed_phase"] = phase
         raise SettingsRoundtripError(str(exc), summary=summary) from exc
     finally:
         if not restored_verified and current is not None and restore_profile is not None:
             try:
+                summary["post_failure_readback"] = "attempted"
                 current_after_failure = client.read_current_settings()
                 value_maps_after_failure = client.collect_candidate_maps()
-                _apply_and_verify(
-                    client=client,
-                    current=current_after_failure,
-                    value_maps=value_maps_after_failure,
-                    profile=restore_profile,
-                    require_change=False,
+                snapshot_ok, snapshot_mismatches = compare_setting_readback(
+                    current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
                 )
-                summary["restore_after_failure"] = "passed"
+                summary["post_failure_snapshot_matches_initial"] = snapshot_ok
+                summary["post_failure_snapshot_mismatches"] = list(snapshot_mismatches)
+                if snapshot_ok:
+                    summary["restore_after_failure"] = "not_needed_snapshot_matches"
+                else:
+                    phase = "post_failure_restore_write"
+                    restored_after_failure, _ = _apply_and_verify(
+                        client=client,
+                        current=current_after_failure,
+                        value_maps=value_maps_after_failure,
+                        profile=restore_profile,
+                        require_change=False,
+                    )
+                    restored_ok, restored_mismatches = compare_setting_readback(
+                        current, restored_after_failure, ROUNDTRIP_SETTING_FIELDS
+                    )
+                    summary["restore_after_failure"] = "passed" if restored_ok else "mismatch"
+                    summary["restore_after_failure_mismatches"] = list(restored_mismatches)
             except Exception as restore_error:
                 summary["restore_after_failure_error"] = type(restore_error).__name__
         try:
