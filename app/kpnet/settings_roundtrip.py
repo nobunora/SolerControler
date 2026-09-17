@@ -59,6 +59,25 @@ def profile_from_current_settings(current: Mapping[str, Any]) -> ProfileOverride
     )
 
 
+def _probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Fetch only candidates the reversible forced-charge probe can change."""
+    return {
+        "BatteryOperatingMode": client.candidate_map(
+            "BatteryOperatingMode",
+            "remotesetting/pcssetting/valueList/batteryoperatingmode",
+        ),
+        "SocSafetyMode": {},
+        "SocEconomyMode": {},
+        "SocContactInput": {},
+        "SocChargeMode": client.candidate_map(
+            "SocChargeMode",
+            "remotesetting/pcssetting/valueList/socchargemode",
+        ),
+        "OnPowerOutageChargePowerW": {},
+        "AgreementAmpere": {},
+    }
+
+
 def validate_forced_target(*, value_maps: Mapping[str, Mapping[str, str]], target_soc_percent: float) -> DeviceSocGuard:
     """Map the test target to the actual device's forced-mode candidate."""
     return build_device_soc_guard(
@@ -133,7 +152,9 @@ def _apply_and_verify(
             raise RuntimeError(f"KP-NET setting confirmation failed for {profile.name}: {error or title}")
         client.write_setting(confirm_html)
     readback = client.read_current_settings()
-    matched, mismatches = compare_setting_readback(payload, readback, ROUNDTRIP_SETTING_FIELDS)
+    # The mutation proof is intentionally limited to fields this write changed.
+    # Exact full-snapshot equality is checked separately after restoration.
+    matched, mismatches = compare_setting_readback(payload, readback, tuple(changed_fields))
     if not matched:
         raise RuntimeError(f"KP-NET read-back mismatch for {profile.name}: {', '.join(mismatches)}")
     return readback, changed_fields
@@ -180,10 +201,11 @@ def run_settings_roundtrip(
             json.dumps(snapshot_values, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         summary["snapshot_field_count"] = len(ROUNDTRIP_SETTING_FIELDS)
-        value_maps = client.collect_candidate_maps()
+        value_maps = _probe_candidate_maps(client)
         guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
         summary["forced_guard_ceiling_percent"] = guard.device_soc_ceiling_percent
         summary["forced_target_compatible"] = True
+        summary["candidate_maps_fetched"] = ["BatteryOperatingMode", "SocChargeMode"]
 
         restore_profile = profile_from_current_settings(current)
         probe_profile = make_reversible_probe_profile(
@@ -226,6 +248,7 @@ def run_settings_roundtrip(
         summary.update(
             {
                 "probe_changed_fields": probe_changed,
+                "probe_readback_fields": probe_changed,
                 "restore_changed_fields": restore_changed,
                 "restore_verified": True,
             }
@@ -241,7 +264,7 @@ def run_settings_roundtrip(
             try:
                 summary["post_failure_readback"] = "attempted"
                 current_after_failure = client.read_current_settings()
-                value_maps_after_failure = client.collect_candidate_maps()
+                value_maps_after_failure = _probe_candidate_maps(client)
                 snapshot_ok, snapshot_mismatches = compare_setting_readback(
                     current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
                 )
@@ -261,7 +284,12 @@ def run_settings_roundtrip(
                     restored_ok, restored_mismatches = compare_setting_readback(
                         current, restored_after_failure, ROUNDTRIP_SETTING_FIELDS
                     )
-                    summary["restore_after_failure"] = "passed" if restored_ok else "mismatch"
+                    if not restored_ok:
+                        raise RuntimeError(
+                            "KP-NET failure cleanup restore did not match initial snapshot: "
+                            + ", ".join(restored_mismatches)
+                        )
+                    summary["restore_after_failure"] = "passed"
                     summary["restore_after_failure_mismatches"] = list(restored_mismatches)
             except Exception as restore_error:
                 summary["restore_after_failure_error"] = type(restore_error).__name__

@@ -126,6 +126,7 @@ class KpNetClient:
     ) -> requests.Response:
         started = time.monotonic()
         stage = stage or f"post:{path.lstrip('/')}"
+        mutation_stage = "write/" in path and not stage.startswith("settings-post-write-housekeeping")
         try:
             resp = self.session.post(
                 self._url(path), data=data, timeout=self._request_timeout(), **kwargs
@@ -138,7 +139,7 @@ class KpNetClient:
                 path=path,
                 elapsed_ms=(time.monotonic() - started) * 1000,
                 exception_class=type(exc).__name__,
-                classification="unknown_write" if "write/" in path else "failed",
+                classification="unknown_write" if mutation_stage else "failed",
             )
             raise
         self._emit_http_event(
@@ -489,9 +490,15 @@ class KpNetClient:
             "Referer": self._url("remotesetting/pcssettingconfirm/batterysetting"),
         }
 
+        # Only the provider mutation request + completion poll define the write
+        # outcome.  Once write/response reports completion, later UI housekeeping
+        # must never downgrade a proven device mutation to UNKNOWN.
         try:
             req_response = self._post(
-                "remotesetting/pcssetting/write/request", data=form_data, headers=headers
+                "remotesetting/pcssetting/write/request",
+                data=form_data,
+                headers=headers,
+                stage="settings-write-request",
             )
             req = self._json_object(req_response, operation="settings write request")
             comm = req.get("data", {})
@@ -504,8 +511,6 @@ class KpNetClient:
                 headers=headers,
                 max_wait_sec=90.0,
             )
-            self._post("remotesetting/pcssettingcomplete/", data={"_csrf": csrf})
-            self._post("remotesetting/pcssetting/write/requestdevicedetail", headers=headers)
         except (requests.RequestException, RuntimeError, TimeoutError) as exc:
             self._emit_http_event(
                 stage="settings-write-terminal",
@@ -517,4 +522,31 @@ class KpNetClient:
             )
             raise KpNetUnknownWriteError("KP-NET settings write outcome is unknown") from exc
 
-        return {"changed": True}
+        housekeeping: dict[str, str] = {}
+        for name, path, kwargs in (
+            (
+                "complete",
+                "remotesetting/pcssettingcomplete/",
+                {"data": {"_csrf": csrf}, "stage": "settings-post-write-housekeeping:complete"},
+            ),
+            (
+                "device_detail",
+                "remotesetting/pcssetting/write/requestdevicedetail",
+                {"headers": headers, "stage": "settings-post-write-housekeeping:device-detail"},
+            ),
+        ):
+            try:
+                self._post(path, **kwargs)
+                housekeeping[name] = "passed"
+            except Exception as exc:
+                housekeeping[name] = f"ignored:{type(exc).__name__}"
+                self._emit_http_event(
+                    stage=f"settings-post-write-housekeeping:{name}:ignored",
+                    method="POST",
+                    path=path,
+                    elapsed_ms=0.0,
+                    exception_class=type(exc).__name__,
+                    classification="ignored_housekeeping_failure",
+                )
+
+        return {"changed": True, "housekeeping": housekeeping}
