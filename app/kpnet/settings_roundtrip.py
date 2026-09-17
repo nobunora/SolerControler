@@ -8,7 +8,7 @@ import json
 import time
 from typing import Any, Mapping
 
-from app.kpnet.client import KpNetClient
+from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 from app.kpnet.config import KpNetConfig
 from app.kpnet.profile_builder import _build_payload
 from app.kpnet.profiles import ProfileOverrides
@@ -95,13 +95,7 @@ def make_reversible_probe_profile(
     test_charge_start_hhmm: str | None = None,
     test_charge_end_hhmm: str | None = None,
 ) -> ProfileOverrides:
-    """Build the required 50%-candidate forced-charge test profile.
-
-    The test confirms the command path that matters for the 03 job: set the
-    device's maximum supported SocChargeMode and enter forced charge.  It keeps
-    every other controlled setting from the initial snapshot and restores that
-    snapshot after exactly 60 seconds.
-    """
+    """Build the required forced-charge test profile from the initial snapshot."""
     modes = value_maps.get("BatteryOperatingMode", {})
     forced_code = next(
         (
@@ -152,12 +146,34 @@ def _apply_and_verify(
             raise RuntimeError(f"KP-NET setting confirmation failed for {profile.name}: {error or title}")
         client.write_setting(confirm_html)
     readback = client.read_current_settings()
-    # The mutation proof is intentionally limited to fields this write changed.
+    # Mutation success is intentionally limited to fields this write changed.
     # Exact full-snapshot equality is checked separately after restoration.
     matched, mismatches = compare_setting_readback(payload, readback, tuple(changed_fields))
     if not matched:
         raise RuntimeError(f"KP-NET read-back mismatch for {profile.name}: {', '.join(mismatches)}")
     return readback, changed_fields
+
+
+def _read_only_snapshot_after_unknown(
+    *,
+    client: KpNetClient,
+    initial: dict[str, Any],
+    summary: dict[str, object],
+) -> None:
+    """Collect evidence after UNKNOWN_WRITE without crossing a second mutation boundary."""
+    summary["post_failure_readback"] = "attempted_read_only_unknown_write"
+    try:
+        observed = client.read_current_settings()
+        matches, mismatches = compare_setting_readback(initial, observed, ROUNDTRIP_SETTING_FIELDS)
+        summary["post_failure_snapshot_matches_initial"] = matches
+        summary["post_failure_snapshot_mismatches"] = list(mismatches)
+    except Exception as exc:
+        summary["post_failure_readback"] = "failed_read_only_unknown_write"
+        summary["post_failure_readback_error"] = type(exc).__name__
+    # A mismatch immediately after an uncertain mutation is not proof of either
+    # acceptance or rejection because provider/device consistency latency is not
+    # bounded. Never issue a cleanup SET from this state.
+    summary["restore_after_failure"] = "suppressed_unknown_write"
 
 
 # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): this live probe must remain
@@ -171,9 +187,8 @@ def run_settings_roundtrip(
 ) -> dict[str, object]:
     """Execute a live, one-minute setting probe and restore its exact snapshot.
 
-    The caller must expose this only as an explicit test mode.  A target/candidate
-    mismatch is reported after restoration, so the test proves both device writes
-    and the separate forced-charge feasibility gate in one execution.
+    UNKNOWN_WRITE is task-terminal for mutation safety. In that case only
+    read-only evidence collection is permitted; no automatic cleanup SET is sent.
     """
     if hold_seconds != 60:
         raise ValueError("settings round-trip hold_seconds must be exactly 60")
@@ -191,6 +206,7 @@ def run_settings_roundtrip(
     current: dict[str, Any] | None = None
     restore_profile: ProfileOverrides | None = None
     restored_verified = False
+    unknown_write = False
     phase = "initial_read"
     try:
         client.login()
@@ -224,7 +240,10 @@ def run_settings_roundtrip(
         }
         phase = "probe_write"
         _, probe_changed = _apply_and_verify(
-            client=client, current=current, value_maps=value_maps, profile=probe_profile
+            client=client,
+            current=current,
+            value_maps=value_maps,
+            profile=probe_profile,
         )
         phase = "hold"
         hold_started = time.monotonic()
@@ -255,44 +274,59 @@ def run_settings_roundtrip(
         )
         summary["status"] = "passed"
         return summary
+    except KpNetUnknownWriteError as exc:
+        unknown_write = True
+        summary["error_type"] = type(exc).__name__
+        summary["failed_phase"] = phase
+        summary["mutation_outcome"] = "unknown"
+        raise SettingsRoundtripError(str(exc), summary=summary) from exc
     except Exception as exc:
         summary["error_type"] = type(exc).__name__
         summary["failed_phase"] = phase
         raise SettingsRoundtripError(str(exc), summary=summary) from exc
     finally:
         if not restored_verified and current is not None and restore_profile is not None:
-            try:
-                summary["post_failure_readback"] = "attempted"
-                current_after_failure = client.read_current_settings()
-                value_maps_after_failure = _probe_candidate_maps(client)
-                snapshot_ok, snapshot_mismatches = compare_setting_readback(
-                    current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
-                )
-                summary["post_failure_snapshot_matches_initial"] = snapshot_ok
-                summary["post_failure_snapshot_mismatches"] = list(snapshot_mismatches)
-                if snapshot_ok:
-                    summary["restore_after_failure"] = "not_needed_snapshot_matches"
-                else:
-                    phase = "post_failure_restore_write"
-                    restored_after_failure, _ = _apply_and_verify(
-                        client=client,
-                        current=current_after_failure,
-                        value_maps=value_maps_after_failure,
-                        profile=restore_profile,
-                        require_change=False,
+            if unknown_write:
+                _read_only_snapshot_after_unknown(client=client, initial=current, summary=summary)
+            else:
+                try:
+                    summary["post_failure_readback"] = "attempted"
+                    current_after_failure = client.read_current_settings()
+                    value_maps_after_failure = _probe_candidate_maps(client)
+                    snapshot_ok, snapshot_mismatches = compare_setting_readback(
+                        current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
                     )
-                    restored_ok, restored_mismatches = compare_setting_readback(
-                        current, restored_after_failure, ROUNDTRIP_SETTING_FIELDS
-                    )
-                    if not restored_ok:
-                        raise RuntimeError(
-                            "KP-NET failure cleanup restore did not match initial snapshot: "
-                            + ", ".join(restored_mismatches)
+                    summary["post_failure_snapshot_matches_initial"] = snapshot_ok
+                    summary["post_failure_snapshot_mismatches"] = list(snapshot_mismatches)
+                    if snapshot_ok:
+                        summary["restore_after_failure"] = "not_needed_snapshot_matches"
+                    else:
+                        phase = "post_failure_restore_write"
+                        restored_after_failure, _ = _apply_and_verify(
+                            client=client,
+                            current=current_after_failure,
+                            value_maps=value_maps_after_failure,
+                            profile=restore_profile,
+                            require_change=False,
                         )
-                    summary["restore_after_failure"] = "passed"
-                    summary["restore_after_failure_mismatches"] = list(restored_mismatches)
-            except Exception as restore_error:
-                summary["restore_after_failure_error"] = type(restore_error).__name__
+                        restored_ok, restored_mismatches = compare_setting_readback(
+                            current, restored_after_failure, ROUNDTRIP_SETTING_FIELDS
+                        )
+                        if not restored_ok:
+                            raise RuntimeError(
+                                "KP-NET failure cleanup restore did not match initial snapshot: "
+                                + ", ".join(restored_mismatches)
+                            )
+                        summary["restore_after_failure"] = "passed"
+                        summary["restore_after_failure_mismatches"] = list(restored_mismatches)
+                except KpNetUnknownWriteError as restore_unknown:
+                    # A cleanup write can itself become ambiguous. Never attempt
+                    # another SET; collect read-only evidence and stop.
+                    summary["restore_after_failure"] = "unknown_write"
+                    summary["restore_after_failure_error"] = type(restore_unknown).__name__
+                    _read_only_snapshot_after_unknown(client=client, initial=current, summary=summary)
+                except Exception as restore_error:
+                    summary["restore_after_failure_error"] = type(restore_error).__name__
         try:
             close_client = getattr(client, "close", client.logout)
             close_client()
