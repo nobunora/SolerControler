@@ -195,13 +195,21 @@ class KpNetClient:
         if not self.csrf_top:
             raise RuntimeError("KP-NET login/session validation failed")
 
+    def close(self) -> None:
+        """Release local HTTP resources without sending a provider logout request.
+
+        KP-NET expires server sessions by timeout.  A best-effort remote logout is
+        therefore not part of control correctness and historically introduced an
+        extra failure surface after otherwise successful reads/writes.  Closing the
+        requests.Session is sufficient for this short-lived job process.
+        """
+        close_session = getattr(self.session, "close", None)
+        if callable(close_session):
+            close_session()
+
     def logout(self) -> None:
-        try:
-            self._get("logout", stage="logout")
-        finally:
-            close_session = getattr(self.session, "close", None)
-            if callable(close_session):
-                close_session()
+        """Compatibility alias for local-only resource release; no network I/O."""
+        self.close()
 
     def read_realtime_soc_percent(self) -> float | None:
         html = self._get(
@@ -425,6 +433,15 @@ class KpNetClient:
             "SocEconomyMode": "remotesetting/pcssetting/valueList/soceconomymode",
             "SocContactInput": "remotesetting/pcssetting/valueList/soccontactinput",
             "SocChargeMode": "remotesetting/pcssetting/valueList/socchargemode",
+            "ChargeStartTimeH": "remotesetting/pcssetting/valueList/chargestarttimeh",
+            "ChargeStartTimeM": "remotesetting/pcssetting/valueList/chargestarttimem",
+            "ChargeEndTimeH": "remotesetting/pcssetting/valueList/chargeendtimeh",
+            "ChargeEndTimeM": "remotesetting/pcssetting/valueList/chargeendtimem",
+            "DischargeStartTimeH": "remotesetting/pcssetting/valueList/dischargestarttimeh",
+            "DischargeStartTimeM": "remotesetting/pcssetting/valueList/dischargestarttimem",
+            "DischargeEndTimeH": "remotesetting/pcssetting/valueList/dischargeendtimeh",
+            "DischargeEndTimeM": "remotesetting/pcssetting/valueList/dischargeendtimem",
+            "OnPowerOutageMode": "remotesetting/pcssetting/valueList/onpoweroutagemode",
             "OnPowerOutageChargePowerW": "remotesetting/pcssetting/valueList/onpoweroutagechargepower",
             "AgreementAmpere": "remotesetting/pcssetting/valueList/agreementampere",
         }
@@ -443,30 +460,25 @@ class KpNetClient:
 
     def _extract_form_data(self, html: str) -> tuple[dict[str, str], str]:
         soup = BeautifulSoup(html, "html.parser")
-        csrf = _extract_csrf(html)
-        form = soup.select_one("form#itemForm, form#ItemForm")
+        form = soup.select_one("form")
         if form is None:
-            raise RuntimeError("確認画面フォーム(ItemForm)を取得できませんでした")
-
+            raise RuntimeError("KP-NET setting confirmation form was not found")
+        action = str(form.get("action", "")).strip()
+        if not action:
+            action = "remotesetting/pcssettingconfirm/batterysetting"
         data: dict[str, str] = {}
-        for input_node in form.select("input[name]"):
-            if input_node.has_attr("disabled"):
-                continue
-            name = str(input_node.get("name", "")).strip()
+        for field in form.select("input[name], select[name]"):
+            name = str(field.get("name", "")).strip()
             if not name:
                 continue
-            data[name] = str(input_node.get("value", ""))
-
-        for select_node in form.select("select[name]"):
-            if select_node.has_attr("disabled"):
-                continue
-            name = str(select_node.get("name", "")).strip()
-            if not name:
-                continue
-            selected = select_node.select_one("option[selected]") or select_node.select_one("option")
-            data[name] = str(selected.get("value", "")) if selected else ""
-
-        data["_csrf"] = csrf
+            value = str(field.get("value", ""))
+            if field.name == "select":
+                selected = field.select_one("option[selected]") or field.select_one("option")
+                value = str(selected.get("value", "")) if selected else ""
+            data[name] = value
+        csrf = data.get("_csrf", "") or self.csrf_setting
+        if csrf:
+            data["_csrf"] = csrf
         return data, csrf
 
     def write_setting(self, confirm_html: str) -> dict[str, Any]:
