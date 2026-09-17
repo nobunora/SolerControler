@@ -171,11 +171,15 @@ def _apply_settings_profile(
         try:
             readback = client.read_current_settings()
         except Exception:
+            fresh_client = KpNetClient(cfg, deadline_monotonic=client.deadline_monotonic)
             try:
-                client.logout(); client.login(); client.open_settings_page()
-                readback = client.read_current_settings()
+                fresh_client.login()
+                fresh_client.open_settings_page()
+                readback = fresh_client.read_current_settings()
             except Exception:
                 readback = {}
+            finally:
+                fresh_client.close()
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }

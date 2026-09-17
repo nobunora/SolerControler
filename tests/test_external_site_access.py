@@ -11,8 +11,7 @@ import pytest
 import requests
 
 from app.forecasting.correction import fetch_hourly_weather
-from app.kpnet.client import KpNetUnknownWriteError
-from app.kpnet.workflow import KpNetClient
+from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 from app.forecasting.pv_array import (
     PVArrayConfig,
     fetch_open_meteo_hourly,
@@ -46,6 +45,18 @@ class _HttpErrorResponse(_Response):
         error = requests.HTTPError(f"HTTP {self.status_code}")
         error.response = self
         raise error
+
+
+def test_kpnet_logout_is_local_session_close_without_http() -> None:
+    client = object.__new__(KpNetClient)
+    session_calls: list[str] = []
+    client.session = SimpleNamespace(close=lambda: session_calls.append("close"))
+    client._get = lambda *_args, **_kwargs: pytest.fail("logout must not GET")
+    client._post = lambda *_args, **_kwargs: pytest.fail("logout must not POST")
+
+    client.logout()
+
+    assert session_calls == ["close"]
 
 
 @pytest.mark.parametrize(

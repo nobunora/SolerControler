@@ -476,25 +476,40 @@ def test_mode_only_unknown_write_stops_without_a_second_write(
     tmp_path: Path,
 ) -> None:
     class FakeClient:
+        instances: list["FakeClient"] = []
         csrf_setting = "csrf"
         pcsid = "pcsid"
         operation_id = "operation"
 
         def __init__(self, _cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
+            self.instance_number = len(self.instances)
+            self.instances.append(self)
+            self.deadline_monotonic = deadline_monotonic
             self.write_calls = 0
             self.confirm_calls = 0
             self.logout_calls = 0
+            self.login_calls = 0
+            self.close_calls = 0
+            self.read_calls = 0
 
         def login(self) -> None:
-            return None
+            self.login_calls += 1
 
         def logout(self) -> None:
             self.logout_calls += 1
+
+        def close(self) -> None:
+            self.close_calls += 1
 
         def open_settings_page(self) -> None:
             return None
 
         def read_current_settings(self) -> dict[str, str]:
+            self.read_calls += 1
+            if self.instance_number == 0 and self.read_calls == 2:
+                raise RuntimeError("same-session readback failed")
+            if self.instance_number > 0:
+                return {"batteryOperatingMode": "1"}
             return {"batteryOperatingMode": "1"}
 
         def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
@@ -508,12 +523,11 @@ def test_mode_only_unknown_write_stops_without_a_second_write(
             self.write_calls += 1
             raise kpnet_workflow.KpNetUnknownWriteError("completion poll timed out")
 
-    client = FakeClient(_build_cfg(plan_path=tmp_path / "plan.json"))
     cfg = KpNetConfig(
         **{**_build_cfg(plan_path=tmp_path / "plan.json").__dict__, "dry_run": False, "artifacts_dir": tmp_path}
     )
     monkeypatch.setattr(kpnet_workflow.KpNetConfig, "from_env", staticmethod(lambda: cfg))
-    monkeypatch.setattr(kpnet_workflow, "KpNetClient", lambda _cfg, *, deadline_monotonic: client)
+    monkeypatch.setattr(kpnet_workflow, "KpNetClient", FakeClient)
     monkeypatch.setattr(
         kpnet_workflow,
         "_build_payload",
@@ -530,9 +544,14 @@ def test_mode_only_unknown_write_stops_without_a_second_write(
 
     with pytest.raises(kpnet_workflow.KpNetUnknownWriteTerminal):
         kpnet_workflow.run_kpnet_mode_only_profile(profile="green")
-    assert client.confirm_calls == 1
-    assert client.write_calls == 1
-    assert client.logout_calls == 1
+    initial_client, fresh_client = FakeClient.instances
+    assert initial_client.confirm_calls == 1
+    assert initial_client.write_calls == 1
+    assert initial_client.logout_calls == 1
+    assert initial_client.login_calls == 1
+    assert fresh_client.login_calls == 1
+    assert fresh_client.close_calls == 1
+    assert sum(instance.write_calls for instance in FakeClient.instances) == 1
     summary = captured["summary"]
     assert isinstance(summary, dict)
     assert summary["setting_results"][0]["status"] == "unknown"

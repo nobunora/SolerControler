@@ -15,6 +15,8 @@ def test_control_image_only_rollout_is_commit_pinned_image_only_and_live_gated()
     assert "[switch]$SkipBuild" in script
     assert "git rev-parse HEAD" in script
     assert "HEAD $actualCommit does not match expected commit $ExpectedCommit" in script
+    assert "git status --porcelain --untracked-files=all" in script
+    assert "Refusing control rollout from a dirty working tree." in script
     assert ":git-$actualCommit" in script
     assert "value(image_summary.digest)" in script
     assert "Skip build (reusing exact commit image)" in script
@@ -64,6 +66,7 @@ def test_postdeploy_probe_proves_readonly_prep_before_real_settings_roundtrip() 
     assert csv_pos < plan_pos < settings_pos
     assert "SETTINGS_ROUNDTRIP_TARGET_SOC" in source
     assert "roundtrip_restore_verified" in source
+    assert 'roundtrip.get("restore_verified") is not True' in source
 
 
 def test_runner_image_includes_postdeploy_probe_entrypoint() -> None:

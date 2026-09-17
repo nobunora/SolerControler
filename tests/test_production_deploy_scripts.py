@@ -100,17 +100,13 @@ def test_production_deployment_runbook_documents_safe_resume_and_verification() 
         assert required in runbook
 
 
-def test_control_readonly_scope_updates_only_immutable_control_job_revisions() -> None:
+def test_control_readonly_scope_is_rejected_in_favor_of_the_live_probed_rollout() -> None:
     wrapper = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
     deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
 
     assert "'control-readonly'" in wrapper
-    assert "SkipSchedulerDeploy = ($resolvedScope -eq 'control-readonly')" in wrapper
-    assert "SkipLegacyResourceCleanup = ($resolvedScope -eq 'control-readonly')" in wrapper
-    assert "SkipArtifactPrune = ($resolvedScope -eq 'control-readonly')" in wrapper
-    assert "$SkipSettingsRoundTripJobDeploy = $true" in wrapper
-    assert "$SkipKpNetImport = $true" in wrapper
-    assert "$SkipDriveBackup = $true" in wrapper
+    assert "control-readonly cannot release control images" in wrapper
+    assert "deploy_control_jobs_image_only.ps1 with its mandatory live probe" in wrapper
     assert "[switch]$SkipSchedulerDeploy" in deploy
     assert "[switch]$SkipLegacyResourceCleanup" in deploy
 
