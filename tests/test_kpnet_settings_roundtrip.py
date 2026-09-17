@@ -175,9 +175,6 @@ def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.Monk
                 "SocChargeMode": {"0": "0", "50": "50"},
             }
 
-        def candidate_map(self, field: str, _path: str) -> dict[str, str]:
-            return self.collect_candidate_maps()[field]
-
         def logout(self) -> None:
             pass
 
@@ -203,10 +200,65 @@ def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.Monk
     assert raised.value.summary["restore_after_failure"] == "not_needed_snapshot_matches"
 
 
+def test_unknown_probe_write_never_issues_cleanup_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.kpnet.settings_roundtrip as roundtrip
+
+    initial = _current()
+    observed_after_unknown = dict(initial)
+    observed_after_unknown["batteryOperatingMode"] = "3"
+    observed_after_unknown["socChargeMode"] = "50"
+    apply_count = 0
+    read_count = 0
+
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+
+        def __init__(self, _cfg: object) -> None:
+            pass
+
+        def login(self) -> None:
+            pass
+
+        def open_settings_page(self) -> None:
+            pass
+
+        def read_current_settings(self) -> dict[str, str]:
+            nonlocal read_count
+            read_count += 1
+            return dict(initial if read_count == 1 else observed_after_unknown)
+
+        def candidate_map(self, field: str, _path: str) -> dict[str, str]:
+            return {
+                "BatteryOperatingMode": {"0": "待機", "1": "グリーン", "3": "強制充電"},
+                "SocChargeMode": {"0": "0", "50": "50"},
+            }[field]
+
+        def logout(self) -> None:
+            pass
+
+    def fake_apply(**_kwargs: object) -> tuple[dict[str, str], list[str]]:
+        nonlocal apply_count
+        apply_count += 1
+        raise roundtrip.KpNetUnknownWriteError("ambiguous provider write")
+
+    monkeypatch.setattr(roundtrip.KpNetConfig, "from_env", lambda: type("Cfg", (), {"dry_run": False})())
+    monkeypatch.setattr(roundtrip, "KpNetClient", FakeClient)
+    monkeypatch.setattr(roundtrip, "_apply_and_verify", fake_apply)
+
+    with pytest.raises(roundtrip.SettingsRoundtripError) as raised:
+        roundtrip.run_settings_roundtrip(target_soc_percent=50.0)
+
+    assert apply_count == 1
+    assert raised.value.summary["error_type"] == "KpNetUnknownWriteError"
+    assert raised.value.summary["mutation_outcome"] == "unknown"
+    assert raised.value.summary["post_failure_readback"] == "attempted_read_only_unknown_write"
+    assert raised.value.summary["post_failure_snapshot_matches_initial"] is False
+    assert raised.value.summary["restore_after_failure"] == "suppressed_unknown_write"
+
+
 def test_roundtrip_emits_a_restore_audit_record() -> None:
-    source = (
-        __import__("app.kpnet.settings_roundtrip", fromlist=["__file__"]).__file__
-    )
+    source = __import__("app.kpnet.settings_roundtrip", fromlist=["__file__"]).__file__
     assert source is not None
     text = open(source, encoding="utf-8").read()
 
