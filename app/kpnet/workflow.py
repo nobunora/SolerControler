@@ -313,6 +313,37 @@ def _mode_only_profile_from_current_settings(
     )
 
 
+def _minimal_03_candidate_maps(
+    client: KpNetClient,
+    *,
+    include_soc_charge: bool,
+) -> dict[str, dict[str, str]]:
+    """Fetch only candidate lists that can change the 03 device command.
+
+    `_build_payload` still sends the provider's complete form contract. Empty maps
+    intentionally make unchanged fields reuse their current provider labels while
+    avoiding unrelated candidate endpoints as a prerequisite for forced/standby.
+    """
+    maps: dict[str, dict[str, str]] = {
+        "BatteryOperatingMode": client.candidate_map(
+            "BatteryOperatingMode",
+            "remotesetting/pcssetting/valueList/batteryoperatingmode",
+        ),
+        "SocSafetyMode": {},
+        "SocEconomyMode": {},
+        "SocContactInput": {},
+        "SocChargeMode": {},
+        "OnPowerOutageChargePowerW": {},
+        "AgreementAmpere": {},
+    }
+    if include_soc_charge:
+        maps["SocChargeMode"] = client.candidate_map(
+            "SocChargeMode",
+            "remotesetting/pcssetting/valueList/socchargemode",
+        )
+    return maps
+
+
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
 def _run_settings_phase(
     client: KpNetClient,
@@ -541,9 +572,24 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
     summary: dict[str, Any] = {"setting_results": [], "night_soc": {"writer": f"mode-only:{profile}"}}
     try:
         if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
-        client.login(); client.open_settings_page(); current = client.read_current_settings(); maps = client.collect_candidate_maps()
+        client.login(); client.open_settings_page(); current = client.read_current_settings()
+        slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
+        is_03_owner = slot in {"3", "03", "adjust", "adjust03"}
+        if is_03_owner:
+            maps = _minimal_03_candidate_maps(client, include_soc_charge=profile == "forced")
+        else:
+            maps = client.collect_candidate_maps()
         if profile == "standby":
-            selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
+            if is_03_owner:
+                selected = _mode_only_profile_from_current_settings(current, name="03-standby-mode-only")
+                selected = replace(
+                    selected,
+                    battery_operating_mode=_pick_battery_operating_mode_code(
+                        maps["BatteryOperatingMode"], prefer="standby"
+                    ),
+                )
+            else:
+                selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
         elif profile == "green":
             selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
         elif profile == "forced":
