@@ -126,16 +126,7 @@ if ($resolvedScope -eq 'none') {
 }
 if ($resolvedScope -eq 'runner') { $SkipDashboardBuild = $true }
 if ($resolvedScope -eq 'control-readonly') {
-    # Explicit PR-approved exception: update only the three control Job
-    # revisions by immutable digest; do not mutate device settings, Scheduler,
-    # IAM, secrets, legacy resources, imports, or backups.
-    $SkipDashboardBuild = $true
-    $SkipForecastJobDeploy = $true
-    $SkipForecastSchedulerDeploy = $true
-    $SkipSettingsRoundTripJobDeploy = $true
-    $SkipInlineSmokeTest = $true
-    $SkipKpNetImport = $true
-    $SkipDriveBackup = $true
+    throw 'control-readonly cannot release control images; use deploy_control_jobs_image_only.ps1 with its mandatory live probe.'
 }
 if ($resolvedScope -eq 'forecast') {
     # Dedicated forecast owner uses the shared runner image but has no device/control ownership.

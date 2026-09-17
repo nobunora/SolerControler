@@ -39,6 +39,10 @@ if ($actualCommit -ne $ExpectedCommit) {
 if ($actualCommit -notmatch '^[0-9a-f]{40}$') {
     throw "Refusing control rollout: invalid Git commit SHA: $actualCommit"
 }
+$workingTree = @(git status --porcelain --untracked-files=all)
+if ($LASTEXITCODE -ne 0 -or $workingTree.Count -ne 0) {
+    throw 'Refusing control rollout from a dirty working tree.'
+}
 
 # A release is not considered valid until a real reversible device-setting probe
 # succeeds. Restrict rollout to the daytime gap so the probe cannot race the 23,

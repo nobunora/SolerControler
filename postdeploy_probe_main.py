@@ -63,6 +63,8 @@ def main() -> int:
 
         target_soc = float(os.getenv("SETTINGS_ROUNDTRIP_TARGET_SOC", "50"))
         roundtrip = run_settings_roundtrip(target_soc_percent=target_soc)
+        if roundtrip.get("restore_verified") is not True:
+            raise RuntimeError("post-deploy settings restore was not verified")
         summary["settings_roundtrip"] = "passed"
         summary["roundtrip_restore_verified"] = roundtrip.get("restore_verified")
         summary["status"] = "passed"

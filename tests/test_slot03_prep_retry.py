@@ -49,7 +49,7 @@ def test_missing_plan_after_csv_failure_attempts_standby_then_raises_for_platfor
     assert payload["platform_retry"] == "eligible"
 
 
-def test_existing_local_plan_can_still_continue_after_csv_prep_failure(
+def test_untrusted_existing_local_plan_cannot_continue_after_csv_prep_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan_path = tmp_path / "night_charge_plan.json"
@@ -64,13 +64,14 @@ def test_existing_local_plan_can_still_continue_after_csv_prep_failure(
             return None
         if name == "_run_csv_with_retry":
             raise RuntimeError("csv unavailable")
-        if name == "_monitor_partial_forced_and_stop":
-            return None
+        if name == "_run_03_prep_fail_safe_standby":
+            return True
         raise AssertionError(f"unexpected cloud call: {name}")
 
     monkeypatch.setattr(slot_orchestration, "_cloud_call", fake_cloud_call)
 
-    slot_orchestration._run_adjust_03()
+    with pytest.raises(RuntimeError, match="csv unavailable"):
+        slot_orchestration._run_adjust_03()
 
-    assert "_run_03_prep_fail_safe_standby" not in calls
-    assert calls[-1] == "_monitor_partial_forced_and_stop"
+    assert "_monitor_partial_forced_and_stop" not in calls
+    assert calls[-1] == "_run_03_prep_fail_safe_standby"

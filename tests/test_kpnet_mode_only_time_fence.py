@@ -148,11 +148,8 @@ def test_mode_only_real_client_requires_full_io_and_release_budget(real_mode_onl
     assert workflow.run_kpnet_mode_only_profile(profile="standby", deadline_monotonic=remaining) == 0
     assert session.current["batteryOperatingMode"] == "5"
     assert any(path.endswith("/write/request") for _at, _method, path, _timeout in session.requests)
-    assert all(at < 240.0 for at, _method, path, _timeout in session.requests if not path.endswith("/logout"))
-    logout = [at for at, _method, path, _timeout in session.requests if path.endswith("/logout")]
-    assert len(logout) == 1
-    assert 0.0 < logout[0] < 240.0
-    assert logout[0] <= remaining
+    assert all(at < 240.0 for at, _method, _path, _timeout in session.requests)
+    assert not [path for _at, _method, path, _timeout in session.requests if path.endswith("/logout")]
     assert all(timeout > 0 for _at, _method, _path, timeout in session.requests)
 
 
@@ -161,17 +158,15 @@ def test_mode_only_real_client_stops_requests_at_io_deadline_and_only_releases_i
     session.request_seconds = 80.0
     assert workflow.run_kpnet_mode_only_profile(profile="green", deadline_monotonic=300.0) == 1
     assert session.current["batteryOperatingMode"] == "1"
-    assert all(at < 240.0 for at, _method, path, _timeout in session.requests if not path.endswith("/logout"))
-    assert [at for at, _method, path, _timeout in session.requests if path.endswith("/logout")] == [240.0]
+    assert all(at < 240.0 for at, _method, _path, _timeout in session.requests)
+    assert not [path for _at, _method, path, _timeout in session.requests if path.endswith("/logout")]
 
 
 def test_mode_only_operation_cap_is_independent_of_large_hard_cutoff(real_mode_only: tuple[_Clock, _Session, KpNetConfig]) -> None:
     clock, session, _cfg = real_mode_only
     assert workflow.run_kpnet_mode_only_profile(profile="green", deadline_monotonic=14_100.0) == 0
-    assert all(at < 240.0 for at, _method, path, _timeout in session.requests if not path.endswith("/logout"))
-    logout = [at for at, _method, path, _timeout in session.requests if path.endswith("/logout")]
-    assert len(logout) == 1
-    assert logout[0] < 300.0
+    assert all(at < 240.0 for at, _method, _path, _timeout in session.requests)
+    assert not [path for _at, _method, path, _timeout in session.requests if path.endswith("/logout")]
     assert clock.monotonic() <= 300.0
 
 

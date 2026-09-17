@@ -246,7 +246,12 @@ def run_settings_roundtrip(
             except Exception as restore_error:
                 summary["restore_after_failure_error"] = type(restore_error).__name__
         try:
-            client.logout()
+            close_client = getattr(client, "close", client.logout)
+            close_client()
+            summary["logout_outcome"] = "local_close"
+        except Exception as close_error:
+            summary["logout_outcome"] = "failed"
+            summary["logout_exception_type"] = type(close_error).__name__
         finally:
             summary.setdefault("status", "failed")
             print(f"[settings_roundtrip] {json.dumps(summary, ensure_ascii=False, sort_keys=True)}", flush=True)

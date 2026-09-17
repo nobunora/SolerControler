@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.kpnet.plan import load_night_charge_plan
+
 
 def _cloud_call(name: str, *args: Any, **kwargs: Any) -> Any:
     from app.runtime import cloud_job
@@ -42,6 +44,20 @@ def _emit_03_prep_terminal_audit(
         return
 
 
+def _has_trusted_current_plan(plan_path: Path) -> bool:
+    """Permit post-CSV continuation only for a structurally trusted current-day plan."""
+    try:
+        plan = load_night_charge_plan(plan_path)
+        now = _cloud_call("_tokyo_now")
+        return (
+            plan.forecast_date == now.date().isoformat()
+            and bool(plan.plan_id)
+            and bool(plan.plan_hash)
+        )
+    except Exception:
+        return False
+
+
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
 # add plan, CSV, forecast, Firestore, manual-mode, or profile-env branching to
 # this slot.  23:00 must perform exactly one standby candidate/read-back write;
@@ -68,7 +84,7 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
         _cloud_call("_run_csv_with_retry", label="03-initial-csv")
         available = _cloud_call("_ensure_night_plan_available", plan_path)
     except Exception as error:
-        available = plan_path.exists()
+        available = _has_trusted_current_plan(plan_path)
         if not available:
             # This is still pre-control: no forced-mode mutation has started.
             # Keep the historical fail-safe standby attempt, but do not convert
