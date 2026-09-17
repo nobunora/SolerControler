@@ -25,7 +25,7 @@ from app.kpnet.csv_visualization import (
 )
 from app.kpnet.client_support import validate_base_url as _validate_base_url  # noqa: F401
 from app.kpnet.config import LOGGER, KpNetConfig
-from app.runtime.night_soc_controller import CONTROLLED_SETTING_FIELDS, compare_setting_readback
+from app.runtime.night_soc_controller import compare_setting_readback
 from app.kpnet.profile_builder import (
     _build_dynamic_forced_profile,
     _build_dynamic_green_profile,
@@ -183,10 +183,14 @@ def _apply_settings_profile(
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
+    # Control success is defined by the fields this operation actually changed.
+    # Unrelated form values may legitimately drift or be normalized by KP-NET and
+    # must not turn a proven SET/read-back into a false failure.
+    readback_fields = tuple(changed_fields)
     readback_ok, mismatches = compare_setting_readback(
         payload,
         readback,
-        tuple(field for field in CONTROLLED_SETTING_FIELDS if field in payload),
+        readback_fields,
     )
     readback_mismatch_values = {
         field: {
@@ -199,7 +203,7 @@ def _apply_settings_profile(
         reconciliation = "APPLIED_RECONCILED" if readback_ok else "UNKNOWN"
         print(
             json.dumps(
-                {"message": "kpnet-write-reconciliation", "operation_id": getattr(client, "operation_id", None), "slot": os.getenv("CLOUD_JOB_SLOT", "") or None, "profile": profile.name, "result": reconciliation, "mismatch_fields": list(mismatches)},
+                {"message": "kpnet-write-reconciliation", "operation_id": getattr(client, "operation_id", None), "slot": os.getenv("CLOUD_JOB_SLOT", "") or None, "profile": profile.name, "result": reconciliation, "readback_fields": list(readback_fields), "mismatch_fields": list(mismatches)},
                 separators=(",", ":"),
             ),
             flush=True,
@@ -210,6 +214,7 @@ def _apply_settings_profile(
             "changed_fields": changed_fields,
             "status": "applied" if reconciliation is None else reconciliation.lower(),
             "write_result": write_result,
+            "readback_fields": list(readback_fields),
             "readback_match": readback_ok,
             "readback_mismatch_fields": list(mismatches),
             "readback_mismatch_values": readback_mismatch_values,
