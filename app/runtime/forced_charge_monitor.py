@@ -42,31 +42,78 @@ def estimate_required_charge_kwh(*, plan_meta: PlanMeta, latest_soc_percent: flo
     return max(0.0, float(plan_meta.get("required_night_charge_kwh", 0.0) or 0.0))
 
 
+def _env_float_or_default(name: str, default: float) -> float:
+    """Read optional estimator tuning without making control depend on it."""
+    try:
+        value = float(os.getenv(name, str(default)).strip() or str(default))
+    except (TypeError, ValueError):
+        return float(default)
+    return value if math.isfinite(value) else float(default)
+
+
+def _fallback_rate_result(
+    *,
+    fallback: float,
+    min_rate: float,
+    max_rate: float,
+    min_charge_kwh: float,
+    source: str,
+) -> dict[str, float | int | str]:
+    bounded = max(min_rate, min(max_rate, fallback))
+    return {
+        "percent_per_hour": bounded,
+        "raw_percent_per_hour": fallback,
+        "sample_count": 0,
+        "interval_sample_count": 0,
+        "lookback_days": 14,
+        "degradation_trend_weight": 0.60,
+        "ewma_weight": 0.40,
+        "sample_min_charge_kwh": min_charge_kwh,
+        "source": source,
+    }
+
+
 # readable-code-audit: skip STRUCT-04 — CSV filtering, robust rate estimation, and diagnostic counts must use the same source rows
 # readable-code-audit: skip DUP-01 — this 14-day trend and EWMA forecast the next forced-charge stop time, unlike KP-NET's current-setting median.
 def estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[str, float | int | str]:
-    fallback = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", "35").strip() or "35")
-    min_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", "25").strip() or "25")
-    max_rate = float(os.getenv("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", "50").strip() or "50")
-    min_charge_kwh = float(os.getenv("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", "1.2").strip() or "1.2")
-    if max_rate < min_rate:
-        max_rate = min_rate
+    """Estimate charge rate, but never make an already-applied forced SET depend on CSV history.
+
+    This value only optimizes the next realtime-SOC check time.  Missing, malformed,
+    or transiently unreadable CSV history must therefore fall back to a bounded
+    fixed rate rather than aborting the 03 monitor after the device SET/read-back
+    already succeeded.
+    """
+    fallback = _env_float_or_default("ADJUST03_FORCE_CHARGE_RATE_FALLBACK_PERCENT_PER_HOUR", 35.0)
+    min_rate = _env_float_or_default("ADJUST03_FORCE_CHARGE_RATE_MIN_PERCENT_PER_HOUR", 25.0)
+    max_rate = _env_float_or_default("ADJUST03_FORCE_CHARGE_RATE_MAX_PERCENT_PER_HOUR", 50.0)
+    min_charge_kwh = max(0.0, _env_float_or_default("ADJUST03_FORCE_CHARGE_SAMPLE_MIN_KWH", 1.2))
+    min_rate = max(1.0, min_rate)
+    max_rate = max(min_rate, max_rate)
+    fallback = max(min_rate, min(max_rate, fallback))
+
     samples_by_day: dict[date, list[float]] = {}
     previous: tuple[datetime, float, float] | None = None
-    for point in iter_charge_soc_points(csv_paths):
-        if previous is not None:
-            previous_dt, previous_soc, _previous_charge = previous
-            observed_at, soc_percent, charge_kwh = point
-            hours = (observed_at - previous_dt).total_seconds() / 3600.0
-            delta_soc = soc_percent - previous_soc
-            if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
-                samples_by_day.setdefault(observed_at.date(), []).append(delta_soc / hours)
-        previous = point
-    daily_rates = [(day, statistics.median(values)) for day, values in sorted(samples_by_day.items()) if values]
-    if not daily_rates:
-        raw_rate = fallback
-        source = "fallback-forced-charge-soc-rate"
-    else:
+    try:
+        for point in iter_charge_soc_points(csv_paths):
+            if previous is not None:
+                previous_dt, previous_soc, _previous_charge = previous
+                observed_at, soc_percent, charge_kwh = point
+                hours = (observed_at - previous_dt).total_seconds() / 3600.0
+                delta_soc = soc_percent - previous_soc
+                if 0 < hours <= 2.0 and delta_soc > 0 and charge_kwh >= min_charge_kwh:
+                    samples_by_day.setdefault(observed_at.date(), []).append(delta_soc / hours)
+            previous = point
+
+        daily_rates = [(day, statistics.median(values)) for day, values in sorted(samples_by_day.items()) if values]
+        if not daily_rates:
+            return _fallback_rate_result(
+                fallback=fallback,
+                min_rate=min_rate,
+                max_rate=max_rate,
+                min_charge_kwh=min_charge_kwh,
+                source="fallback-forced-charge-soc-rate",
+            )
+
         latest_day = daily_rates[-1][0]
         recent = [(day, rate) for day, rate in daily_rates if day >= latest_day - timedelta(days=13)]
         ewma_rate = recent[0][1]
@@ -84,12 +131,22 @@ def estimate_forced_charge_rate_percent_per_hour(csv_paths: list[Path]) -> dict[
         lower_index = max(0, round((len(ordered_rates) - 1) * 0.15))
         trend_rate = max(ordered_rates[lower_index], min(statistics.median(y_values), trend_rate))
         raw_rate = 0.60 * trend_rate + 0.40 * ewma_rate
-        source = "csv-14d-degradation-trend-ewma-soc-rate"
+        if not math.isfinite(raw_rate):
+            raise ValueError("non-finite forced-charge rate estimate")
+    except Exception as exc:
+        return _fallback_rate_result(
+            fallback=fallback,
+            min_rate=min_rate,
+            max_rate=max_rate,
+            min_charge_kwh=min_charge_kwh,
+            source=f"fallback-forced-charge-soc-rate:{type(exc).__name__}",
+        )
+
     return {
         "percent_per_hour": max(min_rate, min(max_rate, raw_rate)), "raw_percent_per_hour": raw_rate,
         "sample_count": len(daily_rates), "interval_sample_count": sum(len(values) for values in samples_by_day.values()),
         "lookback_days": 14, "degradation_trend_weight": 0.60, "ewma_weight": 0.40,
-        "sample_min_charge_kwh": min_charge_kwh, "source": source,
+        "sample_min_charge_kwh": min_charge_kwh, "source": "csv-14d-degradation-trend-ewma-soc-rate",
     }
 
 
