@@ -8,8 +8,9 @@ from datetime import datetime, time
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time-ownership replacement):
 # do not move these boundaries later or make 03 depend on a 23/07 Firestore state.
 # 03 must stop forced monitoring at 06:45.  A KP profile operation is bounded
-# to 240 seconds and release/logout reserves 60 seconds, so final standby must
-# start by 06:50 and all 03 I/O ends at 06:55, leaving green at 07:00.
+# to 240 seconds and keeps a separate 60-second release/safety reserve, so final
+# standby must start by 06:50 and all 03 I/O ends at 06:55, leaving green at 07:00.
+# The reserve is ownership headroom; it must not require a provider logout request.
 # Otherwise a slow 03 KP-NET write can race 07:00 and overwrite green after it
 # has been read back. Guarded by test_night_soc_time_ownership.py.
 FORCED_MONITOR_CUTOFF = time(6, 45)
