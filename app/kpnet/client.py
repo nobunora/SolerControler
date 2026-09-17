@@ -86,7 +86,9 @@ class KpNetClient:
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
-        base_url = getattr(self, "base_url", self.cfg.base_url)
+        base_url = getattr(self, "base_url", None)
+        if base_url is None:
+            base_url = self.cfg.base_url
         return urljoin(base_url, path.lstrip("/"))
 
     def _request_timeout(self) -> float:

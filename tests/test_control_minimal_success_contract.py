@@ -159,6 +159,7 @@ def test_roundtrip_mutation_readback_ignores_unrelated_field_drift(
 
 def test_write_setting_ignores_post_write_housekeeping_failure() -> None:
     client = object.__new__(KpNetClient)
+    client.base_url = "https://example.test/"
     client.operation_id = "operation"
     client.csrf_setting = "csrf"
     client._extract_form_data = lambda _html: ({"_csrf": "csrf"}, "csrf")  # type: ignore[method-assign]

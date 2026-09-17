@@ -128,6 +128,7 @@ def test_live_roundtrip_applies_forced_charge_50_then_restores_snapshot(monkeypa
 
     monkeypatch.setattr(roundtrip.KpNetConfig, "from_env", lambda: type("Cfg", (), {"dry_run": False})())
     monkeypatch.setattr(roundtrip, "KpNetClient", FakeClient)
+    monkeypatch.setattr(roundtrip, "_probe_candidate_maps", lambda client: client.collect_candidate_maps())
     monkeypatch.setattr(roundtrip, "_apply_and_verify", fake_apply)
     monkeypatch.setattr(roundtrip.time, "sleep", lambda _seconds: None)
 
@@ -165,11 +166,17 @@ def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.Monk
         def read_current_settings(self) -> dict[str, str]:
             return dict(current)
 
+        def candidate_map(self, field: str, _path: str) -> dict[str, str]:
+            return self.collect_candidate_maps()[field]
+
         def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
             return {
                 "BatteryOperatingMode": {"0": "待機", "1": "グリーン", "3": "強制充電"},
                 "SocChargeMode": {"0": "0", "50": "50"},
             }
+
+        def candidate_map(self, field: str, _path: str) -> dict[str, str]:
+            return self.collect_candidate_maps()[field]
 
         def logout(self) -> None:
             pass
@@ -183,6 +190,7 @@ def test_live_roundtrip_failure_exposes_restore_outcome(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(roundtrip.KpNetConfig, "from_env", lambda: type("Cfg", (), {"dry_run": False})())
     monkeypatch.setattr(roundtrip, "KpNetClient", FakeClient)
+    monkeypatch.setattr(roundtrip, "_probe_candidate_maps", lambda client: client.collect_candidate_maps())
     monkeypatch.setattr(roundtrip, "_apply_and_verify", fake_apply)
 
     with pytest.raises(roundtrip.SettingsRoundtripError) as raised:
