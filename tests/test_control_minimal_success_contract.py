@@ -79,23 +79,31 @@ def test_minimal_03_candidate_maps_fetch_only_required_candidates() -> None:
 
         def candidate_map(self, candidate_type: str, _path: str) -> dict[str, str]:
             self.calls.append(candidate_type)
-            return {"3": "forced", "50": "50%"}
+            return {"0": "economy", "3": "forced", "5": "standby"}
 
-    standby_client = FakeClient()
-    standby_maps = workflow._minimal_03_candidate_maps(
-        standby_client,
-        include_soc_charge=False,
-    )
-    assert standby_client.calls == ["BatteryOperatingMode"]
-    assert standby_maps["SocChargeMode"] == {}
+    client = FakeClient()
+    maps = workflow._minimal_03_candidate_maps(client)
 
-    forced_client = FakeClient()
-    forced_maps = workflow._minimal_03_candidate_maps(
-        forced_client,
-        include_soc_charge=True,
-    )
-    assert forced_client.calls == ["BatteryOperatingMode", "SocChargeMode"]
-    assert forced_maps["SocChargeMode"]
+    assert client.calls == ["BatteryOperatingMode"]
+    assert maps["SocChargeMode"] == {}
+    assert maps["SocEconomyMode"] == {}
+
+
+def test_minimal_economy_candidate_maps_fetch_only_mode_and_economy_soc() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def candidate_map(self, candidate_type: str, _path: str) -> dict[str, str]:
+            self.calls.append(candidate_type)
+            return {"0": "economy"}
+
+    client = FakeClient()
+    maps = workflow._minimal_mode_only_candidate_maps(client, include_soc_economy=True)
+
+    assert client.calls == ["BatteryOperatingMode", "SocEconomyMode"]
+    assert maps["SocEconomyMode"]
+    assert maps["SocChargeMode"] == {}
 
 
 def test_probe_candidate_maps_fetch_only_mode_and_soc_charge() -> None:
