@@ -40,9 +40,10 @@ def main() -> int:
     3. only then perform the reversible one-minute live settings round-trip.
 
     A failure in steps 1 or 2 never mutates device settings.  The settings
-    round-trip snapshots all controlled fields, performs a real forced-charge
-    write/read-back, holds exactly 60 seconds, and restores/read-backs the exact
-    initial snapshot with Cloud Run retries disabled by deployment policy.
+    round-trip snapshots all controlled fields, proves a real 03 forced
+    write/read-back, holds exactly 60 seconds, then proves a real 07 economy
+    write/read-back before restoring the exact initial snapshot. Cloud Run
+    retries remain disabled by deployment policy.
     """
     summary: dict[str, object] = {
         "message": "postdeploy-live-probe",
@@ -63,9 +64,15 @@ def main() -> int:
 
         target_soc = float(os.getenv("SETTINGS_ROUNDTRIP_TARGET_SOC", "50"))
         roundtrip = run_settings_roundtrip(target_soc_percent=target_soc)
+        if roundtrip.get("forced_proof") != "passed":
+            raise RuntimeError("post-deploy 03 forced proof was not verified")
+        if roundtrip.get("economy_proof") != "passed":
+            raise RuntimeError("post-deploy 07 economy proof was not verified")
         if roundtrip.get("restore_verified") is not True:
             raise RuntimeError("post-deploy settings restore was not verified")
         summary["settings_roundtrip"] = "passed"
+        summary["roundtrip_forced_proof"] = roundtrip.get("forced_proof")
+        summary["roundtrip_economy_proof"] = roundtrip.get("economy_proof")
         summary["roundtrip_restore_verified"] = roundtrip.get("restore_verified")
         summary["status"] = "passed"
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True), flush=True)
