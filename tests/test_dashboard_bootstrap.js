@@ -63,9 +63,9 @@ const context = {
       json: async () => ({
         pv_daily: [],
         forecast_hourly: [
-          { date: "2026-07-20", hour: 0, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 42 },
-          { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
-          { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
+          { date: "2026-07-20", hour: 0, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, forecast_grid_charge_kwh: 0, forecast_soc_percent: null, actual_soc_percent: 42 },
+          { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, forecast_grid_charge_kwh: 3.1403, forecast_soc_percent: 48, actual_soc_percent: 48 },
+          { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0, forecast_grid_charge_kwh: 0, forecast_soc_percent: 77 },
         ],
         energy_daily: [
           { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
