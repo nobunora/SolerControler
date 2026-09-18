@@ -124,8 +124,9 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
 # 2026-09-18 after the observed 07:00 standby state): do not add Firestore,
 # plan, lease, owner, SOC, manual-mode, or terminal-state checks before this
 # call. At 07:00 this job owns the device and must issue exactly one economy
-# candidate/read-back write regardless of every 03 outcome. The economy
-# profile also resets the daytime minimum SOC fields to 0%. A gate can leave
+# candidate/read-back write regardless of every 03 outcome. Only
+# SocEconomyMode is set to 0%; all unrelated settings retain their current
+# values. A gate can leave
 # the physical battery in the 03 standby state. Guarded by
 # test_slot07_has_no_cross_slot_import_or_call and
 # test_07_entrypoint_is_ast_limited_to_one_economy_call.
