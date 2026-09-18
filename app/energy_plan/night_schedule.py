@@ -117,16 +117,17 @@ def forecast_anchor_minute(rows: list[dict[str, Any]], *, target_date: str) -> i
             continue
         if math.isfinite(soc) and 0.0 <= soc <= 100.0:
             observations.append(dt)
+    control_start = 3 * 60
     if not observations:
-        return 0
+        return control_start
     latest = max(observations)
     if latest.date().isoformat() < target_date:
-        return 0
+        return control_start
     if latest.date().isoformat() > target_date:
         return 7 * 60
     minute = latest.hour * 60 + latest.minute
     rounded_up = int(math.ceil(minute / 60.0) * 60) if minute else 0
-    return max(0, min(7 * 60, rounded_up))
+    return max(control_start, min(7 * 60, rounded_up))
 
 
 def estimate_night_charge_power_kw(
@@ -163,26 +164,36 @@ def build_planned_night_charge_schedule(
     anchor_minute: int,
     charge_end_time: str,
 ) -> PlannedNightChargeSchedule:
+    """Plan the expected forced-charge interval from the current 03 owner anchor.
+
+    The 03 controller starts forced mode immediately and stops from live SOC.
+    Therefore the forecast interval starts at the anchor and its end is the
+    expected target-reach time. The KP-NET adapter may keep a wider device
+    safety window; that applied window is recorded separately.
+    """
     required = max(0.0, float(required_charge_kwh))
     power = max(0.1, float(estimated_charge_power_kw))
     anchor = max(0, min(7 * 60, int(anchor_minute)))
-    end = _parse_hhmm(charge_end_time)
+    hard_end = _parse_hhmm(charge_end_time)
     requested_duration = int(math.ceil(required / power * 60.0)) if required > 0.0 else 0
 
     if required <= 0.0:
-        start = end
+        start = anchor
+        end = anchor
         limitation = "no_charge_required"
-    elif anchor >= end:
-        start = end
+    elif anchor >= hard_end:
+        start = hard_end
+        end = hard_end
         limitation = "no_remaining_charge_window"
     else:
-        start = max(anchor, end - requested_duration)
+        start = anchor
+        end = min(hard_end, anchor + requested_duration)
         limitation = "none"
 
     available_minutes = max(0, end - start)
     deliverable = min(required, power * available_minutes / 60.0)
     unmet = max(0.0, required - deliverable)
-    if unmet > 1e-9 and required > 0.0 and anchor < end:
+    if unmet > 1e-9 and required > 0.0 and anchor < hard_end:
         limitation = "insufficient_remaining_charge_window"
 
     hourly = {hour: 0.0 for hour in range(24)}
