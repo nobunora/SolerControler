@@ -325,6 +325,13 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
     monkeypatch.setattr(cloud_job, "run_kpnet_mode_only_profile", workflow.run_kpnet_mode_only_profile)
     _run_night_23(); _run_day_07()
     assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "0"]
+
+    standby_payload = session.confirm_payloads[0]
+    for field, value in before_07.items():
+        if field == "batteryOperatingMode":
+            continue
+        assert standby_payload[field] == value
+
     day_payload = session.confirm_payloads[1]
     assert day_payload["socEconomyMode"] == "0"
     for field, value in before_07.items():
