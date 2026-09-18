@@ -57,6 +57,14 @@ def merge_latest_plan_into_schedule(schedule: dict[str, Any], plan: dict[str, An
         merged["planned_target_soc_percent"] = target_soc
     if night_charge is not None:
         merged["planned_night_charge_kwh"] = night_charge
+    for field in (
+        "planned_charge_start_time",
+        "planned_charge_end_time",
+        "planned_charge_limitation_reason",
+    ):
+        value = str(result.get(field) or "").strip()
+        if value:
+            merged[field] = value
     if (updated_at := str(plan.get("updated_at") or "").strip()):
         merged["plan_updated_at"] = updated_at
     return merged
@@ -75,6 +83,15 @@ def _unique_forecast_value(
         if value is None or value < minimum or (maximum is not None and value > maximum):
             continue
         values.add(value)
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _unique_forecast_text(rows: list[dict[str, Any]], field: str) -> str | None:
+    values = {
+        str(row.get(field) or "").strip()
+        for row in rows
+        if str(row.get(field) or "").strip()
+    }
     return next(iter(values)) if len(values) == 1 else None
 
 
@@ -111,6 +128,16 @@ def merge_forecast_metadata_into_schedule(
         )
         if night_charge is not None:
             merged["planned_night_charge_kwh"] = night_charge
+    for field in (
+        "planned_charge_start_time",
+        "planned_charge_end_time",
+        "planned_charge_limitation_reason",
+    ):
+        if str(merged.get(field) or "").strip():
+            continue
+        value = _unique_forecast_text(matching, f"forecast_{field}")
+        if value:
+            merged[field] = value
     return merged
 
 

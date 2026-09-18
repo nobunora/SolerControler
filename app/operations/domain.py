@@ -215,24 +215,29 @@ def extract_battery_daily_from_summary(
     result = root.get("result", {}) if isinstance(root.get("result", {}), dict) else {}
     forecast = root.get("forecast", {}) if isinstance(root.get("forecast", {}), dict) else {}
     quality = root.get("plan_quality", {}) if isinstance(root.get("plan_quality", {}), dict) else {}
+    has_night_plan = bool(root)
     if quality.get("should_apply") is False:
         result = {}
-    prefer_plan = env("DATA_PREFER_NIGHT_PLAN_METRICS", default="false").strip().lower() in {"1", "true", "yes", "on"}
     day = str(np_summary.get("forecast_date") or forecast.get("date") or "").strip()
     if not day:
         return None
-    target_soc = to_float(result.get("target_soc_7_percent")) if prefer_plan else None
-    target_soc = target_soc if target_soc is not None else to_float(np_summary.get("target_soc_7_percent_raw"))
-    target_soc = target_soc if target_soc is not None else to_float(result.get("target_soc_7_percent"))
-    night_kwh = to_float(result.get("required_night_charge_kwh")) if prefer_plan else None
-    night_kwh = night_kwh if night_kwh is not None else to_float(np_summary.get("required_night_charge_kwh"))
-    night_kwh = night_kwh if night_kwh is not None else to_float(result.get("required_night_charge_kwh"))
+
+    if has_night_plan:
+        # Canonical planning evidence is the final Energy Plan result. Never
+        # substitute the device/raw candidate when a plan document exists.
+        target_soc = to_float(result.get("target_soc_7_percent"))
+        night_kwh = to_float(result.get("required_night_charge_kwh"))
+    else:
+        # Legacy summaries remain readable when the original plan artifact is
+        # unavailable, but this path must not override a canonical plan.
+        target_soc = to_float(np_summary.get("target_soc_7_percent_raw"))
+        night_kwh = to_float(np_summary.get("required_night_charge_kwh"))
+
     return {
         "date": day, "target_soc": target_soc, "night_charge_kwh": night_kwh,
         "pv_charge_end_soc": None, "pv_charge_end_at": None,
         **_extract_settings_metric_source(summary=summary, night_plan=night_plan),
     }
-
 
 def iter_monitoring_rows(csv_path: Path) -> Iterator[dict[str, Any]]:
     for point in iter_monitoring_points(csv_path):
