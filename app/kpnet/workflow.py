@@ -33,7 +33,6 @@ from app.kpnet.profile_builder import (
     _enabled_sorted_rules,
     _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
-    _pick_max_code,
     _pick_min_code,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
@@ -314,18 +313,14 @@ def _mode_only_profile_from_current_settings(
     )
 
 
-def _minimal_03_candidate_maps(
-    client: KpNetClient,
-    *,
-    include_soc_charge: bool,
-) -> dict[str, dict[str, str]]:
-    """Fetch only candidate lists that can change the 03 device command.
+def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Fetch only the operating-mode candidates required by the 03 device command.
 
-    `_build_payload` still sends the provider's complete form contract. Empty maps
-    intentionally make unchanged fields reuse their current provider labels while
-    avoiding unrelated candidate endpoints as a prerequisite for forced/standby.
+    Forced charging is controlled by BatteryOperatingMode alone on the installed
+    device. SocChargeMode is intentionally not fetched, changed, or verified.
+    Unchanged fields reuse their current form values.
     """
-    maps: dict[str, dict[str, str]] = {
+    return {
         "BatteryOperatingMode": client.candidate_map(
             "BatteryOperatingMode",
             "remotesetting/pcssetting/valueList/batteryoperatingmode",
@@ -337,12 +332,6 @@ def _minimal_03_candidate_maps(
         "OnPowerOutageChargePowerW": {},
         "AgreementAmpere": {},
     }
-    if include_soc_charge:
-        maps["SocChargeMode"] = client.candidate_map(
-            "SocChargeMode",
-            "remotesetting/pcssetting/valueList/socchargemode",
-        )
-    return maps
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -581,7 +570,7 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
         is_03_owner = slot in {"3", "03", "adjust", "adjust03"}
         if is_03_owner:
-            maps = _minimal_03_candidate_maps(client, include_soc_charge=profile == "forced")
+            maps = _minimal_03_candidate_maps(client)
         else:
             maps = client.collect_candidate_maps()
         if profile == "standby":
@@ -611,12 +600,11 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
             )
         elif profile == "forced":
             selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
-            forced_mode_code = _pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced")
-            forced_soc_code = _pick_max_code(maps["SocChargeMode"])
             selected = replace(
                 selected,
-                battery_operating_mode=forced_mode_code,
-                soc_charge_mode=forced_soc_code,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="forced"
+                ),
             )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
