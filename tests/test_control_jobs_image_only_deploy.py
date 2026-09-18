@@ -46,6 +46,22 @@ def test_control_image_only_rollout_is_commit_pinned_image_only_and_live_gated()
     assert probe_pos < release_pos
 
 
+def test_control_live_proof_release_wrapper_requires_the_full_successful_path() -> None:
+    script = (ROOT / "scripts" / "release_control_jobs_with_live_proof.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[string]$ExpectedCommit" in script
+    assert "ExpectedCommit must be a full lowercase Git SHA." in script
+    assert "StatePath must remain under artifacts/deployment_state." in script
+    assert "production_deployment_gate.ps1') -RunPreRelease" in script
+    assert "HEAD does not match ExpectedCommit" in script
+    assert "deploy_control_jobs_image_only.ps1') @releaseArgs" in script
+    assert "run_cloud_job_from_env.ps1') -Slot 07 -DryRun" in script
+    assert "if ($AllowOutOfWindowLiveProbe) { $releaseArgs.AllowOutOfWindowLiveProbe = $true }" in script
+    assert "kind = 'control_live_proof_release'" in script
+
+
 def test_live_probe_is_guarded_non_retrying_and_uses_exact_deployed_image() -> None:
     script = (ROOT / "scripts" / "run_control_postdeploy_live_probe.ps1").read_text(
         encoding="utf-8"
