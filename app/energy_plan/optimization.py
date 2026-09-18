@@ -394,6 +394,7 @@ def run_current_optimizer(
                     "tariff_mode": cost_model.tariff_mode,
                     "monthly_day_buy_kwh_before_target": cost_model.monthly_day_buy_kwh_before_target,
                     "expected_rest_of_month_day_buy_kwh": cost_model.expected_rest_of_month_day_buy_kwh,
+                    "charge_efficiency": cost_model.charge_efficiency,
                     "monthly_tariff_projection_enabled": cost_model.monthly_tariff_projection_enabled,
                     "monthly_tier_landing_enabled": cost_model.monthly_tier_landing_enabled,
                     "monthly_tier_landing_penalty_yen": optimized.expected_monthly_tier_landing_penalty_yen,
