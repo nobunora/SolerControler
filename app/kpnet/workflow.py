@@ -313,14 +313,18 @@ def _mode_only_profile_from_current_settings(
     )
 
 
-def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
-    """Fetch only the operating-mode candidates required by the 03 device command.
+def _minimal_mode_only_candidate_maps(
+    client: KpNetClient,
+    *,
+    include_soc_economy: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Fetch only candidate lists required by the requested mode-only mutation.
 
-    Forced charging is controlled by BatteryOperatingMode alone on the installed
-    device. SocChargeMode is intentionally not fetched, changed, or verified.
-    Unchanged fields reuse their current form values.
+    The provider still receives its full form contract, but unchanged fields reuse
+    current values/names and must not make unrelated candidate endpoints a
+    prerequisite for scheduled 23/03/07 mode transitions.
     """
-    return {
+    maps = {
         "BatteryOperatingMode": client.candidate_map(
             "BatteryOperatingMode",
             "remotesetting/pcssetting/valueList/batteryoperatingmode",
@@ -332,6 +336,17 @@ def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]
         "OnPowerOutageChargePowerW": {},
         "AgreementAmpere": {},
     }
+    if include_soc_economy:
+        maps["SocEconomyMode"] = client.candidate_map(
+            "SocEconomyMode",
+            "remotesetting/pcssetting/valueList/soceconomymode",
+        )
+    return maps
+
+
+def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Keep the 03 helper contract explicit: only BatteryOperatingMode is required."""
+    return _minimal_mode_only_candidate_maps(client)
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -567,11 +582,13 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
     try:
         if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
         client.login(); client.open_settings_page(); current = client.read_current_settings()
-        slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
-        is_03_owner = slot in {"3", "03", "adjust", "adjust03"}
-        if is_03_owner:
-            maps = _minimal_03_candidate_maps(client)
+        if profile in {"standby", "forced"}:
+            maps = _minimal_mode_only_candidate_maps(client)
+        elif profile == "economy":
+            maps = _minimal_mode_only_candidate_maps(client, include_soc_economy=True)
         else:
+            # Legacy green mode is not part of the scheduled 23/03/07 minimal-write
+            # contract and still uses its existing full-profile candidate behavior.
             maps = client.collect_candidate_maps()
         if profile == "standby":
             selected = _mode_only_profile_from_current_settings(
