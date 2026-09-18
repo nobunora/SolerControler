@@ -217,18 +217,24 @@ def extract_battery_daily_from_summary(
     result = root.get("result", {}) if isinstance(root.get("result", {}), dict) else {}
     forecast = root.get("forecast", {}) if isinstance(root.get("forecast", {}), dict) else {}
     quality = root.get("plan_quality", {}) if isinstance(root.get("plan_quality", {}), dict) else {}
-    if quality.get("should_apply") is False:
+    plan_rejected = quality.get("should_apply") is False
+    if plan_rejected:
         result = {}
-    prefer_plan = env("DATA_PREFER_NIGHT_PLAN_METRICS", default="false").strip().lower() in {"1", "true", "yes", "on"}
     day = str(np_summary.get("forecast_date") or forecast.get("date") or "").strip()
     if not day:
         return None
-    target_soc = to_float(result.get("target_soc_7_percent")) if prefer_plan else None
-    target_soc = target_soc if target_soc is not None else to_float(np_summary.get("target_soc_7_percent_raw"))
-    target_soc = target_soc if target_soc is not None else to_float(result.get("target_soc_7_percent"))
-    night_kwh = to_float(result.get("required_night_charge_kwh")) if prefer_plan else None
-    night_kwh = night_kwh if night_kwh is not None else to_float(np_summary.get("required_night_charge_kwh"))
-    night_kwh = night_kwh if night_kwh is not None else to_float(result.get("required_night_charge_kwh"))
+
+    # The final planner result is the canonical configured SOC. Legacy summary/raw
+    # values are fallback evidence only when no plan result is available at all.
+    if result:
+        target_soc = to_float(result.get("target_soc_7_percent"))
+        night_kwh = to_float(result.get("required_night_charge_kwh"))
+    elif plan_rejected:
+        target_soc = None
+        night_kwh = None
+    else:
+        target_soc = to_float(np_summary.get("target_soc_7_percent_raw"))
+        night_kwh = to_float(np_summary.get("required_night_charge_kwh"))
     return {
         "date": day, "target_soc": target_soc, "night_charge_kwh": night_kwh,
         "pv_charge_end_soc": None, "pv_charge_end_at": None,
