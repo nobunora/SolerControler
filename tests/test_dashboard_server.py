@@ -40,7 +40,9 @@ def test_dashboard_static_assets_are_available() -> None:
 
     assert css is not None and css[0].startswith("text/css") and b":root" in css[1]
     assert javascript is not None and javascript[0].startswith("text/javascript")
-    assert b"function estimateHourlyNightGridCharge" in javascript[1]
+    assert b"function estimateHourlyNightGridCharge" not in javascript[1]
+    assert b"forecast_grid_charge_kwh" in javascript[1]
+    assert b"forecast_soc_percent" in javascript[1]
     assert b"main();" in javascript[1]
     assert b"__DASHBOARD_DATA_PLACEHOLDER__" not in javascript[1]
     assert b"window.__DASHBOARD_DATA__ || {}" in javascript[1]
