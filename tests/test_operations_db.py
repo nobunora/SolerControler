@@ -281,9 +281,9 @@ def test_upsert_battery_daily_metrics_fallbacks_to_night_plan_result(tmp_path: P
             """
         ).fetchone()
         assert row is not None
-        # summary値が優先される
-        assert float(row[1]) == pytest.approx(15.4)
-        assert float(row[2]) == pytest.approx(0.0)
+        # final plan result is the canonical configured SOC/charge evidence.
+        assert float(row[1]) == pytest.approx(10.0)
+        assert float(row[2]) == pytest.approx(0.7668890711637568)
         # 太陽光充電終了時SOCは実測CSVから再計算するため、ここでは未設定
         assert row[3] is None
         assert row[4] is None
@@ -491,6 +491,8 @@ def test_hourly_forecast_rows_from_plan_adds_persistence_metadata() -> None:
             "forecast_pv_kwh": 1.2,
             "forecast_load_kwh": 0.8,
             "forecast_charge_kwh": 0.4,
+            "forecast_grid_charge_kwh": 0.0,
+            "forecast_soc_percent": None,
             "forecast_weather_code": None,
             "forecast_precipitation_mm": None,
             "forecast_precipitation_probability": None,
