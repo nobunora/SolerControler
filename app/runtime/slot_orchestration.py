@@ -120,16 +120,18 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
     _cloud_call("_monitor_partial_forced_and_stop", plan_path)
 
 
-# HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
-# add Firestore, plan, lease, owner, SOC, manual-mode, or terminal-state checks
-# before this call. At 07:00 this job owns the device and must issue exactly
-# one green candidate/read-back write regardless of every 03 outcome. A gate
-# recreates the observed SOC=100 but non-green physical state. Guarded by
-# test_slot07_is_unconditional_green_without_cross_slot_dependencies.
+# HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership; amended
+# 2026-09-18 after the observed 07:00 standby state): do not add Firestore,
+# plan, lease, owner, SOC, manual-mode, or terminal-state checks before this
+# call. At 07:00 this job owns the device and must issue exactly one economy
+# candidate/read-back write regardless of every 03 outcome. The economy
+# profile also resets the daytime minimum SOC fields to 0%. A gate can leave
+# the physical battery in the 03 standby state. Guarded by
+# test_slot07_is_unconditional_economy_without_cross_slot_dependencies.
 def _run_day_07() -> None:
     _cloud_call(
         "_run_settings_profile_with_retry",
-        profile="green",
+        profile="economy",
         dynamic_forced_profile=False,
-        label="07-green",
+        label="07-economy",
     )
