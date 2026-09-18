@@ -36,7 +36,7 @@ def _tokyo_now() -> datetime:
 
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do not
 # relax this 06:55 check or start a new external 03 operation after it.  A
-# delayed 03 write can otherwise overwrite the 07:00 green owner. Guarded by
+# delayed 03 write can otherwise overwrite the 07:00 daytime owner. Guarded by
 # test_cloud_job_runner.py::test_03_hard_fence_controls_all_device_io.
 def _before_03_external_io(*, now: datetime | None = None) -> None:
     if not may_start_03_io(now or _tokyo_now()):

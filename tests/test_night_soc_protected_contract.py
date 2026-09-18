@@ -23,7 +23,23 @@ def test_independent_time_ownership_contract_is_immutable() -> None:
     assert SLOT03_CLOUD_RUN_MAX_RETRIES == 3
     assert SLOT03_PLATFORM_RETRY_DELAY_SECONDS == 300
     assert "batteryOperatingMode" not in SLOT23_PRESERVED_FIELDS
-    assert len(SLOT23_PRESERVED_FIELDS) == 12
+    assert set(SLOT23_PRESERVED_FIELDS) == {
+        "socSafetyMode",
+        "socEconomyMode",
+        "socContactInput",
+        "socChargeMode",
+        "chargeStartTimeH",
+        "chargeStartTimeM",
+        "chargeEndTimeH",
+        "chargeEndTimeM",
+        "dischargeStartTimeH",
+        "dischargeStartTimeM",
+        "dischargeEndTimeH",
+        "dischargeEndTimeM",
+        "agreementAmpere",
+        "onPowerOutageMode",
+        "onPowerOutageChargePowerW",
+    }
     assert (FORCED_MONITOR_CUTOFF.hour, FORCED_MONITOR_CUTOFF.minute) == (6, 45)
     assert (FINAL_STANDBY_START_CUTOFF.hour, FINAL_STANDBY_START_CUTOFF.minute) == (6, 50)
     assert (CONTROL_HARD_CUTOFF.hour, CONTROL_HARD_CUTOFF.minute) == (6, 55)
@@ -63,10 +79,44 @@ def test_03_direct_soc_path_has_local_20260906_regression_lock() -> None:
     assert "test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable" in window
 
 
-def test_07_entrypoint_is_ast_limited_to_one_green_call() -> None:
+def test_07_entrypoint_is_ast_limited_to_one_economy_call() -> None:
     tree = ast.parse((ROOT / "app/runtime/slot_orchestration.py").read_text(encoding="utf-8"))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run_day_07")
     calls = [node for node in ast.walk(fn) if isinstance(node, ast.Call)]
     assert len(calls) == 1
     keywords = {key.arg: key.value.value for key in calls[0].keywords if isinstance(key.value, ast.Constant)}
-    assert keywords == {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}
+    assert keywords == {"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}
+
+
+def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
+    workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
+    start = workflow.index('elif profile == "economy":')
+    end = workflow.index('elif profile == "forced":', start)
+    window = workflow[start:end]
+
+    assert "_mode_only_profile_from_current_settings" in window
+    assert 'prefer="economy"' in window
+    assert "soc_economy_mode=_pick_min_code" in window
+    for forbidden in (
+        "soc_safety_mode=",
+        "soc_contact_input=",
+        "soc_charge_mode=",
+        "charge_start_h=",
+        "charge_end_h=",
+        "discharge_start_h=",
+        "discharge_end_h=",
+        "agreement_ampere=",
+    ):
+        assert forbidden not in window
+
+
+def test_03_forced_mode_only_changes_only_operating_mode() -> None:
+    workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
+    window = _local_window(workflow, 'elif profile == "forced":', size=900)
+    candidate_helper = _local_window(workflow, "def _minimal_03_candidate_maps", size=1200)
+
+    assert "_mode_only_profile_from_current_settings" in window
+    assert 'prefer="forced"' in window
+    assert "soc_charge_mode=" not in window
+    assert "_pick_max_code" not in window
+    assert "valueList/socchargemode" not in candidate_helper

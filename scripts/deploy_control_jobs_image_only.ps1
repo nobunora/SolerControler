@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExpectedCommit,
     [switch]$SkipBuild,
+    [switch]$AllowOutOfWindowLiveProbe,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07',
@@ -50,8 +51,12 @@ if ($LASTEXITCODE -ne 0 -or $workingTree.Count -ne 0) {
 $tokyo = [System.TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
 $nowJst = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
 $minutes = ($nowJst.Hour * 60) + $nowJst.Minute
-if ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30)) {
-    throw "Control rollout with mandatory live probe is allowed only from 07:15 through 22:29 JST; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
+$outsideNormalWindow = ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30))
+if ($outsideNormalWindow -and -not $AllowOutOfWindowLiveProbe) {
+    throw "Control rollout with mandatory live probe is allowed only from 07:15 through 22:29 JST unless the explicit one-shot override is supplied; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
+}
+if ($outsideNormalWindow -and $AllowOutOfWindowLiveProbe) {
+    Write-Warning "USER-AUTHORIZED ONE-SHOT OUT-OF-WINDOW RELEASE PROBE: $($nowJst.ToString('yyyy-MM-dd HH:mm:ss')) JST"
 }
 
 # This rollout intentionally assumes all production infrastructure already exists.
@@ -110,38 +115,65 @@ foreach ($jobName in $jobs) {
     $previousImages[$jobName] = Get-ControlJobImage -JobName $jobName
 }
 
-foreach ($jobName in $jobs) {
-    # Image is the only mutable control-Job field in this rollout. Existing command,
-    # args, environment, secrets, service account, retry count, timeout and task
-    # settings remain untouched because they are not specified here.
-    & $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to update production control Job image: $jobName"
-    }
-}
-
-# Mandatory end-to-end release gate. This proves the same live dependencies that
-# can otherwise fail only after release: CSV navigation/download, plan generation,
-# then an actual KP-NET settings mutation/readback followed by exact snapshot restore.
+# Prove the exact candidate image on the dedicated live-probe Job BEFORE any
+# production 23/03/07 Job image is changed. A failed probe therefore leaves all
+# scheduled production control Jobs untouched.
 $probeError = $null
 try {
-    & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
-        -ExpectedCommit $actualCommit `
-        -ImmutableImage $immutableImage `
-        -ProbeJobName $ProbeJobName `
-        -Job23Name $Job23Name `
-        -Job03Name $Job03Name `
-        -Job07Name $Job07Name
+    if ($AllowOutOfWindowLiveProbe) {
+        & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
+            -ExpectedCommit $actualCommit `
+            -ImmutableImage $immutableImage `
+            -ProbeJobName $ProbeJobName `
+            -AllowOutOfWindowLiveProbe `
+            -Job23Name $Job23Name `
+            -Job03Name $Job03Name `
+            -Job07Name $Job07Name
+    } else {
+        & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
+            -ExpectedCommit $actualCommit `
+            -ImmutableImage $immutableImage `
+            -ProbeJobName $ProbeJobName `
+            -Job23Name $Job23Name `
+            -Job03Name $Job03Name `
+            -Job07Name $Job07Name
+    }
     if ($LASTEXITCODE -ne 0) {
-        throw 'mandatory live probe returned a non-zero exit code'
+        throw 'mandatory dual-profile live probe returned a non-zero exit code'
     }
 } catch {
     $probeError = $_
 }
-
 if ($null -ne $probeError) {
-    $rollbackFailures = @()
+    throw "LIVE PROBE FAILED; production 23/03/07 Job images were NOT changed. Probe error: $probeError"
+}
+
+# Only an already-proven immutable image may now be released to the scheduled
+# production control Jobs. If image rollout itself partially fails, restore any
+# Jobs already updated in this phase.
+$updatedJobs = @()
+$updateError = $null
+try {
     foreach ($jobName in $jobs) {
+        & $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to update production control Job image: $jobName"
+        }
+        $updatedJobs += $jobName
+    }
+    foreach ($jobName in $jobs) {
+        $observedImage = Get-ControlJobImage -JobName $jobName
+        if ($observedImage -ne $immutableImage) {
+            throw "Production control Job image verification failed for ${jobName}: observed=$observedImage expected=$immutableImage"
+        }
+    }
+} catch {
+    $updateError = $_
+}
+
+if ($null -ne $updateError) {
+    $rollbackFailures = @()
+    foreach ($jobName in $updatedJobs) {
         $previousImage = [string]$previousImages[$jobName]
         & $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage | Out-Null
         if ($LASTEXITCODE -ne 0) {
@@ -149,12 +181,12 @@ if ($null -ne $probeError) {
         }
     }
     if ($rollbackFailures.Count -gt 0) {
-        throw "LIVE PROBE FAILED and rollback also failed for: $($rollbackFailures -join ', '). Original probe error: $probeError"
+        throw "IMAGE RELEASE FAILED and rollback also failed for: $($rollbackFailures -join ', '). Original update error: $updateError"
     }
-    throw "LIVE PROBE FAILED; 23/03/07 images were rolled back to their pre-release values. Probe error: $probeError"
+    throw "IMAGE RELEASE FAILED after successful live proof; updated Jobs were rolled back. Error: $updateError"
 }
 
 Write-Host "Control rollout source SHA: $actualCommit"
 Write-Host "Control rollout immutable image: $immutableImage"
 Write-Host 'Updated only the image field of the existing 23/03/07 control Jobs.'
-Write-Host 'Release accepted only after the live CSV/plan/settings round-trip probe passed.'
+Write-Host 'Release accepted only after the candidate image passed live CSV/plan + real 03 forced + real 07 economy + exact restore proof before production image rollout.'

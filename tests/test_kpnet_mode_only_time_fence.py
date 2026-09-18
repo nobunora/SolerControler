@@ -211,36 +211,38 @@ _MODE_ONLY_CONTROLLED_FIELDS = (
 )
 
 
-def test_03_forced_mode_only_preserves_current_snapshot_except_mode_and_soc_candidate(
+def test_03_forced_mode_only_preserves_every_setting_except_operating_mode(
     real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
     current = _distinct_current_settings()
+    current["socChargeMode"] = "30"
     session.current = dict(current)
 
     assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
 
     payload = session.confirm_payloads[-1]
     assert payload["batteryOperatingMode"] == "3"
-    assert payload["socChargeMode"] == "50"
+    assert payload["socChargeMode"] == "30"
     for field in _MODE_ONLY_CONTROLLED_FIELDS:
-        if field not in {"batteryOperatingMode", "socChargeMode"}:
+        if field != "batteryOperatingMode":
             assert payload[field] == current[field]
 
 
-def test_03_forced_mode_only_changes_only_operating_mode_and_soc_charge_candidate(
+def test_03_forced_mode_only_changes_only_operating_mode_and_skips_soc_charge_candidates(
     real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
     current = _distinct_current_settings()
+    current["socChargeMode"] = "30"
     session.current = dict(current)
 
     assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
 
     payload = session.confirm_payloads[-1]
     changed_fields = [field for field in _MODE_ONLY_CONTROLLED_FIELDS if payload[field] != current[field]]
-    assert set(changed_fields) <= {"batteryOperatingMode", "socChargeMode"}
-    assert set(changed_fields) == {"batteryOperatingMode", "socChargeMode"}
+    assert changed_fields == ["batteryOperatingMode"]
+    assert not any("valueList/socchargemode" in path for _at, _method, path, _timeout in session.requests)
 
 
 def test_03_forced_mode_only_does_not_inject_static_forced_window(
@@ -294,6 +296,27 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
     monkeypatch: pytest.MonkeyPatch, real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
+    session.current.update(
+        {
+            "socSafetyMode": "20",
+            "socEconomyMode": "10",
+            "socContactInput": "30",
+            "socChargeMode": "30",
+            "chargeStartTimeH": "22",
+            "chargeStartTimeM": "15",
+            "chargeEndTimeH": "6",
+            "chargeEndTimeM": "45",
+            "dischargeStartTimeH": "8",
+            "dischargeStartTimeM": "5",
+            "dischargeEndTimeH": "21",
+            "dischargeEndTimeM": "55",
+            "agreementAmpere": "40",
+            "onPowerOutageMode": "1",
+            "onPowerOutageChargePowerW": "65535",
+        }
+    )
+    before_07 = dict(session.current)
+
     def forbidden(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("cross-slot dependency was touched")
 
@@ -303,12 +326,35 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
         monkeypatch.setattr(workflow, name, forbidden)
     monkeypatch.setattr(cloud_job, "run_kpnet_mode_only_profile", workflow.run_kpnet_mode_only_profile)
     _run_night_23(); _run_day_07()
-    assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "1"]
+    assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "0"]
+
+    standby_payload = session.confirm_payloads[0]
+    for field, value in before_07.items():
+        if field == "batteryOperatingMode":
+            continue
+        assert standby_payload[field] == value
+
+    day_payload = session.confirm_payloads[1]
+    assert day_payload["socEconomyMode"] == "0"
+    for field, value in before_07.items():
+        if field in {"batteryOperatingMode", "socEconomyMode"}:
+            continue
+        assert day_payload[field] == value
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/write/request")]) == 2
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/read/request")]) == 4
+    candidate_value_lists = [
+        path.rsplit("/", 1)[-1]
+        for _at, _method, path, _timeout in session.requests
+        if "/valueList/" in path
+    ]
+    assert candidate_value_lists == [
+        "batteryoperatingmode",
+        "batteryoperatingmode",
+        "soceconomymode",
+    ]
 
 
-def test_03_readback_failure_still_leaves_07_green_independent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_03_readback_failure_still_leaves_07_economy_independent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class AtThree:
         def now(self, timezone: ZoneInfo) -> datetime:
             return datetime(2099, 1, 1, 3, tzinfo=timezone)
@@ -333,4 +379,4 @@ def test_03_readback_failure_still_leaves_07_green_independent(monkeypatch: pyte
     with pytest.raises(RuntimeError, match="forced"):
         cloud_job._monitor_partial_forced_and_stop(plan, clock=AtThree(), device_port=FailedForcedDevice())
     _run_day_07()
-    assert writes == ["green"]
+    assert writes == ["economy"]

@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImmutableImage,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
+    [switch]$AllowOutOfWindowLiveProbe,
+    [switch]$RunSlot23StandbyRecovery,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07'
@@ -36,8 +38,22 @@ if ($ImmutableImage -notmatch '@sha256:[0-9a-f]{64}$') {
 $tokyo = [System.TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
 $nowJst = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
 $minutes = ($nowJst.Hour * 60) + $nowJst.Minute
-if ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30)) {
-    throw "Live post-deploy probe is allowed only from 07:15 through 22:29 JST; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
+$outsideNormalWindow = ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30))
+if ($outsideNormalWindow -and -not $AllowOutOfWindowLiveProbe) {
+    throw "Live post-deploy probe is allowed only from 07:15 through 22:29 JST unless the explicit one-shot override is supplied; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
+}
+if ($outsideNormalWindow -and $AllowOutOfWindowLiveProbe) {
+    Write-Warning "USER-AUTHORIZED ONE-SHOT OUT-OF-WINDOW LIVE PROBE: $($nowJst.ToString('yyyy-MM-dd HH:mm:ss')) JST"
+}
+if ($RunSlot23StandbyRecovery -and -not $AllowOutOfWindowLiveProbe) {
+    throw 'Slot-23 standby recovery requires the explicit one-shot out-of-window authorization.'
+}
+$outOfWindowAudit = if ($AllowOutOfWindowLiveProbe) { 'true' } else { 'false' }
+$probeEntrypoint = if ($RunSlot23StandbyRecovery) { 'cloud_job_runner.py' } else { 'postdeploy_probe_main.py' }
+$probeEnvironment = if ($RunSlot23StandbyRecovery) {
+    "CLOUD_JOB_SLOT=23,DRY_RUN=false,KP_NET_UNKNOWN_EXIT_ZERO=false,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
+} else {
+    "CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,KP_NET_UNKNOWN_EXIT_ZERO=true,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 }
 
 function Assert-NoRunningExecution {
@@ -76,24 +92,60 @@ foreach ($jobName in @($Job23Name, $Job03Name, $Job07Name)) {
 if ($LASTEXITCODE -ne 0) {
     throw "Dedicated post-deploy probe Job does not already exist: $ProbeJobName"
 }
+Assert-NoRunningExecution -JobName $ProbeJobName
 
 & $gcloud run jobs update $ProbeJobName `
     --region $region `
     --project $projectId `
     --image $ImmutableImage `
     --command python `
-    --args postdeploy_probe_main.py `
+    --args $probeEntrypoint `
     --max-retries 0 `
     --task-timeout 900 `
-    --update-env-vars 'DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50' | Out-Null
+    --update-env-vars $probeEnvironment | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to update the dedicated post-deploy probe Job.'
 }
 
-& $gcloud run jobs execute $ProbeJobName --region $region --project $projectId --wait | Out-Null
+$executionJson = (& $gcloud run jobs execute $ProbeJobName --region $region --project $projectId --wait --format json) -join "`n"
 if ($LASTEXITCODE -ne 0) {
+    if ($RunSlot23StandbyRecovery) {
+        throw 'LIVE SLOT-23 STANDBY RECOVERY FAILED: the candidate-only mode write/read-back did not complete successfully.'
+    }
     throw 'LIVE POST-DEPLOY PROBE FAILED: CSV/plan/settings round-trip did not complete successfully.'
 }
 
+if ($RunSlot23StandbyRecovery) {
+    Write-Host "LIVE SLOT-23 STANDBY RECOVERY PASSED for source $ExpectedCommit"
+    Write-Host "Out-of-window override supplied: $outOfWindowAudit"
+    Write-Host 'Verified by the slot-23 owner: candidate BatteryOperatingMode only, standby SET/readback, and UNKNOWN makes this dedicated probe fail without retry.'
+    exit 0
+}
+
+$execution = $executionJson | ConvertFrom-Json -AsHashtable
+$executionName = [string]$execution['metadata']['name']
+if (-not $executionName) { throw 'Probe execution identity is missing; release is blocked.' }
+# gcloud.cmd drops embedded quotes on Windows. Query a quote-free job filter,
+# then match the exact execution label locally, including structured JSON logs.
+$filter = "resource.type=cloud_run_job AND resource.labels.job_name=$ProbeJobName AND jsonPayload.message=postdeploy-live-probe"
+$proof = $null
+for ($attempt = 0; $attempt -lt 12; $attempt++) {
+    $logJson = (& $gcloud logging read $filter --project $projectId --freshness 1d --limit 100 --format json) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw 'Probe evidence query failed; release is blocked.' }
+    foreach ($record in @($logJson | ConvertFrom-Json -AsHashtable)) {
+        if ($record['labels']['run.googleapis.com/execution_name'] -eq $executionName) {
+            $proof = $record['jsonPayload']
+            break
+        }
+    }
+    if ($null -ne $proof) { break }
+    Start-Sleep -Seconds 5
+}
+& (Join-Path $PSScriptRoot 'assert_control_probe_evidence.ps1') -Proof $proof
+$evidenceDirectory = Join-Path $repoRoot 'artifacts/deployment_state'
+New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+$proof | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $evidenceDirectory "live-proof-$ExpectedCommit.json")
+
 Write-Host "LIVE POST-DEPLOY PROBE PASSED for source $ExpectedCommit"
-Write-Host 'Verified: KP-NET CSV download -> plan generation -> real settings SET/readback -> exact snapshot restore/readback.'
+Write-Host "Out-of-window override supplied: $outOfWindowAudit"
+Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 economy SET/readback -> exact snapshot restore/readback.'

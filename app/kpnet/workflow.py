@@ -33,13 +33,13 @@ from app.kpnet.profile_builder import (
     _enabled_sorted_rules,
     _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
-    _pick_max_code,
+    _pick_min_code,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
 )
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.runtime.night_soc_time_contract import MODE_OPERATION_RELEASE_RESERVE_SECONDS, MODE_OPERATION_START_BUDGET_SECONDS
-from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
+from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
@@ -238,16 +238,13 @@ def _apply_settings_profile(
     return readback
 
 
-# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE): do not add
-# batteryOperatingMode or replace SLOT23_PRESERVED_FIELDS with a broad current
-# merge. The 23:00 sequence must preserve exactly the twelve SOC/window values
-# while writing standby candidate 5; preserving green 1 overwrites that value,
-# leaves the physical battery green through the night, and makes the successful
-# job log lie about standby. Guarded by
-# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
-# and tests/test_kpnet_workflow.py standby read-back tests.
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE; amended
+# 2026-09-18 by user request): never preserve batteryOperatingMode, but preserve
+# every other writable form value. Standby is a mode transition only; unrelated
+# SOC/window/agreement/outage settings must remain unchanged. Guarded by
+# test_night_soc_protected_contract.py and test_kpnet_mode_only_time_fence.py.
 def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any]) -> ProfileOverrides:
-    """Keep 03:00-owned SOC/window values while allowing the 23:00 standby mode write."""
+    """Preserve every non-mode form value while allowing the standby mode write."""
     field_to_attribute = {
         "socSafetyMode": "soc_safety_mode",
         "socEconomyMode": "soc_economy_mode",
@@ -261,14 +258,17 @@ def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any
         "dischargeStartTimeM": "discharge_start_m",
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
+        "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     # HISTORICAL_FAILURE_LOCK (2026-08-29 runtime evidence): this must iterate
     # SLOT23_PRESERVED_FIELDS, whose immutable contract intentionally excludes
     # batteryOperatingMode.  Adding it back copies the prior green/forced mode
     # over the real standby candidate, making 23:00 ``skipped-no-change`` and
     # leaving the battery non-standby until 07:00.  Replacing this with a broad
-    # ``current`` merge can also overwrite the twelve SOC/window fields that
-    # 03:00 owns.  Guarded by the green(1)->standby(5) read-back regression test.
+    # omitting any other writable field can silently change unrelated settings.
+    # Guarded by the green(1)->standby(5) and preservation regression tests.
     updates = {
         attribute: str(current[field])
         for field, attribute in field_to_attribute.items()
@@ -298,6 +298,8 @@ def _mode_only_profile_from_current_settings(
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
         "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     missing = [field for field in required_fields if field not in current or str(current[field]).strip() == ""]
     if missing:
@@ -308,23 +310,21 @@ def _mode_only_profile_from_current_settings(
             attribute: str(current[field])
             for field, attribute in required_fields.items()
         },
-        on_power_outage_mode=str(current.get("onPowerOutageMode", "0")),
-        on_power_outage_charge_power_w=str(current.get("onPowerOutageChargePowerW", "65535")),
     )
 
 
-def _minimal_03_candidate_maps(
+def _minimal_mode_only_candidate_maps(
     client: KpNetClient,
     *,
-    include_soc_charge: bool,
+    include_soc_economy: bool = False,
 ) -> dict[str, dict[str, str]]:
-    """Fetch only candidate lists that can change the 03 device command.
+    """Fetch only candidate lists required by the requested mode-only mutation.
 
-    `_build_payload` still sends the provider's complete form contract. Empty maps
-    intentionally make unchanged fields reuse their current provider labels while
-    avoiding unrelated candidate endpoints as a prerequisite for forced/standby.
+    The provider still receives its full form contract, but unchanged fields reuse
+    current values/names and must not make unrelated candidate endpoints a
+    prerequisite for scheduled 23/03/07 mode transitions.
     """
-    maps: dict[str, dict[str, str]] = {
+    maps = {
         "BatteryOperatingMode": client.candidate_map(
             "BatteryOperatingMode",
             "remotesetting/pcssetting/valueList/batteryoperatingmode",
@@ -336,12 +336,17 @@ def _minimal_03_candidate_maps(
         "OnPowerOutageChargePowerW": {},
         "AgreementAmpere": {},
     }
-    if include_soc_charge:
-        maps["SocChargeMode"] = client.candidate_map(
-            "SocChargeMode",
-            "remotesetting/pcssetting/valueList/socchargemode",
+    if include_soc_economy:
+        maps["SocEconomyMode"] = client.candidate_map(
+            "SocEconomyMode",
+            "remotesetting/pcssetting/valueList/soceconomymode",
         )
     return maps
+
+
+def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Keep the 03 helper contract explicit: only BatteryOperatingMode is required."""
+    return _minimal_mode_only_candidate_maps(client)
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -439,8 +444,12 @@ def _run_settings_phase(
         }
         LOGGER.info("Forced settings profile selected: green-mode")
     elif cfg.force_settings_profile == "standby":
+        standby_profile = _mode_only_profile_from_current_settings(
+            current,
+            name="standby-mode",
+        )
         standby_profile = replace(
-            STANDBY_PROFILE,
+            standby_profile,
             battery_operating_mode=_pick_battery_operating_mode_code(
                 maps["BatteryOperatingMode"],
                 prefer="standby",
@@ -486,7 +495,7 @@ def _run_settings_phase(
     # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
     # not restore NIGHT_SOC_CONTROL_MODE/manual/profile-plan conditions here.
     # At 23:00 the sequence is one unconditional standby candidate=5 write
-    # while preserving the twelve KP-NET-required SOC/window form fields.  A
+    # while preserving every other writable KP-NET form field. A
     # condition can skip that write and leave the physical battery green or
     # forced overnight.  Guarded by test_slot23_is_unconditional_standby_without_cross_slot_dependencies
     # and test_night_soc_protected_contract.py::test_slot23_form_contract.
@@ -573,33 +582,46 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
     try:
         if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
         client.login(); client.open_settings_page(); current = client.read_current_settings()
-        slot = os.getenv("CLOUD_JOB_SLOT", "").strip().lower()
-        is_03_owner = slot in {"3", "03", "adjust", "adjust03"}
-        if is_03_owner:
-            maps = _minimal_03_candidate_maps(client, include_soc_charge=profile == "forced")
+        if profile in {"standby", "forced"}:
+            maps = _minimal_mode_only_candidate_maps(client)
+        elif profile == "economy":
+            maps = _minimal_mode_only_candidate_maps(client, include_soc_economy=True)
         else:
+            # Legacy green mode is not part of the scheduled 23/03/07 minimal-write
+            # contract and still uses its existing full-profile candidate behavior.
             maps = client.collect_candidate_maps()
         if profile == "standby":
-            if is_03_owner:
-                selected = _mode_only_profile_from_current_settings(current, name="03-standby-mode-only")
-                selected = replace(
-                    selected,
-                    battery_operating_mode=_pick_battery_operating_mode_code(
-                        maps["BatteryOperatingMode"], prefer="standby"
-                    ),
-                )
-            else:
-                selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
-        elif profile == "green":
-            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
-        elif profile == "forced":
-            selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
-            forced_mode_code = _pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced")
-            forced_soc_code = _pick_max_code(maps["SocChargeMode"])
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="standby-mode-only",
+            )
             selected = replace(
                 selected,
-                battery_operating_mode=forced_mode_code,
-                soc_charge_mode=forced_soc_code,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="standby"
+                ),
+            )
+        elif profile == "green":
+            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
+        elif profile == "economy":
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="07-economy-mode-only",
+            )
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="economy"
+                ),
+                soc_economy_mode=_pick_min_code(maps["SocEconomyMode"]),
+            )
+        elif profile == "forced":
+            selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="forced"
+                ),
             )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
         _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
