@@ -196,6 +196,8 @@ def _selected_reconstructed_rows_between(
             item.pop("issued_at", None)
             item.pop("forecast_issued_at", None)
             item.pop("forecast_run_id", None)
+            item.pop("forecast_soc_percent", None)
+            item.pop("forecast_grid_charge_kwh", None)
             item["source"] = RECONSTRUCTED_FORECAST_SOURCE
             item["is_reconstructed"] = True
             item["forecast_reconstruction_id"] = reconstruction_id
