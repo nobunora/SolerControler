@@ -179,7 +179,8 @@ def _build_latest_schedule_from_events(*, event_rows: list[dict[str, Any]], batt
         battery_matches_plan = not plan_date or battery_date == plan_date
         target_soc = to_float(battery_row.get("setting_soc_target_percent")) if battery_matches_plan else None
         if target_soc is not None:
-            schedule["soc_charge_mode"] = str(int(round(target_soc)))
+            schedule["planned_target_soc_percent"] = target_soc
+            schedule["planned_target_soc_source"] = "battery_daily_metrics"
         if schedule.get("plan_date") is None and battery_date:
             schedule["plan_date"] = str(battery_row.get("date"))
         source_status = str(battery_row.get("source_status") or "")
