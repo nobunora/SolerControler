@@ -77,17 +77,6 @@ GREEN_MODE_PROFILE = ProfileOverrides(
     agreement_ampere="50",
 )
 
-ECONOMY_MODE_PROFILE = replace(
-    GREEN_MODE_PROFILE,
-    # 07:00 hand-off: normal daytime discharge in economy mode with minimum SOC 0%.
-    name="economy-mode",
-    battery_operating_mode="0",
-    soc_safety_mode="0",
-    soc_economy_mode="0",
-    soc_contact_input="0",
-    soc_charge_mode="0",
-)
-
 STANDBY_PROFILE = replace(
     GREEN_MODE_PROFILE,
     name="standby-mode",
