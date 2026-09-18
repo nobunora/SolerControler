@@ -39,7 +39,7 @@ from app.kpnet.profile_builder import (
 )
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.runtime.night_soc_time_contract import MODE_OPERATION_RELEASE_RESERVE_SECONDS, MODE_OPERATION_START_BUDGET_SECONDS
-from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
+from app.kpnet.profiles import ECONOMY_MODE_PROFILE, FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
@@ -592,6 +592,13 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
                 selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
         elif profile == "green":
             selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
+        elif profile == "economy":
+            selected = replace(
+                ECONOMY_MODE_PROFILE,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="economy"
+                ),
+            )
         elif profile == "forced":
             selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
             forced_mode_code = _pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced")
