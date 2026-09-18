@@ -294,6 +294,27 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
     monkeypatch: pytest.MonkeyPatch, real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
+    session.current.update(
+        {
+            "socSafetyMode": "20",
+            "socEconomyMode": "10",
+            "socContactInput": "30",
+            "socChargeMode": "30",
+            "chargeStartTimeH": "22",
+            "chargeStartTimeM": "15",
+            "chargeEndTimeH": "6",
+            "chargeEndTimeM": "45",
+            "dischargeStartTimeH": "8",
+            "dischargeStartTimeM": "5",
+            "dischargeEndTimeH": "21",
+            "dischargeEndTimeM": "55",
+            "agreementAmpere": "40",
+            "onPowerOutageMode": "1",
+            "onPowerOutageChargePowerW": "65535",
+        }
+    )
+    before_07 = dict(session.current)
+
     def forbidden(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("cross-slot dependency was touched")
 
@@ -305,10 +326,11 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
     _run_night_23(); _run_day_07()
     assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "0"]
     day_payload = session.confirm_payloads[1]
-    assert day_payload["socSafetyMode"] == "0"
     assert day_payload["socEconomyMode"] == "0"
-    assert day_payload["socContactInput"] == "0"
-    assert day_payload["socChargeMode"] == "0"
+    for field, value in before_07.items():
+        if field in {"batteryOperatingMode", "socEconomyMode"}:
+            continue
+        assert day_payload[field] == value
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/write/request")]) == 2
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/read/request")]) == 4
 
