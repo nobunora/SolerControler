@@ -106,9 +106,14 @@ def _build_energy_model_output(
         if isinstance(optimization_payload, dict)
         else {}
     )
+    optimized_charge_efficiency = (
+        _to_optional_float(soc_risk.get("charge_efficiency"))
+        if isinstance(soc_risk, dict)
+        else None
+    )
     charge_efficiency = (
-        float(soc_risk.get("charge_efficiency"))
-        if isinstance(soc_risk, dict) and soc_risk.get("charge_efficiency") is not None
+        optimized_charge_efficiency
+        if optimized_charge_efficiency is not None
         else float(context.coefficients.battery_round_trip_efficiency)
     )
     hourly_soc_forecast = build_hourly_soc_projection(
