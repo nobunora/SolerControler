@@ -342,6 +342,16 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
         assert day_payload[field] == value
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/write/request")]) == 2
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/read/request")]) == 4
+    candidate_value_lists = [
+        path.rsplit("/", 1)[-1]
+        for _at, _method, path, _timeout in session.requests
+        if "/valueList/" in path
+    ]
+    assert candidate_value_lists == [
+        "batteryoperatingmode",
+        "batteryoperatingmode",
+        "soceconomymode",
+    ]
 
 
 def test_03_readback_failure_still_leaves_07_economy_independent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
