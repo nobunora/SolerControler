@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.domain.constants import SOCBounds, validate_soc_percent
+from app.energy_plan.soc_projection import estimate_charge_power_kw_from_csv
 from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.kpnet.plan import NightChargePlan, load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
@@ -281,39 +282,14 @@ def _estimate_charge_power_kw(
     night_window_end: tuple[int, int],
     fallback_kw: float,
 ) -> float:
-    start_minute = night_window_start[0] * 60 + night_window_start[1]
-    end_minute = night_window_end[0] * 60 + night_window_end[1]
-    charge_kwh_per_30m: list[float] = []
+    """Compatibility wrapper around the planner-owned charge-power estimator."""
 
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                if not date_text or not time_text:
-                    continue
-                try:
-                    dt = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                except ValueError:
-                    continue
-
-                minute_of_day = dt.hour * 60 + dt.minute
-                if not _in_time_window(minute_of_day, start_minute, end_minute):
-                    continue
-
-                try:
-                    charge_kwh = float((row.get("充電電力量[kWh]") or "0").strip() or "0")
-                except ValueError:
-                    charge_kwh = 0.0
-                if charge_kwh > 0:
-                    charge_kwh_per_30m.append(charge_kwh)
-
-    if charge_kwh_per_30m:
-        return statistics.median(charge_kwh_per_30m) * 2.0
-    return fallback_kw
+    return estimate_charge_power_kw_from_csv(
+        csv_paths,
+        night_window_start=f"{night_window_start[0]:02d}:{night_window_start[1]:02d}",
+        night_window_end=f"{night_window_end[0]:02d}:{night_window_end[1]:02d}",
+        fallback_kw=fallback_kw,
+    )
 
 
 # readable-code-audit: skip DUP-01 — this median estimates the currently applied KP-NET setting, while Cloud Job forecasts tomorrow's stop time from a 14-day degradation trend.
@@ -408,11 +384,15 @@ def _build_dynamic_forced_profile(
         cfg.night_charge_window_end,
     )
 
-    estimated_charge_power_kw = _estimate_charge_power_kw(
-        plan.csv_paths,
-        night_window_start=night_window_start,
-        night_window_end=night_window_end,
-        fallback_kw=cfg.default_charge_power_kw,
+    estimated_charge_power_kw = (
+        plan.planned_charge_power_kw
+        if plan.planned_charge_power_kw is not None and plan.planned_charge_power_kw > 0
+        else _estimate_charge_power_kw(
+            plan.csv_paths,
+            night_window_start=night_window_start,
+            night_window_end=night_window_end,
+            fallback_kw=cfg.default_charge_power_kw,
+        )
     )
 
     required_night_charge_kwh = max(0.0, plan.required_night_charge_kwh)
@@ -451,25 +431,38 @@ def _build_dynamic_forced_profile(
         duration_minutes = duration_minutes_soc
         duration_source = "soc-rate-rounded-target"
 
-    # ユーザー要件:
-    # - 夜間設定の充電終了は運用条件で決定
-    # - 曇り/雨予報時は 07:00 に固定（可変条件ファイルで上書き可）
-    # - 0:00 を跨ぐ設定をしない（00:00-終了時刻 の同日内でのみ設定）
-    # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
-    charge_end_h, charge_end_m = _resolve_night_charge_end_hhmm(
-        conditions=conditions,
-        plan=plan,
-        summary=summary,
-    )
+    # Planner owns the desired schedule. The KP-NET adapter only validates it
+    # against device-specific constraints and records any applied adjustment.
+    if plan.planned_charge_end_time:
+        charge_end_h, charge_end_m = _parse_hhmm(
+            plan.planned_charge_end_time,
+            name="result.planned_charge_end_time",
+        )
+    else:
+        charge_end_h, charge_end_m = _resolve_night_charge_end_hhmm(
+            conditions=conditions,
+            plan=plan,
+            summary=summary,
+        )
     charge_end_minute = charge_end_h * 60 + charge_end_m
-    window_duration_minutes = charge_end_minute
-    requested_duration_minutes = duration_minutes
-    duration_clipped = False
-    if duration_minutes > window_duration_minutes:
-        duration_minutes = window_duration_minutes
-        duration_clipped = True
+    requested_duration_minutes = (
+        plan.planned_charge_duration_minutes
+        if plan.planned_charge_duration_minutes is not None
+        else duration_minutes
+    )
+    duration_clipped = plan.planned_charge_duration_clipped
+    if plan.planned_charge_start_time:
+        planned_start_h, planned_start_m = _parse_hhmm(
+            plan.planned_charge_start_time,
+            name="result.planned_charge_start_time",
+        )
+        charge_start_minute = planned_start_h * 60 + planned_start_m
+    else:
+        charge_start_minute = max(0, charge_end_minute - duration_minutes)
 
-    charge_start_minute = max(0, charge_end_minute - duration_minutes)
+    if rounded_up_soc_target and duration_minutes_soc is not None:
+        charge_start_minute = max(0, charge_end_minute - duration_minutes_soc)
+        duration_source = "soc-rate-rounded-target-device-adjustment"
     if duration_minutes > 0:
         charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
             start_minute=charge_start_minute,
@@ -546,6 +539,10 @@ def _build_dynamic_forced_profile(
         "duration_clipped_to_window": duration_clipped,
         "no_cross_midnight": True,
         **window_contract,
+        "planned_charge_start_time": plan.planned_charge_start_time,
+        "planned_charge_end_time": plan.planned_charge_end_time,
+        "applied_charge_start_time": f"{charge_start_h:02d}:{charge_start_m:02d}",
+        "applied_charge_end_time": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "device_schedule_start": f"{charge_start_h:02d}:{charge_start_m:02d}",
         "device_schedule_end": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "device_schedule_duration_minutes": applied_duration_minutes,
