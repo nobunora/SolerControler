@@ -54,16 +54,30 @@ def test_live_probe_is_guarded_non_retrying_and_uses_exact_deployed_image() -> N
     assert "@sha256:[0-9a-f]{64}$" in script
     assert "07:15 through 22:29 JST" in script
     assert "[switch]$AllowOutOfWindowLiveProbe" in script
+    assert "[switch]$RunSlot23StandbyRecovery" in script
     assert "LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED" in script
     assert "Assert-NoRunningExecution" in script
     assert "solar-battery-settings-roundtrip" in script
     assert "--image $ImmutableImage" in script
     assert "--command python" in script
-    assert "--args postdeploy_probe_main.py" in script
+    assert "'postdeploy_probe_main.py'" in script
+    assert "--args $probeEntrypoint" in script
     assert "--max-retries 0" in script
     assert "--task-timeout 900" in script
     assert "run jobs execute $ProbeJobName" in script
     assert "LIVE POST-DEPLOY PROBE PASSED" in script
+
+
+def test_live_probe_can_run_only_the_actual_slot23_standby_owner() -> None:
+    script = (ROOT / "scripts" / "run_control_postdeploy_live_probe.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "$RunSlot23StandbyRecovery" in script
+    assert "cloud_job_runner.py" in script
+    assert "CLOUD_JOB_SLOT=23,DRY_RUN=false" in script
+    assert "Slot-23 standby recovery requires the explicit one-shot out-of-window authorization." in script
+    assert "LIVE SLOT-23 STANDBY RECOVERY PASSED" in script
 
 
 def test_postdeploy_probe_proves_readonly_prep_before_real_settings_roundtrip() -> None:

@@ -5,6 +5,7 @@ param(
     [string]$ImmutableImage,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
     [switch]$AllowOutOfWindowLiveProbe,
+    [switch]$RunSlot23StandbyRecovery,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07'
@@ -44,7 +45,16 @@ if ($outsideNormalWindow -and -not $AllowOutOfWindowLiveProbe) {
 if ($outsideNormalWindow -and $AllowOutOfWindowLiveProbe) {
     Write-Warning "USER-AUTHORIZED ONE-SHOT OUT-OF-WINDOW LIVE PROBE: $($nowJst.ToString('yyyy-MM-dd HH:mm:ss')) JST"
 }
+if ($RunSlot23StandbyRecovery -and -not $AllowOutOfWindowLiveProbe) {
+    throw 'Slot-23 standby recovery requires the explicit one-shot out-of-window authorization.'
+}
 $outOfWindowAudit = if ($AllowOutOfWindowLiveProbe) { 'true' } else { 'false' }
+$probeEntrypoint = if ($RunSlot23StandbyRecovery) { 'cloud_job_runner.py' } else { 'postdeploy_probe_main.py' }
+$probeEnvironment = if ($RunSlot23StandbyRecovery) {
+    "CLOUD_JOB_SLOT=23,DRY_RUN=false,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
+} else {
+    "DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
+}
 
 function Assert-NoRunningExecution {
     param([string]$JobName)
@@ -88,17 +98,27 @@ if ($LASTEXITCODE -ne 0) {
     --project $projectId `
     --image $ImmutableImage `
     --command python `
-    --args postdeploy_probe_main.py `
+    --args $probeEntrypoint `
     --max-retries 0 `
     --task-timeout 900 `
-    --update-env-vars "DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit" | Out-Null
+    --update-env-vars $probeEnvironment | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to update the dedicated post-deploy probe Job.'
 }
 
 & $gcloud run jobs execute $ProbeJobName --region $region --project $projectId --wait | Out-Null
 if ($LASTEXITCODE -ne 0) {
+    if ($RunSlot23StandbyRecovery) {
+        throw 'LIVE SLOT-23 STANDBY RECOVERY FAILED: the candidate-only mode write/read-back did not complete successfully.'
+    }
     throw 'LIVE POST-DEPLOY PROBE FAILED: CSV/plan/settings round-trip did not complete successfully.'
+}
+
+if ($RunSlot23StandbyRecovery) {
+    Write-Host "LIVE SLOT-23 STANDBY RECOVERY PASSED for source $ExpectedCommit"
+    Write-Host "Out-of-window override supplied: $outOfWindowAudit"
+    Write-Host 'Verified by the slot-23 owner: candidate BatteryOperatingMode only, standby SET/readback, and no retry after UNKNOWN.'
+    exit 0
 }
 
 Write-Host "LIVE POST-DEPLOY PROBE PASSED for source $ExpectedCommit"
