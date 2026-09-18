@@ -203,6 +203,7 @@ def test_dashboard_has_no_soc_prediction_engine() -> None:
 
 def test_existing_sqlite_forecast_table_migrates_new_hourly_columns() -> None:
     conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE forecast_hourly (
