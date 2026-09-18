@@ -9,15 +9,13 @@ from typing import Final, Mapping
 
 
 # HISTORICAL_FAILURE_LOCK (d1d7792, 1dd21ae, 3cdd48c, 2026-08-28/29 runtime
-# evidence): NEVER add ``batteryOperatingMode`` to this tuple.  At 23:00 the
-# controller must preserve the 12 SOC/window fields owned by the 03:00 planner,
-# but it must replace the operating mode with the KP-NET standby candidate.  If
-# this list includes batteryOperatingMode, a green value (1) is copied back over
-# the standby candidate (5), producing a successful-looking 23:00 job that
-# leaves the battery in green mode.  If any of the remaining fields is removed,
-# the 23:00 guard can overwrite charge thresholds or 23:00--07:00 / 07:00--23:00
-# windows before 03:00 has taken ownership.  Guarded by
-# test_night_soc_protected_contract.py and test_kpnet_workflow.py.
+# evidence; amended 2026-09-18 by user request): NEVER add
+# ``batteryOperatingMode`` to this tuple. At 23:00 standby must change only
+# the operating mode and preserve every other writable KP-NET form value.
+# Preserving batteryOperatingMode would copy the prior green/forced value back
+# over standby; omitting any other writable field lets the standby hand-off
+# silently change unrelated configuration. Guarded by
+# test_night_soc_protected_contract.py and test_kpnet_mode_only_time_fence.py.
 SLOT23_PRESERVED_FIELDS: Final[tuple[str, ...]] = (
     "socSafetyMode",
     "socEconomyMode",
@@ -31,6 +29,9 @@ SLOT23_PRESERVED_FIELDS: Final[tuple[str, ...]] = (
     "dischargeStartTimeM",
     "dischargeEndTimeH",
     "dischargeEndTimeM",
+    "agreementAmpere",
+    "onPowerOutageMode",
+    "onPowerOutageChargePowerW",
 )
 
 # HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_DAY_GATE, 2026-08-29 03:00 forced-reapply failure): do not add a state here
