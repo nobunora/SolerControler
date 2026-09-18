@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.energy_plan import EnergyPlanOutput as EnergyModelOutput, PlanDocumentV1, summarize_hourly_pv as _hourly_pv_totals
@@ -8,6 +10,13 @@ from app.energy_plan.optimization import OptimizationDecision, apply_uncertainty
 from app.energy_plan.plan_quality import _build_plan_quality, _candidate_reason_summary, _decision_cost_breakdown, _to_optional_float
 from app.energy_plan.soc_constraints import SocConstraintSet, active_constraint_names as _active_constraint_names
 from app.energy_plan.soc_cost import to_plain_dict
+from app.energy_plan.soc_projection import (
+    allocate_hourly_grid_charge,
+    build_hourly_soc_projection,
+    build_planned_night_charge_schedule,
+    estimate_charge_power_kw_from_csv,
+    resolve_planned_charge_end_time,
+)
 
 if TYPE_CHECKING:
     from app.energy_plan.workflow import ConsumptionForecastBundle, EnergyModelContext, NightChargePreparation, PvForecastBundle
@@ -64,6 +73,72 @@ def _build_energy_model_output(
     result_payload["final_pv_forecast_source"] = pv_forecast.source
     optimization_payload = decision.optimization_payload
     cost_payload = decision.cost_optimization_payload
+
+    night_window_start = os.getenv("KP_NIGHT_CHARGE_WINDOW_START", "23:00").strip() or "23:00"
+    night_window_end = os.getenv("KP_NIGHT_CHARGE_WINDOW_END", "07:00").strip() or "07:00"
+    conditions_path = Path(
+        os.getenv("KP_OPERATION_CONDITIONS_PATH", "config/operation_conditions.json").strip()
+        or "config/operation_conditions.json"
+    )
+    fallback_charge_power_kw = float(os.getenv("KP_DEFAULT_CHARGE_POWER_KW", "4.0").strip() or "4.0")
+    estimated_charge_power_kw = estimate_charge_power_kw_from_csv(
+        context.csv_paths,
+        night_window_start=night_window_start,
+        night_window_end=night_window_end,
+        fallback_kw=fallback_charge_power_kw,
+    )
+    planned_charge_end_time = resolve_planned_charge_end_time(
+        conditions_path=conditions_path,
+        default_hhmm=night_window_end,
+    )
+    planned_schedule = build_planned_night_charge_schedule(
+        required_night_charge_kwh=float(result_payload.get("required_night_charge_kwh") or 0.0),
+        estimated_charge_power_kw=estimated_charge_power_kw,
+        charge_end_time=planned_charge_end_time,
+        not_before_minute=3 * 60,
+    )
+    hourly_grid_charge = allocate_hourly_grid_charge(
+        schedule=planned_schedule,
+        required_night_charge_kwh=float(result_payload.get("required_night_charge_kwh") or 0.0),
+    )
+    soc_risk = (
+        optimization_payload.get("soc_cost_risk", {})
+        if isinstance(optimization_payload, dict)
+        else {}
+    )
+    charge_efficiency = (
+        float(soc_risk.get("charge_efficiency"))
+        if isinstance(soc_risk, dict) and soc_risk.get("charge_efficiency") is not None
+        else float(context.coefficients.battery_round_trip_efficiency)
+    )
+    hourly_soc_forecast = build_hourly_soc_projection(
+        anchor_hour=3,
+        anchor_soc_percent=context.latest_soc_percent,
+        capacity_kwh=night_charge.result.effective_capacity_kwh,
+        charge_efficiency=charge_efficiency,
+        hourly_grid_charge_kwh=hourly_grid_charge,
+        hourly_load_kwh=pv_forecast.hourly_load_kwh,
+        hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+    )
+    result_payload.update(
+        {
+            "planned_charge_start_time": planned_schedule.charge_start_time,
+            "planned_charge_end_time": planned_schedule.charge_end_time,
+            "planned_charge_power_kw": planned_schedule.estimated_charge_power_kw,
+            "planned_charge_duration_minutes": planned_schedule.planned_charge_duration_minutes,
+            "planned_charge_duration_clipped": planned_schedule.duration_clipped_to_available_window,
+            "soc_forecast_anchor_hour": 3,
+            "soc_forecast_anchor_percent": context.latest_soc_percent,
+            "hourly_grid_charge_forecast_kwh": {
+                str(hour): round(value, 4) for hour, value in sorted(hourly_grid_charge.items())
+            },
+            "hourly_soc_forecast_percent": {
+                str(hour): (round(value, 1) if value is not None else None)
+                for hour, value in sorted(hourly_soc_forecast.items())
+            },
+            "soc_forecast_source": "energy-plan-single-source",
+        }
+    )
     plan_quality = _build_plan_quality(
         forecast=context.forecast,
         optimization_payload=optimization_payload,
