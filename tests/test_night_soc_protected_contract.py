@@ -23,7 +23,23 @@ def test_independent_time_ownership_contract_is_immutable() -> None:
     assert SLOT03_CLOUD_RUN_MAX_RETRIES == 3
     assert SLOT03_PLATFORM_RETRY_DELAY_SECONDS == 300
     assert "batteryOperatingMode" not in SLOT23_PRESERVED_FIELDS
-    assert len(SLOT23_PRESERVED_FIELDS) == 12
+    assert set(SLOT23_PRESERVED_FIELDS) == {
+        "socSafetyMode",
+        "socEconomyMode",
+        "socContactInput",
+        "socChargeMode",
+        "chargeStartTimeH",
+        "chargeStartTimeM",
+        "chargeEndTimeH",
+        "chargeEndTimeM",
+        "dischargeStartTimeH",
+        "dischargeStartTimeM",
+        "dischargeEndTimeH",
+        "dischargeEndTimeM",
+        "agreementAmpere",
+        "onPowerOutageMode",
+        "onPowerOutageChargePowerW",
+    }
     assert (FORCED_MONITOR_CUTOFF.hour, FORCED_MONITOR_CUTOFF.minute) == (6, 45)
     assert (FINAL_STANDBY_START_CUTOFF.hour, FINAL_STANDBY_START_CUTOFF.minute) == (6, 50)
     assert (CONTROL_HARD_CUTOFF.hour, CONTROL_HARD_CUTOFF.minute) == (6, 55)
