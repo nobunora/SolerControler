@@ -38,6 +38,8 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
             "forecast_pv_kwh": 2.5,
             "forecast_load_kwh": 1.2,
             "forecast_charge_kwh": 1.3,
+            "forecast_grid_charge_kwh": 0.0,
+            "forecast_soc_percent": None,
             "forecast_weather_code": 2,
             "forecast_precipitation_mm": None,
             "forecast_precipitation_probability": None,
