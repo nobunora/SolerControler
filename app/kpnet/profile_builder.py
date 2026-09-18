@@ -449,6 +449,9 @@ def _build_dynamic_forced_profile(
         else duration_minutes
     )
     duration_clipped = plan.planned_charge_duration_clipped
+    if plan.planned_charge_duration_minutes is None and duration_minutes > charge_end_minute:
+        duration_minutes = charge_end_minute
+        duration_clipped = True
     if plan.planned_charge_start_time:
         planned_start_h, planned_start_m = _parse_hhmm(
             plan.planned_charge_start_time,
@@ -460,7 +463,7 @@ def _build_dynamic_forced_profile(
 
     if rounded_up_soc_target and duration_minutes_soc is not None:
         charge_start_minute = max(0, charge_end_minute - duration_minutes_soc)
-        duration_source = "soc-rate-rounded-target-device-adjustment"
+        duration_source = "soc-rate-rounded-target"
     if duration_minutes > 0:
         charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
             start_minute=charge_start_minute,
