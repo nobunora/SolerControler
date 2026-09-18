@@ -104,7 +104,7 @@ def _economy_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, st
 def make_forced_probe_profile(
     *,
     current_profile: ProfileOverrides,
-    value_maps: Mapping[str, Mapping[str, str]],
+    value_maps: Mapping[str, dict[str, str]],
 ) -> ProfileOverrides:
     """Build the scheduled-03-equivalent probe: operating mode only."""
     return replace(
@@ -120,7 +120,7 @@ def make_forced_probe_profile(
 def make_economy_probe_profile(
     *,
     current_profile: ProfileOverrides,
-    value_maps: Mapping[str, Mapping[str, str]],
+    value_maps: Mapping[str, dict[str, str]],
 ) -> ProfileOverrides:
     """Build the scheduled-07-equivalent probe: economy mode plus economy SOC 0%."""
     return replace(
