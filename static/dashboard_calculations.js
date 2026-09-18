@@ -51,7 +51,7 @@
     const batteryTarget = finiteOrNull(battery.setting_soc_target_percent);
     const batteryNightCharge = finiteOrNull(battery.night_charge_kwh);
     return {
-      targetSocPercent: plannedTarget ?? batteryTarget ?? finiteOrNull(plan.soc_charge_mode),
+      targetSocPercent: plannedTarget ?? batteryTarget,
       nightChargeKwh: plannedNightCharge ?? batteryNightCharge ?? 0,
     };
   }
