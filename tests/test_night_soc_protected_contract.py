@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from app.kpnet.profiles import ECONOMY_MODE_PROFILE
 from app.runtime.night_soc_operational_contract import (
     SLOT03_CLOUD_RUN_MAX_RETRIES,
     SLOT03_PLATFORM_RETRY_DELAY_SECONDS,
@@ -73,13 +72,21 @@ def test_07_entrypoint_is_ast_limited_to_one_economy_call() -> None:
     assert keywords == {"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}
 
 
-def test_07_economy_profile_resets_minimum_soc_fields_to_zero() -> None:
-    assert ECONOMY_MODE_PROFILE.name == "economy-mode"
-    assert ECONOMY_MODE_PROFILE.soc_safety_mode == "0"
-    assert ECONOMY_MODE_PROFILE.soc_economy_mode == "0"
-    assert ECONOMY_MODE_PROFILE.soc_contact_input == "0"
-    assert ECONOMY_MODE_PROFILE.soc_charge_mode == "0"
-
+def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
     workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
-    assert 'elif profile == "economy":' in workflow
-    assert 'prefer="economy"' in workflow
+    window = _local_window(workflow, 'elif profile == "economy":', size=900)
+
+    assert "_mode_only_profile_from_current_settings" in window
+    assert 'prefer="economy"' in window
+    assert "soc_economy_mode=_pick_min_code" in window
+    for forbidden in (
+        "soc_safety_mode=",
+        "soc_contact_input=",
+        "soc_charge_mode=",
+        "charge_start_h=",
+        "charge_end_h=",
+        "discharge_start_h=",
+        "discharge_end_h=",
+        "agreement_ampere=",
+    ):
+        assert forbidden not in window
