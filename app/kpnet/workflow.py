@@ -239,16 +239,13 @@ def _apply_settings_profile(
     return readback
 
 
-# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE): do not add
-# batteryOperatingMode or replace SLOT23_PRESERVED_FIELDS with a broad current
-# merge. The 23:00 sequence must preserve exactly the twelve SOC/window values
-# while writing standby candidate 5; preserving green 1 overwrites that value,
-# leaves the physical battery green through the night, and makes the successful
-# job log lie about standby. Guarded by
-# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
-# and tests/test_kpnet_workflow.py standby read-back tests.
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE; amended
+# 2026-09-18 by user request): never preserve batteryOperatingMode, but preserve
+# every other writable form value. Standby is a mode transition only; unrelated
+# SOC/window/agreement/outage settings must remain unchanged. Guarded by
+# test_night_soc_protected_contract.py and test_kpnet_mode_only_time_fence.py.
 def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any]) -> ProfileOverrides:
-    """Keep 03:00-owned SOC/window values while allowing the 23:00 standby mode write."""
+    """Preserve every non-mode form value while allowing the standby mode write."""
     field_to_attribute = {
         "socSafetyMode": "soc_safety_mode",
         "socEconomyMode": "soc_economy_mode",
@@ -262,14 +259,17 @@ def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any
         "dischargeStartTimeM": "discharge_start_m",
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
+        "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     # HISTORICAL_FAILURE_LOCK (2026-08-29 runtime evidence): this must iterate
     # SLOT23_PRESERVED_FIELDS, whose immutable contract intentionally excludes
     # batteryOperatingMode.  Adding it back copies the prior green/forced mode
     # over the real standby candidate, making 23:00 ``skipped-no-change`` and
     # leaving the battery non-standby until 07:00.  Replacing this with a broad
-    # ``current`` merge can also overwrite the twelve SOC/window fields that
-    # 03:00 owns.  Guarded by the green(1)->standby(5) read-back regression test.
+    # omitting any other writable field can silently change unrelated settings.
+    # Guarded by the green(1)->standby(5) and preservation regression tests.
     updates = {
         attribute: str(current[field])
         for field, attribute in field_to_attribute.items()
@@ -491,7 +491,7 @@ def _run_settings_phase(
     # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
     # not restore NIGHT_SOC_CONTROL_MODE/manual/profile-plan conditions here.
     # At 23:00 the sequence is one unconditional standby candidate=5 write
-    # while preserving the twelve KP-NET-required SOC/window form fields.  A
+    # while preserving every other writable KP-NET form field. A
     # condition can skip that write and leave the physical battery green or
     # forced overnight.  Guarded by test_slot23_is_unconditional_standby_without_cross_slot_dependencies
     # and test_night_soc_protected_contract.py::test_slot23_form_contract.
