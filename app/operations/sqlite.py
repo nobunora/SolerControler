@@ -248,8 +248,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn,
         "sunshine_daily",
         {
-            "forecast_grid_charge_kwh": "REAL",
-            "forecast_soc_percent": "REAL",
             "forecast_weather_code": "INTEGER",
             "actual_weather_code": "INTEGER",
             "forecast_precipitation_sum_mm": "REAL",
@@ -268,6 +266,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn,
         "forecast_hourly",
         {
+            "forecast_grid_charge_kwh": "REAL",
+            "forecast_soc_percent": "REAL",
             "forecast_weather_code": "INTEGER",
             "forecast_precipitation_mm": "REAL",
             "forecast_precipitation_probability": "REAL",
