@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "a6cc773fcd756d09d3189ce5c083fd724b0dcda3",
-    "indexed_at": "2026-09-18T15:32:07Z",
-    "project": "solar-pr45-d184de3",
-    "nodes": 3085,
-    "edges": 15384,
-    "original_size": 12517376,
-    "compressed_size": 1709137,
-    "compression_level": 3
+    "commit": "83a6bb64dcb408d16a272aaaee8923af277813fe",
+    "indexed_at": "2026-09-18T15:54:57Z",
+    "project": "C-VSC-SolerControler",
+    "nodes": 6850,
+    "edges": 21509,
+    "original_size": 16580608,
+    "compressed_size": 3226225,
+    "compression_level": 9
 }
