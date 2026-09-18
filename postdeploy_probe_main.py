@@ -74,6 +74,7 @@ def main() -> int:
         summary["roundtrip_forced_proof"] = roundtrip.get("forced_proof")
         summary["roundtrip_economy_proof"] = roundtrip.get("economy_proof")
         summary["roundtrip_restore_verified"] = roundtrip.get("restore_verified")
+        summary["settings_roundtrip_evidence"] = roundtrip
         summary["status"] = "passed"
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True), flush=True)
         return 0
