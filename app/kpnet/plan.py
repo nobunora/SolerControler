@@ -23,6 +23,11 @@ class NightChargePlan:
     plan_revision: str = ""
     plan_hash: str = ""
     generated_at_utc: str = ""
+    planned_charge_start_time: str | None = None
+    planned_charge_end_time: str | None = None
+    planned_charge_power_kw: float | None = None
+    planned_charge_duration_minutes: int | None = None
+    planned_charge_duration_clipped: bool = False
 
 
 def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
@@ -82,6 +87,15 @@ def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         plan_revision=snapshot.revision,
         plan_hash=snapshot.content_hash,
         generated_at_utc=snapshot.generated_at_utc,
+        planned_charge_start_time=str(result.get("planned_charge_start_time") or "").strip() or None,
+        planned_charge_end_time=str(result.get("planned_charge_end_time") or "").strip() or None,
+        planned_charge_power_kw=to_float(result.get("planned_charge_power_kw")),
+        planned_charge_duration_minutes=(
+            int(result["planned_charge_duration_minutes"])
+            if isinstance(result.get("planned_charge_duration_minutes"), (int, float))
+            else None
+        ),
+        planned_charge_duration_clipped=bool(result.get("planned_charge_duration_clipped", False)),
     )
 
 
