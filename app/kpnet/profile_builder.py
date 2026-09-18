@@ -457,16 +457,22 @@ def _build_dynamic_forced_profile(
             plan.planned_charge_start_time or "",
             name="result.planned_charge_start_time",
         )
-        charge_end_h, charge_end_m = _parse_hhmm(
+        planned_end_h, planned_end_m = _parse_hhmm(
             plan.planned_charge_end_time or "",
             name="result.planned_charge_end_time",
         )
+        planned_end_minute = planned_end_h * 60 + planned_end_m
         charge_start_minute = charge_start_h * 60 + charge_start_m
-        charge_end_minute = charge_end_h * 60 + charge_end_m
-        requested_duration_minutes = max(0, charge_end_minute - charge_start_minute)
+        device_end_h, device_end_m = _resolve_night_charge_end_hhmm(
+            conditions=conditions,
+            plan=plan,
+            summary=summary,
+        )
+        charge_end_minute = max(planned_end_minute, device_end_h * 60 + device_end_m)
+        requested_duration_minutes = max(0, planned_end_minute - charge_start_minute)
         duration_minutes = requested_duration_minutes
         duration_source = "energy-plan"
-        if duration_minutes > 0:
+        if charge_end_minute > charge_start_minute:
             charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
                 start_minute=charge_start_minute,
                 end_minute=charge_end_minute,
@@ -477,15 +483,14 @@ def _build_dynamic_forced_profile(
         charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
         charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
         applied_duration_minutes = max(0, charge_end_minute - charge_start_minute)
-        duration_clipped = applied_duration_minutes < requested_duration_minutes
+        duration_clipped = planned_end_minute > charge_end_minute
         logical_duration_minutes = int(window_contract["logical_window_duration_minutes"])
         truncated_minutes = max(0, logical_duration_minutes - charge_end_minute)
         limitation_reason = plan.planned_charge_limitation_reason or "none"
-        if (
-            f"{charge_start_h:02d}:{charge_start_m:02d}" != plan.planned_charge_start_time
-            or f"{charge_end_h:02d}:{charge_end_m:02d}" != plan.planned_charge_end_time
-        ):
+        if f"{charge_start_h:02d}:{charge_start_m:02d}" != plan.planned_charge_start_time:
             limitation_reason = "device_fixed_rule_adjustment"
+        elif charge_end_minute > planned_end_minute and limitation_reason == "none":
+            limitation_reason = "device_safety_window_extends_planned_completion"
     else:
         # ユーザー要件:
         # - 夜間設定の充電終了は運用条件で決定
