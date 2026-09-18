@@ -19,14 +19,23 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
     forecast = data.get("forecast", {})
     forecast_date = str(forecast.get("date", "")).strip() if isinstance(forecast, dict) else ""
     optimization = data.get("daytime_soc_optimization", {})
+    result = data.get("result", {})
     if not forecast_date or not isinstance(optimization, dict):
         return []
+    if not isinstance(result, dict):
+        result = {}
     pv_by_hour = optimization.get("hourly_pv_forecast_kwh", {})
     load_by_hour = optimization.get("hourly_load_forecast_kwh", {})
+    soc_by_hour = result.get("hourly_soc_forecast_percent", {})
+    grid_charge_by_hour = result.get("hourly_grid_charge_forecast_kwh", {})
     if not isinstance(pv_by_hour, dict):
         pv_by_hour = {}
     if not isinstance(load_by_hour, dict):
         load_by_hour = {}
+    if not isinstance(soc_by_hour, dict):
+        soc_by_hour = {}
+    if not isinstance(grid_charge_by_hour, dict):
+        grid_charge_by_hour = {}
     weather_by_hour: dict[int, dict[str, Any]] = {}
     hourly_weather = forecast.get("hourly_weather", []) if isinstance(forecast, dict) else []
     if isinstance(hourly_weather, list):
@@ -38,7 +47,7 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
                 weather_by_hour[hour] = item
 
     hours: set[int] = set(weather_by_hour)
-    for source in (pv_by_hour, load_by_hour):
+    for source in (pv_by_hour, load_by_hour, soc_by_hour, grid_charge_by_hour):
         for raw_hour in source:
             try:
                 hour = int(raw_hour)
@@ -52,6 +61,10 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
         pv_kwh = to_float(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
         load_kwh = to_float(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
         weather = weather_by_hour.get(hour, {})
+        forecast_soc = to_float(soc_by_hour.get(str(hour), soc_by_hour.get(hour)))
+        if forecast_soc is not None and not 0.0 <= forecast_soc <= 100.0:
+            forecast_soc = None
+        grid_charge_kwh = to_float(grid_charge_by_hour.get(str(hour), grid_charge_by_hour.get(hour)))
         rows.append(
             {
                 "date": forecast_date,
@@ -59,6 +72,8 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
                 "forecast_pv_kwh": round(max(0.0, pv_kwh), 4),
                 "forecast_load_kwh": round(max(0.0, load_kwh), 4),
                 "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4),
+                "forecast_grid_charge_kwh": round(max(0.0, grid_charge_kwh or 0.0), 4),
+                "forecast_soc_percent": round(forecast_soc, 1) if forecast_soc is not None else None,
                 "forecast_weather_code": to_int(weather.get("weather_code")),
                 "forecast_precipitation_mm": to_float(weather.get("precipitation_mm")),
                 "forecast_precipitation_probability": to_float(weather.get("precipitation_probability")),
