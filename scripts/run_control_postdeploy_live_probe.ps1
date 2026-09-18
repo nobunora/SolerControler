@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImmutableImage,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
+    [switch]$AllowOutOfWindowLiveProbe,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07'
@@ -36,9 +37,14 @@ if ($ImmutableImage -notmatch '@sha256:[0-9a-f]{64}$') {
 $tokyo = [System.TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
 $nowJst = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
 $minutes = ($nowJst.Hour * 60) + $nowJst.Minute
-if ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30)) {
-    throw "Live post-deploy probe is allowed only from 07:15 through 22:29 JST; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
+$outsideNormalWindow = ($minutes -lt (7 * 60 + 15) -or $minutes -ge (22 * 60 + 30))
+if ($outsideNormalWindow -and -not $AllowOutOfWindowLiveProbe) {
+    throw "Live post-deploy probe is allowed only from 07:15 through 22:29 JST unless the explicit one-shot override is supplied; current JST=$($nowJst.ToString('yyyy-MM-dd HH:mm:ss'))"
 }
+if ($outsideNormalWindow -and $AllowOutOfWindowLiveProbe) {
+    Write-Warning "USER-AUTHORIZED ONE-SHOT OUT-OF-WINDOW LIVE PROBE: $($nowJst.ToString('yyyy-MM-dd HH:mm:ss')) JST"
+}
+$outOfWindowAudit = if ($AllowOutOfWindowLiveProbe) { 'true' } else { 'false' }
 
 function Assert-NoRunningExecution {
     param([string]$JobName)
@@ -85,7 +91,7 @@ if ($LASTEXITCODE -ne 0) {
     --args postdeploy_probe_main.py `
     --max-retries 0 `
     --task-timeout 900 `
-    --update-env-vars 'DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50' | Out-Null
+    --update-env-vars "DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit" | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to update the dedicated post-deploy probe Job.'
 }
@@ -96,4 +102,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "LIVE POST-DEPLOY PROBE PASSED for source $ExpectedCommit"
-Write-Host 'Verified: KP-NET CSV download -> plan generation -> real settings SET/readback -> exact snapshot restore/readback.'
+Write-Host "Out-of-window override supplied: $outOfWindowAudit"
+Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 economy SET/readback -> exact snapshot restore/readback.'
