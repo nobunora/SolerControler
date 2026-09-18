@@ -299,6 +299,8 @@ def _mode_only_profile_from_current_settings(
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
         "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     missing = [field for field in required_fields if field not in current or str(current[field]).strip() == ""]
     if missing:
@@ -309,8 +311,6 @@ def _mode_only_profile_from_current_settings(
             attribute: str(current[field])
             for field, attribute in required_fields.items()
         },
-        on_power_outage_mode=str(current.get("onPowerOutageMode", "0")),
-        on_power_outage_charge_power_w=str(current.get("onPowerOutageChargePowerW", "65535")),
     )
 
 
@@ -440,8 +440,12 @@ def _run_settings_phase(
         }
         LOGGER.info("Forced settings profile selected: green-mode")
     elif cfg.force_settings_profile == "standby":
+        standby_profile = _mode_only_profile_from_current_settings(
+            current,
+            name="standby-mode",
+        )
         standby_profile = replace(
-            STANDBY_PROFILE,
+            standby_profile,
             battery_operating_mode=_pick_battery_operating_mode_code(
                 maps["BatteryOperatingMode"],
                 prefer="standby",
@@ -581,16 +585,16 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         else:
             maps = client.collect_candidate_maps()
         if profile == "standby":
-            if is_03_owner:
-                selected = _mode_only_profile_from_current_settings(current, name="03-standby-mode-only")
-                selected = replace(
-                    selected,
-                    battery_operating_mode=_pick_battery_operating_mode_code(
-                        maps["BatteryOperatingMode"], prefer="standby"
-                    ),
-                )
-            else:
-                selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="standby-mode-only",
+            )
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="standby"
+                ),
+            )
         elif profile == "green":
             selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
         elif profile == "economy":
