@@ -10,13 +10,14 @@ from typing import Any, Mapping
 
 from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 from app.kpnet.config import KpNetConfig
-from app.kpnet.profile_builder import _build_payload
+from app.kpnet.profile_builder import (
+    _build_payload,
+    _pick_battery_operating_mode_code,
+    _pick_min_code,
+)
 from app.kpnet.profiles import ProfileOverrides
-from app.kpnet.rules import _parse_hhmm
 from app.runtime.night_soc_controller import (
     CONTROLLED_SETTING_FIELDS,
-    DeviceSocGuard,
-    build_device_soc_guard,
     compare_setting_readback,
 )
 
@@ -59,69 +60,97 @@ def profile_from_current_settings(current: Mapping[str, Any]) -> ProfileOverride
     )
 
 
-def _probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
-    """Fetch only candidates the reversible forced-charge probe can change."""
+def _sparse_candidate_maps(
+    *,
+    battery_operating_mode: Mapping[str, str],
+    soc_economy_mode: Mapping[str, str] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Build sparse candidate maps while preserving current names for unchanged fields."""
     return {
-        "BatteryOperatingMode": client.candidate_map(
-            "BatteryOperatingMode",
-            "remotesetting/pcssetting/valueList/batteryoperatingmode",
-        ),
+        "BatteryOperatingMode": dict(battery_operating_mode),
         "SocSafetyMode": {},
-        "SocEconomyMode": {},
+        "SocEconomyMode": dict(soc_economy_mode or {}),
         "SocContactInput": {},
-        "SocChargeMode": client.candidate_map(
-            "SocChargeMode",
-            "remotesetting/pcssetting/valueList/socchargemode",
-        ),
+        "SocChargeMode": {},
         "OnPowerOutageChargePowerW": {},
         "AgreementAmpere": {},
     }
 
 
-def validate_forced_target(*, value_maps: Mapping[str, Mapping[str, str]], target_soc_percent: float) -> DeviceSocGuard:
-    """Map the test target to the actual device's forced-mode candidate."""
-    return build_device_soc_guard(
-        value_maps.get("SocChargeMode", {}),
-        raw_target_soc_percent=target_soc_percent,
-        stop_margin_percent=0.0,
+def _forced_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Fetch exactly the candidate list required by scheduled 03 forced mode."""
+    return _sparse_candidate_maps(
+        battery_operating_mode=client.candidate_map(
+            "BatteryOperatingMode",
+            "remotesetting/pcssetting/valueList/batteryoperatingmode",
+        )
     )
 
 
-def make_reversible_probe_profile(
-    *,
-    restore_profile: ProfileOverrides,
-    value_maps: Mapping[str, Mapping[str, str]],
-    target_soc_percent: float,
-    test_charge_start_hhmm: str | None = None,
-    test_charge_end_hhmm: str | None = None,
-) -> ProfileOverrides:
-    """Build the required forced-charge test profile from the initial snapshot."""
-    modes = value_maps.get("BatteryOperatingMode", {})
-    forced_code = next(
-        (
-            str(code)
-            for code, label in modes.items()
-            if "強制充電" in str(label) or "forced charge" in str(label).lower()
+def _economy_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Fetch exactly the candidate lists required by scheduled 07 economy mode."""
+    return _sparse_candidate_maps(
+        battery_operating_mode=client.candidate_map(
+            "BatteryOperatingMode",
+            "remotesetting/pcssetting/valueList/batteryoperatingmode",
         ),
-        "3" if "3" in modes else None,
+        soc_economy_mode=client.candidate_map(
+            "SocEconomyMode",
+            "remotesetting/pcssetting/valueList/soceconomymode",
+        ),
     )
-    if forced_code is None:
-        raise RuntimeError("KP-NET has no forced-charge operating-mode candidate for the post-deploy probe")
-    guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
-    probe = replace(
-        restore_profile,
-        name="post-deploy-forced-charge-50-probe",
-        battery_operating_mode=forced_code,
-        soc_charge_mode=guard.device_soc_code,
-    )
-    if test_charge_start_hhmm is not None:
-        start_h, start_m = _parse_hhmm(test_charge_start_hhmm, name="test_charge_start_hhmm")
-        probe = replace(probe, charge_start_h=str(start_h), charge_start_m=str(start_m))
-    if test_charge_end_hhmm is not None:
-        end_h, end_m = _parse_hhmm(test_charge_end_hhmm, name="test_charge_end_hhmm")
-        probe = replace(probe, charge_end_h=str(end_h), charge_end_m=str(end_m))
-    return probe
 
+
+def make_forced_probe_profile(
+    *,
+    current_profile: ProfileOverrides,
+    value_maps: Mapping[str, Mapping[str, str]],
+) -> ProfileOverrides:
+    """Build the scheduled-03-equivalent probe: operating mode only."""
+    return replace(
+        current_profile,
+        name="post-deploy-03-forced-probe",
+        battery_operating_mode=_pick_battery_operating_mode_code(
+            value_maps["BatteryOperatingMode"],
+            prefer="forced",
+        ),
+    )
+
+
+def make_economy_probe_profile(
+    *,
+    current_profile: ProfileOverrides,
+    value_maps: Mapping[str, Mapping[str, str]],
+) -> ProfileOverrides:
+    """Build the scheduled-07-equivalent probe: economy mode plus economy SOC 0%."""
+    return replace(
+        current_profile,
+        name="post-deploy-07-economy-probe",
+        battery_operating_mode=_pick_battery_operating_mode_code(
+            value_maps["BatteryOperatingMode"],
+            prefer="economy",
+        ),
+        soc_economy_mode=_pick_min_code(value_maps["SocEconomyMode"]),
+    )
+
+
+def _assert_preserved_fields(
+    *,
+    baseline: Mapping[str, Any],
+    observed: Mapping[str, Any],
+    allowed_changes: set[str],
+    phase: str,
+) -> None:
+    mismatches = [
+        field
+        for field in ROUNDTRIP_SETTING_FIELDS
+        if field not in allowed_changes
+        and str(baseline.get(field, "")) != str(observed.get(field, ""))
+    ]
+    if mismatches:
+        raise RuntimeError(
+            f"KP-NET {phase} changed unrelated writable fields: {', '.join(mismatches)}"
+        )
 
 def _apply_and_verify(
     *,
@@ -130,7 +159,8 @@ def _apply_and_verify(
     value_maps: dict[str, dict[str, str]],
     profile: ProfileOverrides,
     require_change: bool = True,
-) -> tuple[dict[str, Any], list[str]]:
+    required_readback_fields: tuple[str, ...] | None = None,
+) -> tuple[dict[str, Any], list[str], dict[str, str]]:
     payload, changed_fields = _build_payload(
         csrf_setting=client.csrf_setting,
         pcsid=client.pcsid,
@@ -146,13 +176,11 @@ def _apply_and_verify(
             raise RuntimeError(f"KP-NET setting confirmation failed for {profile.name}: {error or title}")
         client.write_setting(confirm_html)
     readback = client.read_current_settings()
-    # Mutation success is intentionally limited to fields this write changed.
-    # Exact full-snapshot equality is checked separately after restoration.
-    matched, mismatches = compare_setting_readback(payload, readback, tuple(changed_fields))
+    readback_fields = required_readback_fields or tuple(changed_fields)
+    matched, mismatches = compare_setting_readback(payload, readback, readback_fields)
     if not matched:
         raise RuntimeError(f"KP-NET read-back mismatch for {profile.name}: {', '.join(mismatches)}")
-    return readback, changed_fields
-
+    return readback, changed_fields, payload
 
 def _read_only_snapshot_after_unknown(
     *,
@@ -180,31 +208,36 @@ def _read_only_snapshot_after_unknown(
 # explicit, exactly 60 seconds, and restore/read back the original snapshot.
 def run_settings_roundtrip(
     *,
-    target_soc_percent: float,
+    target_soc_percent: float = 50.0,
     hold_seconds: int = 60,
     test_charge_start_hhmm: str | None = None,
     test_charge_end_hhmm: str | None = None,
 ) -> dict[str, object]:
-    """Execute a live, one-minute setting probe and restore its exact snapshot.
+    """Prove real 03 forced and 07 economy writes, then restore the exact snapshot.
 
-    UNKNOWN_WRITE is task-terminal for mutation safety. In that case only
-    read-only evidence collection is permitted; no automatic cleanup SET is sent.
+    The legacy target/window arguments remain accepted for entrypoint compatibility
+    only. They are intentionally not mapped into the device settings because the
+    approved scheduled 03 forced contract changes BatteryOperatingMode only.
     """
     if hold_seconds != 60:
         raise ValueError("settings round-trip hold_seconds must be exactly 60")
+    if test_charge_start_hhmm is not None or test_charge_end_hhmm is not None:
+        raise ValueError("dual-profile release probe must not alter charge/discharge windows")
+
     cfg = KpNetConfig.from_env()
     if cfg.dry_run:
         raise RuntimeError("settings round-trip test execution requires DRY_RUN=false")
     client = KpNetClient(cfg)
     summary: dict[str, object] = {
-        "target_soc_percent": target_soc_percent,
+        "target_soc_percent_compatibility_only": target_soc_percent,
         "hold_seconds": hold_seconds,
-        "test_charge_start_hhmm": test_charge_start_hhmm,
-        "test_charge_end_hhmm": test_charge_end_hhmm,
         "status": "failed",
+        "forced_proof": "not_started",
+        "economy_proof": "not_started",
     }
     current: dict[str, Any] | None = None
     restore_profile: ProfileOverrides | None = None
+    restore_maps: dict[str, dict[str, str]] | None = None
     restored_verified = False
     unknown_write = False
     phase = "initial_read"
@@ -217,62 +250,113 @@ def run_settings_roundtrip(
             json.dumps(snapshot_values, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         summary["snapshot_field_count"] = len(ROUNDTRIP_SETTING_FIELDS)
-        value_maps = _probe_candidate_maps(client)
-        guard = validate_forced_target(value_maps=value_maps, target_soc_percent=target_soc_percent)
-        summary["forced_guard_ceiling_percent"] = guard.device_soc_ceiling_percent
-        summary["forced_target_compatible"] = True
-        summary["candidate_maps_fetched"] = ["BatteryOperatingMode", "SocChargeMode"]
-
         restore_profile = profile_from_current_settings(current)
-        probe_profile = make_reversible_probe_profile(
-            restore_profile=restore_profile,
-            value_maps=value_maps,
-            target_soc_percent=target_soc_percent,
-            test_charge_start_hhmm=test_charge_start_hhmm,
-            test_charge_end_hhmm=test_charge_end_hhmm,
+
+        phase = "forced_candidate_fetch"
+        forced_maps = _forced_probe_candidate_maps(client)
+        summary["forced_candidate_maps_fetched"] = ["BatteryOperatingMode"]
+        forced_profile = make_forced_probe_profile(
+            current_profile=restore_profile,
+            value_maps=forced_maps,
         )
-        summary["probe_profile"] = probe_profile.name
-        summary["probe_settings"] = {
-            "battery_operating_mode": probe_profile.battery_operating_mode,
-            "soc_charge_mode": probe_profile.soc_charge_mode,
-            "charge_start_hhmm": f"{int(probe_profile.charge_start_h):02d}:{int(probe_profile.charge_start_m):02d}",
-            "charge_end_hhmm": f"{int(probe_profile.charge_end_h):02d}:{int(probe_profile.charge_end_m):02d}",
-        }
-        phase = "probe_write"
-        _, probe_changed = _apply_and_verify(
+        phase = "forced_write"
+        forced_readback, forced_changed, forced_payload = _apply_and_verify(
             client=client,
             current=current,
-            value_maps=value_maps,
-            profile=probe_profile,
+            value_maps=forced_maps,
+            profile=forced_profile,
+            required_readback_fields=("batteryOperatingMode",),
         )
+        _assert_preserved_fields(
+            baseline=current,
+            observed=forced_readback,
+            allowed_changes={"batteryOperatingMode"},
+            phase="03 forced proof",
+        )
+        summary["forced_proof"] = "passed"
+        summary["forced_changed_fields"] = forced_changed
+        summary["forced_readback_fields"] = ["batteryOperatingMode"]
+        summary["forced_requested"] = {
+            "batteryOperatingMode": forced_payload["batteryOperatingMode"],
+        }
+        summary["forced_observed"] = {
+            "batteryOperatingMode": str(forced_readback.get("batteryOperatingMode", "")),
+        }
+        summary["forced_operation_id"] = getattr(client, "operation_id", None)
+
         phase = "hold"
         hold_started = time.monotonic()
         time.sleep(hold_seconds)
         elapsed = time.monotonic() - hold_started
         if elapsed < hold_seconds:
             time.sleep(hold_seconds - elapsed)
-        phase = "restore_write"
-        restored, restore_changed = _apply_and_verify(
+
+        phase = "economy_candidate_fetch"
+        economy_maps = _economy_probe_candidate_maps(client)
+        restore_maps = economy_maps
+        summary["economy_candidate_maps_fetched"] = [
+            "BatteryOperatingMode",
+            "SocEconomyMode",
+        ]
+        economy_base = profile_from_current_settings(forced_readback)
+        economy_profile = make_economy_probe_profile(
+            current_profile=economy_base,
+            value_maps=economy_maps,
+        )
+        phase = "economy_write"
+        economy_readback, economy_changed, economy_payload = _apply_and_verify(
             client=client,
-            current=client.read_current_settings(),
-            value_maps=value_maps,
+            current=forced_readback,
+            value_maps=economy_maps,
+            profile=economy_profile,
+            required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
+        )
+        _assert_preserved_fields(
+            baseline=current,
+            observed=economy_readback,
+            allowed_changes={"batteryOperatingMode", "socEconomyMode"},
+            phase="07 economy proof",
+        )
+        summary["economy_proof"] = "passed"
+        summary["economy_changed_fields"] = economy_changed
+        summary["economy_readback_fields"] = [
+            "batteryOperatingMode",
+            "socEconomyMode",
+        ]
+        summary["economy_requested"] = {
+            "batteryOperatingMode": economy_payload["batteryOperatingMode"],
+            "socEconomyMode": economy_payload["socEconomyMode"],
+        }
+        summary["economy_observed"] = {
+            "batteryOperatingMode": str(economy_readback.get("batteryOperatingMode", "")),
+            "socEconomyMode": str(economy_readback.get("socEconomyMode", "")),
+        }
+        summary["economy_operation_id"] = getattr(client, "operation_id", None)
+
+        phase = "restore_write"
+        restored, restore_changed, _ = _apply_and_verify(
+            client=client,
+            current=economy_readback,
+            value_maps=economy_maps,
             profile=restore_profile,
             require_change=False,
         )
         phase = "restore_readback"
-        snapshot_ok, snapshot_mismatches = compare_setting_readback(current, restored, ROUNDTRIP_SETTING_FIELDS)
+        snapshot_ok, snapshot_mismatches = compare_setting_readback(
+            current, restored, ROUNDTRIP_SETTING_FIELDS
+        )
         if not snapshot_ok:
-            raise RuntimeError(f"KP-NET restore did not match initial snapshot: {', '.join(snapshot_mismatches)}")
+            raise RuntimeError(
+                f"KP-NET restore did not match initial snapshot: {', '.join(snapshot_mismatches)}"
+            )
         restored_verified = True
         summary.update(
             {
-                "probe_changed_fields": probe_changed,
-                "probe_readback_fields": probe_changed,
                 "restore_changed_fields": restore_changed,
                 "restore_verified": True,
+                "status": "passed",
             }
         )
-        summary["status"] = "passed"
         return summary
     except KpNetUnknownWriteError as exc:
         unknown_write = True
@@ -292,7 +376,8 @@ def run_settings_roundtrip(
                 try:
                     summary["post_failure_readback"] = "attempted"
                     current_after_failure = client.read_current_settings()
-                    value_maps_after_failure = _probe_candidate_maps(client)
+                    if restore_maps is None:
+                        restore_maps = _economy_probe_candidate_maps(client)
                     snapshot_ok, snapshot_mismatches = compare_setting_readback(
                         current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
                     )
@@ -302,10 +387,10 @@ def run_settings_roundtrip(
                         summary["restore_after_failure"] = "not_needed_snapshot_matches"
                     else:
                         phase = "post_failure_restore_write"
-                        restored_after_failure, _ = _apply_and_verify(
+                        restored_after_failure, _, _ = _apply_and_verify(
                             client=client,
                             current=current_after_failure,
-                            value_maps=value_maps_after_failure,
+                            value_maps=restore_maps,
                             profile=restore_profile,
                             require_change=False,
                         )
@@ -320,8 +405,6 @@ def run_settings_roundtrip(
                         summary["restore_after_failure"] = "passed"
                         summary["restore_after_failure_mismatches"] = list(restored_mismatches)
                 except KpNetUnknownWriteError as restore_unknown:
-                    # A cleanup write can itself become ambiguous. Never attempt
-                    # another SET; collect read-only evidence and stop.
                     summary["restore_after_failure"] = "unknown_write"
                     summary["restore_after_failure_error"] = type(restore_unknown).__name__
                     _read_only_snapshot_after_unknown(client=client, initial=current, summary=summary)
