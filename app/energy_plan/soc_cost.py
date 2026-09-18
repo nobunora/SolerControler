@@ -5,6 +5,7 @@ from typing import Any
 
 from app.domain.constants import SOCBounds
 from app.domain.tariff import tiered_day_increment_cost
+from app.energy_plan.soc_projection import simulate_daytime_soc
 
 
 @dataclass(frozen=True)
@@ -383,36 +384,23 @@ def _simulate_day(
     pv_multiplier: float,
     load_multiplier: float,
 ) -> tuple[float, float, float, int | None, float]:
-    """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
+    """Replay 07:00-23:00 through the canonical SOC projection model."""
 
-    energy = max(0.0, min(capacity_kwh, start_energy_kwh))
-    buy_kwh = 0.0
-    sell_kwh = 0.0
-    max_energy = energy
-    first_full_hour: int | None = None
-
-    for hour in range(7, 23):
-        load = max(0.0, hourly_load_kwh.get(hour, 0.0)) * max(0.0, load_multiplier)
-        pv = max(0.0, hourly_pv_kwh.get(hour, 0.0)) * max(0.0, pv_multiplier)
-        net = pv - load
-        if net >= 0:
-            charge = min(capacity_kwh - energy, net)
-            energy += charge
-            sell_kwh += max(0.0, net - charge)
-        else:
-            need = -net
-            discharge = min(energy, need)
-            energy -= discharge
-            buy_kwh += max(0.0, need - discharge)
-
-        max_energy = max(max_energy, energy)
-        if first_full_hour is None and capacity_kwh > 0 and energy >= capacity_kwh * 0.999:
-            first_full_hour = hour
-
-    max_soc = (100.0 * max_energy / capacity_kwh) if capacity_kwh > 0 else 0.0
-    end_soc = (100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
-    return buy_kwh, sell_kwh, _bounded_soc(max_soc), first_full_hour, _bounded_soc(end_soc)
-
+    projection = simulate_daytime_soc(
+        start_energy_kwh=start_energy_kwh,
+        capacity_kwh=capacity_kwh,
+        hourly_load_kwh=hourly_load_kwh,
+        hourly_pv_kwh=hourly_pv_kwh,
+        pv_multiplier=pv_multiplier,
+        load_multiplier=load_multiplier,
+    )
+    return (
+        projection.buy_kwh,
+        projection.sell_kwh,
+        projection.max_soc_percent,
+        projection.first_full_hour,
+        projection.end_soc_percent,
+    )
 
 def _decision_prior_cost_yen(
     *,

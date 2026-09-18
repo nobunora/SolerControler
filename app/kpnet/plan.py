@@ -23,6 +23,9 @@ class NightChargePlan:
     plan_revision: str = ""
     plan_hash: str = ""
     generated_at_utc: str = ""
+    planned_charge_start_time: str | None = None
+    planned_charge_end_time: str | None = None
+    planned_charge_limitation_reason: str | None = None
 
 
 def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
@@ -62,6 +65,11 @@ def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
     )
     soc_now_percent = to_float(inputs.get("soc_now_percent"))
     effective_capacity_kwh = to_float(result.get("effective_capacity_kwh"))
+    planned_charge_start_time = str(result.get("planned_charge_start_time") or "").strip() or None
+    planned_charge_end_time = str(result.get("planned_charge_end_time") or "").strip() or None
+    planned_charge_limitation_reason = (
+        str(result.get("planned_charge_limitation_reason") or "").strip() or None
+    )
     forecast_date = str(forecast.get("date", "")).strip()
     if not forecast_date:
         raise RuntimeError("夜間充電計画にforecast.dateが含まれていません")
@@ -82,6 +90,9 @@ def load_night_charge_plan(plan_path: Path) -> NightChargePlan:
         plan_revision=snapshot.revision,
         plan_hash=snapshot.content_hash,
         generated_at_utc=snapshot.generated_at_utc,
+        planned_charge_start_time=planned_charge_start_time,
+        planned_charge_end_time=planned_charge_end_time,
+        planned_charge_limitation_reason=planned_charge_limitation_reason,
     )
 
 

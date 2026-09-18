@@ -451,47 +451,84 @@ def _build_dynamic_forced_profile(
         duration_minutes = duration_minutes_soc
         duration_source = "soc-rate-rounded-target"
 
-    # ユーザー要件:
-    # - 夜間設定の充電終了は運用条件で決定
-    # - 曇り/雨予報時は 07:00 に固定（可変条件ファイルで上書き可）
-    # - 0:00 を跨ぐ設定をしない（00:00-終了時刻 の同日内でのみ設定）
-    # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
-    charge_end_h, charge_end_m = _resolve_night_charge_end_hhmm(
-        conditions=conditions,
-        plan=plan,
-        summary=summary,
-    )
-    charge_end_minute = charge_end_h * 60 + charge_end_m
-    window_duration_minutes = charge_end_minute
-    requested_duration_minutes = duration_minutes
-    duration_clipped = False
-    if duration_minutes > window_duration_minutes:
-        duration_minutes = window_duration_minutes
-        duration_clipped = True
-
-    charge_start_minute = max(0, charge_end_minute - duration_minutes)
-    if duration_minutes > 0:
-        charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
-            start_minute=charge_start_minute,
-            end_minute=charge_end_minute,
-            window_name="charge",
+    planner_schedule = bool(plan.planned_charge_start_time and plan.planned_charge_end_time)
+    if planner_schedule:
+        charge_start_h, charge_start_m = _parse_hhmm(
+            plan.planned_charge_start_time or "",
+            name="result.planned_charge_start_time",
+        )
+        charge_end_h, charge_end_m = _parse_hhmm(
+            plan.planned_charge_end_time or "",
+            name="result.planned_charge_end_time",
+        )
+        charge_start_minute = charge_start_h * 60 + charge_start_m
+        charge_end_minute = charge_end_h * 60 + charge_end_m
+        requested_duration_minutes = max(0, charge_end_minute - charge_start_minute)
+        duration_minutes = requested_duration_minutes
+        duration_source = "energy-plan"
+        if duration_minutes > 0:
+            charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
+                start_minute=charge_start_minute,
+                end_minute=charge_end_minute,
+                window_name="charge",
+                conditions=conditions,
+                summary=summary,
+            )
+        charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
+        charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
+        applied_duration_minutes = max(0, charge_end_minute - charge_start_minute)
+        duration_clipped = applied_duration_minutes < requested_duration_minutes
+        logical_duration_minutes = int(window_contract["logical_window_duration_minutes"])
+        truncated_minutes = max(0, logical_duration_minutes - charge_end_minute)
+        limitation_reason = plan.planned_charge_limitation_reason or "none"
+        if (
+            f"{charge_start_h:02d}:{charge_start_m:02d}" != plan.planned_charge_start_time
+            or f"{charge_end_h:02d}:{charge_end_m:02d}" != plan.planned_charge_end_time
+        ):
+            limitation_reason = "device_fixed_rule_adjustment"
+    else:
+        # ユーザー要件:
+        # - 夜間設定の充電終了は運用条件で決定
+        # - 曇り/雨予報時は 07:00 に固定（可変条件ファイルで上書き可）
+        # - 0:00 を跨ぐ設定をしない（00:00-終了時刻 の同日内でのみ設定）
+        # - 逆算で開始時刻を決定（必要時間 > 6h の場合は 00:00 始まりにクリップ）
+        charge_end_h, charge_end_m = _resolve_night_charge_end_hhmm(
             conditions=conditions,
+            plan=plan,
             summary=summary,
         )
-    charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
-    charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
-    applied_duration_minutes = max(0, charge_end_minute - charge_start_minute)
-    logical_duration_minutes = int(window_contract["logical_window_duration_minutes"])
-    truncated_minutes = max(0, logical_duration_minutes - charge_end_minute)
-    configured_start_minute = night_window_start[0] * 60 + night_window_start[1]
-    if duration_clipped:
-        limitation_reason = "requested_duration_exceeds_device_same_day_window"
-    elif truncated_minutes > 0:
-        limitation_reason = "configured_window_exceeds_device_same_day_window"
-    elif requested_duration_minutes > 0 and charge_start_minute < configured_start_minute:
-        limitation_reason = "configured_start_not_enforced_by_device_schedule"
-    else:
-        limitation_reason = "none"
+        charge_end_minute = charge_end_h * 60 + charge_end_m
+        window_duration_minutes = charge_end_minute
+        requested_duration_minutes = duration_minutes
+        duration_clipped = False
+        if duration_minutes > window_duration_minutes:
+            duration_minutes = window_duration_minutes
+            duration_clipped = True
+
+        charge_start_minute = max(0, charge_end_minute - duration_minutes)
+        if duration_minutes > 0:
+            charge_start_minute, charge_end_minute = _apply_fixed_time_rules(
+                start_minute=charge_start_minute,
+                end_minute=charge_end_minute,
+                window_name="charge",
+                conditions=conditions,
+                summary=summary,
+            )
+        charge_start_h, charge_start_m = _minutes_to_hm(charge_start_minute)
+        charge_end_h, charge_end_m = _minutes_to_hm(charge_end_minute)
+        applied_duration_minutes = max(0, charge_end_minute - charge_start_minute)
+        logical_duration_minutes = int(window_contract["logical_window_duration_minutes"])
+        truncated_minutes = max(0, logical_duration_minutes - charge_end_minute)
+        configured_start_minute = night_window_start[0] * 60 + night_window_start[1]
+        if duration_clipped:
+            limitation_reason = "requested_duration_exceeds_device_same_day_window"
+        elif truncated_minutes > 0:
+            limitation_reason = "configured_window_exceeds_device_same_day_window"
+        elif requested_duration_minutes > 0 and charge_start_minute < configured_start_minute:
+            limitation_reason = "configured_start_not_enforced_by_device_schedule"
+        else:
+            limitation_reason = "none"
+
     discharge_start_h, discharge_start_m = _resolve_day_discharge_start_hhmm(
         cfg=cfg,
         conditions=conditions,
@@ -539,6 +576,9 @@ def _build_dynamic_forced_profile(
         "duration_minutes_kwh": duration_minutes_kwh,
         "duration_minutes_soc": duration_minutes_soc,
         "duration_source": duration_source,
+        "schedule_source": "energy-plan" if planner_schedule else "legacy-profile-builder",
+        "planned_charge_start_time": plan.planned_charge_start_time,
+        "planned_charge_end_time": plan.planned_charge_end_time,
         "charge_rate_percent_per_hour": (charge_rate_info or {}).get("percent_per_hour"),
         "charge_rate_source": (charge_rate_info or {}).get("source"),
         "charge_rate_sample_count": (charge_rate_info or {}).get("sample_count"),
@@ -548,6 +588,8 @@ def _build_dynamic_forced_profile(
         **window_contract,
         "device_schedule_start": f"{charge_start_h:02d}:{charge_start_m:02d}",
         "device_schedule_end": f"{charge_end_h:02d}:{charge_end_m:02d}",
+        "applied_charge_start_time": f"{charge_start_h:02d}:{charge_start_m:02d}",
+        "applied_charge_end_time": f"{charge_end_h:02d}:{charge_end_m:02d}",
         "device_schedule_duration_minutes": applied_duration_minutes,
         "truncated_minutes": truncated_minutes,
         "requested_charge_duration_minutes": requested_duration_minutes,
