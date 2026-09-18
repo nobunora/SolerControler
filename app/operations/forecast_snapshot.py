@@ -22,6 +22,8 @@ _SNAPSHOT_COLUMNS = (
     "forecast_pv_kwh",
     "forecast_load_kwh",
     "forecast_charge_kwh",
+    "forecast_soc_percent",
+    "forecast_grid_charge_kwh",
     "forecast_weather_code",
     "forecast_precipitation_mm",
     "forecast_precipitation_probability",
@@ -301,6 +303,8 @@ def _ensure_sqlite_schema(conn: Any) -> None:
             forecast_pv_kwh REAL,
             forecast_load_kwh REAL,
             forecast_charge_kwh REAL,
+            forecast_soc_percent REAL,
+            forecast_grid_charge_kwh REAL,
             forecast_weather_code INTEGER,
             forecast_precipitation_mm REAL,
             forecast_precipitation_probability REAL,
@@ -329,6 +333,8 @@ def _ensure_sqlite_schema(conn: Any) -> None:
     )
     existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(forecast_hourly_snapshots)").fetchall()}
     additions = {
+        "forecast_soc_percent": "forecast_soc_percent REAL",
+        "forecast_grid_charge_kwh": "forecast_grid_charge_kwh REAL",
         "pv_provider": "pv_provider TEXT",
         "physical_pv_kwh": "physical_pv_kwh REAL",
         "pv_forecast_detail_json": "pv_forecast_detail_json TEXT NOT NULL DEFAULT '{}'",
@@ -366,6 +372,8 @@ def _ensure_postgres_schema(conn: Any) -> None:
                 forecast_pv_kwh DOUBLE PRECISION,
                 forecast_load_kwh DOUBLE PRECISION,
                 forecast_charge_kwh DOUBLE PRECISION,
+                forecast_soc_percent DOUBLE PRECISION,
+                forecast_grid_charge_kwh DOUBLE PRECISION,
                 forecast_weather_code INTEGER,
                 forecast_precipitation_mm DOUBLE PRECISION,
                 forecast_precipitation_probability DOUBLE PRECISION,
@@ -390,6 +398,8 @@ def _ensure_postgres_schema(conn: Any) -> None:
             )
             """
         )
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS forecast_soc_percent DOUBLE PRECISION")
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS forecast_grid_charge_kwh DOUBLE PRECISION")
         cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS pv_provider TEXT")
         cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS physical_pv_kwh DOUBLE PRECISION")
         cur.execute(

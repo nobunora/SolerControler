@@ -86,10 +86,19 @@ def _forecast_plan_metadata_by_date(
         metadata: dict[str, Any] = {}
         target_soc = to_float(row.get("planned_target_soc_percent"))
         night_charge = to_float(row.get("planned_night_charge_kwh"))
+        planned_charge_start = str(row.get("planned_charge_start_time") or "").strip()
+        planned_charge_end = str(row.get("planned_charge_end_time") or "").strip()
+        planned_charge_limitation = str(row.get("planned_charge_limitation_reason") or "").strip()
         if target_soc is not None and 0.0 <= target_soc <= 100.0:
             metadata["forecast_target_soc_percent"] = target_soc
         if night_charge is not None and night_charge >= 0.0:
             metadata["forecast_night_charge_kwh"] = night_charge
+        if planned_charge_start:
+            metadata["forecast_planned_charge_start_time"] = planned_charge_start
+        if planned_charge_end:
+            metadata["forecast_planned_charge_end_time"] = planned_charge_end
+        if planned_charge_limitation:
+            metadata["forecast_planned_charge_limitation_reason"] = planned_charge_limitation
         if not metadata:
             continue
         run_id = str(row.get("forecast_run_id") or "").strip()
@@ -137,7 +146,13 @@ def _with_forecast_plan_metadata(
         item = dict(row)
         metadata = metadata_by_date.get(str(item.get("date") or ""))
         if metadata and _metadata_matches_forecast_row(item, metadata):
-            for key in ("forecast_target_soc_percent", "forecast_night_charge_kwh"):
+            for key in (
+                "forecast_target_soc_percent",
+                "forecast_night_charge_kwh",
+                "forecast_planned_charge_start_time",
+                "forecast_planned_charge_end_time",
+                "forecast_planned_charge_limitation_reason",
+            ):
                 if key in metadata:
                     item.setdefault(key, metadata[key])
         enriched.append(item)
@@ -196,6 +211,8 @@ def _selected_reconstructed_rows_between(
             item.pop("issued_at", None)
             item.pop("forecast_issued_at", None)
             item.pop("forecast_run_id", None)
+            item.pop("forecast_soc_percent", None)
+            item.pop("forecast_grid_charge_kwh", None)
             item["source"] = RECONSTRUCTED_FORECAST_SOURCE
             item["is_reconstructed"] = True
             item["forecast_reconstruction_id"] = reconstruction_id

@@ -292,6 +292,8 @@ def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_is
             selected.extend({
                 "date": target_date, "hour": row.get("hour"), "forecast_pv_kwh": row.get("forecast_pv_kwh"),
                 "forecast_load_kwh": row.get("forecast_load_kwh"), "forecast_charge_kwh": row.get("forecast_charge_kwh"),
+                "forecast_soc_percent": row.get("forecast_soc_percent"),
+                "forecast_grid_charge_kwh": row.get("forecast_grid_charge_kwh"),
                 "source": "forecast_hourly_snapshot", "forecast_run_id": run_id,
                 "forecast_issued_at": issued_at.isoformat(),
             } for row in rows)
@@ -600,6 +602,8 @@ def _firestore_forecast_hourly_between(
             "forecast_pv_kwh",
             "forecast_load_kwh",
             "forecast_charge_kwh",
+            "forecast_soc_percent",
+            "forecast_grid_charge_kwh",
             "source",
             "updated_at",
         ],

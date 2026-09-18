@@ -152,7 +152,8 @@ def load_postgres_slice(
                     GROUP BY date, hour
                 )
                 SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                       fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
+                       fh.forecast_charge_kwh, fh.forecast_soc_percent,
+                       fh.forecast_grid_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
                        ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at
                 FROM forecast_hourly fh
