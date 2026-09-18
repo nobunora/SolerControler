@@ -42,7 +42,7 @@ def test_real_kpnet_mode_candidates_map_standby_to_five_not_economy_zero() -> No
     assert _pick_battery_operating_mode_code(candidates, prefer="standby") == "5"
 
 
-def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candidate() -> None:
+def test_slot23_preserves_all_non_mode_fields_and_replaces_only_operating_mode() -> None:
     current = {
         "batteryOperatingMode": "1",
         "socSafetyMode": "11",
@@ -57,6 +57,9 @@ def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candi
         "dischargeStartTimeM": "20",
         "dischargeEndTimeH": "21",
         "dischargeEndTimeM": "22",
+        "agreementAmpere": "23",
+        "onPowerOutageMode": "24",
+        "onPowerOutageChargePowerW": "25",
     }
     standby = CanonicalProfileOverrides(
         **{**CanonicalForcedChargeProfile.__dict__, "name": "standby", "battery_operating_mode": "5"}
@@ -65,12 +68,21 @@ def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candi
     preserved = _preserve_night_soc_fields(standby, current)
 
     assert preserved.battery_operating_mode == "5"
-    assert [
-        preserved.soc_safety_mode, preserved.soc_economy_mode, preserved.soc_contact_input,
-        preserved.soc_charge_mode, preserved.charge_start_h, preserved.charge_start_m,
-        preserved.charge_end_h, preserved.charge_end_m, preserved.discharge_start_h,
-        preserved.discharge_start_m, preserved.discharge_end_h, preserved.discharge_end_m,
-    ] == [str(value) for key, value in current.items() if key != "batteryOperatingMode"]
+    assert preserved.soc_safety_mode == current["socSafetyMode"]
+    assert preserved.soc_economy_mode == current["socEconomyMode"]
+    assert preserved.soc_contact_input == current["socContactInput"]
+    assert preserved.soc_charge_mode == current["socChargeMode"]
+    assert preserved.charge_start_h == current["chargeStartTimeH"]
+    assert preserved.charge_start_m == current["chargeStartTimeM"]
+    assert preserved.charge_end_h == current["chargeEndTimeH"]
+    assert preserved.charge_end_m == current["chargeEndTimeM"]
+    assert preserved.discharge_start_h == current["dischargeStartTimeH"]
+    assert preserved.discharge_start_m == current["dischargeStartTimeM"]
+    assert preserved.discharge_end_h == current["dischargeEndTimeH"]
+    assert preserved.discharge_end_m == current["dischargeEndTimeM"]
+    assert preserved.agreement_ampere == current["agreementAmpere"]
+    assert preserved.on_power_outage_mode == current["onPowerOutageMode"]
+    assert preserved.on_power_outage_charge_power_w == current["onPowerOutageChargePowerW"]
 
 
 def test_workflow_reexports_canonical_night_charge_plan_contract() -> None:
