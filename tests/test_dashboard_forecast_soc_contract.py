@@ -13,9 +13,9 @@ from app.dashboard.slice_assembler import (
 )
 
 
-# HISTORICAL_FAILURE_LOCK (2026-09-04): predicted SOC must not silently disappear
-# when control-plan persistence is intentionally absent. The dedicated forecast-only
-# path owns display metadata only and must never write or require control-plan state.
+# HISTORICAL_FAILURE_LOCK replacement (2026-09-18): hourly SOC prediction now has
+# one owner in Energy Plan. Dashboard/history code may display persisted same-vintage
+# values, but must not synthesize missing SOC from actuals or reconstructed PV/load.
 
 
 def test_latest_forecast_plan_restores_battery_chart_without_control_write() -> None:
@@ -360,12 +360,17 @@ def test_reconstructed_history_never_inherits_original_forecast_soc_metadata(
     assert all("forecast_target_soc_percent" not in row for row in rows)
 
 
-def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
+def test_frontend_uses_persisted_soc_forecast_without_browser_prediction() -> None:
     source = (Path(__file__).parents[1] / "static" / "dashboard.js").read_text(encoding="utf-8")
+    calculations = (
+        Path(__file__).parents[1] / "static" / "dashboard_calculations.js"
+    ).read_text(encoding="utf-8")
 
-    assert "plannedBatteryValues(batteryRow, sch).targetSocPercent" in source
-    assert "HISTORICAL_FAILURE_LOCK (2026-09-05)" in source
-    assert "forecastSocFromLatestActual(rows, capacityKwh, chargeEff, dischargeEff)" in source
-    assert "if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);" not in source
+    assert "row.forecast_soc_percent" in source
+    assert "row.forecast_grid_charge_kwh" in source
+    assert "estimateHourlyForecastSoc" not in source
+    assert "estimateHourlyNightGridCharge" not in source
+    assert "forecastSocFromLatestActual" not in source
+    assert "forecastSocFromLatestActual" not in calculations
+    assert "allocateNightGridCharge" not in calculations
     assert 'label: "予想SOC(%)"' in source
-    assert "const soc = estimateHourlyForecastSoc(rows, date);" in source
