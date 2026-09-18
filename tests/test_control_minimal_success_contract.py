@@ -106,21 +106,30 @@ def test_minimal_economy_candidate_maps_fetch_only_mode_and_economy_soc() -> Non
     assert maps["SocChargeMode"] == {}
 
 
-def test_probe_candidate_maps_fetch_only_mode_and_soc_charge() -> None:
+def test_probe_candidate_maps_match_forced_and_economy_scheduled_dependencies() -> None:
     class FakeClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
 
         def candidate_map(self, candidate_type: str, _path: str) -> dict[str, str]:
             self.calls.append(candidate_type)
-            return {"3": "強制充電", "50": "50%"}
+            if candidate_type == "BatteryOperatingMode":
+                return {"0": "economy", "3": "forced charge", "5": "standby"}
+            if candidate_type == "SocEconomyMode":
+                return {"0": "0%", "10": "10%"}
+            raise AssertionError(candidate_type)
 
-    client = FakeClient()
-    maps = settings_roundtrip._probe_candidate_maps(client)  # type: ignore[arg-type]
+    forced_client = FakeClient()
+    forced_maps = settings_roundtrip._forced_probe_candidate_maps(forced_client)  # type: ignore[arg-type]
+    assert forced_client.calls == ["BatteryOperatingMode"]
+    assert forced_maps["SocChargeMode"] == {}
+    assert forced_maps["SocEconomyMode"] == {}
 
-    assert client.calls == ["BatteryOperatingMode", "SocChargeMode"]
-    assert maps["SocSafetyMode"] == {}
-    assert maps["AgreementAmpere"] == {}
+    economy_client = FakeClient()
+    economy_maps = settings_roundtrip._economy_probe_candidate_maps(economy_client)  # type: ignore[arg-type]
+    assert economy_client.calls == ["BatteryOperatingMode", "SocEconomyMode"]
+    assert economy_maps["SocChargeMode"] == {}
+    assert economy_maps["SocEconomyMode"]["0"] == "0%"
 
 
 def test_roundtrip_mutation_readback_ignores_unrelated_field_drift(
@@ -154,7 +163,7 @@ def test_roundtrip_mutation_readback_ignores_unrelated_field_drift(
                 "chargeStartTimeH": "22",
             }
 
-    readback, changed = settings_roundtrip._apply_and_verify(
+    readback, changed, returned_payload = settings_roundtrip._apply_and_verify(
         client=FakeClient(),  # type: ignore[arg-type]
         current={"batteryOperatingMode": "1", "socChargeMode": "0", "chargeStartTimeH": "22"},
         value_maps={},
@@ -162,6 +171,7 @@ def test_roundtrip_mutation_readback_ignores_unrelated_field_drift(
     )
 
     assert changed == ["batteryOperatingMode", "socChargeMode"]
+    assert returned_payload == payload
     assert readback["chargeStartTimeH"] == "22"
 
 
