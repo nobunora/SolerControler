@@ -90,7 +90,9 @@ def test_07_entrypoint_is_ast_limited_to_one_economy_call() -> None:
 
 def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
     workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
-    window = _local_window(workflow, 'elif profile == "economy":', size=900)
+    start = workflow.index('elif profile == "economy":')
+    end = workflow.index('elif profile == "forced":', start)
+    window = workflow[start:end]
 
     assert "_mode_only_profile_from_current_settings" in window
     assert 'prefer="economy"' in window
