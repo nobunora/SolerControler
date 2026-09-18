@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from app.kpnet.profiles import ECONOMY_MODE_PROFILE
 from app.runtime.night_soc_operational_contract import (
     SLOT03_CLOUD_RUN_MAX_RETRIES,
     SLOT03_PLATFORM_RETRY_DELAY_SECONDS,
@@ -63,10 +64,22 @@ def test_03_direct_soc_path_has_local_20260906_regression_lock() -> None:
     assert "test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable" in window
 
 
-def test_07_entrypoint_is_ast_limited_to_one_green_call() -> None:
+def test_07_entrypoint_is_ast_limited_to_one_economy_call() -> None:
     tree = ast.parse((ROOT / "app/runtime/slot_orchestration.py").read_text(encoding="utf-8"))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run_day_07")
     calls = [node for node in ast.walk(fn) if isinstance(node, ast.Call)]
     assert len(calls) == 1
     keywords = {key.arg: key.value.value for key in calls[0].keywords if isinstance(key.value, ast.Constant)}
-    assert keywords == {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}
+    assert keywords == {"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}
+
+
+def test_07_economy_profile_resets_minimum_soc_fields_to_zero() -> None:
+    assert ECONOMY_MODE_PROFILE.name == "economy-mode"
+    assert ECONOMY_MODE_PROFILE.soc_safety_mode == "0"
+    assert ECONOMY_MODE_PROFILE.soc_economy_mode == "0"
+    assert ECONOMY_MODE_PROFILE.soc_contact_input == "0"
+    assert ECONOMY_MODE_PROFILE.soc_charge_mode == "0"
+
+    workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
+    assert 'elif profile == "economy":' in workflow
+    assert 'prefer="economy"' in workflow
