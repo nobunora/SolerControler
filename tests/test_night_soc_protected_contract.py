@@ -106,3 +106,15 @@ def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
         "agreement_ampere=",
     ):
         assert forbidden not in window
+
+
+def test_03_forced_mode_only_changes_only_operating_mode() -> None:
+    workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
+    window = _local_window(workflow, 'elif profile == "forced":', size=900)
+    candidate_helper = _local_window(workflow, "def _minimal_03_candidate_maps", size=1200)
+
+    assert "_mode_only_profile_from_current_settings" in window
+    assert 'prefer="forced"' in window
+    assert "soc_charge_mode=" not in window
+    assert "_pick_max_code" not in window
+    assert "valueList/socchargemode" not in candidate_helper
