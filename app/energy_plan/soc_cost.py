@@ -149,6 +149,16 @@ class ScenarioReplay:
 
 
 @dataclass(frozen=True)
+class DaytimeSocReplay:
+    buy_kwh: float
+    sell_kwh: float
+    max_soc_percent: float
+    first_full_hour: int | None
+    end_soc_percent: float
+    hourly_soc_percent: dict[int, float]
+
+
+@dataclass(frozen=True)
 class SocCandidate:
     target_soc_percent: float
     target_energy_kwh: float
@@ -374,7 +384,7 @@ def _build_forecast_scenarios(
     )
 
 
-def _simulate_day(
+def simulate_daytime_soc_replay(
     *,
     start_energy_kwh: float,
     capacity_kwh: float,
@@ -382,16 +392,20 @@ def _simulate_day(
     hourly_pv_kwh: dict[int, float],
     pv_multiplier: float,
     load_multiplier: float,
-) -> tuple[float, float, float, int | None, float]:
-    """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
+) -> DaytimeSocReplay:
+    """Replay 07:00-23:00 and retain the hourly SOC points used by the planner."""
 
     energy = max(0.0, min(capacity_kwh, start_energy_kwh))
     buy_kwh = 0.0
     sell_kwh = 0.0
     max_energy = energy
     first_full_hour: int | None = None
+    hourly_soc_percent: dict[int, float] = {}
 
     for hour in range(7, 23):
+        hourly_soc_percent[hour] = _bounded_soc(
+            (100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
+        )
         load = max(0.0, hourly_load_kwh.get(hour, 0.0)) * max(0.0, load_multiplier)
         pv = max(0.0, hourly_pv_kwh.get(hour, 0.0)) * max(0.0, pv_multiplier)
         net = pv - load
@@ -411,7 +425,42 @@ def _simulate_day(
 
     max_soc = (100.0 * max_energy / capacity_kwh) if capacity_kwh > 0 else 0.0
     end_soc = (100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
-    return buy_kwh, sell_kwh, _bounded_soc(max_soc), first_full_hour, _bounded_soc(end_soc)
+    return DaytimeSocReplay(
+        buy_kwh=buy_kwh,
+        sell_kwh=sell_kwh,
+        max_soc_percent=_bounded_soc(max_soc),
+        first_full_hour=first_full_hour,
+        end_soc_percent=_bounded_soc(end_soc),
+        hourly_soc_percent=hourly_soc_percent,
+    )
+
+
+def _simulate_day(
+    *,
+    start_energy_kwh: float,
+    capacity_kwh: float,
+    hourly_load_kwh: dict[int, float],
+    hourly_pv_kwh: dict[int, float],
+    pv_multiplier: float,
+    load_multiplier: float,
+) -> tuple[float, float, float, int | None, float]:
+    """Compatibility summary over the canonical hourly daytime replay."""
+
+    replay = simulate_daytime_soc_replay(
+        start_energy_kwh=start_energy_kwh,
+        capacity_kwh=capacity_kwh,
+        hourly_load_kwh=hourly_load_kwh,
+        hourly_pv_kwh=hourly_pv_kwh,
+        pv_multiplier=pv_multiplier,
+        load_multiplier=load_multiplier,
+    )
+    return (
+        replay.buy_kwh,
+        replay.sell_kwh,
+        replay.max_soc_percent,
+        replay.first_full_hour,
+        replay.end_soc_percent,
+    )
 
 
 def _decision_prior_cost_yen(
