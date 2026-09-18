@@ -337,7 +337,7 @@ def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monke
     calls: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: calls.append(kwargs))
     _run_day_07()
-    assert calls == [{"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}]
+    assert calls == [{"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}]
 
 
 @pytest.mark.parametrize("at, expected", [(datetime(2099, 1, 1, 6, 54, 59, tzinfo=JST), []), (datetime(2099, 1, 1, 6, 55, tzinfo=JST), [])])
@@ -351,10 +351,10 @@ def test_slot23_and_07_are_one_unconditional_profile_write(monkeypatch: pytest.M
     calls: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: calls.append(kwargs))
     _run_night_23(); _run_day_07()
-    assert [call["profile"] for call in calls] == ["standby", "green"]
+    assert [call["profile"] for call in calls] == ["standby", "economy"]
 
 
-def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_03_prep_failure_standby_then_independent_07_economy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     writes: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._night_plan_path", lambda: tmp_path / "missing.json")
     monkeypatch.setattr("app.runtime.cloud_job._before_03_external_io", lambda: None)
@@ -366,7 +366,7 @@ def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.M
         _run_adjust_03()
     _run_day_07()
 
-    assert [call["profile"] for call in writes] == ["standby", "green"]
+    assert [call["profile"] for call in writes] == ["standby", "economy"]
 
 
 def test_03_plan_generation_timeout_logs_failure_and_standby_once(
