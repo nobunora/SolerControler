@@ -31,15 +31,11 @@ def test_daytime_hourly_replay_is_the_same_engine_as_optimizer_summary() -> None
 
     assert replay.hourly_soc_percent[7] == pytest.approx(50.0)
     assert replay.hourly_soc_percent[8] == pytest.approx(70.0)
-    assert summary == pytest.approx(
-        (
-            replay.buy_kwh,
-            replay.sell_kwh,
-            replay.max_soc_percent,
-            replay.first_full_hour,
-            replay.end_soc_percent,
-        )
-    )
+    assert summary[0] == pytest.approx(replay.buy_kwh)
+    assert summary[1] == pytest.approx(replay.sell_kwh)
+    assert summary[2] == pytest.approx(replay.max_soc_percent)
+    assert summary[3] == replay.first_full_hour
+    assert summary[4] == pytest.approx(replay.end_soc_percent)
 
 
 def test_03_anchor_generates_night_soc_and_grid_charge_without_07_actual() -> None:
