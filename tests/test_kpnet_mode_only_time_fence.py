@@ -211,36 +211,38 @@ _MODE_ONLY_CONTROLLED_FIELDS = (
 )
 
 
-def test_03_forced_mode_only_preserves_current_snapshot_except_mode_and_soc_candidate(
+def test_03_forced_mode_only_preserves_every_setting_except_operating_mode(
     real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
     current = _distinct_current_settings()
+    current["socChargeMode"] = "30"
     session.current = dict(current)
 
     assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
 
     payload = session.confirm_payloads[-1]
     assert payload["batteryOperatingMode"] == "3"
-    assert payload["socChargeMode"] == "50"
+    assert payload["socChargeMode"] == "30"
     for field in _MODE_ONLY_CONTROLLED_FIELDS:
-        if field not in {"batteryOperatingMode", "socChargeMode"}:
+        if field != "batteryOperatingMode":
             assert payload[field] == current[field]
 
 
-def test_03_forced_mode_only_changes_only_operating_mode_and_soc_charge_candidate(
+def test_03_forced_mode_only_changes_only_operating_mode_and_skips_soc_charge_candidates(
     real_mode_only: tuple[_Clock, _Session, KpNetConfig],
 ) -> None:
     _clock, session, _cfg = real_mode_only
     current = _distinct_current_settings()
+    current["socChargeMode"] = "30"
     session.current = dict(current)
 
     assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=300.0) == 0
 
     payload = session.confirm_payloads[-1]
     changed_fields = [field for field in _MODE_ONLY_CONTROLLED_FIELDS if payload[field] != current[field]]
-    assert set(changed_fields) <= {"batteryOperatingMode", "socChargeMode"}
-    assert set(changed_fields) == {"batteryOperatingMode", "socChargeMode"}
+    assert changed_fields == ["batteryOperatingMode"]
+    assert not any("valueList/socchargemode" in path for _at, _method, path, _timeout in session.requests)
 
 
 def test_03_forced_mode_only_does_not_inject_static_forced_window(
