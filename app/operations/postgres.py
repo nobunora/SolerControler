@@ -160,6 +160,8 @@ def ensure_schema(conn: Any) -> None:
             forecast_pv_kwh DOUBLE PRECISION,
             forecast_load_kwh DOUBLE PRECISION,
             forecast_charge_kwh DOUBLE PRECISION,
+            forecast_grid_charge_kwh DOUBLE PRECISION,
+            forecast_soc_percent DOUBLE PRECISION,
             forecast_weather_code INTEGER,
             forecast_precipitation_mm DOUBLE PRECISION,
             forecast_precipitation_probability DOUBLE PRECISION,
@@ -184,6 +186,8 @@ def ensure_schema(conn: Any) -> None:
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_midday_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_evening_kwh DOUBLE PRECISION",
             "ALTER TABLE sunshine_daily ADD COLUMN IF NOT EXISTS forecast_pv_calibration_factor DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_grid_charge_kwh DOUBLE PRECISION",
+            "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_soc_percent DOUBLE PRECISION",
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_weather_code INTEGER",
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_precipitation_mm DOUBLE PRECISION",
             "ALTER TABLE forecast_hourly ADD COLUMN IF NOT EXISTS forecast_precipitation_probability DOUBLE PRECISION",
@@ -324,6 +328,7 @@ def ingest_sunshine_from_night_plan(
                 """
                 INSERT INTO forecast_hourly (
                     date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                    forecast_grid_charge_kwh, forecast_soc_percent,
                     forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                     forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                     forecast_temp_c, forecast_relative_humidity_percent,
@@ -333,6 +338,7 @@ def ingest_sunshine_from_night_plan(
                 VALUES (
                     %(date)s, %(hour)s, %(forecast_pv_kwh)s, %(forecast_load_kwh)s,
                     %(forecast_charge_kwh)s,
+                    %(forecast_grid_charge_kwh)s, %(forecast_soc_percent)s,
                     %(forecast_weather_code)s, %(forecast_precipitation_mm)s,
                     %(forecast_precipitation_probability)s, %(forecast_cloud_cover)s,
                     %(forecast_shortwave_radiation_w_m2)s,
@@ -344,6 +350,8 @@ def ingest_sunshine_from_night_plan(
                     forecast_pv_kwh=excluded.forecast_pv_kwh,
                     forecast_load_kwh=excluded.forecast_load_kwh,
                     forecast_charge_kwh=excluded.forecast_charge_kwh,
+                    forecast_grid_charge_kwh=excluded.forecast_grid_charge_kwh,
+                    forecast_soc_percent=excluded.forecast_soc_percent,
                     forecast_weather_code=excluded.forecast_weather_code,
                     forecast_precipitation_mm=excluded.forecast_precipitation_mm,
                     forecast_precipitation_probability=excluded.forecast_precipitation_probability,
