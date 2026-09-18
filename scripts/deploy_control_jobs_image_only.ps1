@@ -164,7 +164,7 @@ try {
     foreach ($jobName in $jobs) {
         $observedImage = Get-ControlJobImage -JobName $jobName
         if ($observedImage -ne $immutableImage) {
-            throw "Production control Job image verification failed for $jobName: observed=$observedImage expected=$immutableImage"
+            throw "Production control Job image verification failed for ${jobName}: observed=$observedImage expected=$immutableImage"
         }
     }
 } catch {

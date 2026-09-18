@@ -10,6 +10,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_control_release_scripts_parse_before_cloud_actions() -> None:
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command",
+         "$tokens=$null; $errors=$null; "
+         "foreach ($file in @('deploy_control_jobs_image_only.ps1', "
+         "'run_control_postdeploy_live_probe.ps1', 'assert_control_probe_evidence.ps1')) { "
+         "[void][System.Management.Automation.Language.Parser]::ParseFile("
+         "(Join-Path $PWD scripts $file), [ref]$tokens, [ref]$errors); "
+         "if ($errors.Count) { throw $errors[0] } }"],
+        text=True, capture_output=True, cwd=ROOT, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def _proof() -> dict:
     evidence = {"status": "passed", "restore_verified": True, "hold_seconds": 60}
     for phase, values, candidates in (
