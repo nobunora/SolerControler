@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -15,6 +16,7 @@ from app.operations.domain import (
     extract_battery_daily_from_summary,
     extract_hourly_forecast_from_plan,
 )
+from app.operations.sqlite import ensure_schema
 
 
 def test_daytime_hourly_replay_is_the_same_engine_as_optimizer_summary() -> None:
@@ -197,3 +199,30 @@ def test_dashboard_has_no_soc_prediction_engine() -> None:
     assert "forecastSocFromLatestActual" not in dashboard
     assert "forecastSocFromLatestActual" not in calculations
     assert "allocateNightGridCharge" not in calculations
+
+
+def test_existing_sqlite_forecast_table_migrates_new_hourly_columns() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        """
+        CREATE TABLE forecast_hourly (
+            date TEXT NOT NULL,
+            hour INTEGER NOT NULL,
+            forecast_pv_kwh REAL,
+            forecast_load_kwh REAL,
+            forecast_charge_kwh REAL,
+            source TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(date, hour)
+        )
+        """
+    )
+
+    ensure_schema(conn)
+
+    columns = {
+        str(row[1])
+        for row in conn.execute("PRAGMA table_info(forecast_hourly)").fetchall()
+    }
+    assert "forecast_grid_charge_kwh" in columns
+    assert "forecast_soc_percent" in columns
