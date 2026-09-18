@@ -19,7 +19,7 @@
 | 保護対象 | 過去の根拠 | 再発防止する事故 | 拘束内容 |
 | --- | --- | --- | --- |
 | `app/runtime/night_soc_controller.py::build_device_soc_guard`、`app/kpnet/profile_builder.py::_build_dynamic_forced_profile` | `d1d7792`、2026-08-23実機確認 | 実機の `SocChargeMode` は最大50%までで、計画SOCは50%を超え得る。このとき50%候補で強制充電を開始し、03時監視が連続値の計画SOC到達で待機へ遷移する | 最大候補未満を強制開始エラーに戻さない。`SocChargeMode` を停止閾値に使わず、連続目標と停止閾値を03時監視に残す。変更時は50%強制開始・read-back・60秒後の復元と待機遷移を再検証する |
-| `app/runtime/slot_orchestration.py::_run_night_23` / `_run_adjust_03` / `_run_day_07`、`app/runtime/night_soc_time_contract.py` | 2026-08-29 利用者承認による `d1d7792` / `f2cfa51` の cross-slot ownership 置換。2026-09-18、07時点で実機がstandbyのまま残っている事象を確認し、利用者要件として日中復帰先をeconomy・最低SOC 0%へ明示変更 | 03の失敗・再試行や遅い03書込みが07の日中モード復帰を止める、または07後にstandby/forcedで上書きする | 23はstandby一回、07はeconomy一回を無条件read-backし、07 profileは `SocSafetyMode=0` / `SocEconomyMode=0` / `SocContactInput=0` / `SocChargeMode=0` を要求する。03は06:45 realtime監視停止・06:50最終standby開始停止・06:55 I/O停止の単独所有とする。時刻は `night_soc_time_contract.py` を唯一の実行根拠とし、23/07へcross-slot依存を戻さない。2026-09-18のstandby残留は、この仕様変更とは別に07 Job実行・SET・read-backログを調査する。|
+| `app/runtime/slot_orchestration.py::_run_night_23` / `_run_adjust_03` / `_run_day_07`、`app/runtime/night_soc_time_contract.py` | 2026-08-29 利用者承認による `d1d7792` / `f2cfa51` の cross-slot ownership 置換。2026-09-18、07時点で実機がstandbyのまま残っている事象を確認し、利用者要件として07時の復帰先をeconomy、`SocEconomyMode=0%`へ明示変更 | 03の失敗・再試行や遅い03書込みが07の日中モード復帰を止める、または07後にstandby/forcedで上書きする | 23はstandby一回、07はeconomy一回を無条件read-backし、07では `BatteryOperatingMode` と `SocEconomyMode=0%` だけを変更する。その他のSOC設定、充放電時間帯、契約電流、停電時設定は現在値を保持する。03は06:45 realtime監視停止・06:50最終standby開始停止・06:55 I/O停止の単独所有とする。時刻は `night_soc_time_contract.py` を唯一の実行根拠とし、23/07へcross-slot依存を戻さない。2026-09-18のstandby残留は、この仕様変更とは別に07 Job実行・SET・read-backログを調査する。|
 | `app/runtime/plan_persistence.py::acquire_night_soc_lease` | `79361c4`, `f910b98`, `0a804f4` | Firestore transaction の呼び出し順・generator互換性・既存リース判定の不整合で、所有権取得を誤って拒否または上書きする | このlegacy persistence契約はslot controlの外側だけに適用する。23/03/07のdevice controlへlease判定を戻さない。transaction は read 前に開始し、plan_id・owner・有効期限を維持する。 |
 
 | `scripts/deploy_production_from_env.ps1::Get-DeploymentStageRecord`、`Invoke-DeploymentStage` | `0bc046b`, `92c32d0`, `5e46ff8` | 実行済みCloud操作が状態ファイルへ保存されず、再実行で不要な再ビルド・再実行や手戻りが発生する | OrderedDictionary と PSCustomObject の両方を明示的に扱う。成功した段階だけを resume でスキップし、stage状態の動的メンバー解決に戻さない |
@@ -41,7 +41,7 @@
 
 ## 03時の実機確認基準
 
-時刻境界の自動テストは、締切後に新しいHTTP要求・再試行・retry sleepを開始しないことを確認する。既にKP-NETへ送出済みの非同期要求をクライアントだけで取り消せる保証ではない。本番反映後は、03実行ログとKP-NETのread-backで、06:45以後にSOC realtime要求がないこと、06:50前に開始した最終standbyが候補5でread-backされること、07:00のeconomyが実機候補ラベルから選択され、最低SOC関連4項目が0%でread-backされることを確認する。
+時刻境界の自動テストは、締切後に新しいHTTP要求・再試行・retry sleepを開始しないことを確認する。既にKP-NETへ送出済みの非同期要求をクライアントだけで取り消せる保証ではない。本番反映後は、03実行ログとKP-NETのread-backで、06:45以後にSOC realtime要求がないこと、06:50前に開始した最終standbyが候補5でread-backされること、07:00のeconomyが実機候補ラベルから選択され、`SocEconomyMode=0%` がread-backされることを確認する。その他の設定値は07時処理前の値を保持する。
 
 ダッシュボードの朝SOC目標判定は、07:00の日中economy切替後に同時刻の放電が反映される競合を避けるため、切替前の最終30分実績（通常06:30）のみを使う。06:30実績がない場合に07:00以後のSOCで代用してはならない。変更時は、06:30で目標到達後に07:00で低下しても未達警告を出さないことと、06:30で真に未達なら警告することを回帰テストで固定する。
 
