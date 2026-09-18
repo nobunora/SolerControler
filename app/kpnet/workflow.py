@@ -40,7 +40,7 @@ from app.kpnet.profile_builder import (
 )
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.runtime.night_soc_time_contract import MODE_OPERATION_RELEASE_RESERVE_SECONDS, MODE_OPERATION_START_BUDGET_SECONDS
-from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
+from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
