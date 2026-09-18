@@ -1,4 +1,4 @@
-"""Reversible live verification of the KP-NET forced-charge command path."""
+"""Reversible live verification of the scheduled 03 forced and 07 economy paths."""
 
 from __future__ import annotations
 
