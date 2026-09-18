@@ -51,9 +51,9 @@ if ($RunSlot23StandbyRecovery -and -not $AllowOutOfWindowLiveProbe) {
 $outOfWindowAudit = if ($AllowOutOfWindowLiveProbe) { 'true' } else { 'false' }
 $probeEntrypoint = if ($RunSlot23StandbyRecovery) { 'cloud_job_runner.py' } else { 'postdeploy_probe_main.py' }
 $probeEnvironment = if ($RunSlot23StandbyRecovery) {
-    "CLOUD_JOB_SLOT=23,DRY_RUN=false,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
+    "CLOUD_JOB_SLOT=23,DRY_RUN=false,KP_NET_UNKNOWN_EXIT_ZERO=false,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 } else {
-    "DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
+    "DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,KP_NET_UNKNOWN_EXIT_ZERO=true,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 }
 
 function Assert-NoRunningExecution {
@@ -117,7 +117,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($RunSlot23StandbyRecovery) {
     Write-Host "LIVE SLOT-23 STANDBY RECOVERY PASSED for source $ExpectedCommit"
     Write-Host "Out-of-window override supplied: $outOfWindowAudit"
-    Write-Host 'Verified by the slot-23 owner: candidate BatteryOperatingMode only, standby SET/readback, and no retry after UNKNOWN.'
+    Write-Host 'Verified by the slot-23 owner: candidate BatteryOperatingMode only, standby SET/readback, and UNKNOWN makes this dedicated probe fail without retry.'
     exit 0
 }
 

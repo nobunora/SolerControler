@@ -173,6 +173,24 @@ def test_runner_suppresses_platform_retry_only_for_unknown_terminal(
     }
 
 
+def test_runner_fails_dedicated_probe_for_unknown_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cloud_job_runner, "install_unknown_write_guard", lambda: None)
+    monkeypatch.setenv("KP_NET_UNKNOWN_EXIT_ZERO", "false")
+
+    def unknown_main() -> int:
+        raise KpNetUnknownTaskTerminal("still unknown")
+
+    monkeypatch.setattr(cloud_job_runner, "main", unknown_main)
+
+    assert cloud_job_runner._run_main() == 1
+    record = json.loads(capsys.readouterr().out.strip())
+    assert record["classification"] == "unknown"
+    assert record["platform_retry"] == "probe-failed"
+
+
 def test_runner_does_not_suppress_normal_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cloud_job_runner, "install_unknown_write_guard", lambda: None)
 

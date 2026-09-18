@@ -75,7 +75,7 @@ def test_live_probe_can_run_only_the_actual_slot23_standby_owner() -> None:
 
     assert "$RunSlot23StandbyRecovery" in script
     assert "cloud_job_runner.py" in script
-    assert "CLOUD_JOB_SLOT=23,DRY_RUN=false" in script
+    assert "CLOUD_JOB_SLOT=23,DRY_RUN=false,KP_NET_UNKNOWN_EXIT_ZERO=false" in script
     assert "Slot-23 standby recovery requires the explicit one-shot out-of-window authorization." in script
     assert "LIVE SLOT-23 STANDBY RECOVERY PASSED" in script
 
