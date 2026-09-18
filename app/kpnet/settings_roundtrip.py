@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import os
 import time
 from typing import Any, Mapping
 
@@ -231,6 +232,9 @@ def run_settings_roundtrip(
     summary: dict[str, object] = {
         "target_soc_percent_compatibility_only": target_soc_percent,
         "hold_seconds": hold_seconds,
+        "out_of_window_authorized": os.getenv(
+            "LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED", ""
+        ).strip().lower() in {"1", "true", "yes", "on"},
         "status": "failed",
         "forced_proof": "not_started",
         "economy_proof": "not_started",
