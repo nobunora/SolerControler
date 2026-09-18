@@ -13,9 +13,9 @@ from app.dashboard.slice_assembler import (
 )
 
 
-# HISTORICAL_FAILURE_LOCK (2026-09-04): predicted SOC must not silently disappear
-# when control-plan persistence is intentionally absent. The dedicated forecast-only
-# path owns display metadata only and must never write or require control-plan state.
+# HISTORICAL_FAILURE_LOCK (2026-09-05, superseded 2026-09-18): the browser
+# must not invent an hourly SOC path from target/PV/load when the canonical
+# Energy Plan forecast is missing. Actual SOC may still be displayed as actual.
 
 
 def test_latest_forecast_plan_restores_battery_chart_without_control_write() -> None:
@@ -360,12 +360,17 @@ def test_reconstructed_history_never_inherits_original_forecast_soc_metadata(
     assert all("forecast_target_soc_percent" not in row for row in rows)
 
 
-def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
+def test_frontend_predicted_soc_is_display_only() -> None:
     source = (Path(__file__).parents[1] / "static" / "dashboard.js").read_text(encoding="utf-8")
+    calculations = (Path(__file__).parents[1] / "static" / "dashboard_calculations.js").read_text(encoding="utf-8")
 
-    assert "plannedBatteryValues(batteryRow, sch).targetSocPercent" in source
-    assert "HISTORICAL_FAILURE_LOCK (2026-09-05)" in source
-    assert "forecastSocFromLatestActual(rows, capacityKwh, chargeEff, dischargeEff)" in source
-    assert "if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);" not in source
+    assert "const nightGridCharge = forecastGridChargeValues(rows);" in source
+    assert "const soc = forecastSocValues(rows);" in source
+    assert "estimateHourlyForecastSoc" not in source
+    assert "forecastSocFromLatestActual" not in source
+    assert "allocateNightGridCharge" not in source
+    assert "forecastSocFromLatestActual" not in calculations
+    assert "allocateNightGridCharge" not in calculations
+    assert "soc_charge_mode" not in calculations.split("function plannedBatteryValues", 1)[1]
     assert 'label: "予想SOC(%)"' in source
-    assert "const soc = estimateHourlyForecastSoc(rows, date);" in source
+

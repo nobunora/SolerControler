@@ -100,6 +100,17 @@ def _plan(*, date: str = "2026-09-03", issued_at: str = "2026-09-03T02:30:00+09:
             "final_pv_forecast_source": "test",
             "target_soc_7_percent": 67.5,
             "required_night_charge_kwh": 3.25,
+            "planned_charge_start_time": "03:00",
+            "planned_charge_end_time": "04:30",
+            "planned_charge_limitation_reason": "none",
+            "hourly_soc_forecast_percent": {
+                str(hour): 67.5 if hour >= 7 else 40.0 + hour
+                for hour in range(3, 24)
+            },
+            "hourly_grid_charge_forecast_kwh": {
+                str(hour): 1.0 if hour in {3, 4} else 0.0
+                for hour in range(24)
+            },
         },
     }
 
@@ -122,10 +133,16 @@ def test_valid_forecast_persists_only_forecast_collections(tmp_path: Path) -> No
     assert forecast_plan["hourly_row_count"] == 24
     assert forecast_plan["planned_target_soc_percent"] == pytest.approx(67.5)
     assert forecast_plan["planned_night_charge_kwh"] == pytest.approx(3.25)
+    assert forecast_plan["planned_charge_start_time"] == "03:00"
+    assert forecast_plan["planned_charge_end_time"] == "04:30"
+    assert forecast_plan["planned_charge_limitation_reason"] == "none"
     mutable_rows = list(client.data["forecast_hourly"].values())
     assert forecast_plan["forecast_run_id"]
     assert {row["forecast_run_id"] for row in mutable_rows} == {forecast_plan["forecast_run_id"]}
     assert {row["updated_at"] for row in mutable_rows} == {forecast_plan["updated_at"]}
+    row03 = next(row for row in mutable_rows if row["hour"] == 3)
+    assert row03["forecast_soc_percent"] == pytest.approx(43.0)
+    assert row03["forecast_grid_charge_kwh"] == pytest.approx(1.0)
     assert "night_charge_plans" not in client.data
 
 

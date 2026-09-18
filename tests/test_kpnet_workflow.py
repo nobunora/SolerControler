@@ -1036,3 +1036,51 @@ def test_build_dynamic_forced_profile_switches_to_forced_mode_when_charge_need_i
     night_plan_summary = summary.get("night_charge_plan", {})
     assert isinstance(night_plan_summary, dict)
     assert night_plan_summary.get("force_charge_mode") is True
+
+
+def test_energy_plan_schedule_keeps_device_safety_window(tmp_path: Path) -> None:
+    csv_path = tmp_path / "sample.csv"
+    csv_path.write_text(
+        "年月日,時刻,充電電力量[kWh]\n2026/09/17,23:30,0.5\n",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "night_charge_plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "forecast": {"date": "2026-09-18"},
+                "inputs": {"soc_now_percent": 42.0},
+                "result": {
+                    "required_night_charge_kwh": 4.0,
+                    "effective_capacity_kwh": 10.0,
+                    "target_soc_7_percent": 78.0,
+                    "planned_charge_start_time": "03:00",
+                    "planned_charge_end_time": "04:00",
+                    "planned_charge_limitation_reason": "none",
+                },
+                "csv_paths": [str(csv_path)],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    summary: dict[str, object] = {}
+
+    profile = _build_dynamic_forced_profile(
+        cfg=_build_cfg(plan_path=plan_path),
+        value_maps=_value_maps(),
+        summary=summary,
+    )
+
+    assert profile.charge_start_h == "3"
+    assert profile.charge_start_m == "0"
+    # Test fixture operation conditions keep the device safety window open to 06:00.
+    assert profile.charge_end_h == "6"
+    assert profile.charge_end_m == "0"
+    night_plan = summary["night_charge_plan"]
+    assert night_plan["schedule_source"] == "energy-plan"
+    assert night_plan["planned_charge_start_time"] == "03:00"
+    assert night_plan["planned_charge_end_time"] == "04:00"
+    assert night_plan["applied_charge_start_time"] == "03:00"
+    assert night_plan["applied_charge_end_time"] == "06:00"
+    assert night_plan["limitation_reason"] == "device_safety_window_extends_planned_completion"
