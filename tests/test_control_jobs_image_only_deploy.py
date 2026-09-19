@@ -60,6 +60,10 @@ def test_control_live_proof_release_wrapper_requires_the_full_successful_path() 
     assert "run_cloud_job_from_env.ps1') -Slot 07 -DryRun" in script
     assert "if ($AllowOutOfWindowLiveProbe) { $releaseArgs.AllowOutOfWindowLiveProbe = $true }" in script
     assert "kind = 'control_live_proof_release'" in script
+    assert "production_image_release_completed = $false" in script
+    assert "$state.production_image_release_completed = $true" in script
+    assert "'deployed_postcheck_failed'" in script
+    assert "'failed_before_release'" in script
 
 
 def test_live_probe_is_guarded_non_retrying_and_uses_exact_deployed_image() -> None:
