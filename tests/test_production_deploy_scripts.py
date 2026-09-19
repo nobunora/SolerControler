@@ -100,6 +100,17 @@ def test_production_deployment_runbook_documents_safe_resume_and_verification() 
         assert required in runbook
 
 
+def test_control_readonly_scope_is_rejected_in_favor_of_the_live_probed_rollout() -> None:
+    wrapper = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "'control-readonly'" in wrapper
+    assert "control-readonly cannot release control images" in wrapper
+    assert "deploy_control_jobs_image_only.ps1 with its mandatory live probe" in wrapper
+    assert "[switch]$SkipSchedulerDeploy" in deploy
+    assert "[switch]$SkipLegacyResourceCleanup" in deploy
+
+
 def test_manual_actual_import_cannot_overwrite_production_plan() -> None:
     script = (ROOT / "scripts" / "run_kpnet_import_from_env.ps1").read_text(
         encoding="utf-8"
@@ -423,7 +434,7 @@ def test_production_deploy_auto_scope_skips_irrelevant_cloud_work() -> None:
         encoding="utf-8"
     )
 
-    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard')]" in script
+    assert "[ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard', 'control-readonly')]" in script
     assert "function Resolve-DeploymentScope" in script
     assert "Get-LastCompletedDeploymentCommit" in script
     assert "No deployable runner or dashboard source changed" in script

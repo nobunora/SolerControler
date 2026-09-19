@@ -124,13 +124,21 @@ def test_03_target_stop_log_records_target_source_and_reason(tmp_path: Path, cap
     assert payload["standby_outcome"] == "success"
 
 
-def test_03_soc_unavailable_emits_terminal_audit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _monitor_partial_forced_and_stop(
-        _plan(tmp_path / "plan.json", 80), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)), device_port=_Device([None])
-    )
+def test_03_initial_soc_unavailable_fails_before_any_settings_mutation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    device = _Device([None])
+    with pytest.raises(RuntimeError, match="initial realtime SOC unavailable"):
+        _monitor_partial_forced_and_stop(
+            _plan(tmp_path / "plan.json", 80),
+            clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+            device_port=device,
+        )
     audits = _terminal_audits(capsys.readouterr().out)
+    assert device.calls == []
     assert len(audits) == 1
-    assert audits[0]["stop_reason"] == "soc_unavailable"
+    assert audits[0]["stop_reason"] == "initial_soc_unavailable"
+    assert audits[0]["standby_attempted"] is False
 
 
 def test_03_single_monitor_soc_failure_keeps_forced_charge_until_direct_soc_recovers(
@@ -329,7 +337,7 @@ def test_03_mismatch_is_not_reapplied_and_does_not_gate_07(tmp_path: Path, monke
     calls: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: calls.append(kwargs))
     _run_day_07()
-    assert calls == [{"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}]
+    assert calls == [{"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}]
 
 
 @pytest.mark.parametrize("at, expected", [(datetime(2099, 1, 1, 6, 54, 59, tzinfo=JST), []), (datetime(2099, 1, 1, 6, 55, tzinfo=JST), [])])
@@ -343,10 +351,10 @@ def test_slot23_and_07_are_one_unconditional_profile_write(monkeypatch: pytest.M
     calls: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: calls.append(kwargs))
     _run_night_23(); _run_day_07()
-    assert [call["profile"] for call in calls] == ["standby", "green"]
+    assert [call["profile"] for call in calls] == ["standby", "economy"]
 
 
-def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_03_prep_failure_standby_then_independent_07_economy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     writes: list[dict[str, object]] = []
     monkeypatch.setattr("app.runtime.cloud_job._night_plan_path", lambda: tmp_path / "missing.json")
     monkeypatch.setattr("app.runtime.cloud_job._before_03_external_io", lambda: None)
@@ -354,9 +362,11 @@ def test_03_prep_failure_standby_then_independent_07_green(monkeypatch: pytest.M
     monkeypatch.setattr("app.runtime.cloud_job._run_03_prep_fail_safe_standby", lambda: writes.append({"profile": "standby"}))
     monkeypatch.setattr("app.runtime.cloud_job._run_settings_profile_with_retry", lambda **kwargs: writes.append(kwargs))
 
-    _run_adjust_03(); _run_day_07()
+    with pytest.raises(RuntimeError, match="csv failed"):
+        _run_adjust_03()
+    _run_day_07()
 
-    assert [call["profile"] for call in writes] == ["standby", "green"]
+    assert [call["profile"] for call in writes] == ["standby", "economy"]
 
 
 def test_03_plan_generation_timeout_logs_failure_and_standby_once(
@@ -377,7 +387,8 @@ def test_03_plan_generation_timeout_logs_failure_and_standby_once(
     monkeypatch.setattr(cloud_job, "_run_03_prep_fail_safe_standby", lambda: writes.append("standby"))
     monkeypatch.setattr(cloud_job, "_monitor_partial_forced_and_stop", lambda path: monitor_calls.append(path))
 
-    _run_adjust_03()
+    with pytest.raises(TimeoutError, match="secret detail"):
+        _run_adjust_03()
 
     output = capsys.readouterr().out
     prefix = "[cloud_job_runner] 03-prep "
@@ -390,6 +401,8 @@ def test_03_plan_generation_timeout_logs_failure_and_standby_once(
         "usable_plan_exists": False,
     }
     assert "secret detail" not in output
+    assert '"message":"03-prep-terminal-audit"' in output
+    assert '"platform_retry":"eligible"' in output
     assert writes == ["standby"]
     assert monitor_calls == []
 
@@ -432,6 +445,17 @@ def test_deploy_job03_time_ownership_semantics() -> None:
     line = next(value for value in source.splitlines() if "run jobs deploy $Job03Name" in value)
     assert "--task-timeout 14100" in line and "--max-retries 3" in line
     assert "ADJUST03_FORCE_MONITOR_CUTOFF_HHMM" not in line
+
+
+def test_control_jobs_use_resolved_immutable_runner_digest() -> None:
+    source = Path("scripts/deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+
+    assert "artifacts docker images describe $image" in source
+    assert "^sha256:[0-9a-f]{64}$" in source
+    assert "$image -replace ':latest$',''" in source
+    for job in ("$Job23Name", "$Job03Name", "$Job07Name"):
+        line = next(value for value in source.splitlines() if f"run jobs deploy {job}" in value)
+        assert "--image $image" in line
 
 
 def test_03_platform_retry_waits_five_minutes_and_logs_before_controller(

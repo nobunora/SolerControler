@@ -25,7 +25,7 @@ from app.kpnet.csv_visualization import (
 )
 from app.kpnet.client_support import validate_base_url as _validate_base_url  # noqa: F401
 from app.kpnet.config import LOGGER, KpNetConfig
-from app.runtime.night_soc_controller import CONTROLLED_SETTING_FIELDS, compare_setting_readback
+from app.runtime.night_soc_controller import compare_setting_readback
 from app.kpnet.profile_builder import (
     _build_dynamic_forced_profile,
     _build_dynamic_green_profile,
@@ -33,13 +33,13 @@ from app.kpnet.profile_builder import (
     _enabled_sorted_rules,
     _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
-    _pick_max_code,
+    _pick_min_code,
     _pick_battery_operating_mode_code,
     _pick_night_mode_preference,
 )
 from app.kpnet.plan import NightChargePlan as NightChargePlan, load_night_charge_plan
 from app.runtime.night_soc_time_contract import MODE_OPERATION_RELEASE_RESERVE_SECONDS, MODE_OPERATION_START_BUDGET_SECONDS
-from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, STANDBY_PROFILE, ProfileOverrides
+from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
 from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
@@ -55,7 +55,11 @@ def _setup_logging() -> None:
     )
 
 # readable-code-audit: skip STRUCT-04 — profile fields are resolved together so the KP-NET command cannot mix settings from different rule versions
-from app.kpnet.client import KpNetClient
+from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
+
+
+class KpNetUnknownWriteTerminal(RuntimeError):
+    """Stop this task after reconciliation without permitting another settings write."""
 
 _load_night_charge_plan = load_night_charge_plan
 
@@ -98,6 +102,8 @@ def _apply_settings_profile(
     current: dict[str, Any],
     value_maps: dict[str, dict[str, str]],
     profile: ProfileOverrides,
+    required_readback_fields: tuple[str, ...] | None = None,
+    candidate_maps_fetched: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     payload, changed_fields = _build_payload(
         csrf_setting=client.csrf_setting,
@@ -116,13 +122,46 @@ def _apply_settings_profile(
     payload = dict(intent.desired_values)
     changed_fields = [change.field for change in intent.expected_changes]
     if not intent.has_changes:
-        summary["setting_results"].append(
-            {
-                "profile": profile.name,
-                "changed_fields": [],
-                "status": "skipped-no-change",
-                "readback_mismatch_values": {},
-            }
+        readback_fields = required_readback_fields or ()
+        requested_values = {
+            field: str(payload.get(field, ""))
+            for field in readback_fields
+        }
+        observed_values = {
+            field: str(current.get(field, ""))
+            for field in readback_fields
+        }
+        setting_result = {
+            "profile": profile.name,
+            "changed_fields": [],
+            "status": "skipped-no-change",
+            "readback_fields": list(readback_fields),
+            "readback_match": all(
+                requested_values[field] == observed_values[field]
+                for field in readback_fields
+            ),
+            "readback_mismatch_fields": [
+                field
+                for field in readback_fields
+                if requested_values[field] != observed_values[field]
+            ],
+            "readback_mismatch_values": {},
+            "requested": requested_values,
+            "observed": observed_values,
+            "candidate_maps_fetched": list(candidate_maps_fetched or ()),
+        }
+        summary["setting_results"].append(setting_result)
+        print(
+            json.dumps(
+                {
+                    "message": "kpnet-settings-readback",
+                    "operation_id": getattr(client, "operation_id", None),
+                    "slot": os.getenv("CLOUD_JOB_SLOT", "") or None,
+                    **setting_result,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
         )
         return current
 
@@ -157,39 +196,97 @@ def _apply_settings_profile(
         )
         return current
 
-    write_result = client.write_setting(confirm_html)
-    readback = client.read_current_settings()
+    write_result: dict[str, Any] | None = None
+    reconciliation = None
+    try:
+        write_result = client.write_setting(confirm_html)
+        readback = client.read_current_settings()
+    except KpNetUnknownWriteError:
+        reconciliation = "UNKNOWN"
+        try:
+            readback = client.read_current_settings()
+        except Exception:
+            fresh_client = KpNetClient(cfg, deadline_monotonic=client.deadline_monotonic)
+            try:
+                fresh_client.login()
+                fresh_client.open_settings_page()
+                readback = fresh_client.read_current_settings()
+            except Exception:
+                readback = {}
+            finally:
+                fresh_client.close()
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
+    # Control success normally follows the fields this operation actually changed.
+    # A scheduled owner may strengthen that contract for fields whose final value
+    # must be proven even when the requested value was already present. 07:00 uses
+    # this for BatteryOperatingMode + SocEconomyMode=0% without expanding the SET.
+    # Unrelated form values may legitimately drift or be normalized by KP-NET and
+    # must not turn a proven SET/read-back into a false failure.
+    readback_fields = required_readback_fields or tuple(changed_fields)
     readback_ok, mismatches = compare_setting_readback(
         payload,
         readback,
-        tuple(field for field in CONTROLLED_SETTING_FIELDS if field in payload),
+        readback_fields,
     )
+    requested_values = {
+        field: str(payload.get(field, ""))
+        for field in readback_fields
+    }
+    observed_values = {
+        field: str(readback.get(field, ""))
+        for field in readback_fields
+    }
     readback_mismatch_values = {
         field: {
-            "requested": str(payload.get(field, "")),
-            "observed": str(readback.get(field, "")),
+            "requested": requested_values[field],
+            "observed": observed_values[field],
         }
         for field in mismatches
     }
-    summary["setting_results"].append(
-        {
-            "profile": profile.name,
-            "changed_fields": changed_fields,
-            "status": "applied",
-            "write_result": write_result,
-            "readback_match": readback_ok,
-            "readback_mismatch_fields": list(mismatches),
-            "readback_mismatch_values": readback_mismatch_values,
-            "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
-            "plan_id": summary.get("night_soc", {}).get("plan_id")
-            if isinstance(summary.get("night_soc"), dict)
-            else None,
-            "confirm_path": str(confirm_path),
-        }
+    if reconciliation == "UNKNOWN":
+        reconciliation = "APPLIED_RECONCILED" if readback_ok else "UNKNOWN"
+        print(
+            json.dumps(
+                {"message": "kpnet-write-reconciliation", "operation_id": getattr(client, "operation_id", None), "slot": os.getenv("CLOUD_JOB_SLOT", "") or None, "profile": profile.name, "result": reconciliation, "readback_fields": list(readback_fields), "mismatch_fields": list(mismatches)},
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+    setting_result = {
+        "profile": profile.name,
+        "changed_fields": changed_fields,
+        "status": "applied" if reconciliation is None else reconciliation.lower(),
+        "write_result": write_result,
+        "readback_fields": list(readback_fields),
+        "readback_match": readback_ok,
+        "readback_mismatch_fields": list(mismatches),
+        "readback_mismatch_values": readback_mismatch_values,
+        "requested": requested_values,
+        "observed": observed_values,
+        "candidate_maps_fetched": list(candidate_maps_fetched or ()),
+        "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
+        "plan_id": summary.get("night_soc", {}).get("plan_id")
+        if isinstance(summary.get("night_soc"), dict)
+        else None,
+        "confirm_path": str(confirm_path),
+    }
+    summary["setting_results"].append(setting_result)
+    print(
+        json.dumps(
+            {
+                "message": "kpnet-settings-readback",
+                "operation_id": getattr(client, "operation_id", None),
+                "slot": os.getenv("CLOUD_JOB_SLOT", "") or None,
+                **setting_result,
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
     )
+    if reconciliation == "UNKNOWN":
+        raise KpNetUnknownWriteTerminal("KP-NET write remains unknown after read-only reconciliation")
     if readback_required and not readback_ok:
         mismatch_details = ", ".join(
             f"{field}(requested={values['requested']} observed={values['observed']})"
@@ -201,16 +298,13 @@ def _apply_settings_profile(
     return readback
 
 
-# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE): do not add
-# batteryOperatingMode or replace SLOT23_PRESERVED_FIELDS with a broad current
-# merge. The 23:00 sequence must preserve exactly the twelve SOC/window values
-# while writing standby candidate 5; preserving green 1 overwrites that value,
-# leaves the physical battery green through the night, and makes the successful
-# job log lie about standby. Guarded by
-# test_night_soc_protected_contract.py::test_protected_contract_has_documented_locks_at_each_operational_boundary
-# and tests/test_kpnet_workflow.py standby read-back tests.
+# HISTORICAL_FAILURE_LOCK (EVIDENCE_20260829_SLOT23_PRESERVE; amended
+# 2026-09-18 by user request): never preserve batteryOperatingMode, but preserve
+# every other writable form value. Standby is a mode transition only; unrelated
+# SOC/window/agreement/outage settings must remain unchanged. Guarded by
+# test_night_soc_protected_contract.py and test_kpnet_mode_only_time_fence.py.
 def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any]) -> ProfileOverrides:
-    """Keep 03:00-owned SOC/window values while allowing the 23:00 standby mode write."""
+    """Preserve every non-mode form value while allowing the standby mode write."""
     field_to_attribute = {
         "socSafetyMode": "soc_safety_mode",
         "socEconomyMode": "soc_economy_mode",
@@ -224,14 +318,17 @@ def _preserve_night_soc_fields(profile: ProfileOverrides, current: dict[str, Any
         "dischargeStartTimeM": "discharge_start_m",
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
+        "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     # HISTORICAL_FAILURE_LOCK (2026-08-29 runtime evidence): this must iterate
     # SLOT23_PRESERVED_FIELDS, whose immutable contract intentionally excludes
     # batteryOperatingMode.  Adding it back copies the prior green/forced mode
     # over the real standby candidate, making 23:00 ``skipped-no-change`` and
     # leaving the battery non-standby until 07:00.  Replacing this with a broad
-    # ``current`` merge can also overwrite the twelve SOC/window fields that
-    # 03:00 owns.  Guarded by the green(1)->standby(5) read-back regression test.
+    # omitting any other writable field can silently change unrelated settings.
+    # Guarded by the green(1)->standby(5) and preservation regression tests.
     updates = {
         attribute: str(current[field])
         for field, attribute in field_to_attribute.items()
@@ -261,6 +358,8 @@ def _mode_only_profile_from_current_settings(
         "dischargeEndTimeH": "discharge_end_h",
         "dischargeEndTimeM": "discharge_end_m",
         "agreementAmpere": "agreement_ampere",
+        "onPowerOutageMode": "on_power_outage_mode",
+        "onPowerOutageChargePowerW": "on_power_outage_charge_power_w",
     }
     missing = [field for field in required_fields if field not in current or str(current[field]).strip() == ""]
     if missing:
@@ -271,9 +370,43 @@ def _mode_only_profile_from_current_settings(
             attribute: str(current[field])
             for field, attribute in required_fields.items()
         },
-        on_power_outage_mode=str(current.get("onPowerOutageMode", "0")),
-        on_power_outage_charge_power_w=str(current.get("onPowerOutageChargePowerW", "65535")),
     )
+
+
+def _minimal_mode_only_candidate_maps(
+    client: KpNetClient,
+    *,
+    include_soc_economy: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Fetch only candidate lists required by the requested mode-only mutation.
+
+    The provider still receives its full form contract, but unchanged fields reuse
+    current values/names and must not make unrelated candidate endpoints a
+    prerequisite for scheduled 23/03/07 mode transitions.
+    """
+    maps = {
+        "BatteryOperatingMode": client.candidate_map(
+            "BatteryOperatingMode",
+            "remotesetting/pcssetting/valueList/batteryoperatingmode",
+        ),
+        "SocSafetyMode": {},
+        "SocEconomyMode": {},
+        "SocContactInput": {},
+        "SocChargeMode": {},
+        "OnPowerOutageChargePowerW": {},
+        "AgreementAmpere": {},
+    }
+    if include_soc_economy:
+        maps["SocEconomyMode"] = client.candidate_map(
+            "SocEconomyMode",
+            "remotesetting/pcssetting/valueList/soceconomymode",
+        )
+    return maps
+
+
+def _minimal_03_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Keep the 03 helper contract explicit: only BatteryOperatingMode is required."""
+    return _minimal_mode_only_candidate_maps(client)
 
 
 # readable-code-audit: skip STRUCT-04 — command execution, confirmation, and durable result recording form one device-operation boundary and must retain their failure order
@@ -371,8 +504,12 @@ def _run_settings_phase(
         }
         LOGGER.info("Forced settings profile selected: green-mode")
     elif cfg.force_settings_profile == "standby":
+        standby_profile = _mode_only_profile_from_current_settings(
+            current,
+            name="standby-mode",
+        )
         standby_profile = replace(
-            STANDBY_PROFILE,
+            standby_profile,
             battery_operating_mode=_pick_battery_operating_mode_code(
                 maps["BatteryOperatingMode"],
                 prefer="standby",
@@ -418,7 +555,7 @@ def _run_settings_phase(
     # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership): do
     # not restore NIGHT_SOC_CONTROL_MODE/manual/profile-plan conditions here.
     # At 23:00 the sequence is one unconditional standby candidate=5 write
-    # while preserving the twelve KP-NET-required SOC/window form fields.  A
+    # while preserving every other writable KP-NET form field. A
     # condition can skip that write and leave the physical battery green or
     # forced overnight.  Guarded by test_slot23_is_unconditional_standby_without_cross_slot_dependencies
     # and test_night_soc_protected_contract.py::test_slot23_form_contract.
@@ -490,32 +627,92 @@ def run_kpnet_workflow() -> int:
 def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | None = None) -> int:
     operation_start = time.monotonic()
     requested_end = operation_start + MODE_OPERATION_START_BUDGET_SECONDS
-    operation_end = min(deadline_monotonic, requested_end) if deadline_monotonic is not None else requested_end
-    if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
-        raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
+    if deadline_monotonic is None:
+        # The requested end is our own deadline.  Re-subtracting the two
+        # floats can round the 300-second window below its exact budget.
+        operation_end = requested_end
+    else:
+        operation_end = min(deadline_monotonic, requested_end)
+        if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
+            raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
     io_deadline = operation_end - MODE_OPERATION_RELEASE_RESERVE_SECONDS
     load_dotenv_if_present(); _setup_logging(); cfg = KpNetConfig.from_env(); client = KpNetClient(cfg, deadline_monotonic=io_deadline)
     run_dir = cfg.artifacts_dir / datetime.now().strftime("%Y%m%d-%H%M%S"); run_dir.mkdir(parents=True, exist_ok=True)
     summary: dict[str, Any] = {"setting_results": [], "night_soc": {"writer": f"mode-only:{profile}"}}
     try:
         if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
-        client.login(); client.open_settings_page(); current = client.read_current_settings(); maps = client.collect_candidate_maps()
+        client.login(); client.open_settings_page(); current = client.read_current_settings()
+        if profile in {"standby", "forced"}:
+            maps = _minimal_mode_only_candidate_maps(client)
+        elif profile == "economy":
+            maps = _minimal_mode_only_candidate_maps(client, include_soc_economy=True)
+        else:
+            # Legacy green mode is not part of the scheduled 23/03/07 minimal-write
+            # contract and still uses its existing full-profile candidate behavior.
+            maps = client.collect_candidate_maps()
         if profile == "standby":
-            selected = _preserve_night_soc_fields(replace(STANDBY_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="standby")), current)
-        elif profile == "green":
-            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
-        elif profile == "forced":
-            selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
-            forced_mode_code = _pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="forced")
-            forced_soc_code = _pick_max_code(maps["SocChargeMode"])
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="standby-mode-only",
+            )
             selected = replace(
                 selected,
-                battery_operating_mode=forced_mode_code,
-                soc_charge_mode=forced_soc_code,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="standby"
+                ),
+            )
+        elif profile == "green":
+            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
+        elif profile == "economy":
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="07-economy-mode-only",
+            )
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="economy"
+                ),
+                soc_economy_mode=_pick_min_code(maps["SocEconomyMode"]),
+            )
+        elif profile == "forced":
+            selected = _mode_only_profile_from_current_settings(current, name="03-forced-mode-only")
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="forced"
+                ),
             )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
-        _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
+        required_readback_fields = (
+            ("batteryOperatingMode", "socEconomyMode")
+            if profile == "economy"
+            else None
+        )
+        candidate_maps_fetched = (
+            ("BatteryOperatingMode", "SocEconomyMode")
+            if profile == "economy"
+            else ("BatteryOperatingMode",)
+            if profile in {"standby", "forced"}
+            else None
+        )
+        _apply_settings_profile(
+            client=client,
+            cfg=cfg,
+            run_dir=run_dir,
+            summary=summary,
+            current=current,
+            value_maps=maps,
+            profile=selected,
+            required_readback_fields=required_readback_fields,
+            candidate_maps_fetched=candidate_maps_fetched,
+        )
         return 0
+    except KpNetUnknownWriteTerminal:
+        # The Cloud Run entrypoint promotes this to a BaseException sentinel.
+        # Do not turn an ambiguous write into success here: a 03 caller would
+        # otherwise continue to its fail-safe standby SET.
+        raise
     except Exception:
         LOGGER.exception("KP-NET mode-only workflow failed"); return 1
     finally:

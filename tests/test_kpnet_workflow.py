@@ -42,7 +42,7 @@ def test_real_kpnet_mode_candidates_map_standby_to_five_not_economy_zero() -> No
     assert _pick_battery_operating_mode_code(candidates, prefer="standby") == "5"
 
 
-def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candidate() -> None:
+def test_slot23_preserves_all_non_mode_fields_and_replaces_only_operating_mode() -> None:
     current = {
         "batteryOperatingMode": "1",
         "socSafetyMode": "11",
@@ -57,6 +57,9 @@ def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candi
         "dischargeStartTimeM": "20",
         "dischargeEndTimeH": "21",
         "dischargeEndTimeM": "22",
+        "agreementAmpere": "23",
+        "onPowerOutageMode": "24",
+        "onPowerOutageChargePowerW": "25",
     }
     standby = CanonicalProfileOverrides(
         **{**CanonicalForcedChargeProfile.__dict__, "name": "standby", "battery_operating_mode": "5"}
@@ -65,12 +68,21 @@ def test_slot23_preserves_soc_windows_but_replaces_green_mode_with_standby_candi
     preserved = _preserve_night_soc_fields(standby, current)
 
     assert preserved.battery_operating_mode == "5"
-    assert [
-        preserved.soc_safety_mode, preserved.soc_economy_mode, preserved.soc_contact_input,
-        preserved.soc_charge_mode, preserved.charge_start_h, preserved.charge_start_m,
-        preserved.charge_end_h, preserved.charge_end_m, preserved.discharge_start_h,
-        preserved.discharge_start_m, preserved.discharge_end_h, preserved.discharge_end_m,
-    ] == [str(value) for key, value in current.items() if key != "batteryOperatingMode"]
+    assert preserved.soc_safety_mode == current["socSafetyMode"]
+    assert preserved.soc_economy_mode == current["socEconomyMode"]
+    assert preserved.soc_contact_input == current["socContactInput"]
+    assert preserved.soc_charge_mode == current["socChargeMode"]
+    assert preserved.charge_start_h == current["chargeStartTimeH"]
+    assert preserved.charge_start_m == current["chargeStartTimeM"]
+    assert preserved.charge_end_h == current["chargeEndTimeH"]
+    assert preserved.charge_end_m == current["chargeEndTimeM"]
+    assert preserved.discharge_start_h == current["dischargeStartTimeH"]
+    assert preserved.discharge_start_m == current["dischargeStartTimeM"]
+    assert preserved.discharge_end_h == current["dischargeEndTimeH"]
+    assert preserved.discharge_end_m == current["dischargeEndTimeM"]
+    assert preserved.agreement_ampere == current["agreementAmpere"]
+    assert preserved.on_power_outage_mode == current["onPowerOutageMode"]
+    assert preserved.on_power_outage_charge_power_w == current["onPowerOutageChargePowerW"]
 
 
 def test_workflow_reexports_canonical_night_charge_plan_contract() -> None:
@@ -469,6 +481,92 @@ def test_readback_mismatch_records_requested_and_observed_controlled_values(
     for secret_name in ("_csrf", "loginid", "loginpassword", "password", "secret", "token", "authorization"):
         assert secret_name not in str(exc_info.value).lower()
         assert secret_name not in str(summary["setting_results"][0]).lower()
+
+
+def test_mode_only_unknown_write_stops_without_a_second_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeClient:
+        instances: list["FakeClient"] = []
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+        operation_id = "operation"
+
+        def __init__(self, _cfg: KpNetConfig, *, deadline_monotonic: float | None = None) -> None:
+            self.instance_number = len(self.instances)
+            self.instances.append(self)
+            self.deadline_monotonic = deadline_monotonic
+            self.write_calls = 0
+            self.confirm_calls = 0
+            self.logout_calls = 0
+            self.login_calls = 0
+            self.close_calls = 0
+            self.read_calls = 0
+
+        def login(self) -> None:
+            self.login_calls += 1
+
+        def logout(self) -> None:
+            self.logout_calls += 1
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+        def open_settings_page(self) -> None:
+            return None
+
+        def read_current_settings(self) -> dict[str, str]:
+            self.read_calls += 1
+            if self.instance_number == 0 and self.read_calls == 2:
+                raise RuntimeError("same-session readback failed")
+            if self.instance_number > 0:
+                return {"batteryOperatingMode": "1"}
+            return {"batteryOperatingMode": "1"}
+
+        def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
+            return {"BatteryOperatingMode": {"1": "green", "3": "forced"}}
+
+        def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            self.confirm_calls += 1
+            return True, "confirmed", "", "<html>confirmed</html>"
+
+        def write_setting(self, _confirm_html: str) -> dict[str, object]:
+            self.write_calls += 1
+            raise kpnet_workflow.KpNetUnknownWriteError("completion poll timed out")
+
+    cfg = KpNetConfig(
+        **{**_build_cfg(plan_path=tmp_path / "plan.json").__dict__, "dry_run": False, "artifacts_dir": tmp_path}
+    )
+    monkeypatch.setattr(kpnet_workflow.KpNetConfig, "from_env", staticmethod(lambda: cfg))
+    monkeypatch.setattr(kpnet_workflow, "KpNetClient", FakeClient)
+    monkeypatch.setattr(
+        kpnet_workflow,
+        "_build_payload",
+        lambda **_kwargs: ({"batteryOperatingMode": "3"}, ["batteryOperatingMode"]),
+    )
+    captured: dict[str, object] = {}
+    original_apply = kpnet_workflow._apply_settings_profile
+
+    def apply_with_capture(**kwargs: object) -> dict[str, object]:
+        captured["summary"] = kwargs["summary"]
+        return original_apply(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(kpnet_workflow, "_apply_settings_profile", apply_with_capture)
+
+    with pytest.raises(kpnet_workflow.KpNetUnknownWriteTerminal):
+        kpnet_workflow.run_kpnet_mode_only_profile(profile="green")
+    initial_client, fresh_client = FakeClient.instances
+    assert initial_client.confirm_calls == 1
+    assert initial_client.write_calls == 1
+    assert initial_client.logout_calls == 1
+    assert initial_client.login_calls == 1
+    assert fresh_client.login_calls == 1
+    assert fresh_client.close_calls == 1
+    assert sum(instance.write_calls for instance in FakeClient.instances) == 1
+    summary = captured["summary"]
+    assert isinstance(summary, dict)
+    assert summary["setting_results"][0]["status"] == "unknown"
 
 
 def test_run_settings_phase_raises_after_confirm_failed(tmp_path: Path) -> None:

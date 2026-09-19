@@ -44,6 +44,25 @@ def _emit_03_soc_read_attempt(*, attempt: int, max_attempts: int, outcome: str, 
         pass
 
 
+def _retry_sleep_seconds(
+    *,
+    configured_delay_seconds: float,
+    remaining_budget_seconds: float,
+    remaining_attempts: int,
+) -> float:
+    """Bound retry sleep so one delay cannot consume the whole SOC read budget.
+
+    The historical default delay is 300 seconds while one realtime-SOC operation is
+    intentionally bounded to 60 seconds. Sleeping the whole remaining budget after
+    attempt 1 therefore reduced a nominal three-attempt policy to one useful attempt.
+    Reserve an equal share of the remaining budget for every remaining attempt.
+    """
+    if configured_delay_seconds <= 0 or remaining_budget_seconds <= 0 or remaining_attempts <= 0:
+        return 0.0
+    fair_share = remaining_budget_seconds / float(remaining_attempts + 1)
+    return max(0.0, min(configured_delay_seconds, fair_share))
+
+
 def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:
     latest_dt: datetime | None = None
     latest_soc: float | None = None
@@ -75,6 +94,7 @@ def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetim
 
 def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
     from app.kpnet.client import KpNetClient
+    from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
     from app.kpnet.workflow import KpNetConfig
 
     operation_start = time.monotonic()
@@ -84,7 +104,33 @@ def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> f
     client = KpNetClient(KpNetConfig.from_env(), deadline_monotonic=operation_deadline)
     client.login()
     try:
-        return client.read_realtime_soc_percent()
+        value = client.read_realtime_soc_percent()
+        if value is not None:
+            return value
+
+        # The normal parser intentionally remains the first path.  If KP-NET keeps
+        # the semantic labels but changes presentation-only CSS/icon markup, make one
+        # additional read-only request and parse only a clearly identified battery/SOC
+        # table.  This never opens the settings page and never crosses a mutation boundary.
+        response = client._get(
+            "remotevisualization/simplevisualization/enduser",
+            stage="realtime-soc-semantic-fallback",
+        )
+        fallback_value = extract_realtime_soc_percent_resilient(response.text)
+        try:
+            print(
+                json.dumps(
+                    {
+                        "message": "03-soc-parser-fallback",
+                        "result": "numeric" if fallback_value is not None else "no_value",
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+        except Exception:
+            pass
+        return fallback_value
     finally:
         try:
             client.logout()
@@ -104,8 +150,8 @@ def read_soc_with_fallback(
     allow_realtime: bool = True,
     allow_csv_fallback: bool = True,
 ) -> SocReading:
-    attempts = env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3)
-    delay_seconds = env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 300.0)
+    attempts = max(1, env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3))
+    delay_seconds = max(0.0, env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 300.0))
     errors: list[str] = []
     operation_start = time.monotonic()
     operation_deadline = deadline_monotonic if deadline_monotonic is not None else operation_start + SOC_OPERATION_MAX_SECONDS
@@ -127,9 +173,13 @@ def read_soc_with_fallback(
             except Exception as exc:
                 errors.append(str(exc))
                 outcome = "error"
-            sleep_seconds = 0.0
-            if attempt < attempts and delay_seconds > 0:
-                sleep_seconds = min(delay_seconds, max(0.0, operation_deadline - time.monotonic()))
+            remaining_attempts = attempts - attempt
+            remaining_budget = max(0.0, operation_deadline - time.monotonic())
+            sleep_seconds = _retry_sleep_seconds(
+                configured_delay_seconds=delay_seconds,
+                remaining_budget_seconds=remaining_budget,
+                remaining_attempts=remaining_attempts,
+            )
             _emit_03_soc_read_attempt(
                 attempt=attempt,
                 max_attempts=attempts,

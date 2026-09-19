@@ -134,10 +134,11 @@ def test_soc_retry_sleep_is_clamped_to_monitor_deadline(monkeypatch: pytest.Monk
         deadline_monotonic=1.0,
     )
 
-    assert calls == ["realtime"]
-    assert clock.sleeps == [1.0]
+    assert calls == ["realtime", "realtime", "realtime"]
+    assert len(clock.sleeps) == 2
+    assert sum(clock.sleeps) < 1.0
     assert result.source == "unavailable"
-    assert "SOC deadline expired" in (result.error or "")
+    assert "offline" in (result.error or "")
 
 
 def test_soc_default_retries_wait_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:

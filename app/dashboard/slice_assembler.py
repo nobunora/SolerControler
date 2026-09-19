@@ -62,6 +62,22 @@ def merge_latest_plan_into_schedule(schedule: dict[str, Any], plan: dict[str, An
     return merged
 
 
+def _unique_forecast_value(
+    rows: list[dict[str, Any]],
+    field: str,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+) -> float | None:
+    values: set[float] = set()
+    for row in rows:
+        value = to_float(row.get(field))
+        if value is None or value < minimum or (maximum is not None and value > maximum):
+            continue
+        values.add(value)
+    return next(iter(values)) if len(values) == 1 else None
+
+
 def merge_forecast_metadata_into_schedule(
     schedule: dict[str, Any],
     forecast_hourly: list[dict[str, Any]],
@@ -77,25 +93,84 @@ def merge_forecast_metadata_into_schedule(
     merged = dict(schedule)
     matching = [row for row in forecast_hourly if str(row.get("date") or "") == plan_date]
 
-    def unique_value(field: str, *, minimum: float, maximum: float | None = None) -> float | None:
-        values: set[float] = set()
-        for row in matching:
-            value = to_float(row.get(field))
-            if value is None or value < minimum or (maximum is not None and value > maximum):
-                continue
-            values.add(value)
-        return next(iter(values)) if len(values) == 1 else None
-
     if to_float(merged.get("planned_target_soc_percent")) is None:
-        target_soc = unique_value("forecast_target_soc_percent", minimum=0.0, maximum=100.0)
+        target_soc = _unique_forecast_value(
+            matching,
+            "forecast_target_soc_percent",
+            minimum=0.0,
+            maximum=100.0,
+        )
         if target_soc is not None:
             merged["planned_target_soc_percent"] = target_soc
             merged["planned_target_soc_source"] = "forecast_plans"
     if to_float(merged.get("planned_night_charge_kwh")) is None:
-        night_charge = unique_value("forecast_night_charge_kwh", minimum=0.0)
+        night_charge = _unique_forecast_value(
+            matching,
+            "forecast_night_charge_kwh",
+            minimum=0.0,
+        )
         if night_charge is not None:
             merged["planned_night_charge_kwh"] = night_charge
     return merged
+
+
+def merge_forecast_history_into_battery_daily(
+    battery_daily: list[dict[str, Any]],
+    forecast_hourly: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover configured-SOC chart history from same-vintage forecast-plan evidence.
+
+    ``history_reconstruction`` attaches forecast-plan metadata only when it can prove the
+    forecast vintage. Reconstructed forecasts intentionally carry no plan SOC metadata.
+    This function therefore fills only missing dashboard fields, never overwrites stronger
+    applied/control evidence, and never invents a target from actual SOC.
+    """
+    merged_by_date = {
+        str(row.get("date")): dict(row)
+        for row in battery_daily
+        if str(row.get("date") or "").strip()
+    }
+    forecast_by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in forecast_hourly:
+        day = str(row.get("date") or "").strip()
+        if not day:
+            continue
+        forecast_by_date.setdefault(day, []).append(row)
+
+    for day, rows in forecast_by_date.items():
+        # Defensive fail-closed guard: historical reconstruction must never fabricate
+        # plan SOC.  If a reconstructed row somehow gains metadata, ignore that day.
+        if any(
+            bool(row.get("is_reconstructed"))
+            or str(row.get("source") or "") == "historical_reconstructed_estimate"
+            for row in rows
+        ):
+            continue
+        target_soc = _unique_forecast_value(
+            rows,
+            "forecast_target_soc_percent",
+            minimum=0.0,
+            maximum=100.0,
+        )
+        night_charge = _unique_forecast_value(
+            rows,
+            "forecast_night_charge_kwh",
+            minimum=0.0,
+        )
+        if target_soc is None and night_charge is None:
+            continue
+        target = merged_by_date.setdefault(day, {"date": day})
+        recovered = False
+        if target.get("setting_soc_target_percent") is None and target_soc is not None:
+            target["setting_soc_target_percent"] = target_soc
+            recovered = True
+        if target.get("night_charge_kwh") is None and night_charge is not None:
+            target["night_charge_kwh"] = night_charge
+            recovered = True
+        if recovered and not target.get("plan_display_source"):
+            target["plan_display_source"] = "forecast_plans"
+
+    return [merged_by_date[day] for day in sorted(merged_by_date)]
 
 
 def merge_display_plan_into_battery_daily(
@@ -145,8 +220,15 @@ def dashboard_meta(*, window_days: int, global_oldest_date: str | None, global_n
 
 
 def build_dashboard_slice(raw: DashboardRawData, *, end_date_iso: str, window_days: int, pv_forecast_diagnostics: dict[str, Any] | None = None, daily_review: dict[str, Any] | None = None, daily_reviews: list[dict[str, Any]] | None = None, today_jst_iso: str | None = None) -> DashboardSlice:
+    # Restore same-vintage forecast-plan display metadata for every historical day,
+    # not just the current end date. This keeps the configured-SOC line continuous
+    # whenever trustworthy plan evidence exists.
+    battery_daily = merge_forecast_history_into_battery_daily(
+        raw.battery_daily,
+        raw.forecast_hourly,
+    )
     latest_schedule = merge_forecast_metadata_into_schedule(raw.latest_schedule, raw.forecast_hourly, plan_date=end_date_iso)
-    battery_daily = merge_display_plan_into_battery_daily(raw.battery_daily, latest_schedule)
+    battery_daily = merge_display_plan_into_battery_daily(battery_daily, latest_schedule)
     if latest_schedule != raw.latest_schedule or battery_daily != raw.battery_daily:
         raw = replace(raw, latest_schedule=latest_schedule, battery_daily=battery_daily)
     meta = dashboard_meta(window_days=window_days, global_oldest_date=raw.global_oldest, global_newest_date=raw.global_newest, pv_daily=raw.pv_daily, cost_daily=raw.cost_daily, battery_daily=raw.battery_daily, energy_daily=raw.energy_daily, forecast_hourly=raw.forecast_hourly, battery_flow_daily=raw.battery_flow_daily)
