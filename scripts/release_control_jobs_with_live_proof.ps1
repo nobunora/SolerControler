@@ -35,6 +35,7 @@ $state = [ordered]@{
     started_at = (Get-Date).ToUniversalTime().ToString('o')
     completed_at = $null
     status = 'running'
+    production_image_release_completed = $false
     stages = [ordered]@{}
 }
 
@@ -93,6 +94,8 @@ try {
         if ($AllowOutOfWindowLiveProbe) { $releaseArgs.AllowOutOfWindowLiveProbe = $true }
         & (Join-Path $PSScriptRoot 'deploy_control_jobs_image_only.ps1') @releaseArgs
     }
+    $state.production_image_release_completed = $true
+    Save-State
 
     Invoke-ReleaseStage -Name 'slot_07_dry_run' -Action {
         & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot 07 -DryRun
