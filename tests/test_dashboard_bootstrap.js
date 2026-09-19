@@ -124,7 +124,7 @@ for (const filename of [
   vm.runInContext(source, context, { filename });
 }
 
-setImmediate(() => {
+setImmediate(async () => {
   assert.ok(context.DashboardCalculations);
   assert.ok(context.DashboardDates);
   assert.ok(context.DashboardApi);
@@ -169,6 +169,36 @@ setImmediate(() => {
   assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize }, { min: 0, max: 15, step: 3 });
   assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 100, step: 20 });
   assert.equal(batteryChart.options.scales.y.ticks.count, batteryChart.options.scales.y2.ticks.count);
+
+  await elements.get("periodYearBtn").listeners.click();
+  const assertAxisHasPadding = (chart, axisName, datasetIndexes) => {
+    const values = datasetIndexes
+      .flatMap((index) => chart.data.datasets[index].data)
+      .filter((value) => value != null)
+      .map(Number)
+      .filter(Number.isFinite);
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const axis = chart.options.scales[axisName];
+    assert.ok(axis.min < dataMin, `${axisName} lower bound should include padding`);
+    assert.ok(axis.max > dataMax, `${axisName} upper bound should include padding`);
+    if (dataMin !== dataMax) {
+      const padding = (dataMax - dataMin) * 0.15;
+      assert.ok(axis.min <= dataMin - padding, `${axisName} lower 15% padding`);
+      assert.ok(axis.max >= dataMax + padding, `${axisName} upper 15% padding`);
+    }
+  };
+  assertAxisHasPadding(pvChart, "y", [0, 1, 2]);
+  assertAxisHasPadding(loadChart, "y", [0, 1, 2]);
+  assertAxisHasPadding(dailyKwhChart, "y", [0]);
+  assertAxisHasPadding(dailyKwhChart, "y2", [1]);
+  assertAxisHasPadding(dailyYenChart, "y", [0]);
+  assertAxisHasPadding(dailyYenChart, "y2", [1]);
+  assertAxisHasPadding(monthlyChart, "y", [0]);
+  assertAxisHasPadding(monthlyChart, "y2", [1]);
+  assertAxisHasPadding(batteryChart, "y", [1]);
+  assertAxisHasPadding(batteryChart, "y2", [0, 2]);
+
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
