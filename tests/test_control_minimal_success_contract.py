@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -70,6 +71,136 @@ def test_apply_settings_profile_verifies_only_fields_changed_by_this_operation(
     assert setting_result["readback_fields"] == ["batteryOperatingMode", "socChargeMode"]
     assert setting_result["readback_match"] is True
     assert setting_result["readback_mismatch_fields"] == []
+
+
+def test_scheduled_07_can_require_both_final_values_and_emits_structured_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "batteryOperatingMode": "0",
+        "socEconomyMode": "0",
+        "chargeStartTimeH": "23",
+    }
+    monkeypatch.setattr(
+        workflow,
+        "_build_payload",
+        lambda **_kwargs: (payload, ["batteryOperatingMode"]),
+    )
+
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+        deadline_monotonic = None
+        operation_id = "operation-07"
+
+        def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            return True, "ok", "", "<form></form>"
+
+        def write_setting(self, _confirm_html: str) -> dict[str, Any]:
+            return {"changed": True}
+
+        def read_current_settings(self) -> dict[str, Any]:
+            return {
+                "batteryOperatingMode": "0",
+                "socEconomyMode": "0",
+                "chargeStartTimeH": "23",
+            }
+
+    summary: dict[str, Any] = {"setting_results": [], "night_soc": {}}
+    result = workflow._apply_settings_profile(
+        client=FakeClient(),
+        cfg=SimpleNamespace(dry_run=False),
+        run_dir=tmp_path,
+        summary=summary,
+        current={
+            "batteryOperatingMode": "5",
+            "socEconomyMode": "0",
+            "chargeStartTimeH": "23",
+        },
+        value_maps={},
+        profile=SimpleNamespace(name="07-economy-mode-only"),
+        required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
+        candidate_maps_fetched=("BatteryOperatingMode", "SocEconomyMode"),
+    )
+
+    assert result["batteryOperatingMode"] == "0"
+    setting_result = summary["setting_results"][0]
+    assert setting_result["changed_fields"] == ["batteryOperatingMode"]
+    assert setting_result["readback_fields"] == ["batteryOperatingMode", "socEconomyMode"]
+    assert setting_result["requested"] == {
+        "batteryOperatingMode": "0",
+        "socEconomyMode": "0",
+    }
+    assert setting_result["observed"] == {
+        "batteryOperatingMode": "0",
+        "socEconomyMode": "0",
+    }
+    assert setting_result["candidate_maps_fetched"] == [
+        "BatteryOperatingMode",
+        "SocEconomyMode",
+    ]
+
+    records = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{")
+    ]
+    audit = next(record for record in records if record.get("message") == "kpnet-settings-readback")
+    assert audit["operation_id"] == "operation-07"
+    assert audit["readback_fields"] == ["batteryOperatingMode", "socEconomyMode"]
+    assert audit["requested"]["socEconomyMode"] == "0"
+    assert audit["observed"]["socEconomyMode"] == "0"
+
+
+def test_scheduled_07_required_soc_economy_readback_mismatch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = {
+        "batteryOperatingMode": "0",
+        "socEconomyMode": "0",
+    }
+    monkeypatch.setattr(
+        workflow,
+        "_build_payload",
+        lambda **_kwargs: (payload, ["batteryOperatingMode"]),
+    )
+
+    class FakeClient:
+        csrf_setting = "csrf"
+        pcsid = "pcsid"
+        deadline_monotonic = None
+        operation_id = "operation-07-mismatch"
+
+        def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
+            return True, "ok", "", "<form></form>"
+
+        def write_setting(self, _confirm_html: str) -> dict[str, Any]:
+            return {"changed": True}
+
+        def read_current_settings(self) -> dict[str, Any]:
+            return {
+                "batteryOperatingMode": "0",
+                "socEconomyMode": "10",
+            }
+
+    with pytest.raises(RuntimeError, match="socEconomyMode"):
+        workflow._apply_settings_profile(
+            client=FakeClient(),
+            cfg=SimpleNamespace(dry_run=False),
+            run_dir=tmp_path,
+            summary={"setting_results": [], "night_soc": {}},
+            current={
+                "batteryOperatingMode": "5",
+                "socEconomyMode": "0",
+            },
+            value_maps={},
+            profile=SimpleNamespace(name="07-economy-mode-only"),
+            required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
+            candidate_maps_fetched=("BatteryOperatingMode", "SocEconomyMode"),
+        )
 
 
 def test_minimal_03_candidate_maps_fetch_only_required_candidates() -> None:
