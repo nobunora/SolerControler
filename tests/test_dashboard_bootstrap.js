@@ -201,14 +201,38 @@ setImmediate(async () => {
   assertAxisHasPadding(batteryChart, "y2", [0, 2]);
 
   await elements.get("periodAllBtn").listeners.click();
-  assert.equal(pvChart.options.scales.y.max, 30);
-  assert.equal(loadChart.options.scales.y.max, 100);
-  assert.equal(dailyKwhChart.options.scales.y.max, 30);
-  assert.equal(dailyYenChart.options.scales.y.max, 1500);
-  assert.equal(monthlyChart.options.scales.y.max, 800);
-  assert.equal(monthlyChart.options.scales.y2.max, 40000);
-  assert.equal(batteryChart.options.scales.y.max, 15);
-  assert.equal(batteryChart.options.scales.y2.max, 100);
+  assert.deepEqual(
+    { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 30, step: 6 },
+  );
+  assert.deepEqual(
+    { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
+    { min: -20, max: 100, step: 20 },
+  );
+  assert.deepEqual(
+    { min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max, step: dailyKwhChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 30, step: 5 },
+  );
+  assert.deepEqual(
+    { min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max, step: dailyYenChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 1500, step: 250 },
+  );
+  assert.deepEqual(
+    { min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max, step: monthlyChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 800, step: 200 },
+  );
+  assert.deepEqual(
+    { min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max, step: monthlyChart.options.scales.y2.ticks.stepSize },
+    { min: 0, max: 40000, step: 10000 },
+  );
+  assert.deepEqual(
+    { min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 15, step: 3 },
+  );
+  assert.deepEqual(
+    { min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize },
+    { min: 0, max: 100, step: 20 },
+  );
 
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
