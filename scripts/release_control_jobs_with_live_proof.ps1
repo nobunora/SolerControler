@@ -106,9 +106,13 @@ try {
     Save-State
     Write-Host "Control live-proof release completed. State: $StatePath"
 } catch {
-    $state.status = 'failed'
+    $state.status = if ($state.production_image_release_completed) {
+        'deployed_postcheck_failed'
+    } else {
+        'failed_before_release'
+    }
     $state.completed_at = (Get-Date).ToUniversalTime().ToString('o')
     Save-State
-    Write-Error "Control live-proof release failed. State: $StatePath"
+    Write-Error "Control live-proof release failed with status=$($state.status). State: $StatePath"
     exit 1
 }
