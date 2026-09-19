@@ -102,6 +102,8 @@ def _apply_settings_profile(
     current: dict[str, Any],
     value_maps: dict[str, dict[str, str]],
     profile: ProfileOverrides,
+    required_readback_fields: tuple[str, ...] | None = None,
+    candidate_maps_fetched: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     payload, changed_fields = _build_payload(
         csrf_setting=client.csrf_setting,
@@ -120,13 +122,46 @@ def _apply_settings_profile(
     payload = dict(intent.desired_values)
     changed_fields = [change.field for change in intent.expected_changes]
     if not intent.has_changes:
-        summary["setting_results"].append(
-            {
-                "profile": profile.name,
-                "changed_fields": [],
-                "status": "skipped-no-change",
-                "readback_mismatch_values": {},
-            }
+        readback_fields = required_readback_fields or ()
+        requested_values = {
+            field: str(payload.get(field, ""))
+            for field in readback_fields
+        }
+        observed_values = {
+            field: str(current.get(field, ""))
+            for field in readback_fields
+        }
+        setting_result = {
+            "profile": profile.name,
+            "changed_fields": [],
+            "status": "skipped-no-change",
+            "readback_fields": list(readback_fields),
+            "readback_match": all(
+                requested_values[field] == observed_values[field]
+                for field in readback_fields
+            ),
+            "readback_mismatch_fields": [
+                field
+                for field in readback_fields
+                if requested_values[field] != observed_values[field]
+            ],
+            "readback_mismatch_values": {},
+            "requested": requested_values,
+            "observed": observed_values,
+            "candidate_maps_fetched": list(candidate_maps_fetched or ()),
+        }
+        summary["setting_results"].append(setting_result)
+        print(
+            json.dumps(
+                {
+                    "message": "kpnet-settings-readback",
+                    "operation_id": getattr(client, "operation_id", None),
+                    "slot": os.getenv("CLOUD_JOB_SLOT", "") or None,
+                    **setting_result,
+                },
+                separators=(",", ":"),
+            ),
+            flush=True,
         )
         return current
 
@@ -183,19 +218,30 @@ def _apply_settings_profile(
     readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
-    # Control success is defined by the fields this operation actually changed.
+    # Control success normally follows the fields this operation actually changed.
+    # A scheduled owner may strengthen that contract for fields whose final value
+    # must be proven even when the requested value was already present. 07:00 uses
+    # this for BatteryOperatingMode + SocEconomyMode=0% without expanding the SET.
     # Unrelated form values may legitimately drift or be normalized by KP-NET and
     # must not turn a proven SET/read-back into a false failure.
-    readback_fields = tuple(changed_fields)
+    readback_fields = required_readback_fields or tuple(changed_fields)
     readback_ok, mismatches = compare_setting_readback(
         payload,
         readback,
         readback_fields,
     )
+    requested_values = {
+        field: str(payload.get(field, ""))
+        for field in readback_fields
+    }
+    observed_values = {
+        field: str(readback.get(field, ""))
+        for field in readback_fields
+    }
     readback_mismatch_values = {
         field: {
-            "requested": str(payload.get(field, "")),
-            "observed": str(readback.get(field, "")),
+            "requested": requested_values[field],
+            "observed": observed_values[field],
         }
         for field in mismatches
     }
@@ -208,22 +254,36 @@ def _apply_settings_profile(
             ),
             flush=True,
         )
-    summary["setting_results"].append(
-        {
-            "profile": profile.name,
-            "changed_fields": changed_fields,
-            "status": "applied" if reconciliation is None else reconciliation.lower(),
-            "write_result": write_result,
-            "readback_fields": list(readback_fields),
-            "readback_match": readback_ok,
-            "readback_mismatch_fields": list(mismatches),
-            "readback_mismatch_values": readback_mismatch_values,
-            "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
-            "plan_id": summary.get("night_soc", {}).get("plan_id")
-            if isinstance(summary.get("night_soc"), dict)
-            else None,
-            "confirm_path": str(confirm_path),
-        }
+    setting_result = {
+        "profile": profile.name,
+        "changed_fields": changed_fields,
+        "status": "applied" if reconciliation is None else reconciliation.lower(),
+        "write_result": write_result,
+        "readback_fields": list(readback_fields),
+        "readback_match": readback_ok,
+        "readback_mismatch_fields": list(mismatches),
+        "readback_mismatch_values": readback_mismatch_values,
+        "requested": requested_values,
+        "observed": observed_values,
+        "candidate_maps_fetched": list(candidate_maps_fetched or ()),
+        "writer": os.getenv("NIGHT_SOC_WRITER", "unknown"),
+        "plan_id": summary.get("night_soc", {}).get("plan_id")
+        if isinstance(summary.get("night_soc"), dict)
+        else None,
+        "confirm_path": str(confirm_path),
+    }
+    summary["setting_results"].append(setting_result)
+    print(
+        json.dumps(
+            {
+                "message": "kpnet-settings-readback",
+                "operation_id": getattr(client, "operation_id", None),
+                "slot": os.getenv("CLOUD_JOB_SLOT", "") or None,
+                **setting_result,
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
     )
     if reconciliation == "UNKNOWN":
         raise KpNetUnknownWriteTerminal("KP-NET write remains unknown after read-only reconciliation")
@@ -624,7 +684,29 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
                 ),
             )
         else: raise ValueError(f"unknown mode-only profile: {profile}")
-        _apply_settings_profile(client=client, cfg=cfg, run_dir=run_dir, summary=summary, current=current, value_maps=maps, profile=selected)
+        required_readback_fields = (
+            ("batteryOperatingMode", "socEconomyMode")
+            if profile == "economy"
+            else None
+        )
+        candidate_maps_fetched = (
+            ("BatteryOperatingMode", "SocEconomyMode")
+            if profile == "economy"
+            else ("BatteryOperatingMode",)
+            if profile in {"standby", "forced"}
+            else None
+        )
+        _apply_settings_profile(
+            client=client,
+            cfg=cfg,
+            run_dir=run_dir,
+            summary=summary,
+            current=current,
+            value_maps=maps,
+            profile=selected,
+            required_readback_fields=required_readback_fields,
+            candidate_maps_fetched=candidate_maps_fetched,
+        )
         return 0
     except KpNetUnknownWriteTerminal:
         # The Cloud Run entrypoint promotes this to a BaseException sentinel.
