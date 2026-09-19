@@ -82,12 +82,14 @@
         ? minMaxBounds(leftValues, {
             intervals,
             minZero: options.minZero === true || options.leftMinZero === true,
+            paddingRatio: options.paddingRatio,
           })
         : fixedBounds(n(options.leftMax));
       const rightBounds = options.rightMax == null
         ? minMaxBounds(rightValues, {
             intervals,
             minZero: options.minZero === true || options.rightMinZero === true,
+            paddingRatio: options.paddingRatio,
           })
         : fixedBounds(n(options.rightMax));
       return {
@@ -940,19 +942,23 @@
       return n(actual) - n(forecast);
     }
 
-    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit, axisMax) {
+    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit, options = {}) {
       chart.data.labels = labels;
       chart.data.datasets[0].data = forecast;
       chart.data.datasets[1].data = actual;
       chart.data.datasets[2].data = diff;
       const values = [...forecast, ...actual, ...diff].filter((v) => v != null);
-      const bounds = minMaxBounds(values);
-      const stepSize = cleanAxisNumber(axisMax / bounds.intervals);
+      const bounds = minMaxBounds(values, { paddingRatio: options.paddingRatio });
+      const axisMax = options.axisMax;
+      const stepSize = axisMax == null
+        ? bounds.stepSize
+        : cleanAxisNumber(axisMax / bounds.intervals);
       const roundedMin = Math.floor(bounds.min / stepSize) * stepSize;
-      const axisMin = roundedMin < 0 ? roundedMin : 0;
-      const tickCount = Math.round((axisMax - axisMin) / stepSize) + 1;
+      const axisMin = axisMax == null ? bounds.min : (roundedMin < 0 ? roundedMin : 0);
+      const chartMax = axisMax == null ? bounds.max : axisMax;
+      const tickCount = Math.round((chartMax - axisMin) / stepSize) + 1;
       chart.options.scales.y.min = axisMin;
-      chart.options.scales.y.max = axisMax;
+      chart.options.scales.y.max = chartMax;
       chart.options.scales.y.grid = {
         color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
         lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
@@ -1250,12 +1256,21 @@
       const pvForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_pv_kwh"));
       const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
-      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh", 30);
+      const dynamicWeeklyAxis = isWeekly ? { paddingRatio: 0.15 } : { axisMax: 30 };
+      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh", dynamicWeeklyAxis);
 
       const loadForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_load_kwh"));
       const loadActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_load_kwh"));
       const loadDiff = labels.map((_d, i) => diffOrNull(loadActual[i], loadForecast[i]));
-      updateForecastActualChart(charts.load, labels, loadForecast, loadActual, loadDiff, "kWh", 100);
+      updateForecastActualChart(
+        charts.load,
+        labels,
+        loadForecast,
+        loadActual,
+        loadDiff,
+        "kWh",
+        isWeekly ? { paddingRatio: 0.15 } : { axisMax: 100 },
+      );
 
       const dailySelf = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "self_consumption_kwh")));
       const dailyYen = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "savings_yen")));
@@ -1280,9 +1295,10 @@
       const dailyKwhDual = dualScales(dailySelf, cumKwh, {
         leftUnit: "kWh",
         rightUnit: "kWh",
-        leftMax: isWeekly ? 240 : 30,
-        rightMinZero: true,
+        leftMax: isWeekly ? null : 30,
+        rightMinZero: !isWeekly,
         intervals: 6,
+        paddingRatio: isWeekly ? 0.15 : undefined,
       });
       charts.dailyKwh.options.scales.y = {
         ...dailyKwhDual.y,
@@ -1310,9 +1326,10 @@
       const dailyYenDual = dualScales(dailyYen, cumYen, {
         leftUnit: "円",
         rightUnit: "円",
-        leftMax: isWeekly ? 12000 : 1500,
-        rightMinZero: true,
+        leftMax: isWeekly ? null : 1500,
+        rightMinZero: !isWeekly,
         intervals: 6,
+        paddingRatio: isWeekly ? 0.15 : undefined,
       });
       charts.dailyYen.options.scales.y = {
         ...dailyYenDual.y,
@@ -1355,9 +1372,10 @@
       const batteryDual = dualScales(batteryKwh, batterySoc, {
         leftUnit: "kWh",
         rightUnit: "%",
-        leftMax: 15,
-        rightMax: 100,
+        leftMax: isWeekly ? null : 15,
+        rightMax: isWeekly ? null : 100,
         intervals: 5,
+        paddingRatio: isWeekly ? 0.15 : undefined,
       });
       charts.battery.options.scales.y = {
         ...batteryDual.y,
@@ -1379,6 +1397,7 @@
     }
 
     function renderMonthly() {
+      const isWeekly = periodState.mode === "year";
       const range = currentPeriodRange();
       const rows = range
         ? store.monthly.filter((x) => {
@@ -1396,9 +1415,10 @@
       const scales = dualScales(monthKwh, monthYen, {
         leftUnit: "kWh",
         rightUnit: "円",
-        leftMax: 800,
-        rightMax: 40000,
+        leftMax: isWeekly ? null : 800,
+        rightMax: isWeekly ? null : 40000,
         intervals: 4,
+        paddingRatio: isWeekly ? 0.15 : undefined,
       });
       charts.monthly.options.scales.y = {
         ...scales.y,

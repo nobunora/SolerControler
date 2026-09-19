@@ -124,7 +124,7 @@ for (const filename of [
   vm.runInContext(source, context, { filename });
 }
 
-setImmediate(() => {
+setImmediate(async () => {
   assert.ok(context.DashboardCalculations);
   assert.ok(context.DashboardDates);
   assert.ok(context.DashboardApi);
@@ -169,6 +169,71 @@ setImmediate(() => {
   assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize }, { min: 0, max: 15, step: 3 });
   assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 100, step: 20 });
   assert.equal(batteryChart.options.scales.y.ticks.count, batteryChart.options.scales.y2.ticks.count);
+
+  await elements.get("periodYearBtn").listeners.click();
+  const assertAxisHasPadding = (chart, axisName, datasetIndexes) => {
+    const values = datasetIndexes
+      .flatMap((index) => chart.data.datasets[index].data)
+      .filter((value) => value != null)
+      .map(Number)
+      .filter(Number.isFinite);
+    assert.ok(values.length > 0, `${axisName} should have finite series values`);
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const axis = chart.options.scales[axisName];
+    assert.ok(axis.min < dataMin, `${axisName} lower bound should include padding`);
+    assert.ok(axis.max > dataMax, `${axisName} upper bound should include padding`);
+    if (dataMin !== dataMax) {
+      const padding = (dataMax - dataMin) * 0.15;
+      assert.ok(axis.min <= dataMin - padding, `${axisName} lower 15% padding`);
+      assert.ok(axis.max >= dataMax + padding, `${axisName} upper 15% padding`);
+    }
+  };
+  assertAxisHasPadding(pvChart, "y", [0, 1, 2]);
+  assertAxisHasPadding(loadChart, "y", [0, 1, 2]);
+  assertAxisHasPadding(dailyKwhChart, "y", [0]);
+  assertAxisHasPadding(dailyKwhChart, "y2", [1]);
+  assertAxisHasPadding(dailyYenChart, "y", [0]);
+  assertAxisHasPadding(dailyYenChart, "y2", [1]);
+  assertAxisHasPadding(monthlyChart, "y", [0]);
+  assertAxisHasPadding(monthlyChart, "y2", [1]);
+  assertAxisHasPadding(batteryChart, "y", [1]);
+  assertAxisHasPadding(batteryChart, "y2", [0, 2]);
+
+  await elements.get("periodAllBtn").listeners.click();
+  assert.deepEqual(
+    { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 30, step: 6 },
+  );
+  assert.deepEqual(
+    { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
+    { min: -20, max: 100, step: 20 },
+  );
+  assert.deepEqual(
+    { min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max, step: dailyKwhChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 30, step: 5 },
+  );
+  assert.deepEqual(
+    { min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max, step: dailyYenChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 1500, step: 250 },
+  );
+  assert.deepEqual(
+    { min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max, step: monthlyChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 800, step: 200 },
+  );
+  assert.deepEqual(
+    { min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max, step: monthlyChart.options.scales.y2.ticks.stepSize },
+    { min: 0, max: 40000, step: 10000 },
+  );
+  assert.deepEqual(
+    { min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize },
+    { min: 0, max: 15, step: 3 },
+  );
+  assert.deepEqual(
+    { min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize },
+    { min: 0, max: 100, step: 20 },
+  );
+
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
