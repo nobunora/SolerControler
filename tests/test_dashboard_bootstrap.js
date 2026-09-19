@@ -177,6 +177,7 @@ setImmediate(async () => {
       .filter((value) => value != null)
       .map(Number)
       .filter(Number.isFinite);
+    assert.ok(values.length > 0, `${axisName} should have finite series values`);
     const dataMin = Math.min(...values);
     const dataMax = Math.max(...values);
     const axis = chart.options.scales[axisName];
@@ -198,6 +199,16 @@ setImmediate(async () => {
   assertAxisHasPadding(monthlyChart, "y2", [1]);
   assertAxisHasPadding(batteryChart, "y", [1]);
   assertAxisHasPadding(batteryChart, "y2", [0, 2]);
+
+  await elements.get("periodAllBtn").listeners.click();
+  assert.equal(pvChart.options.scales.y.max, 30);
+  assert.equal(loadChart.options.scales.y.max, 100);
+  assert.equal(dailyKwhChart.options.scales.y.max, 30);
+  assert.equal(dailyYenChart.options.scales.y.max, 1500);
+  assert.equal(monthlyChart.options.scales.y.max, 800);
+  assert.equal(monthlyChart.options.scales.y2.max, 40000);
+  assert.equal(batteryChart.options.scales.y.max, 15);
+  assert.equal(batteryChart.options.scales.y2.max, 100);
 
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
