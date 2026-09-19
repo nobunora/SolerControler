@@ -110,6 +110,18 @@ def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
         assert forbidden not in window
 
 
+def test_07_mode_only_requires_explicit_mode_and_soc_economy_readback() -> None:
+    workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
+    start = workflow.index("def run_kpnet_mode_only_profile")
+    window = workflow[start:]
+
+    assert 'if profile == "economy"' in window
+    assert '("batteryOperatingMode", "socEconomyMode")' in window
+    assert "required_readback_fields=required_readback_fields" in window
+    assert "candidate_maps_fetched=candidate_maps_fetched" in window
+    assert '"message": "kpnet-settings-readback"' in workflow
+
+
 def test_03_forced_mode_only_changes_only_operating_mode() -> None:
     workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
     window = _local_window(workflow, 'elif profile == "forced":', size=900)
