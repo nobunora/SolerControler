@@ -22,7 +22,6 @@ from app.dashboard.snapshots import (
     SnapshotArtifact,
     artifact_from_payload,
     build_bootstrap_payload,
-    build_dashboard_snapshot_payloads,
     load_precomputed_snapshot,
 )
 
@@ -176,22 +175,31 @@ class Handler(BaseHTTPRequestHandler):
         return "*" in values or etag in values
 
     def _snapshot_fallback(self, kind: str) -> SnapshotArtifact:
+        if kind != BOOTSTRAP_KIND:
+            raise ValueError(f"unbounded snapshot fallback is not allowed: {kind}")
         db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
-        if kind == BOOTSTRAP_KIND:
-            value = load_dashboard_slice(
-                db_path,
-                end_date=None,
-                window_days=31,
-                include_static=True,
-            )
-            return artifact_from_payload(kind, build_bootstrap_payload(value))
-        payloads = build_dashboard_snapshot_payloads(db_path)
-        return artifact_from_payload(kind, payloads[kind])
+        value = load_dashboard_slice(
+            db_path,
+            end_date=None,
+            window_days=31,
+            include_static=True,
+        )
+        return artifact_from_payload(kind, build_bootstrap_payload(value))
 
     def _serve_snapshot(self, kind: str) -> None:
         artifact = load_precomputed_snapshot(kind)
         if artifact is None:
-            artifact = self._snapshot_fallback(kind)
+            if kind == BOOTSTRAP_KIND:
+                artifact = self._snapshot_fallback(kind)
+            else:
+                body = b'{"error":"snapshot_unavailable"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                return
 
         cache_control = "private, max-age=0, must-revalidate"
         if self._etag_matches(artifact.etag):
