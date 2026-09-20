@@ -219,10 +219,12 @@
       physical_pv_global_bias_scale: { code: "Pbs", label: "物理PV予測の全体バイアス補正係数" },
     };
 
-    function mergeRows(map, rows) {
+    function mergeRows(map, rows, overwrite = true) {
       for (const row of rows || []) {
         if (!row || !row.date) continue;
-        map.set(String(row.date), row);
+        const date = String(row.date);
+        if (!overwrite && map.has(date)) continue;
+        map.set(date, row);
       }
     }
 
@@ -274,12 +276,13 @@
     }
 
     function absorbSlice(payload, includeStatic) {
-      mergeRows(store.pvDaily, payload.pv_daily || []);
+      const overwriteExisting = !!includeStatic;
+      mergeRows(store.pvDaily, payload.pv_daily || [], overwriteExisting);
       mergeHourlyRows(payload.forecast_hourly || []);
-      mergeRows(store.energy, payload.energy_daily || []);
-      mergeRows(store.cost, payload.cost_daily || []);
-      mergeRows(store.battery, payload.battery_daily || []);
-      mergeRows(store.batteryFlow, payload.battery_flow_daily || []);
+      mergeRows(store.energy, payload.energy_daily || [], overwriteExisting);
+      mergeRows(store.cost, payload.cost_daily || [], overwriteExisting);
+      mergeRows(store.battery, payload.battery_daily || [], overwriteExisting);
+      mergeRows(store.batteryFlow, payload.battery_flow_daily || [], overwriteExisting);
       if (includeStatic) {
         store.monthly = payload.cost_monthly || [];
         store.params = payload.model_parameters || [];
