@@ -317,3 +317,81 @@ def test_sqlite_bounded_cost_recalculation_applies_prior_cumulative_baseline(tmp
         ("2026-09-02", 103.0, 2030.0),
     ]
     conn.close()
+
+
+def test_firestore_daily_materialization_clears_stale_pv_charge_end_when_no_candidate_remains() -> None:
+    day = "2026-07-16"
+    client = _FirestoreClient(
+        {
+            "monitoring_samples": {
+                f"{day}T12:30:00": _monitoring_payload(
+                    f"{day}T12:30:00",
+                    soc=63.0,
+                    charge=0.0,
+                )
+            },
+            "battery_daily_metrics": {
+                day: {
+                    "date": day,
+                    "pv_charge_end_soc_percent": 63.0,
+                    "pv_charge_end_at": f"{day}T12:30:00",
+                }
+            },
+        }
+    )
+
+    result = firestore_ops.recalc_monitoring_daily_metrics(
+        client,
+        calendar_dates={day},
+        dashboard_affected_dates={day},
+        updated_at="2026-07-17T00:00:00Z",
+    )
+
+    battery = client.data["battery_daily_metrics"][day]
+    assert result["pv_charge_end"] == 1
+    assert battery["pv_charge_end_soc_percent"] is None
+    assert battery["pv_charge_end_at"] is None
+
+
+def test_sqlite_pv_charge_end_recalc_clears_stale_value_when_no_candidate_remains(
+    tmp_path: Path,
+) -> None:
+    conn = sqlite_ops.open_db(tmp_path / "pv-clear.db")
+    sqlite_ops.ensure_schema(conn)
+    day = "2026-09-20"
+    conn.execute(
+        """
+        INSERT INTO battery_daily_metrics
+        (date, pv_charge_end_soc_percent, pv_charge_end_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (day, 63.0, f"{day}T12:30:00", "old"),
+    )
+    conn.execute(
+        """
+        INSERT INTO monitoring_samples
+        (ts, pv_kwh, charge_kwh, soc_percent, source_csv, ingested_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (f"{day}T12:30:00", 1.0, 0.0, 63.0, "x.csv", "now"),
+    )
+    conn.commit()
+
+    updated = sqlite_ops.recalc_battery_pv_charge_end_soc_for_dates(
+        conn,
+        dates={day},
+        updated_at="new",
+    )
+
+    row = conn.execute(
+        """
+        SELECT pv_charge_end_soc_percent, pv_charge_end_at
+        FROM battery_daily_metrics
+        WHERE date=?
+        """,
+        (day,),
+    ).fetchone()
+    assert updated == 1
+    assert row["pv_charge_end_soc_percent"] is None
+    assert row["pv_charge_end_at"] is None
+    conn.close()
