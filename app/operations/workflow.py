@@ -82,10 +82,12 @@ def _refresh_dashboard_snapshots(cfg: sqlite_ops.PipelineConfig) -> None:
         return
     result = write_dashboard_snapshots(cfg.db_path)
     for kind, info in result.items():
+        rebuild_mode = info.get("rebuild_mode")
+        mode_suffix = f" rebuild_mode={rebuild_mode}" if rebuild_mode else ""
         print(
             "[db_pipeline] dashboard snapshot "
             f"kind={kind} raw_bytes={info['raw_bytes']} gzip_bytes={info['gzip_bytes']} "
-            f"location={info['location']}"
+            f"location={info['location']}{mode_suffix}"
         )
 
 
