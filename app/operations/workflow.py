@@ -23,7 +23,7 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 
 def _monitoring_full_backfill_requested() -> bool:
-    return bool(os.getenv("KP_CSV_TARGET_MONTHS", "").strip())
+    return _env_bool("DATA_MONITORING_FULL_BACKFILL", False)
 
 
 def _log_monitoring_sync(changes: Any) -> None:
