@@ -54,7 +54,10 @@ def test_bootstrap_snapshot_keeps_only_latest_plan_hourly_rows() -> None:
 
 
 def test_snapshot_artifact_is_deterministic_and_gzipped() -> None:
-    payload = {"meta": {"snapshot_kind": BOOTSTRAP_KIND}, "pv_daily": [{"date": "2026-09-20"}]}
+    payload = {
+        "meta": {"snapshot_kind": BOOTSTRAP_KIND},
+        "pv_daily": [{"date": f"2026-09-{(index % 20) + 1:02d}", "forecast_pv_kwh": 12.345} for index in range(100)],
+    }
 
     first = artifact_from_payload(BOOTSTRAP_KIND, payload)
     second = artifact_from_payload(BOOTSTRAP_KIND, payload)
