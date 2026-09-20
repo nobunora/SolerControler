@@ -10,6 +10,7 @@ from app.dashboard.snapshots import (
     artifact_from_payload,
     build_bootstrap_payload,
     clear_snapshot_cache,
+    _full_history_rebuild_requested,
     load_precomputed_snapshot,
 )
 
@@ -85,3 +86,15 @@ def test_local_precomputed_snapshot_roundtrip(monkeypatch, tmp_path) -> None:
     assert loaded.etag == artifact.etag
     assert loaded.raw == artifact.raw
     assert loaded.gzip_bytes == artifact.gzip_bytes
+
+
+def test_full_history_rebuild_flag_is_explicit(monkeypatch) -> None:
+    monkeypatch.delenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", raising=False)
+    assert _full_history_rebuild_requested() is False
+
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "true")
+    assert _full_history_rebuild_requested() is True
+
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "0")
+    assert _full_history_rebuild_requested() is False
+
