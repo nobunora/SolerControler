@@ -28,6 +28,12 @@ from app.operations.domain import (
     read_summary as _read_summary,
     tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
 )
+from app.operations.monitoring_sync import (
+    MonitoringChangeSet,
+    classify_monitoring_rows,
+    prepare_monitoring_csvs,
+    window_from_ingested_at,
+)
 from app.configuration.environment import env
 from app.parsing.numbers import to_float, to_int
 
@@ -102,6 +108,54 @@ def ingest_monitoring_csvs(
     if batch_count > 0:
         batch.commit()
     return upserted
+
+
+def sync_monitoring_csvs(
+    client: Any,
+    *,
+    csv_paths: list[Path],
+    ingested_at: str,
+    full_backfill: bool = False,
+) -> MonitoringChangeSet:
+    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    prepared = prepare_monitoring_csvs(csv_paths, window=window)
+    existing_by_ts: dict[str, dict[str, Any]] = {}
+    collection = client.collection("monitoring_samples")
+    if window is None:
+        for row in prepared.rows:
+            snap = collection.document(str(row["ts"])).get()
+            if snap.exists:
+                existing = snap.to_dict() or {}
+                existing["ts"] = existing.get("ts", snap.id)
+                existing_by_ts[str(row["ts"])] = existing
+    else:
+        query = collection.where("ts", ">=", window.start_ts).where("ts", "<", window.end_ts)
+        for snap in query.stream():
+            existing = snap.to_dict() or {}
+            ts = str(existing.get("ts", snap.id))
+            existing["ts"] = ts
+            existing_by_ts[ts] = existing
+
+    changes = classify_monitoring_rows(prepared, existing_by_ts=existing_by_ts)
+    if changes.changed_count == 0:
+        return changes
+
+    batch = client.batch()
+    batch_count = 0
+    for row in changes.changed_rows:
+        source_csv = str(row.get("_source_csv", ""))
+        payload = {key: value for key, value in row.items() if not key.startswith("_")}
+        payload["source_csv"] = source_csv
+        payload["ingested_at"] = ingested_at
+        batch.set(collection.document(str(row["ts"])), payload, merge=True)
+        batch_count += 1
+        if batch_count >= 450:
+            batch.commit()
+            batch = client.batch()
+            batch_count = 0
+    if batch_count:
+        batch.commit()
+    return changes
 
 
 # readable-code-audit: skip DUP-01 — Firestore writes documents rather than relational rows and requires backend-specific merge semantics
