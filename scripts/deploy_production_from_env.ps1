@@ -352,13 +352,14 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
             DASHBOARD_COOKIE_SECURE = 'true'
             DASHBOARD_AGGREGATION_CLOSE_DAY = Get-ProductionEnv 'DASHBOARD_AGGREGATION_CLOSE_DAY' '14'
             DASHBOARD_SESSION_TTL_SECONDS = Get-ProductionEnv 'DASHBOARD_SESSION_TTL_SECONDS' '31536000'
+            DASHBOARD_SNAPSHOT_GCS_PREFIX = "$archivePrefix/dashboard_snapshots"
         }
         $yamlLines = foreach ($entry in $dashboardEnv.GetEnumerator()) {
             $escaped = ([string]$entry.Value).Replace("'", "''")
             "$($entry.Key): '$escaped'"
         }
         [IO.File]::WriteAllLines($tempEnv.FullName, $yamlLines, [Text.UTF8Encoding]::new($false))
-        & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --env-vars-file $tempEnv.FullName
+        & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --service-account (Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT') --env-vars-file $tempEnv.FullName
     } finally {
         Remove-Item -LiteralPath $tempEnv.FullName -Force -ErrorAction SilentlyContinue
     }
