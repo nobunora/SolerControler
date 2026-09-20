@@ -334,20 +334,26 @@ def _ingest_postgres(
             print("[db_pipeline] skip night plan and forecast ingestion")
         hit_rate = postgres_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
         print(f"[db_pipeline] model hit_rate={hit_rate!r}")
-        postgres_ops.recalc_cost_daily(
-            conn,
-            day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
-            updated_at=now_iso,
-            tariff_mode=cfg.cost_tariff_mode,
-            night8_day_start_hhmm=cfg.night8_day_start_hhmm,
-            night8_day_end_hhmm=cfg.night8_day_end_hhmm,
-            night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
-            night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
-            night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
-            night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
-            night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
-            night8_night_rate_yen=cfg.night8_night_rate_yen,
-        )
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            cost_start = earliest_changed_month_start(monitoring_changes)
+            if cost_start is not None:
+                cost_rows = postgres_ops.recalc_cost_daily_from(
+                    conn,
+                    start_date=cost_start,
+                    end_ts=window_from_ingested_at(now_iso).end_ts,
+                    day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+                    updated_at=now_iso,
+                    tariff_mode=cfg.cost_tariff_mode,
+                    night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+                    night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+                    night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+                    night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+                    night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+                    night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+                    night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+                    night8_night_rate_yen=cfg.night8_night_rate_yen,
+                )
+                print(f"[db_pipeline] cost daily recalculated rows={cost_rows} start={cost_start}")
 
         with conn.cursor() as cur:
             cur.execute(
