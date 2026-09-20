@@ -17,6 +17,7 @@ from app.dashboard.models import DashboardSlice
 from app.dashboard.snapshots import (
     BOOTSTRAP_KIND,
     HISTORY_KIND,
+    SnapshotArtifact,
     artifact_from_payload,
     build_bootstrap_payload,
     build_dashboard_snapshot_payloads,
@@ -157,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
         values = {part.strip() for part in raw.split(",")}
         return "*" in values or etag in values
 
-    def _snapshot_fallback(self, kind: str):
+    def _snapshot_fallback(self, kind: str) -> SnapshotArtifact:
         db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
         if kind == BOOTSTRAP_KIND:
             value = load_dashboard_slice(
