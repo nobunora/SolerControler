@@ -9,7 +9,7 @@ from typing import Any
 
 from google.cloud import firestore
 
-from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, apply_cumulative_baseline, calculate_daily_costs
 from app.backup.night_plan_archive import (
     build_night_plan_firestore_document,
     read_plan_file,
@@ -430,6 +430,103 @@ def recalc_cost_daily(
     if batch_count > 0:
         batch.commit()
     return
+
+
+def recalc_cost_daily_from(
+    client: Any,
+    *,
+    start_date: str,
+    end_ts: str,
+    day_rate_yen_per_kwh: float,
+    updated_at: str,
+    tariff_mode: str = "flat",
+    night8_day_start_hhmm: str = "07:00",
+    night8_day_end_hhmm: str = "23:00",
+    night8_day_tier1_upper_kwh: float = 90.0,
+    night8_day_tier2_upper_kwh: float = 230.0,
+    night8_day_rate_tier1_yen: float = 31.80,
+    night8_day_rate_tier2_yen: float = 39.10,
+    night8_day_rate_tier3_yen: float = 43.62,
+    night8_night_rate_yen: float = 28.85,
+) -> int:
+    start_ts = f"{start_date}T00:00:00"
+    rows: list[dict[str, Any]] = []
+    query = (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", start_ts)
+        .where("ts", "<", end_ts)
+        .order_by("ts")
+    )
+    for doc in query.stream():
+        row = doc.to_dict() or {}
+        row["ts"] = str(row.get("ts", doc.id))
+        rows.append(row)
+    if not rows:
+        return 0
+
+    base_kwh = 0.0
+    base_yen = 0.0
+    prior_query = (
+        client.collection("cost_daily")
+        .where("date", "<", start_date)
+        .order_by("date", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    prior_rows = list(prior_query.stream())
+    if prior_rows:
+        prior = prior_rows[0].to_dict() or {}
+        base_kwh = float(prior.get("cumulative_kwh") or 0.0)
+        base_yen = float(prior.get("cumulative_yen") or 0.0)
+
+    results = calculate_daily_costs(
+        [
+            EnergyInterval(
+                timestamp=str(row.get("ts", "")),
+                load_kwh=row.get("load_kwh"),
+                buy_kwh=row.get("buy_kwh"),
+            )
+            for row in rows
+        ],
+        DailyCostPolicy(
+            tariff_mode=tariff_mode,
+            day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+            day_start_hhmm=night8_day_start_hhmm,
+            day_end_hhmm=night8_day_end_hhmm,
+            day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+            day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+            day_rate_tier1_yen=night8_day_rate_tier1_yen,
+            day_rate_tier2_yen=night8_day_rate_tier2_yen,
+            day_rate_tier3_yen=night8_day_rate_tier3_yen,
+            night_rate_yen=night8_night_rate_yen,
+        ),
+    )
+    results = apply_cumulative_baseline(results, base_kwh=base_kwh, base_yen=base_yen)
+
+    batch = client.batch()
+    count = 0
+    for result in results:
+        batch.set(
+            client.collection("cost_daily").document(result.date),
+            {
+                "date": result.date,
+                "self_consumption_kwh": result.self_consumption_kwh,
+                "savings_yen": result.savings_yen,
+                "cumulative_kwh": result.cumulative_kwh,
+                "cumulative_yen": result.cumulative_yen,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        count += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count:
+        batch.commit()
+    return len(results)
+
+
 def upsert_battery_daily_metrics(
     client: Any,
     *,
