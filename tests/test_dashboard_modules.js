@@ -14,7 +14,7 @@ const first = store.createStore();
 const second = store.createStore();
 first.pvDaily.set("2026-07-16", {});
 assert.equal(second.pvDaily.size, 0);
-assert.deepEqual(store.createPeriodState(), { mode: "all", month: null, year: null, initialized: false });
+assert.deepEqual(store.createPeriodState(), { mode: "month", month: null, year: null, initialized: false });
 
 (async () => {
   let request = null;
@@ -30,6 +30,27 @@ assert.deepEqual(store.createPeriodState(), { mode: "all", month: null, year: nu
     url: "/api/dashboard?window_days=31&end_date=2026-07-16&include_static=0",
     options: { credentials: "include" },
   });
+  let bootstrapRequest = null;
+  const bootstrap = await api.fetchBootstrap(async (url, options) => {
+    bootstrapRequest = { url, options };
+    return { ok: true, json: async () => ({ meta: { snapshot_kind: "bootstrap" } }) };
+  });
+  assert.deepEqual(bootstrap, { meta: { snapshot_kind: "bootstrap" } });
+  assert.deepEqual(bootstrapRequest, {
+    url: "/api/dashboard/bootstrap",
+    options: { credentials: "include" },
+  });
+
+  let historyRequest = null;
+  await api.fetchHistory(async (url, options) => {
+    historyRequest = { url, options };
+    return { ok: true, json: async () => ({ meta: { snapshot_kind: "history" } }) };
+  });
+  assert.deepEqual(historyRequest, {
+    url: "/api/dashboard/history",
+    options: { credentials: "include" },
+  });
+
   await assert.rejects(
     () => api.fetchSlice({}, async () => ({ ok: false, status: 503 })),
     /api_error_503/,

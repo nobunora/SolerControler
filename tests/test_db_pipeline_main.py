@@ -59,6 +59,7 @@ def test_night_plan_ingestion_can_be_disabled_for_actual_only_import(
 
 def test_firestore_actual_only_import_does_not_write_night_plan(monkeypatch) -> None:
     from app.operations import firestore as firestore_ops
+    from app.operations import workflow
 
     client = object()
     monkeypatch.setattr(firestore_ops, "open_firestore", lambda: client)
@@ -91,6 +92,7 @@ def test_firestore_actual_only_import_does_not_write_night_plan(monkeypatch) -> 
     )
     monkeypatch.setattr(firestore_ops, "recalc_cost_daily", lambda *args, **kwargs: None)
     monkeypatch.setattr(firestore_ops, "upsert_pipeline_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(workflow, "_refresh_dashboard_snapshots", lambda _cfg: None)
     cfg = SimpleNamespace(
         site_id="test-site",
         slot="manual-csv",

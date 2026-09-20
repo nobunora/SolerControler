@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
 import base64
@@ -14,9 +16,37 @@ from urllib.parse import ParseResult, parse_qs, urlparse
 
 from app.dashboard.data import load_dashboard_slice
 from app.dashboard.models import DashboardSlice
+from app.dashboard.snapshots import (
+    BOOTSTRAP_KIND,
+    HISTORY_KIND,
+    SnapshotArtifact,
+    artifact_from_payload,
+    build_bootstrap_payload,
+    load_precomputed_snapshot,
+)
 
 
 _PROJECT_ROOT = Path(__file__).parents[2]
+
+_STATIC_ASSET_FILES = {
+    "/static/dashboard.css": ("text/css; charset=utf-8", "dashboard.css"),
+    "/static/dashboard_calculations.js": ("text/javascript; charset=utf-8", "dashboard_calculations.js"),
+    "/static/dashboard_dates.js": ("text/javascript; charset=utf-8", "dashboard_dates.js"),
+    "/static/dashboard_api.js": ("text/javascript; charset=utf-8", "dashboard_api.js"),
+    "/static/dashboard_store.js": ("text/javascript; charset=utf-8", "dashboard_store.js"),
+    "/static/dashboard.js": ("text/javascript; charset=utf-8", "dashboard.js"),
+}
+_STATIC_ASSETS: dict[str, tuple[str, bytes, bytes, str]] = {}
+_static_version_digest = hashlib.sha256()
+for _asset_path, (_content_type, _filename) in _STATIC_ASSET_FILES.items():
+    _content = (_PROJECT_ROOT / "static" / _filename).read_bytes()
+    _gzip_content = gzip.compress(_content, compresslevel=9, mtime=0)
+    _etag = f'W/"{hashlib.sha256(_content).hexdigest()}"'
+    _STATIC_ASSETS[_asset_path] = (_content_type, _content, _gzip_content, _etag)
+    _static_version_digest.update(_asset_path.encode("utf-8"))
+    _static_version_digest.update(b"\0")
+    _static_version_digest.update(_content)
+_STATIC_VERSION = _static_version_digest.hexdigest()[:16]
 
 
 def _env(name: str, default: str) -> str:
@@ -98,24 +128,19 @@ def _empty_dashboard_payload() -> dict[str, object]:
 def _html(payload: dict[str, object], script_nonce: str) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     template = (_PROJECT_ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
-    return template.replace("__DASHBOARD_DATA_PLACEHOLDER__", payload_json).replace("__NONCE__", script_nonce)
+    return (
+        template.replace("__DASHBOARD_DATA_PLACEHOLDER__", payload_json)
+        .replace("__NONCE__", script_nonce)
+        .replace("__STATIC_VERSION__", _STATIC_VERSION)
+    )
 
 
-def _static_asset(path: str) -> tuple[str, bytes] | None:
-    assets = {
-        "/static/dashboard.css": ("text/css; charset=utf-8", "dashboard.css"),
-        "/static/dashboard_calculations.js": ("text/javascript; charset=utf-8", "dashboard_calculations.js"),
-        "/static/dashboard_dates.js": ("text/javascript; charset=utf-8", "dashboard_dates.js"),
-        "/static/dashboard_api.js": ("text/javascript; charset=utf-8", "dashboard_api.js"),
-        "/static/dashboard_store.js": ("text/javascript; charset=utf-8", "dashboard_store.js"),
-        "/static/dashboard.js": ("text/javascript; charset=utf-8", "dashboard.js"),
-    }
-    asset = assets.get(path)
-    if asset is None:
-        return None
-    content_type, filename = asset
-    content = (_PROJECT_ROOT / "static" / filename).read_bytes()
-    return content_type, content
+def _static_asset(path: str) -> tuple[str, bytes, bytes, str] | None:
+    return _STATIC_ASSETS.get(path)
+
+
+def _static_version() -> str:
+    return _STATIC_VERSION
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -123,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     _new_session_cookie: str | None = None
 
-    def _send_security_headers(self, script_nonce: str | None = None) -> None:
+    def _send_security_headers(self, script_nonce: str | None = None, *, cache_control: str = "no-store") -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -136,7 +161,69 @@ class Handler(BaseHTTPRequestHandler):
             f"default-src 'self'; {script_src}; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none';",
         )
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
+
+    def _accepts_gzip(self) -> bool:
+        raw = self.headers.get("Accept-Encoding", "")
+        return any(part.strip().split(";", 1)[0].lower() == "gzip" for part in raw.split(","))
+
+    def _etag_matches(self, etag: str) -> bool:
+        raw = self.headers.get("If-None-Match", "")
+        if not raw:
+            return False
+        values = {part.strip() for part in raw.split(",")}
+        return "*" in values or etag in values
+
+    def _snapshot_fallback(self, kind: str) -> SnapshotArtifact:
+        if kind != BOOTSTRAP_KIND:
+            raise ValueError(f"unbounded snapshot fallback is not allowed: {kind}")
+        db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
+        value = load_dashboard_slice(
+            db_path,
+            end_date=None,
+            window_days=31,
+            include_static=True,
+        )
+        return artifact_from_payload(kind, build_bootstrap_payload(value))
+
+    def _serve_snapshot(self, kind: str) -> None:
+        artifact = load_precomputed_snapshot(kind)
+        if artifact is None:
+            if kind == BOOTSTRAP_KIND:
+                artifact = self._snapshot_fallback(kind)
+            else:
+                body = b'{"error":"snapshot_unavailable"}'
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+        cache_control = "private, max-age=0, must-revalidate"
+        if self._etag_matches(artifact.etag):
+            self.send_response(304)
+            self.send_header("ETag", artifact.etag)
+            self.send_header("Vary", "Accept-Encoding")
+            self._maybe_send_auth_cookie()
+            self._send_security_headers(cache_control=cache_control)
+            self.end_headers()
+            return
+
+        use_gzip = self._accepts_gzip()
+        body = artifact.gzip_bytes if use_gzip else artifact.raw
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("ETag", artifact.etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+        self._maybe_send_auth_cookie()
+        self._send_security_headers(cache_control=cache_control)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _cookie_secure_flag(self) -> bool:
         explicit = os.getenv("DASHBOARD_COOKIE_SECURE", "").strip().lower()
@@ -260,12 +347,32 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         static_asset = _static_asset(path)
         if static_asset is not None:
-            content_type, content = static_asset
+            content_type, content, gzip_content, etag = static_asset
+            version = (parse_qs(parsed.query or "").get("v") or [""])[0]
+            cache_control = (
+                "private, max-age=31536000, immutable"
+                if version == _STATIC_VERSION
+                else "private, max-age=0, must-revalidate"
+            )
+            if self._etag_matches(etag):
+                self.send_response(304)
+                self.send_header("ETag", etag)
+                self.send_header("Vary", "Accept-Encoding")
+                self._send_security_headers(cache_control=cache_control)
+                self.end_headers()
+                return
+            use_gzip = self._accepts_gzip()
+            body = gzip_content if use_gzip else content
             self.send_response(200)
             self.send_header("Content-Type", content_type)
-            self._send_security_headers()
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
+            if use_gzip:
+                self.send_header("Content-Encoding", "gzip")
+            self._send_security_headers(cache_control=cache_control)
             self.end_headers()
-            self.wfile.write(content)
+            self.wfile.write(body)
             return
         if parsed.query and "auth=" in parsed.query and (path == "/" or path == "/index.html"):
             self.send_response(302)
@@ -276,22 +383,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/" or path == "/index.html":
-            try:
-                db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
-                root_slice = load_dashboard_slice(
-                    db_path,
-                    end_date=None,
-                    window_days=31,
-                    include_static=True,
-                )
-                payload = {
-                    **root_slice.data.__dict__,
-                    "meta": root_slice.meta,
-                }
-            except Exception:
-                print("dashboard root render error")
-                print(traceback.format_exc())
-                payload = _empty_dashboard_payload()
+            # Return the HTML shell immediately. The browser loads the precomputed
+            # bootstrap snapshot separately, so the first byte is no longer gated
+            # on Firestore aggregation.
+            payload = _empty_dashboard_payload()
             script_nonce = secrets.token_urlsafe(16)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -299,6 +394,30 @@ class Handler(BaseHTTPRequestHandler):
             self._send_security_headers(script_nonce=script_nonce)
             self.end_headers()
             self.wfile.write(_html(payload, script_nonce=script_nonce).encode("utf-8"))
+            return
+        if path == "/api/dashboard/bootstrap":
+            try:
+                self._serve_snapshot(BOOTSTRAP_KIND)
+            except Exception:
+                print("dashboard bootstrap snapshot error")
+                print(traceback.format_exc())
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'{"error":"internal_error"}')
+            return
+        if path == "/api/dashboard/history":
+            try:
+                self._serve_snapshot(HISTORY_KIND)
+            except Exception:
+                print("dashboard history snapshot error")
+                print(traceback.format_exc())
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'{"error":"internal_error"}')
             return
         if path == "/api/dashboard":
             try:

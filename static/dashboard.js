@@ -219,10 +219,12 @@
       physical_pv_global_bias_scale: { code: "Pbs", label: "物理PV予測の全体バイアス補正係数" },
     };
 
-    function mergeRows(map, rows) {
+    function mergeRows(map, rows, overwrite = true) {
       for (const row of rows || []) {
         if (!row || !row.date) continue;
-        map.set(String(row.date), row);
+        const date = String(row.date);
+        if (!overwrite && map.has(date)) continue;
+        map.set(date, row);
       }
     }
 
@@ -274,12 +276,13 @@
     }
 
     function absorbSlice(payload, includeStatic) {
-      mergeRows(store.pvDaily, payload.pv_daily || []);
+      const overwriteExisting = !!includeStatic;
+      mergeRows(store.pvDaily, payload.pv_daily || [], overwriteExisting);
       mergeHourlyRows(payload.forecast_hourly || []);
-      mergeRows(store.energy, payload.energy_daily || []);
-      mergeRows(store.cost, payload.cost_daily || []);
-      mergeRows(store.battery, payload.battery_daily || []);
-      mergeRows(store.batteryFlow, payload.battery_flow_daily || []);
+      mergeRows(store.energy, payload.energy_daily || [], overwriteExisting);
+      mergeRows(store.cost, payload.cost_daily || [], overwriteExisting);
+      mergeRows(store.battery, payload.battery_daily || [], overwriteExisting);
+      mergeRows(store.batteryFlow, payload.battery_flow_daily || [], overwriteExisting);
       if (includeStatic) {
         store.monthly = payload.cost_monthly || [];
         store.params = payload.model_parameters || [];
@@ -656,6 +659,27 @@
     }
 
     async function ensureDataForRange(startDate) {
+      const needsOlder =
+        store.meta &&
+        store.meta.oldest_loaded_date &&
+        store.meta.oldest_loaded_date > startDate;
+
+      if (needsOlder && !store.historyLoaded && !store.loadingOlder) {
+        store.loadingOlder = true;
+        try {
+          setStatus("履歴データを読み込んでいます...");
+          const payload = await dashboardApi.fetchHistory();
+          absorbSlice(payload, false);
+          store.historyLoaded = true;
+        } catch {
+          setStatus("履歴スナップショットの読込に失敗したため、従来方式で取得します。", "#ef8e1d");
+        } finally {
+          store.loadingOlder = false;
+        }
+      }
+
+      // Rollout/failure fallback: keep the legacy chunk API available until a
+      // precomputed history snapshot has been generated successfully.
       while (
         !store.loadingOlder &&
         store.meta &&
@@ -1513,15 +1537,17 @@
         absorbSlice(initialPayload, true);
       }
 
-      try {
-        const bootstrap = await fetchSlice({ window_days: WINDOW_DAYS, include_static: true });
-        absorbSlice(bootstrap, true);
-      } catch {
-        if (!store.dates.length) {
-          setStatus("データ読込に失敗しました（認証の再確認をお願いします）", "#e6504f");
-          return;
+      if (!hasInitialRows) {
+        try {
+          const bootstrap = await dashboardApi.fetchBootstrap();
+          absorbSlice(bootstrap, true);
+        } catch {
+          if (!store.dates.length) {
+            setStatus("データ読込に失敗しました（認証の再確認をお願いします）", "#e6504f");
+            return;
+          }
+          setStatus("最新データの取得に失敗したため、取得済みデータで表示しています。", "#ef8e1d");
         }
-        setStatus("最新データの再取得に失敗したため、取得済みデータで表示しています。", "#ef8e1d");
       }
 
       fillLearningParams();

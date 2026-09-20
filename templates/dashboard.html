@@ -4,8 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>おうち発電ダッシュボード</title>
-  <script nonce="__NONCE__" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/dashboard.css?v=__STATIC_VERSION__">
 </head>
 <body>
   <div class="wrap">
@@ -130,13 +129,14 @@
     </section>
   </div>
 
+  <script nonce="__NONCE__" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script nonce="__NONCE__">
     window.__DASHBOARD_DATA__ = __DASHBOARD_DATA_PLACEHOLDER__;
   </script>
-<script nonce="__NONCE__" src="/static/dashboard_calculations.js"></script>
-<script nonce="__NONCE__" src="/static/dashboard_dates.js"></script>
-<script nonce="__NONCE__" src="/static/dashboard_api.js"></script>
-<script nonce="__NONCE__" src="/static/dashboard_store.js"></script>
-<script nonce="__NONCE__" src="/static/dashboard.js"></script>
+<script nonce="__NONCE__" src="/static/dashboard_calculations.js?v=__STATIC_VERSION__"></script>
+<script nonce="__NONCE__" src="/static/dashboard_dates.js?v=__STATIC_VERSION__"></script>
+<script nonce="__NONCE__" src="/static/dashboard_api.js?v=__STATIC_VERSION__"></script>
+<script nonce="__NONCE__" src="/static/dashboard_store.js?v=__STATIC_VERSION__"></script>
+<script nonce="__NONCE__" src="/static/dashboard.js?v=__STATIC_VERSION__"></script>
 </body>
 </html>

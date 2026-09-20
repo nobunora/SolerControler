@@ -74,6 +74,27 @@ def _record_planned_day_mode_sqlite(conn: Any, *, settings_summary_path: Path, r
     conn.commit()
 
 
+def _refresh_dashboard_snapshots(cfg: sqlite_ops.PipelineConfig) -> None:
+    from app.dashboard.snapshots import dashboard_snapshot_prefix, write_dashboard_snapshots
+
+    if not dashboard_snapshot_prefix():
+        print("[db_pipeline] dashboard snapshot: skipped (no GCS prefix)")
+        return
+    result = write_dashboard_snapshots(
+        cfg.db_path,
+        update_history=cfg.slot == "23",
+        full_history_rebuild=cfg.slot == "23",
+    )
+    for kind, info in result.items():
+        rebuild_mode = info.get("rebuild_mode")
+        mode_suffix = f" rebuild_mode={rebuild_mode}" if rebuild_mode else ""
+        print(
+            "[db_pipeline] dashboard snapshot "
+            f"kind={kind} raw_bytes={info['raw_bytes']} gzip_bytes={info['gzip_bytes']} "
+            f"location={info['location']}{mode_suffix}"
+        )
+
+
 def _maybe_weekly_backup(conn: Any, *, cfg: sqlite_ops.PipelineConfig, backend: str, now_utc: datetime) -> None:
     if not cfg.weekly_backup_enabled:
         print("[db_pipeline] weekly backup: disabled")
@@ -313,6 +334,7 @@ def _ingest_firestore(
     run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
     if firestore_ops.pipeline_run_exists(client, run_key=run_key):
         print(f"[db_pipeline] already ingested: {run_key}")
+        _refresh_dashboard_snapshots(cfg)
         return
 
     if csv_run_dir is not None:
@@ -388,6 +410,7 @@ def _ingest_firestore(
         csv_rows_upserted=csv_rows,
         recorded_at=now_iso,
     )
+    _refresh_dashboard_snapshots(cfg)
     print("[db_pipeline] weekly backup: disabled (firestore backend)")
     print("[db_pipeline] done backend=firestore")
 

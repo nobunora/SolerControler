@@ -5,6 +5,7 @@ const vm = require("node:vm");
 
 const elements = new Map();
 let fetchCount = 0;
+const fetchRequests = [];
 function element(id = "") {
   if (elements.has(id)) return elements.get(id);
   const value = {
@@ -55,8 +56,10 @@ const context = {
   Chart: ChartStub,
   setTimeout: () => 0,
   clearTimeout() {},
-  fetch: async () => {
+  fetch: async (url) => {
     fetchCount += 1;
+    fetchRequests.push(String(url));
+    const isHistory = String(url).startsWith("/api/dashboard/history");
     return {
       ok: true,
       status: 200,
@@ -67,10 +70,15 @@ const context = {
           { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
           { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
         ],
-        energy_daily: [
-          { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
-          { date: "2026-07-18", forecast_pv_kwh: 7, actual_pv_kwh: 9, forecast_load_kwh: 4, actual_load_kwh: 6 },
-        ],
+        energy_daily: isHistory
+          ? [
+              { date: "2026-07-17", forecast_pv_kwh: 999, actual_pv_kwh: 999, forecast_load_kwh: 999, actual_load_kwh: 999 },
+              { date: "2026-07-18", forecast_pv_kwh: 999, actual_pv_kwh: 999, forecast_load_kwh: 999, actual_load_kwh: 999 },
+            ]
+          : [
+              { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
+              { date: "2026-07-18", forecast_pv_kwh: 7, actual_pv_kwh: 9, forecast_load_kwh: 4, actual_load_kwh: 6 },
+            ],
         cost_daily: [
           { date: "2026-07-17", self_consumption_kwh: 2, savings_yen: 100 },
           { date: "2026-07-18", self_consumption_kwh: 4, savings_yen: 300 },
@@ -96,7 +104,23 @@ const context = {
           { date: "2026-07-16", complete_day: true },
           { date: "2026-07-17", complete_day: true },
         ],
-        meta: {},
+        meta: isHistory
+          ? {
+              window_days: 201,
+              oldest_loaded_date: "2026-01-01",
+              newest_loaded_date: "2026-07-20",
+              global_oldest_date: "2026-01-01",
+              global_newest_date: "2026-07-20",
+              has_more_before: false,
+            }
+          : {
+              window_days: 31,
+              oldest_loaded_date: "2026-06-15",
+              newest_loaded_date: "2026-07-20",
+              global_oldest_date: "2026-01-01",
+              global_newest_date: "2026-07-20",
+              has_more_before: true,
+            },
       }),
     };
   },
@@ -134,6 +158,9 @@ setImmediate(async () => {
   assert.ok(elements.has("dailyReviewNextBtn"));
   assert.equal(typeof elements.get("dailyReviewPrevBtn").listeners.click, "function");
   assert.equal(typeof elements.get("dailyReviewNextBtn").listeners.click, "function");
+  assert.deepEqual(fetchRequests, ["/api/dashboard/bootstrap"]);
+  assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard/history")), false);
+  assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
   assert.match(elements.get("hourlyForecastNote").textContent, /夜間系統充電 3\.14kWh/);
   assert.match(elements.get("hourlyForecastNote").textContent, /予想SOCピーク 07:00ごろ 77%/);
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
@@ -171,6 +198,12 @@ setImmediate(async () => {
   assert.equal(batteryChart.options.scales.y.ticks.count, batteryChart.options.scales.y2.ticks.count);
 
   await elements.get("periodYearBtn").listeners.click();
+  assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
+  assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
+  assert.ok(
+    pvChart.data.datasets[0].data.every((value) => value == null || Number(value) < 100),
+    "stale overlapping history must not overwrite fresh bootstrap rows",
+  );
   const assertAxisHasPadding = (chart, axisName, datasetIndexes) => {
     const values = datasetIndexes
       .flatMap((index) => chart.data.datasets[index].data)
@@ -201,6 +234,8 @@ setImmediate(async () => {
   assertAxisHasPadding(batteryChart, "y2", [0, 2]);
 
   await elements.get("periodAllBtn").listeners.click();
+  assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
+  assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
   assert.deepEqual(
     { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
     { min: 0, max: 30, step: 6 },

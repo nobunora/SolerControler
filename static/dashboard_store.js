@@ -8,12 +8,12 @@
       meta: null, pvDaily: new Map(), hourly: new Map(), energy: new Map(), cost: new Map(),
       battery: new Map(), batteryFlow: new Map(), monthly: [], params: [], latestSchedule: null,
       dashboardWarnings: [], pvForecastDiagnostics: {}, dailyReview: {}, dailyReviews: new Map(), latestReviewDate: null,
-      dates: [], loadingOlder: false,
+      dates: [], loadingOlder: false, historyLoaded: false,
     };
   }
 
   function createPeriodState() {
-    return { mode: "all", month: null, year: null, initialized: false };
+    return { mode: "month", month: null, year: null, initialized: false };
   }
 
   return { createStore, createPeriodState };

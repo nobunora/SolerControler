@@ -339,6 +339,29 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
         throw 'Dashboard image build failed.'
     }
 
+    # Preserve the dashboard's existing runtime identity. The runner service
+    # account has write/admin permissions that the read-only dashboard does not
+    # need. Grant only snapshot-object read access to the current dashboard SA.
+    $dashboardServiceAccount = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format 'value(spec.template.spec.serviceAccountName)').Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Dashboard Cloud Run service account could not be resolved.'
+    }
+    if (-not $dashboardServiceAccount) {
+        $dashboardProjectNumber = (& $gcloud projects describe $projectId --format 'value(projectNumber)').Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $dashboardProjectNumber) {
+            throw 'Dashboard default service account project number could not be resolved.'
+        }
+        $dashboardServiceAccount = "$dashboardProjectNumber-compute@developer.gserviceaccount.com"
+    }
+    if ($archivePrefix -notmatch '^gs://([^/]+)') {
+        throw 'NIGHT_PLAN_ARCHIVE_GCS_PREFIX must be a gs:// URI.'
+    }
+    $dashboardSnapshotBucket = $Matches[1]
+    & $gcloud storage buckets add-iam-policy-binding "gs://$dashboardSnapshotBucket" --project $projectId --member "serviceAccount:$dashboardServiceAccount" --role 'roles/storage.objectViewer' --quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to grant dashboard snapshot read access.'
+    }
+
     $tempEnv = New-TemporaryFile
     try {
         $dashboardEnv = [ordered]@{
@@ -352,6 +375,7 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
             DASHBOARD_COOKIE_SECURE = 'true'
             DASHBOARD_AGGREGATION_CLOSE_DAY = Get-ProductionEnv 'DASHBOARD_AGGREGATION_CLOSE_DAY' '14'
             DASHBOARD_SESSION_TTL_SECONDS = Get-ProductionEnv 'DASHBOARD_SESSION_TTL_SECONDS' '31536000'
+            DASHBOARD_SNAPSHOT_GCS_PREFIX = "$archivePrefix/dashboard_snapshots"
         }
         $yamlLines = foreach ($entry in $dashboardEnv.GetEnumerator()) {
             $escaped = ([string]$entry.Value).Replace("'", "''")

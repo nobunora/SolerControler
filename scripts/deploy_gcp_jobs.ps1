@@ -664,6 +664,7 @@ $commonEnv = @(
     "DATA_WEEKLY_BACKUP_WEEKDAY=5",
     "DATA_WEEKLY_BACKUP_DIR=artifacts/backups/weekly",
     "NIGHT_PLAN_ARCHIVE_GCS_PREFIX=$NightPlanArchiveGcsPrefix",
+    "DASHBOARD_SNAPSHOT_GCS_PREFIX=$NightPlanArchiveGcsPrefix/dashboard_snapshots",
     "NIGHT_PLAN_FIRESTORE_INLINE_DETAIL_DAYS=0",
     "DAY_RATE_YEN_PER_KWH=31",
     "COST_TARIFF_MODE=night8_tiered",
