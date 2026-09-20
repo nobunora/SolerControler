@@ -42,9 +42,12 @@ def main() -> int:
             Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))
         )
         for kind, info in snapshot_result.items():
+            rebuild_mode = info.get("rebuild_mode")
+            mode_suffix = f" rebuild_mode={rebuild_mode}" if rebuild_mode else ""
             print(
                 "[forecast_job] dashboard snapshot "
-                f"kind={kind} raw_bytes={info['raw_bytes']} gzip_bytes={info['gzip_bytes']}",
+                f"kind={kind} raw_bytes={info['raw_bytes']} gzip_bytes={info['gzip_bytes']}"
+                f"{mode_suffix}",
                 flush=True,
             )
     return 0
