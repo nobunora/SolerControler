@@ -668,9 +668,9 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
         else:
             acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
         charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
-        review_day = day
+        review_day = day_key
         if minute >= "23:00":
-            review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+            review_day = (datetime.fromisoformat(day_key) + timedelta(days=1)).date().isoformat()
         if minute < "07:00" or minute >= "23:00":
             review_night_charge_by_day[review_day] += charge_kwh
         soc = to_float(row.get("soc_percent"))
@@ -690,7 +690,7 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     batch = client.batch()
     count = 0
     for day, metrics in by_day.items():
-        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key, 0.0)
         batch.set(client.collection("dashboard_daily_metrics").document(day), {"date": day, **metrics, "updated_at": updated_at}, merge=True)
         count += 1
         if count >= 450:
@@ -715,13 +715,13 @@ def recalc_monitoring_daily_metrics(
     start_candidates: list[datetime] = []
     end_candidates: list[datetime] = []
     for value in calendar_dates:
-        day = datetime.fromisoformat(value)
-        start_candidates.append(day)
-        end_candidates.append(day + timedelta(days=1))
+        day_dt = datetime.fromisoformat(value)
+        start_candidates.append(day_dt)
+        end_candidates.append(day_dt + timedelta(days=1))
     for value in dashboard_affected_dates:
-        day = datetime.fromisoformat(value)
-        start_candidates.append(day - timedelta(hours=1))
-        end_candidates.append(day + timedelta(days=1))
+        day_dt = datetime.fromisoformat(value)
+        start_candidates.append(day_dt - timedelta(hours=1))
+        end_candidates.append(day_dt + timedelta(days=1))
 
     start_ts = min(start_candidates).isoformat()
     end_ts = max(end_candidates).isoformat()
@@ -744,11 +744,11 @@ def recalc_monitoring_daily_metrics(
         ts = str(row.get("ts", "")).strip()
         if len(ts) < 16:
             continue
-        day = ts[:10]
+        day_key = ts[:10]
         minute = ts[11:16]
-        if day in dashboard_affected_dates:
+        if day_key in dashboard_affected_dates:
             acc = by_day.setdefault(
-                day,
+                day_key,
                 {
                     "actual_pv_kwh": 0.0,
                     "actual_load_kwh": 0.0,
@@ -796,26 +796,26 @@ def recalc_monitoring_daily_metrics(
         if review_day in dashboard_affected_dates and (minute < "07:00" or minute >= "23:00"):
             review_night_charge_by_day[review_day] += charge_kwh
 
-        if day in calendar_dates:
+        if day_key in calendar_dates:
             pv_kwh = max(0.0, float(row.get("pv_kwh") or 0.0))
             soc = to_float(row.get("soc_percent"))
             if pv_kwh > 0.0 and charge_kwh > 0.0 and soc is not None:
-                previous = latest_pv_charge_by_day.get(day)
+                previous = latest_pv_charge_by_day.get(day_key)
                 if previous is None or ts > previous[0]:
-                    latest_pv_charge_by_day[day] = (ts, soc)
+                    latest_pv_charge_by_day[day_key] = (ts, soc)
 
     batch = client.batch()
     count = 0
     dashboard_updated = 0
     pv_updated = 0
-    for day in sorted(dashboard_affected_dates):
-        metrics = by_day.get(day)
+    for day_key in sorted(dashboard_affected_dates):
+        metrics = by_day.get(day_key)
         if metrics is None:
             continue
         metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
         batch.set(
-            client.collection("dashboard_daily_metrics").document(day),
-            {"date": day, **metrics, "updated_at": updated_at},
+            client.collection("dashboard_daily_metrics").document(day_key),
+            {"date": day_key, **metrics, "updated_at": updated_at},
             merge=True,
         )
         count += 1
@@ -824,15 +824,15 @@ def recalc_monitoring_daily_metrics(
             batch.commit()
             batch = client.batch()
             count = 0
-    for day in sorted(calendar_dates):
-        latest = latest_pv_charge_by_day.get(day)
+    for day_key in sorted(calendar_dates):
+        latest = latest_pv_charge_by_day.get(day_key)
         if latest is None:
             continue
         ts, soc = latest
         batch.set(
-            client.collection("battery_daily_metrics").document(day),
+            client.collection("battery_daily_metrics").document(day_key),
             {
-                "date": day,
+                "date": day_key,
                 "pv_charge_end_soc_percent": soc,
                 "pv_charge_end_at": ts,
                 "updated_at": updated_at,
