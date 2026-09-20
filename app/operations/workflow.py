@@ -9,6 +9,7 @@ from typing import Any
 from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
 from app.operations.forecast_snapshot import persist_forecast_snapshots
+from app.operations.monitoring_sync import earliest_changed_month_start, window_from_ingested_at
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
@@ -19,6 +20,22 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _monitoring_full_backfill_requested() -> bool:
+    return bool(os.getenv("KP_CSV_TARGET_MONTHS", "").strip())
+
+
+def _log_monitoring_sync(changes: Any) -> None:
+    print(
+        "[monitoring_sync] "
+        f"rows_seen={changes.rows_seen} rows_in_window={changes.rows_in_window} "
+        f"inserted={len(changes.inserts)} updated={len(changes.updates)} "
+        f"unchanged={changes.unchanged} duplicate_same={changes.duplicate_same} "
+        f"duplicate_conflict={changes.duplicate_conflict} "
+        f"changed_dates={','.join(changes.calendar_dates) or '-'} "
+        f"dashboard_affected_dates={','.join(changes.dashboard_affected_dates) or '-'}"
+    )
 
 
 def _collect_csv_paths(csv_run_dir: Path) -> list[Path]:
