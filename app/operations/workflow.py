@@ -80,7 +80,10 @@ def _refresh_dashboard_snapshots(cfg: sqlite_ops.PipelineConfig) -> None:
     if not dashboard_snapshot_prefix():
         print("[db_pipeline] dashboard snapshot: skipped (no GCS prefix)")
         return
-    result = write_dashboard_snapshots(cfg.db_path)
+    result = write_dashboard_snapshots(
+        cfg.db_path,
+        full_history_rebuild=cfg.slot == "23",
+    )
     for kind, info in result.items():
         rebuild_mode = info.get("rebuild_mode")
         mode_suffix = f" rebuild_mode={rebuild_mode}" if rebuild_mode else ""
