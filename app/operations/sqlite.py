@@ -378,6 +378,76 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+def sync_monitoring_csvs(
+    conn: sqlite3.Connection,
+    *,
+    csv_paths: list[Path],
+    ingested_at: str,
+    full_backfill: bool = False,
+) -> MonitoringChangeSet:
+    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    prepared = prepare_monitoring_csvs(csv_paths, window=window)
+    existing_by_ts: dict[str, dict[str, Any]] = {}
+    if window is None:
+        for row in prepared.rows:
+            existing = conn.execute(
+                """
+                SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+                FROM monitoring_samples
+                WHERE ts=?
+                """,
+                (str(row["ts"]),),
+            ).fetchone()
+            if existing is not None:
+                existing_by_ts[str(row["ts"])] = dict(existing)
+    else:
+        existing_rows = conn.execute(
+            """
+            SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+            FROM monitoring_samples
+            WHERE ts >= ? AND ts < ?
+            """,
+            (window.start_ts, window.end_ts),
+        ).fetchall()
+        existing_by_ts = {str(row["ts"]): dict(row) for row in existing_rows}
+
+    changes = classify_monitoring_rows(prepared, existing_by_ts=existing_by_ts)
+    for row in changes.changed_rows:
+        conn.execute(
+            """
+            INSERT INTO monitoring_samples (
+                ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh,
+                soc_percent, source_csv, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ts) DO UPDATE SET
+                pv_kwh=excluded.pv_kwh,
+                load_kwh=excluded.load_kwh,
+                sell_kwh=excluded.sell_kwh,
+                buy_kwh=excluded.buy_kwh,
+                charge_kwh=excluded.charge_kwh,
+                discharge_kwh=excluded.discharge_kwh,
+                soc_percent=excluded.soc_percent,
+                source_csv=excluded.source_csv,
+                ingested_at=excluded.ingested_at
+            """,
+            (
+                row["ts"],
+                row.get("pv_kwh"),
+                row.get("load_kwh"),
+                row.get("sell_kwh"),
+                row.get("buy_kwh"),
+                row.get("charge_kwh"),
+                row.get("discharge_kwh"),
+                row.get("soc_percent"),
+                str(row.get("_source_csv", "")),
+                ingested_at,
+            ),
+        )
+    if changes.changed_count:
+        conn.commit()
+    return changes
+
+
 def _forecast_daily_values_from_plan(data: dict[str, Any]) -> dict[str, Any]:
     """Collect the plan values written to one forecast-day database row."""
     forecast = data.get("forecast", {})
