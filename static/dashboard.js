@@ -656,6 +656,27 @@
     }
 
     async function ensureDataForRange(startDate) {
+      const needsOlder =
+        store.meta &&
+        store.meta.oldest_loaded_date &&
+        store.meta.oldest_loaded_date > startDate;
+
+      if (needsOlder && !store.historyLoaded && !store.loadingOlder) {
+        store.loadingOlder = true;
+        try {
+          setStatus("履歴データを読み込んでいます...");
+          const payload = await dashboardApi.fetchHistory();
+          absorbSlice(payload, false);
+          store.historyLoaded = true;
+        } catch {
+          setStatus("履歴スナップショットの読込に失敗したため、従来方式で取得します。", "#ef8e1d");
+        } finally {
+          store.loadingOlder = false;
+        }
+      }
+
+      // Rollout/failure fallback: keep the legacy chunk API available until a
+      // precomputed history snapshot has been generated successfully.
       while (
         !store.loadingOlder &&
         store.meta &&
@@ -1513,15 +1534,17 @@
         absorbSlice(initialPayload, true);
       }
 
-      try {
-        const bootstrap = await fetchSlice({ window_days: WINDOW_DAYS, include_static: true });
-        absorbSlice(bootstrap, true);
-      } catch {
-        if (!store.dates.length) {
-          setStatus("データ読込に失敗しました（認証の再確認をお願いします）", "#e6504f");
-          return;
+      if (!hasInitialRows) {
+        try {
+          const bootstrap = await dashboardApi.fetchBootstrap();
+          absorbSlice(bootstrap, true);
+        } catch {
+          if (!store.dates.length) {
+            setStatus("データ読込に失敗しました（認証の再確認をお願いします）", "#e6504f");
+            return;
+          }
+          setStatus("最新データの取得に失敗したため、取得済みデータで表示しています。", "#ef8e1d");
         }
-        setStatus("最新データの再取得に失敗したため、取得済みデータで表示しています。", "#ef8e1d");
       }
 
       fillLearningParams();
