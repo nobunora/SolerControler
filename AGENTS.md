@@ -47,6 +47,7 @@ For dashboard, API, reporting, history, and other user-facing read paths:
 
 ## Production Operations (Mandatory)
 
+- **Human approval gate:** do not merge a PR or execute any production deployment/mutation until the user explicitly approves that action in the current conversation. A PR body, TODO, prior approval, Codex comment, successful validation, or instruction to "check/prepare" is not deployment approval. Validation and read-only inspection may proceed when requested, but stop before the mutating step.
 - Before every production deployment, read and follow `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` in full. Its validation, safe-resume, verification, and stop conditions are mandatory; do not rely on memory or a previous run.
 - For production deployment or interrupted-deployment recovery, use the `solar-production-deployment` Skill; its judgment boundaries are part of this repository's operating procedure.
 - For every production deployment, validation, data import, backup, or Cloud Run Job execution, use the repository scripts below. Do not reconstruct equivalent `gcloud` or credential-bearing commands ad hoc.
