@@ -12,7 +12,6 @@ from app.dashboard.snapshots import (
     build_bootstrap_payload,
     clear_snapshot_cache,
     _full_history_rebuild_requested,
-    _should_full_history_rebuild,
     load_precomputed_snapshot,
 )
 
@@ -94,19 +93,16 @@ def test_full_history_rebuild_flag_is_explicit(monkeypatch) -> None:
     monkeypatch.delenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", raising=False)
     assert _full_history_rebuild_requested() is False
 
-    current_history = {
-        "meta": {
-            "snapshot_full_history_rebuild_date": dashboard_snapshots._today_jst_iso(),
-        }
-    }
-    assert _should_full_history_rebuild(current_history) is False
-    assert _should_full_history_rebuild(None) is True
-    assert _should_full_history_rebuild({"meta": {"snapshot_full_history_rebuild_date": "2000-01-01"}}) is True
-
     monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "true")
     assert _full_history_rebuild_requested() is True
     assert _should_full_history_rebuild(current_history) is True
 
     monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "0")
     assert _full_history_rebuild_requested() is False
+
+
+def test_slot_23_is_the_only_automatic_full_history_rebuild_path() -> None:
+    source = (Path(__file__).parents[1] / "app" / "operations" / "workflow.py").read_text(encoding="utf-8")
+
+    assert 'full_history_rebuild=cfg.slot == "23"' in source
 
