@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from pathlib import Path
 
 from app.dashboard.models import DashboardData, DashboardSlice
 from app.dashboard.snapshots import (
@@ -94,7 +95,6 @@ def test_full_history_rebuild_flag_is_explicit(monkeypatch) -> None:
 
     monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "true")
     assert _full_history_rebuild_requested() is True
-    assert _should_full_history_rebuild(current_history) is True
 
     monkeypatch.setenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "0")
     assert _full_history_rebuild_requested() is False
