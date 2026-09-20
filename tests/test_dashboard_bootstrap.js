@@ -150,7 +150,7 @@ setImmediate(async () => {
   const loadChart = ChartStub.instances[2];
   assert.deepEqual(
     { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
-    { min: -20, max: 100, step: 20 },
+    { min: 0, max: 100, step: 20 },
   );
   assert.equal(Number.isInteger(loadChart.options.scales.y.min / loadChart.options.scales.y.ticks.stepSize), true);
   const dailyKwhChart = ChartStub.instances[3];
