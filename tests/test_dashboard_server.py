@@ -205,3 +205,36 @@ def test_versioned_static_asset_is_precompressed_immutable_and_revalidates(
         server.server_close()
         thread.join(timeout=2)
 
+
+def test_missing_history_snapshot_never_triggers_unbounded_db_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_USER", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_PASSWORD", raising=False)
+    monkeypatch.delenv("DASHBOARD_SNAPSHOT_GCS_PREFIX", raising=False)
+    monkeypatch.delenv("NIGHT_PLAN_ARCHIVE_GCS_PREFIX", raising=False)
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_LOCAL_DIR", str(tmp_path))
+    clear_snapshot_cache()
+
+    def _db_must_not_be_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("missing history snapshot attempted an unbounded DB rebuild")
+
+    monkeypatch.setattr("app.dashboard.server.load_dashboard_slice", _db_must_not_be_called)
+
+    server, thread = _serve_dashboard_for_test()
+    try:
+        host, port = server.server_address
+        conn = HTTPConnection(host, port)
+        conn.request("GET", "/api/dashboard/history")
+        response = conn.getresponse()
+        body = response.read()
+        assert response.status == 404
+        assert json.loads(body.decode("utf-8")) == {"error": "snapshot_unavailable"}
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        clear_snapshot_cache()
+
