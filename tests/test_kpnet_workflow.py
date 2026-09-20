@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -234,6 +235,38 @@ def test_resolve_months_does_not_append_latest_to_explicit_backfill() -> None:
         ["2026-05", "2026-09"],
         include_latest=True,
     ) == ["2026-05"]
+
+
+def test_csv_phase_reports_requested_months_that_are_temporarily_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class Client:
+        def open_csv_measure_page(self):
+            return ["2026-09"], "pcs"
+
+        def download_csv(self, *, month: str, pcsclass: str, out_dir: Path) -> Path:
+            del pcsclass
+            path = out_dir / f"{month}.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("年月日,時刻\n", encoding="utf-8")
+            return path
+
+    monkeypatch.setattr(kpnet_workflow, "_plot_csvs", lambda paths, output: {"points": len(paths)})
+    cfg = SimpleNamespace(
+        csv_target_months=["2026-08", "2026-09"],
+        download_latest_month=True,
+    )
+    summary: dict[str, object] = {"csv_downloads": []}
+
+    kpnet_workflow._run_csv_phase(
+        client=Client(),
+        cfg=cfg,
+        run_dir=tmp_path,
+        summary=summary,
+    )
+
+    assert summary["csv_unavailable_months"] == ["2026-08"]
+    assert [item["month"] for item in summary["csv_downloads"]] == ["2026-09"]
 
 
 def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
