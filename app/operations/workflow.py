@@ -458,20 +458,26 @@ def _ingest_firestore(
         print("[db_pipeline] skip night plan and forecast ingestion")
     hit_rate = firestore_ops.recalc_model_hit_rates(client, updated_at=now_iso)
     print(f"[db_pipeline] model hit_rate={hit_rate!r}")
-    firestore_ops.recalc_cost_daily(
-        client,
-        day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
-        updated_at=now_iso,
-        tariff_mode=cfg.cost_tariff_mode,
-        night8_day_start_hhmm=cfg.night8_day_start_hhmm,
-        night8_day_end_hhmm=cfg.night8_day_end_hhmm,
-        night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
-        night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
-        night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
-        night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
-        night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
-        night8_night_rate_yen=cfg.night8_night_rate_yen,
-    )
+    if monitoring_changes is not None and monitoring_changes.changed_count:
+        cost_start = earliest_changed_month_start(monitoring_changes)
+        if cost_start is not None:
+            cost_rows = firestore_ops.recalc_cost_daily_from(
+                client,
+                start_date=cost_start,
+                end_ts=window_from_ingested_at(now_iso).end_ts,
+                day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+                updated_at=now_iso,
+                tariff_mode=cfg.cost_tariff_mode,
+                night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+                night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+                night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+                night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+                night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+                night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+                night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+                night8_night_rate_yen=cfg.night8_night_rate_yen,
+            )
+            print(f"[db_pipeline] cost daily recalculated rows={cost_rows} start={cost_start}")
     firestore_ops.upsert_pipeline_run(
         client,
         run_key=run_key,
@@ -481,7 +487,14 @@ def _ingest_firestore(
         csv_rows_upserted=csv_rows,
         recorded_at=now_iso,
     )
-    _refresh_dashboard_snapshots(cfg)
+    if (
+        settings_run_dir is not None
+        or include_night_plan
+        or (monitoring_changes is not None and monitoring_changes.changed_count > 0)
+    ):
+        _refresh_dashboard_snapshots(cfg)
+    else:
+        print("[db_pipeline] dashboard snapshot: skipped (no changed inputs)")
     print("[db_pipeline] weekly backup: disabled (firestore backend)")
     print("[db_pipeline] done backend=firestore")
 
