@@ -75,8 +75,11 @@ def _record_planned_day_mode_sqlite(conn: Any, *, settings_summary_path: Path, r
 
 
 def _refresh_dashboard_snapshots(cfg: sqlite_ops.PipelineConfig) -> None:
-    from app.dashboard.snapshots import write_dashboard_snapshots
+    from app.dashboard.snapshots import dashboard_snapshot_prefix, write_dashboard_snapshots
 
+    if not dashboard_snapshot_prefix():
+        print("[db_pipeline] dashboard snapshot: skipped (no GCS prefix)")
+        return
     result = write_dashboard_snapshots(cfg.db_path)
     for kind, info in result.items():
         print(
