@@ -3,7 +3,6 @@ from __future__ import annotations
 import gzip
 import json
 
-from app.dashboard import snapshots as dashboard_snapshots
 from app.dashboard.models import DashboardData, DashboardSlice
 from app.dashboard.snapshots import (
     BOOTSTRAP_KIND,
