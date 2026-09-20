@@ -276,9 +276,10 @@ def build_dashboard_snapshot_payloads(
         previous_oldest = cursor_oldest
         for name in _DAILY_SERIES:
             _merge_rows(series[name], list(chunk_payload.get(name) or []))
-        cursor_oldest, _ = _history_bounds(series)
-        if not cursor_oldest or cursor_oldest >= previous_oldest:
+        next_oldest, _ = _history_bounds(series)
+        if not next_oldest or next_oldest >= previous_oldest:
             break
+        cursor_oldest = next_oldest
         has_more = bool(global_oldest and cursor_oldest > global_oldest)
 
     history = _history_payload(series=series, bootstrap_meta=bootstrap_meta)
