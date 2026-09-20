@@ -185,7 +185,7 @@ def _history_payload(
                 "newest_loaded_date": newest,
                 "global_oldest_date": global_oldest,
                 "global_newest_date": global_newest,
-                "has_more_before": False,
+                "has_more_before": bool(global_oldest and oldest and oldest > str(global_oldest)),
             },
             kind=HISTORY_KIND,
         ),
