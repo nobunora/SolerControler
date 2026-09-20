@@ -67,5 +67,7 @@ def test_dashboard_deploy_preserves_runtime_identity_and_grants_read_only_snapsh
     assert "value(spec.template.spec.serviceAccountName)" in script
     assert "roles/storage.objectViewer" in script
     assert "Dashboard Cloud Run service account could not be resolved." in script
+    assert "compute@developer.gserviceaccount.com" in script
+    assert "Dashboard default service account project number could not be resolved." in script
     assert "--service-account (Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT')" not in script
 
