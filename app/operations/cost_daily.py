@@ -112,6 +112,26 @@ def calculate_daily_costs(
     return _with_cumulative((day, metrics[day]["self"], savings[day]) for day in sorted(metrics))
 
 
+def apply_cumulative_baseline(
+    results: list[DailyCostResult],
+    *,
+    base_kwh: float,
+    base_yen: float,
+) -> list[DailyCostResult]:
+    if not results or (base_kwh == 0.0 and base_yen == 0.0):
+        return results
+    return [
+        DailyCostResult(
+            date=result.date,
+            self_consumption_kwh=result.self_consumption_kwh,
+            savings_yen=result.savings_yen,
+            cumulative_kwh=result.cumulative_kwh + base_kwh,
+            cumulative_yen=result.cumulative_yen + base_yen,
+        )
+        for result in results
+    ]
+
+
 def _with_cumulative(rows: Iterable[tuple[str, float, float]]) -> list[DailyCostResult]:
     results: list[DailyCostResult] = []
     cumulative_kwh = 0.0
