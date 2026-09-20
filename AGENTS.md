@@ -23,6 +23,21 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Do not add dependencies or change external contracts without user approval.
 - Leave no debug code, temporary bypasses, or commented-out code.
 
+## Performance-Sensitive Read Paths (Mandatory)
+
+For dashboard, API, reporting, history, and other user-facing read paths:
+
+- Before implementation, write down the end-to-end request/data path (browser or caller -> HTTP endpoint -> service -> storage). Check the whole page/workflow, not only the edited function.
+- Treat request count, backend reads, serialized bytes, and cache behavior as part of correctness. A functionally correct change that duplicates the same payload or scans unnecessary history is not complete.
+- Initial/default views must fetch only the data required to render that view. Do not synchronously load all history when history can be loaded after explicit navigation.
+- Do not both embed and fetch the same bootstrap payload unless the design explicitly requires revalidation, the embedded copy is rendered before the fetch completes, and a regression test proves there is no redundant blocking transfer.
+- Separate bootstrap/current data from historical/bulk data when their access patterns differ. Prefer precomputed/materialized read models for data that changes on scheduled jobs but is read frequently.
+- Static assets must use a resource-appropriate cache policy. Do not apply HTML/API `no-store` policy to versioned JS/CSS. Version immutable assets and test their ETag/cache behavior.
+- Any fallback that reads the primary database must be bounded and observable. Never hide an unbounded history scan behind a normal bootstrap endpoint.
+- For dashboard/read-path PRs, add or update regression tests for the relevant performance contract. At minimum, test initial request count and lazy history behavior when those paths are changed; test ETag/cache behavior when caching is changed; test that precomputed fast paths do not hit the database when an artifact is present.
+- In the PR description, report the before/after request path and identify expected changes in request count, compressed transfer size, backend reads, and cache hits. If production-only measurements are required, record them as a deployment validation task rather than guessing.
+- If historical or bulk source data can be rewritten outside the normal recent-data window, document how the materialized history is invalidated or rebuilt. Incremental snapshots must not silently make older corrected data permanently stale.
+
 ## Historical Failure Protected Regions (Mandatory)
 
 - Before changing a symbol or constant listed in `docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md`, read that document and the cited commit evidence.
