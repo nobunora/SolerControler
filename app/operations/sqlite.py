@@ -743,6 +743,97 @@ def recalc_cost_daily(
         )
     conn.commit()
     return
+
+
+def recalc_cost_daily_from(
+    conn: sqlite3.Connection,
+    *,
+    start_date: str,
+    end_ts: str,
+    day_rate_yen_per_kwh: float,
+    updated_at: str,
+    tariff_mode: str = "flat",
+    night8_day_start_hhmm: str = "07:00",
+    night8_day_end_hhmm: str = "23:00",
+    night8_day_tier1_upper_kwh: float = 90.0,
+    night8_day_tier2_upper_kwh: float = 230.0,
+    night8_day_rate_tier1_yen: float = 31.80,
+    night8_day_rate_tier2_yen: float = 39.10,
+    night8_day_rate_tier3_yen: float = 43.62,
+    night8_night_rate_yen: float = 28.85,
+) -> int:
+    start_ts = f"{start_date}T00:00:00"
+    sample_rows = conn.execute(
+        """
+        SELECT ts, load_kwh, buy_kwh
+        FROM monitoring_samples
+        WHERE ts >= ? AND ts < ?
+        ORDER BY ts
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    if not sample_rows:
+        return 0
+    prior = conn.execute(
+        """
+        SELECT cumulative_kwh, cumulative_yen
+        FROM cost_daily
+        WHERE date < ?
+        ORDER BY date DESC
+        LIMIT 1
+        """,
+        (start_date,),
+    ).fetchone()
+    base_kwh = float(prior["cumulative_kwh"] or 0.0) if prior is not None else 0.0
+    base_yen = float(prior["cumulative_yen"] or 0.0) if prior is not None else 0.0
+    results = calculate_daily_costs(
+        [
+            EnergyInterval(
+                timestamp=str(row["ts"] or ""),
+                load_kwh=row["load_kwh"],
+                buy_kwh=row["buy_kwh"],
+            )
+            for row in sample_rows
+        ],
+        DailyCostPolicy(
+            tariff_mode=tariff_mode,
+            day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+            day_start_hhmm=night8_day_start_hhmm,
+            day_end_hhmm=night8_day_end_hhmm,
+            day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+            day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+            day_rate_tier1_yen=night8_day_rate_tier1_yen,
+            day_rate_tier2_yen=night8_day_rate_tier2_yen,
+            day_rate_tier3_yen=night8_day_rate_tier3_yen,
+            night_rate_yen=night8_night_rate_yen,
+        ),
+    )
+    results = apply_cumulative_baseline(results, base_kwh=base_kwh, base_yen=base_yen)
+    for result in results:
+        conn.execute(
+            """
+            INSERT INTO cost_daily (date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                self_consumption_kwh=excluded.self_consumption_kwh,
+                savings_yen=excluded.savings_yen,
+                cumulative_kwh=excluded.cumulative_kwh,
+                cumulative_yen=excluded.cumulative_yen,
+                updated_at=excluded.updated_at
+            """,
+            (
+                result.date,
+                result.self_consumption_kwh,
+                result.savings_yen,
+                result.cumulative_kwh,
+                result.cumulative_yen,
+                updated_at,
+            ),
+        )
+    conn.commit()
+    return len(results)
+
+
 def upsert_battery_daily_metrics(
     conn: sqlite3.Connection,
     *,
