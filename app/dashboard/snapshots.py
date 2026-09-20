@@ -364,7 +364,7 @@ def load_precomputed_snapshot(
         try:
             payload = blob.download_as_bytes(raw_download=True)
         except Exception as exc:
-            if exc.__class__.__name__ in {"NotFound", "Forbidden"}:
+            if exc.__class__.__name__ == "NotFound":
                 return None
             raise
     else:
