@@ -12,6 +12,20 @@
     return output.toString();
   }
 
+  async function fetchJson(path, fetchImpl = fetch) {
+    const response = await fetchImpl(path, { credentials: "include" });
+    if (!response.ok) throw new Error(`api_error_${response.status}`);
+    return await response.json();
+  }
+
+  async function fetchBootstrap(fetchImpl = fetch) {
+    return await fetchJson("/api/dashboard/bootstrap", fetchImpl);
+  }
+
+  async function fetchHistory(fetchImpl = fetch) {
+    return await fetchJson("/api/dashboard/history", fetchImpl);
+  }
+
   async function fetchSlice(options = {}, fetchImpl = fetch) {
     const query = queryString({
       window_days: options.window_days,
@@ -23,5 +37,5 @@
     return await response.json();
   }
 
-  return { queryString, fetchSlice };
+  return { queryString, fetchJson, fetchBootstrap, fetchHistory, fetchSlice };
 });
