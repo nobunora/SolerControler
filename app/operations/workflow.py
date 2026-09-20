@@ -82,6 +82,7 @@ def _refresh_dashboard_snapshots(cfg: sqlite_ops.PipelineConfig) -> None:
         return
     result = write_dashboard_snapshots(
         cfg.db_path,
+        update_history=cfg.slot == "23",
         full_history_rebuild=cfg.slot == "23",
     )
     for kind, info in result.items():
