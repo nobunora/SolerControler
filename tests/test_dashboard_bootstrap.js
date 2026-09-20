@@ -70,10 +70,15 @@ const context = {
           { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
           { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
         ],
-        energy_daily: [
-          { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
-          { date: "2026-07-18", forecast_pv_kwh: 7, actual_pv_kwh: 9, forecast_load_kwh: 4, actual_load_kwh: 6 },
-        ],
+        energy_daily: isHistory
+          ? [
+              { date: "2026-07-17", forecast_pv_kwh: 999, actual_pv_kwh: 999, forecast_load_kwh: 999, actual_load_kwh: 999 },
+              { date: "2026-07-18", forecast_pv_kwh: 999, actual_pv_kwh: 999, forecast_load_kwh: 999, actual_load_kwh: 999 },
+            ]
+          : [
+              { date: "2026-07-17", forecast_pv_kwh: 5, actual_pv_kwh: 6, forecast_load_kwh: 3, actual_load_kwh: 1 },
+              { date: "2026-07-18", forecast_pv_kwh: 7, actual_pv_kwh: 9, forecast_load_kwh: 4, actual_load_kwh: 6 },
+            ],
         cost_daily: [
           { date: "2026-07-17", self_consumption_kwh: 2, savings_yen: 100 },
           { date: "2026-07-18", self_consumption_kwh: 4, savings_yen: 300 },
@@ -195,6 +200,10 @@ setImmediate(async () => {
   await elements.get("periodYearBtn").listeners.click();
   assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
+  assert.ok(
+    pvChart.data.datasets[0].data.every((value) => value == null || Number(value) < 100),
+    "stale overlapping history must not overwrite fresh bootstrap rows",
+  );
   const assertAxisHasPadding = (chart, axisName, datasetIndexes) => {
     const values = datasetIndexes
       .flatMap((index) => chart.data.datasets[index].data)
