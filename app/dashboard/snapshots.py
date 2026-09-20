@@ -319,20 +319,30 @@ def write_dashboard_snapshots(
     full_history_rebuild = bool(
         full_history_rebuild
         or _full_history_rebuild_requested()
-        or existing_history_candidate is None
     )
-    existing_history = None if full_history_rebuild else existing_history_candidate
-    payloads = build_dashboard_snapshot_payloads(db_path, existing_history=existing_history)
-    history_meta = payloads[HISTORY_KIND].get("meta")
-    if isinstance(history_meta, dict):
-        if full_history_rebuild:
-            history_meta["snapshot_full_history_rebuild_date"] = _today_jst_iso()
-        elif isinstance(existing_history_candidate, dict):
-            previous_meta = existing_history_candidate.get("meta")
-            if isinstance(previous_meta, dict):
-                history_meta["snapshot_full_history_rebuild_date"] = previous_meta.get(
-                    "snapshot_full_history_rebuild_date"
-                )
+    if existing_history_candidate is None and not full_history_rebuild:
+        bootstrap_slice = load_dashboard_slice(
+            db_path,
+            end_date=None,
+            window_days=31,
+            include_static=True,
+        )
+        payloads = {
+            BOOTSTRAP_KIND: build_bootstrap_payload(bootstrap_slice),
+        }
+    else:
+        existing_history = None if full_history_rebuild else existing_history_candidate
+        payloads = build_dashboard_snapshot_payloads(db_path, existing_history=existing_history)
+        history_meta = payloads[HISTORY_KIND].get("meta")
+        if isinstance(history_meta, dict):
+            if full_history_rebuild:
+                history_meta["snapshot_full_history_rebuild_date"] = _today_jst_iso()
+            elif isinstance(existing_history_candidate, dict):
+                previous_meta = existing_history_candidate.get("meta")
+                if isinstance(previous_meta, dict):
+                    history_meta["snapshot_full_history_rebuild_date"] = previous_meta.get(
+                        "snapshot_full_history_rebuild_date"
+                    )
     results: dict[str, dict[str, Any]] = {}
 
     for kind, payload in payloads.items():
