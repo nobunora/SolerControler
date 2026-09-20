@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import app.kpnet.workflow as kpnet_workflow
+from app.kpnet.csv_visualization import _resolve_months
 from app.kpnet.plan import NightChargePlan as CanonicalNightChargePlan
 from app.kpnet.plan import load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE as CanonicalForcedChargeProfile
@@ -225,6 +226,14 @@ def test_default_csv_target_months_follow_four_day_reconciliation_window() -> No
     assert _default_csv_target_months(datetime(2026, 7, 20, 4, 0)) == ["2026-07"]
     assert _default_csv_target_months(datetime(2026, 10, 3, 4, 0)) == ["2026-09", "2026-10"]
     assert _default_csv_target_months(datetime(2026, 10, 4, 4, 0)) == ["2026-10"]
+
+
+def test_resolve_months_does_not_append_latest_to_explicit_backfill() -> None:
+    assert _resolve_months(
+        ["2026-05"],
+        ["2026-05", "2026-09"],
+        include_latest=True,
+    ) == ["2026-05"]
 
 
 def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
