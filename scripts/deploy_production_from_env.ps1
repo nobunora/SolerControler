@@ -339,6 +339,22 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
         throw 'Dashboard image build failed.'
     }
 
+    # Preserve the dashboard's existing runtime identity. The runner service
+    # account has write/admin permissions that the read-only dashboard does not
+    # need. Grant only snapshot-object read access to the current dashboard SA.
+    $dashboardServiceAccount = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format 'value(spec.template.spec.serviceAccountName)').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $dashboardServiceAccount) {
+        throw 'Dashboard Cloud Run service account could not be resolved.'
+    }
+    if ($archivePrefix -notmatch '^gs://([^/]+)') {
+        throw 'NIGHT_PLAN_ARCHIVE_GCS_PREFIX must be a gs:// URI.'
+    }
+    $dashboardSnapshotBucket = $Matches[1]
+    & $gcloud storage buckets add-iam-policy-binding "gs://$dashboardSnapshotBucket" --project $projectId --member "serviceAccount:$dashboardServiceAccount" --role 'roles/storage.objectViewer' --quiet | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to grant dashboard snapshot read access.'
+    }
+
     $tempEnv = New-TemporaryFile
     try {
         $dashboardEnv = [ordered]@{
@@ -359,7 +375,7 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
             "$($entry.Key): '$escaped'"
         }
         [IO.File]::WriteAllLines($tempEnv.FullName, $yamlLines, [Text.UTF8Encoding]::new($false))
-        & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --service-account (Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT') --env-vars-file $tempEnv.FullName
+        & $gcloud run services update $dashboardService --region $region --project $projectId --image $dashboardImage --env-vars-file $tempEnv.FullName
     } finally {
         Remove-Item -LiteralPath $tempEnv.FullName -Force -ErrorAction SilentlyContinue
     }
