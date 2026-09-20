@@ -227,7 +227,16 @@ def _read_existing_history_payload(*, storage_client: Any | None = None) -> dict
     if artifact is None:
         return None
     parsed = json.loads(artifact.raw.decode("utf-8"))
-    return parsed if isinstance(parsed, dict) else None
+    if not isinstance(parsed, dict):
+        return None
+    meta = parsed.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    if meta.get("snapshot_kind") != HISTORY_KIND:
+        return None
+    if meta.get("snapshot_schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        return None
+    return parsed
 
 
 def build_dashboard_snapshot_payloads(
@@ -284,12 +293,11 @@ def _upload_artifact(artifact: SnapshotArtifact, *, storage_client: Any) -> str:
     bucket_name, blob_name = _parse_gs_uri(uri)
     blob = storage_client.bucket(bucket_name).blob(blob_name)
     blob.cache_control = "private, max-age=0, must-revalidate"
-    blob.content_encoding = "gzip"
     blob.metadata = {
         "dashboard_snapshot_schema": str(SNAPSHOT_SCHEMA_VERSION),
         "sha256": hashlib.sha256(artifact.raw).hexdigest(),
     }
-    blob.upload_from_string(artifact.gzip_bytes, content_type="application/json")
+    blob.upload_from_string(artifact.gzip_bytes, content_type="application/gzip")
     return uri
 
 
@@ -362,7 +370,7 @@ def load_precomputed_snapshot(
         bucket_name, blob_name = _parse_gs_uri(snapshot_gcs_uri(kind))
         blob = storage_client.bucket(bucket_name).blob(blob_name)
         try:
-            payload = blob.download_as_bytes(raw_download=True)
+            payload = blob.download_as_bytes()
         except Exception as exc:
             if exc.__class__.__name__ == "NotFound":
                 return None
