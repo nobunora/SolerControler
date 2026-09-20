@@ -307,6 +307,7 @@ def write_dashboard_snapshots(
     db_path: Path,
     *,
     storage_client: Any | None = None,
+    update_history: bool = False,
     full_history_rebuild: bool = False,
 ) -> dict[str, dict[str, Any]]:
     prefix = dashboard_snapshot_prefix()
@@ -315,12 +316,19 @@ def write_dashboard_snapshots(
 
         storage_client = Client()
 
-    existing_history_candidate = _read_existing_history_payload(storage_client=storage_client)
     full_history_rebuild = bool(
         full_history_rebuild
         or _full_history_rebuild_requested()
     )
-    if existing_history_candidate is None and not full_history_rebuild:
+    history_requested = bool(update_history or full_history_rebuild)
+    existing_history_candidate = (
+        _read_existing_history_payload(storage_client=storage_client)
+        if history_requested
+        else None
+    )
+    if not history_requested or (
+        existing_history_candidate is None and not full_history_rebuild
+    ):
         bootstrap_slice = load_dashboard_slice(
             db_path,
             end_date=None,
