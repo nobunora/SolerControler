@@ -102,7 +102,7 @@ def _latest_hourly_date(payload: dict[str, Any]) -> str | None:
     return dates[-1] if dates else None
 
 
-def _compact_bootstrap_payload(value: DashboardSlice) -> dict[str, Any]:
+def build_bootstrap_payload(value: DashboardSlice) -> dict[str, Any]:
     payload = _payload_from_slice(value)
     latest_hourly = _latest_hourly_date(payload)
     if latest_hourly:
@@ -241,7 +241,7 @@ def build_dashboard_snapshot_payloads(
         window_days=31,
         include_static=True,
     )
-    bootstrap = _compact_bootstrap_payload(bootstrap_slice)
+    bootstrap = build_bootstrap_payload(bootstrap_slice)
     bootstrap_meta = bootstrap.get("meta") or {}
     series = _series_from_existing_history(existing_history)
     for name in _DAILY_SERIES:
