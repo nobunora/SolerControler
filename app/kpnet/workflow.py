@@ -81,6 +81,12 @@ def _run_csv_phase(
     )
     LOGGER.info("Available months: %s", available_months)
     LOGGER.info("Target months: %s", target_months)
+    unavailable_months = [
+        month for month in cfg.csv_target_months if month not in set(available_months)
+    ]
+    if unavailable_months:
+        summary["csv_unavailable_months"] = unavailable_months
+        LOGGER.warning("Requested CSV months unavailable: %s", unavailable_months)
 
     csv_paths: list[Path] = []
     for month in target_months:
