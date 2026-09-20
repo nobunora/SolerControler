@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -943,6 +943,47 @@ def recalc_battery_pv_charge_end_soc(conn: sqlite3.Connection, *, updated_at: st
         )
         updated += int(cur.rowcount or 0)
     conn.commit()
+    return updated
+
+
+def recalc_battery_pv_charge_end_soc_for_dates(
+    conn: sqlite3.Connection,
+    *,
+    dates: set[str],
+    updated_at: str,
+) -> int:
+    updated = 0
+    for day in sorted(dates):
+        next_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+        row = conn.execute(
+            """
+            SELECT ts, soc_percent
+            FROM monitoring_samples
+            WHERE ts >= ? AND ts < ?
+              AND soc_percent IS NOT NULL
+              AND COALESCE(pv_kwh, 0) > 0
+              AND COALESCE(charge_kwh, 0) > 0
+            ORDER BY ts DESC
+            LIMIT 1
+            """,
+            (f"{day}T00:00:00", f"{next_day}T00:00:00"),
+        ).fetchone()
+        if row is None:
+            continue
+        soc = to_float(row["soc_percent"])
+        if soc is None:
+            continue
+        cur = conn.execute(
+            """
+            UPDATE battery_daily_metrics
+            SET pv_charge_end_soc_percent = ?, pv_charge_end_at = ?, updated_at = ?
+            WHERE date = ?
+            """,
+            (soc, str(row["ts"]), updated_at, day),
+        )
+        updated += int(cur.rowcount or 0)
+    if updated:
+        conn.commit()
     return updated
 
 
