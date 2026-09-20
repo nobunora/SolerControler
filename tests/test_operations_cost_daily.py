@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, apply_cumulative_baseline, calculate_daily_costs
 
 
 def test_calculate_daily_costs_characterizes_tiered_boundaries_and_missing_values() -> None:
@@ -47,3 +47,22 @@ def test_calculate_daily_costs_preserves_flat_precision_and_cumulative_values() 
     assert results[0].savings_yen == pytest.approx(31.0)
     assert results[1].cumulative_kwh == pytest.approx(2.5)
     assert results[1].cumulative_yen == pytest.approx(77.5)
+
+
+def test_apply_cumulative_baseline_preserves_daily_values_and_offsets_totals() -> None:
+    results = calculate_daily_costs(
+        [
+            EnergyInterval("2026-09-01T07:00:00", 2.0, 1.0),
+            EnergyInterval("2026-09-02T07:00:00", 3.0, 1.0),
+        ],
+        DailyCostPolicy(tariff_mode="flat", day_rate_yen_per_kwh=10.0),
+    )
+
+    adjusted = apply_cumulative_baseline(results, base_kwh=100.0, base_yen=2000.0)
+
+    assert adjusted[0].self_consumption_kwh == pytest.approx(results[0].self_consumption_kwh)
+    assert adjusted[0].savings_yen == pytest.approx(results[0].savings_yen)
+    assert adjusted[0].cumulative_kwh == pytest.approx(101.0)
+    assert adjusted[0].cumulative_yen == pytest.approx(2010.0)
+    assert adjusted[1].cumulative_kwh == pytest.approx(103.0)
+    assert adjusted[1].cumulative_yen == pytest.approx(2030.0)
