@@ -384,17 +384,26 @@ def _ingest_firestore(
     client = firestore_ops.open_firestore()
     firestore_ops.ensure_schema(client)
     csv_rows = 0
+    monitoring_changes = None
     csv_run_id = csv_run_dir.name if csv_run_dir else ""
     settings_run_id = settings_run_dir.name if settings_run_dir else ""
     run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
     if firestore_ops.pipeline_run_exists(client, run_key=run_key):
         print(f"[db_pipeline] already ingested: {run_key}")
-        _refresh_dashboard_snapshots(cfg)
+        if settings_run_dir is not None or include_night_plan:
+            _refresh_dashboard_snapshots(cfg)
         return
 
     if csv_run_dir is not None:
         csv_paths = _collect_csv_paths(csv_run_dir)
-        csv_rows = firestore_ops.ingest_monitoring_csvs(client, csv_paths=csv_paths, ingested_at=now_iso)
+        monitoring_changes = firestore_ops.sync_monitoring_csvs(
+            client,
+            csv_paths=csv_paths,
+            ingested_at=now_iso,
+            full_backfill=_monitoring_full_backfill_requested(),
+        )
+        csv_rows = monitoring_changes.changed_count
+        _log_monitoring_sync(monitoring_changes)
 
     if settings_run_dir is not None:
         summary_path = settings_run_dir / "kpnet_summary.json"
@@ -416,10 +425,17 @@ def _ingest_firestore(
             )
         else:
             print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-    pv_charge_end_updated = firestore_ops.recalc_battery_pv_charge_end_soc(client, updated_at=now_iso)
-    print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
-    dashboard_daily_updated = firestore_ops.recalc_dashboard_daily_metrics(client, updated_at=now_iso)
-    print(f"[db_pipeline] dashboard daily metrics updated rows={dashboard_daily_updated}")
+    if monitoring_changes is not None and monitoring_changes.changed_count:
+        daily_result = firestore_ops.recalc_monitoring_daily_metrics(
+            client,
+            calendar_dates=set(monitoring_changes.calendar_dates),
+            dashboard_affected_dates=set(monitoring_changes.dashboard_affected_dates),
+            updated_at=now_iso,
+        )
+        print(
+            "[db_pipeline] monitoring daily materialized "
+            f"dashboard={daily_result['dashboard']} pv_charge_end={daily_result['pv_charge_end']}"
+        )
 
     if include_night_plan:
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
