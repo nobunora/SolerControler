@@ -220,8 +220,11 @@ def test_in_time_window_cross_midnight() -> None:
     assert not _in_time_window(12 * 60, start, end)
 
 
-def test_default_csv_target_months_includes_previous_and_current_month() -> None:
+def test_default_csv_target_months_follow_four_day_reconciliation_window() -> None:
     assert _default_csv_target_months(datetime(2026, 7, 1, 4, 0)) == ["2026-06", "2026-07"]
+    assert _default_csv_target_months(datetime(2026, 7, 20, 4, 0)) == ["2026-07"]
+    assert _default_csv_target_months(datetime(2026, 10, 3, 4, 0)) == ["2026-09", "2026-10"]
+    assert _default_csv_target_months(datetime(2026, 10, 4, 4, 0)) == ["2026-10"]
 
 
 def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
