@@ -829,13 +829,13 @@ def recalc_monitoring_daily_metrics(
         ref = client.collection("battery_daily_metrics").document(day_key)
         if latest is None:
             snap = ref.get()
-            previous = snap.to_dict() or {} if snap.exists else {}
+            previous_doc: dict[str, Any] = (snap.to_dict() or {}) if snap.exists else {}
             if (
-                previous.get("pv_charge_end_soc_percent") is None
-                and previous.get("pv_charge_end_at") is None
+                previous_doc.get("pv_charge_end_soc_percent") is None
+                and previous_doc.get("pv_charge_end_at") is None
             ):
                 continue
-            payload = {
+            pv_payload: dict[str, Any] = {
                 "date": day_key,
                 "pv_charge_end_soc_percent": None,
                 "pv_charge_end_at": None,
@@ -843,13 +843,13 @@ def recalc_monitoring_daily_metrics(
             }
         else:
             ts, soc = latest
-            payload = {
+            pv_payload = {
                 "date": day_key,
                 "pv_charge_end_soc_percent": soc,
                 "pv_charge_end_at": ts,
                 "updated_at": updated_at,
             }
-        batch.set(ref, payload, merge=True)
+        batch.set(ref, pv_payload, merge=True)
         count += 1
         pv_updated += 1
         if count >= 450:
