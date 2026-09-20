@@ -262,6 +262,7 @@ def _ingest_postgres(
     try:
         postgres_ops.ensure_schema(conn)
         csv_rows = 0
+        monitoring_changes = None
         csv_run_id = csv_run_dir.name if csv_run_dir else ""
         settings_run_id = settings_run_dir.name if settings_run_dir else ""
         run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
@@ -275,7 +276,14 @@ def _ingest_postgres(
 
         if csv_run_dir is not None:
             csv_paths = _collect_csv_paths(csv_run_dir)
-            csv_rows = postgres_ops.ingest_monitoring_csvs(conn, csv_paths=csv_paths, ingested_at=now_iso)
+            monitoring_changes = postgres_ops.sync_monitoring_csvs(
+                conn,
+                csv_paths=csv_paths,
+                ingested_at=now_iso,
+                full_backfill=_monitoring_full_backfill_requested(),
+            )
+            csv_rows = monitoring_changes.changed_count
+            _log_monitoring_sync(monitoring_changes)
 
         if settings_run_dir is not None:
             summary_path = settings_run_dir / "kpnet_summary.json"
@@ -297,8 +305,13 @@ def _ingest_postgres(
                 )
             else:
                 print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-        pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
-        print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc_for_dates(
+                conn,
+                dates=set(monitoring_changes.calendar_dates),
+                updated_at=now_iso,
+            )
+            print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
         if include_night_plan:
             night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
