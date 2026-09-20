@@ -969,6 +969,16 @@ def recalc_battery_pv_charge_end_soc_for_dates(
             (f"{day}T00:00:00", f"{next_day}T00:00:00"),
         ).fetchone()
         if row is None:
+            cur = conn.execute(
+                """
+                UPDATE battery_daily_metrics
+                SET pv_charge_end_soc_percent = NULL, pv_charge_end_at = NULL, updated_at = ?
+                WHERE date = ?
+                  AND (pv_charge_end_soc_percent IS NOT NULL OR pv_charge_end_at IS NOT NULL)
+                """,
+                (updated_at, day),
+            )
+            updated += int(cur.rowcount or 0)
             continue
         soc = to_float(row["soc_percent"])
         if soc is None:
