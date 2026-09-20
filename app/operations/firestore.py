@@ -605,6 +605,154 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     return len(by_day)
 
 
+def recalc_monitoring_daily_metrics(
+    client: Any,
+    *,
+    calendar_dates: set[str],
+    dashboard_affected_dates: set[str],
+    updated_at: str,
+) -> dict[str, int]:
+    if not calendar_dates and not dashboard_affected_dates:
+        return {"dashboard": 0, "pv_charge_end": 0}
+
+    start_candidates: list[datetime] = []
+    end_candidates: list[datetime] = []
+    for value in calendar_dates:
+        day = datetime.fromisoformat(value)
+        start_candidates.append(day)
+        end_candidates.append(day + timedelta(days=1))
+    for value in dashboard_affected_dates:
+        day = datetime.fromisoformat(value)
+        start_candidates.append(day - timedelta(hours=1))
+        end_candidates.append(day + timedelta(days=1))
+
+    start_ts = min(start_candidates).isoformat()
+    end_ts = max(end_candidates).isoformat()
+    rows: list[dict[str, Any]] = []
+    query = (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", start_ts)
+        .where("ts", "<", end_ts)
+    )
+    for doc in query.stream():
+        row = doc.to_dict() or {}
+        row["ts"] = str(row.get("ts", doc.id))
+        rows.append(row)
+
+    by_day: dict[str, dict[str, float | str | None]] = {}
+    review_night_charge_by_day: dict[str, float] = defaultdict(float)
+    latest_pv_charge_by_day: dict[str, tuple[str, float]] = {}
+
+    for row in rows:
+        ts = str(row.get("ts", "")).strip()
+        if len(ts) < 16:
+            continue
+        day = ts[:10]
+        minute = ts[11:16]
+        if day in dashboard_affected_dates:
+            acc = by_day.setdefault(
+                day,
+                {
+                    "actual_pv_kwh": 0.0,
+                    "actual_load_kwh": 0.0,
+                    "buy_kwh": 0.0,
+                    "sell_kwh": 0.0,
+                    "charge_kwh": 0.0,
+                    "discharge_kwh": 0.0,
+                    "day_buy_kwh": 0.0,
+                    "night_buy_kwh": 0.0,
+                    "morning_soc_percent": None,
+                    "soc_min_percent": None,
+                    "soc_max_percent": None,
+                    "day_soc_max_percent": None,
+                    "sample_count": 0.0,
+                    "first_sample_at": ts,
+                    "latest_sample_at": ts,
+                },
+            )
+            for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
+                target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
+                acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
+            buy_kwh = max(0.0, float(row.get("buy_kwh") or 0.0))
+            if "07:00" <= minute < "23:00":
+                acc["day_buy_kwh"] = float(acc["day_buy_kwh"] or 0.0) + buy_kwh
+            else:
+                acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
+            soc = to_float(row.get("soc_percent"))
+            if soc is not None:
+                acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
+                acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
+                if "07:00" <= minute < "23:00":
+                    acc["day_soc_max_percent"] = soc if acc["day_soc_max_percent"] is None else max(float(acc["day_soc_max_percent"]), soc)
+                if minute == "07:00":
+                    acc["morning_soc_percent"] = soc
+            acc["sample_count"] = float(acc["sample_count"] or 0.0) + 1.0
+            if ts < str(acc["first_sample_at"] or ""):
+                acc["first_sample_at"] = ts
+            if ts > str(acc["latest_sample_at"] or ""):
+                acc["latest_sample_at"] = ts
+
+        charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
+        review_day = day
+        if minute >= "23:00":
+            review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+        if review_day in dashboard_affected_dates and (minute < "07:00" or minute >= "23:00"):
+            review_night_charge_by_day[review_day] += charge_kwh
+
+        if day in calendar_dates:
+            pv_kwh = max(0.0, float(row.get("pv_kwh") or 0.0))
+            soc = to_float(row.get("soc_percent"))
+            if pv_kwh > 0.0 and charge_kwh > 0.0 and soc is not None:
+                previous = latest_pv_charge_by_day.get(day)
+                if previous is None or ts > previous[0]:
+                    latest_pv_charge_by_day[day] = (ts, soc)
+
+    batch = client.batch()
+    count = 0
+    dashboard_updated = 0
+    pv_updated = 0
+    for day in sorted(dashboard_affected_dates):
+        metrics = by_day.get(day)
+        if metrics is None:
+            continue
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
+        batch.set(
+            client.collection("dashboard_daily_metrics").document(day),
+            {"date": day, **metrics, "updated_at": updated_at},
+            merge=True,
+        )
+        count += 1
+        dashboard_updated += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    for day in sorted(calendar_dates):
+        latest = latest_pv_charge_by_day.get(day)
+        if latest is None:
+            continue
+        ts, soc = latest
+        batch.set(
+            client.collection("battery_daily_metrics").document(day),
+            {
+                "date": day,
+                "pv_charge_end_soc_percent": soc,
+                "pv_charge_end_at": ts,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        count += 1
+        pv_updated += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count:
+        batch.commit()
+    return {"dashboard": dashboard_updated, "pv_charge_end": pv_updated}
+
+
 def recalc_battery_end_of_day_soc(client: Any, *, updated_at: str) -> int:
     # Backward-compatible entry point. The dashboard now tracks the SOC at the
     # last PV charging sample, not the final sample of the day.
