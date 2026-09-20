@@ -259,6 +259,81 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+def sync_monitoring_csvs(
+    conn: Any,
+    *,
+    csv_paths: list[Path],
+    ingested_at: str,
+    full_backfill: bool = False,
+) -> MonitoringChangeSet:
+    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    prepared = prepare_monitoring_csvs(csv_paths, window=window)
+    existing_by_ts: dict[str, dict[str, Any]] = {}
+    with conn.cursor() as cur:
+        if window is None:
+            for row in prepared.rows:
+                cur.execute(
+                    """
+                    SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+                    FROM monitoring_samples
+                    WHERE ts=%s
+                    """,
+                    (str(row["ts"]),),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    existing_by_ts[str(row["ts"])] = dict(existing)
+        else:
+            cur.execute(
+                """
+                SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+                FROM monitoring_samples
+                WHERE ts >= %s AND ts < %s
+                """,
+                (window.start_ts, window.end_ts),
+            )
+            existing_by_ts = {str(row["ts"]): dict(row) for row in cur.fetchall()}
+
+    changes = classify_monitoring_rows(prepared, existing_by_ts=existing_by_ts)
+    if changes.changed_count == 0:
+        return changes
+
+    with conn.cursor() as cur:
+        for row in changes.changed_rows:
+            cur.execute(
+                """
+                INSERT INTO monitoring_samples (
+                    ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh,
+                    soc_percent, source_csv, ingested_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT(ts) DO UPDATE SET
+                    pv_kwh=excluded.pv_kwh,
+                    load_kwh=excluded.load_kwh,
+                    sell_kwh=excluded.sell_kwh,
+                    buy_kwh=excluded.buy_kwh,
+                    charge_kwh=excluded.charge_kwh,
+                    discharge_kwh=excluded.discharge_kwh,
+                    soc_percent=excluded.soc_percent,
+                    source_csv=excluded.source_csv,
+                    ingested_at=excluded.ingested_at
+                """,
+                (
+                    row["ts"],
+                    row.get("pv_kwh"),
+                    row.get("load_kwh"),
+                    row.get("sell_kwh"),
+                    row.get("buy_kwh"),
+                    row.get("charge_kwh"),
+                    row.get("discharge_kwh"),
+                    row.get("soc_percent"),
+                    str(row.get("_source_csv", "")),
+                    ingested_at,
+                ),
+            )
+    conn.commit()
+    return changes
+
+
 # readable-code-audit: skip DUP-01 — PostgreSQL uses its own driver bindings and conflict syntax, so the backend write boundary remains deliberately separate
 # readable-code-audit: skip STRUCT-04 — forecast and actual rows are written in one PostgreSQL transaction so a run cannot leave a mixed snapshot
 def ingest_sunshine_from_night_plan(
