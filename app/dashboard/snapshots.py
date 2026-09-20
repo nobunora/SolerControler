@@ -307,6 +307,7 @@ def write_dashboard_snapshots(
     db_path: Path,
     *,
     storage_client: Any | None = None,
+    full_history_rebuild: bool = False,
 ) -> dict[str, dict[str, Any]]:
     prefix = dashboard_snapshot_prefix()
     if prefix and storage_client is None:
@@ -315,7 +316,11 @@ def write_dashboard_snapshots(
         storage_client = Client()
 
     existing_history_candidate = _read_existing_history_payload(storage_client=storage_client)
-    full_history_rebuild = _should_full_history_rebuild(existing_history_candidate)
+    full_history_rebuild = bool(
+        full_history_rebuild
+        or _full_history_rebuild_requested()
+        or existing_history_candidate is None
+    )
     existing_history = None if full_history_rebuild else existing_history_candidate
     payloads = build_dashboard_snapshot_payloads(db_path, existing_history=existing_history)
     history_meta = payloads[HISTORY_KIND].get("meta")
@@ -361,15 +366,6 @@ def _full_history_rebuild_requested() -> bool:
 
 def _today_jst_iso() -> str:
     return datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
-
-
-def _should_full_history_rebuild(existing_history: dict[str, Any] | None) -> bool:
-    if _full_history_rebuild_requested() or not existing_history:
-        return True
-    meta = existing_history.get("meta")
-    if not isinstance(meta, dict):
-        return True
-    return str(meta.get("snapshot_full_history_rebuild_date") or "") != _today_jst_iso()
 
 
 def _cache_ttl_seconds() -> float:
