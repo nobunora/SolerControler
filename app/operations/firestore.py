@@ -668,9 +668,9 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
         else:
             acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
         charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
-        review_day = day_key
+        review_day = day
         if minute >= "23:00":
-            review_day = (datetime.fromisoformat(day_key) + timedelta(days=1)).date().isoformat()
+            review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
         if minute < "07:00" or minute >= "23:00":
             review_night_charge_by_day[review_day] += charge_kwh
         soc = to_float(row.get("soc_percent"))
@@ -690,7 +690,7 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     batch = client.batch()
     count = 0
     for day, metrics in by_day.items():
-        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key, 0.0)
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
         batch.set(client.collection("dashboard_daily_metrics").document(day), {"date": day, **metrics, "updated_at": updated_at}, merge=True)
         count += 1
         if count >= 450:
@@ -790,9 +790,9 @@ def recalc_monitoring_daily_metrics(
                 acc["latest_sample_at"] = ts
 
         charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
-        review_day = day
+        review_day = day_key
         if minute >= "23:00":
-            review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+            review_day = (datetime.fromisoformat(day_key) + timedelta(days=1)).date().isoformat()
         if review_day in dashboard_affected_dates and (minute < "07:00" or minute >= "23:00"):
             review_night_charge_by_day[review_day] += charge_kwh
 
@@ -812,7 +812,7 @@ def recalc_monitoring_daily_metrics(
         metrics = by_day.get(day_key)
         if metrics is None:
             continue
-        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key, 0.0)
         batch.set(
             client.collection("dashboard_daily_metrics").document(day_key),
             {"date": day_key, **metrics, "updated_at": updated_at},
