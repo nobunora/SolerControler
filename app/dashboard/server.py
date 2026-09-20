@@ -129,7 +129,12 @@ def _empty_dashboard_payload() -> dict[str, object]:
 def _html(payload: dict[str, object], script_nonce: str) -> str:
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     template = (_PROJECT_ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
-    return (\n        template.replace("__DASHBOARD_DATA_PLACEHOLDER__", payload_json)\n        .replace("__NONCE__", script_nonce)\n        .replace("__STATIC_VERSION__", _STATIC_VERSION)\n    )\n
+    return (
+        template.replace("__DASHBOARD_DATA_PLACEHOLDER__", payload_json)
+        .replace("__NONCE__", script_nonce)
+        .replace("__STATIC_VERSION__", _STATIC_VERSION)
+    )
+
 
 def _static_asset(path: str) -> tuple[str, bytes, bytes, str] | None:
     return _STATIC_ASSETS.get(path)
