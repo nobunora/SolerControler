@@ -96,8 +96,7 @@ Expected:
 
 ### T-WIN-006 explicit target months を維持
 
-KP_CSV_TARGET_MONTHS を明示した場合、通常4日windowの resolver が勝手に削らない。
-明示指定は backfill として処理可能であること。
+KP_CSV_TARGET_MONTHS を明示した場合、取得対象月として維持する。ただし DATA_MONITORING_FULL_BACKFILL が false/未設定ならDB同期は4日windowを維持する。指定月全体のfull backfillは DATA_MONITORING_FULL_BACKFILL=true の場合だけ許可する。
 
 ### T-WIN-007 include_latest が window 外 month を追加しない
 
