@@ -133,9 +133,9 @@ today - 3 days
 
 ### 4.3 明示バックフィル
 
-`KP_CSV_TARGET_MONTHS` 等で利用者が明示的に過去月を指定した場合は、通常4日同期とは別の **明示バックフィル** として扱う。
+`KP_CSV_TARGET_MONTHS` は取得対象月の明示指定に使用する。4日windowを外して指定月全体をDB同期する **full backfill** は、これとは別に `DATA_MONITORING_FULL_BACKFILL=true` を明示した場合だけ有効とする。
 
-明示バックフィルでは指定範囲を処理できること。
+過去月全体を同期する場合は `KP_CSV_TARGET_MONTHS=<対象月>` と `DATA_MONITORING_FULL_BACKFILL=true` を同時に指定する。対象月だけを設定しても通常4日windowを暗黙に解除してはならない。
 
 通常実行が勝手に全履歴へ拡大してはならない。
 
