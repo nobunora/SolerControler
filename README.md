@@ -424,7 +424,7 @@ python dashboard_server.py
 - 2つのスナップショットはDB/予報更新後にgzip済みでGCSへ保存し、HTTPでは `Content-Encoding: gzip` とETagを付与
 - 再表示時は `If-None-Match` / `304 Not Modified` により未変更データの本文転送を省略
 - スナップショット保存先は既定で `NIGHT_PLAN_ARCHIVE_GCS_PREFIX/dashboard_snapshots/`。未生成時は従来のDB読込APIへフォールバック
-- 履歴は1日1回自動で全再構築し、それ以外は増分更新する。31日より古い履歴を訂正・バックフィルした直後は `DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD=true` で即時全再構築できる
+- 履歴は23時スロットで1日1回全再構築し、03/07・予報更新では増分更新する。31日より古い履歴を訂正・バックフィルした直後は `DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD=true` で即時全再構築できる
 - ローカルJS/CSSは内容ハッシュ付きURL・事前gzip・ETag・immutable cacheで配信する
 
 認証URL（毎回の入力を省略）:
