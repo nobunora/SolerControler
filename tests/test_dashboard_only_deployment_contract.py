@@ -59,3 +59,13 @@ def test_protected_regions_keep_roundtrip_for_runner_full_only() -> None:
     assert "runner/fullではsettings round-tripを必須" in protected
     assert "control-readonly" in protected
     assert "`skipped_not_applicable`" in protected
+
+
+def test_dashboard_deploy_preserves_runtime_identity_and_grants_read_only_snapshot_access() -> None:
+    script = (ROOT / "scripts" / "deploy_production_from_env.ps1").read_text(encoding="utf-8")
+
+    assert "value(spec.template.spec.serviceAccountName)" in script
+    assert "roles/storage.objectViewer" in script
+    assert "Dashboard Cloud Run service account could not be resolved." in script
+    assert "--service-account (Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT')" not in script
+
