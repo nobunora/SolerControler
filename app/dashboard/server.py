@@ -14,6 +14,14 @@ from urllib.parse import ParseResult, parse_qs, urlparse
 
 from app.dashboard.data import load_dashboard_slice
 from app.dashboard.models import DashboardSlice
+from app.dashboard.snapshots import (
+    BOOTSTRAP_KIND,
+    HISTORY_KIND,
+    artifact_from_payload,
+    build_bootstrap_payload,
+    build_dashboard_snapshot_payloads,
+    load_precomputed_snapshot,
+)
 
 
 _PROJECT_ROOT = Path(__file__).parents[2]
@@ -123,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     _new_session_cookie: str | None = None
 
-    def _send_security_headers(self, script_nonce: str | None = None) -> None:
+    def _send_security_headers(self, script_nonce: str | None = None, *, cache_control: str = "no-store") -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
@@ -136,7 +144,60 @@ class Handler(BaseHTTPRequestHandler):
             f"default-src 'self'; {script_src}; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none';",
         )
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
+
+    def _accepts_gzip(self) -> bool:
+        raw = self.headers.get("Accept-Encoding", "")
+        return any(part.strip().split(";", 1)[0].lower() == "gzip" for part in raw.split(","))
+
+    def _etag_matches(self, etag: str) -> bool:
+        raw = self.headers.get("If-None-Match", "")
+        if not raw:
+            return False
+        values = {part.strip() for part in raw.split(",")}
+        return "*" in values or etag in values
+
+    def _snapshot_fallback(self, kind: str):
+        db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
+        if kind == BOOTSTRAP_KIND:
+            value = load_dashboard_slice(
+                db_path,
+                end_date=None,
+                window_days=31,
+                include_static=True,
+            )
+            return artifact_from_payload(kind, build_bootstrap_payload(value))
+        payloads = build_dashboard_snapshot_payloads(db_path)
+        return artifact_from_payload(kind, payloads[kind])
+
+    def _serve_snapshot(self, kind: str) -> None:
+        artifact = load_precomputed_snapshot(kind)
+        if artifact is None:
+            artifact = self._snapshot_fallback(kind)
+
+        cache_control = "private, max-age=0, must-revalidate"
+        if self._etag_matches(artifact.etag):
+            self.send_response(304)
+            self.send_header("ETag", artifact.etag)
+            self.send_header("Vary", "Accept-Encoding")
+            self._maybe_send_auth_cookie()
+            self._send_security_headers(cache_control=cache_control)
+            self.end_headers()
+            return
+
+        use_gzip = self._accepts_gzip()
+        body = artifact.gzip_bytes if use_gzip else artifact.raw
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("ETag", artifact.etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+        self._maybe_send_auth_cookie()
+        self._send_security_headers(cache_control=cache_control)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _cookie_secure_flag(self) -> bool:
         explicit = os.getenv("DASHBOARD_COOKIE_SECURE", "").strip().lower()
@@ -276,22 +337,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/" or path == "/index.html":
-            try:
-                db_path = Path(_env("DATA_DB_PATH", "artifacts/solar_monitor.db"))
-                root_slice = load_dashboard_slice(
-                    db_path,
-                    end_date=None,
-                    window_days=31,
-                    include_static=True,
-                )
-                payload = {
-                    **root_slice.data.__dict__,
-                    "meta": root_slice.meta,
-                }
-            except Exception:
-                print("dashboard root render error")
-                print(traceback.format_exc())
-                payload = _empty_dashboard_payload()
+            # Return the HTML shell immediately. The browser loads the precomputed
+            # bootstrap snapshot separately, so the first byte is no longer gated
+            # on Firestore aggregation.
+            payload = _empty_dashboard_payload()
             script_nonce = secrets.token_urlsafe(16)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -299,6 +348,30 @@ class Handler(BaseHTTPRequestHandler):
             self._send_security_headers(script_nonce=script_nonce)
             self.end_headers()
             self.wfile.write(_html(payload, script_nonce=script_nonce).encode("utf-8"))
+            return
+        if path == "/api/dashboard/bootstrap":
+            try:
+                self._serve_snapshot(BOOTSTRAP_KIND)
+            except Exception:
+                print("dashboard bootstrap snapshot error")
+                print(traceback.format_exc())
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'{"error":"internal_error"}')
+            return
+        if path == "/api/dashboard/history":
+            try:
+                self._serve_snapshot(HISTORY_KIND)
+            except Exception:
+                print("dashboard history snapshot error")
+                print(traceback.format_exc())
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self._send_security_headers()
+                self.end_headers()
+                self.wfile.write(b'{"error":"internal_error"}')
             return
         if path == "/api/dashboard":
             try:
