@@ -826,19 +826,30 @@ def recalc_monitoring_daily_metrics(
             count = 0
     for day_key in sorted(calendar_dates):
         latest = latest_pv_charge_by_day.get(day_key)
+        ref = client.collection("battery_daily_metrics").document(day_key)
         if latest is None:
-            continue
-        ts, soc = latest
-        batch.set(
-            client.collection("battery_daily_metrics").document(day_key),
-            {
+            snap = ref.get()
+            previous = snap.to_dict() or {} if snap.exists else {}
+            if (
+                previous.get("pv_charge_end_soc_percent") is None
+                and previous.get("pv_charge_end_at") is None
+            ):
+                continue
+            payload = {
+                "date": day_key,
+                "pv_charge_end_soc_percent": None,
+                "pv_charge_end_at": None,
+                "updated_at": updated_at,
+            }
+        else:
+            ts, soc = latest
+            payload = {
                 "date": day_key,
                 "pv_charge_end_soc_percent": soc,
                 "pv_charge_end_at": ts,
                 "updated_at": updated_at,
-            },
-            merge=True,
-        )
+            }
+        batch.set(ref, payload, merge=True)
         count += 1
         pv_updated += 1
         if count >= 450:
