@@ -343,8 +343,15 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
     # account has write/admin permissions that the read-only dashboard does not
     # need. Grant only snapshot-object read access to the current dashboard SA.
     $dashboardServiceAccount = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format 'value(spec.template.spec.serviceAccountName)').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $dashboardServiceAccount) {
+    if ($LASTEXITCODE -ne 0) {
         throw 'Dashboard Cloud Run service account could not be resolved.'
+    }
+    if (-not $dashboardServiceAccount) {
+        $dashboardProjectNumber = (& $gcloud projects describe $projectId --format 'value(projectNumber)').Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $dashboardProjectNumber) {
+            throw 'Dashboard default service account project number could not be resolved.'
+        }
+        $dashboardServiceAccount = "$dashboardProjectNumber-compute@developer.gserviceaccount.com"
     }
     if ($archivePrefix -notmatch '^gs://([^/]+)') {
         throw 'NIGHT_PLAN_ARCHIVE_GCS_PREFIX must be a gs:// URI.'
