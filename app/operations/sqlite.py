@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, apply_cumulative_baseline, calculate_daily_costs
 from app.operations.domain import (
     extract_battery_daily_from_summary as _extract_battery_daily_from_summary,
     extract_final_pv_source_from_plan as _extract_final_pv_source_from_plan,
@@ -21,6 +21,12 @@ from app.operations.domain import (
     read_summary as _read_summary,
     safe_json as _safe_json,
     tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
+)
+from app.operations.monitoring_sync import (
+    MonitoringChangeSet,
+    classify_monitoring_rows,
+    prepare_monitoring_csvs,
+    window_from_ingested_at,
 )
 from app.configuration.environment import env, env_float, load_dotenv_if_present
 from app.parsing.numbers import to_float, to_int
