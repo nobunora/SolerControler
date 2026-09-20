@@ -104,6 +104,7 @@ def test_full_history_rebuild_flag_is_explicit(monkeypatch) -> None:
 def test_slot_23_is_the_only_automatic_full_history_rebuild_path() -> None:
     source = (Path(__file__).parents[1] / "app" / "operations" / "workflow.py").read_text(encoding="utf-8")
 
+    assert 'update_history=cfg.slot == "23"' in source
     assert 'full_history_rebuild=cfg.slot == "23"' in source
 
 
