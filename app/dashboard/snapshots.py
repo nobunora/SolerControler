@@ -6,10 +6,11 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from app.dashboard.data import load_dashboard_slice
 from app.dashboard.models import DashboardSlice
@@ -313,13 +314,20 @@ def write_dashboard_snapshots(
 
         storage_client = Client()
 
-    full_history_rebuild = _full_history_rebuild_requested()
-    existing_history = (
-        None
-        if full_history_rebuild
-        else _read_existing_history_payload(storage_client=storage_client)
-    )
+    existing_history_candidate = _read_existing_history_payload(storage_client=storage_client)
+    full_history_rebuild = _should_full_history_rebuild(existing_history_candidate)
+    existing_history = None if full_history_rebuild else existing_history_candidate
     payloads = build_dashboard_snapshot_payloads(db_path, existing_history=existing_history)
+    history_meta = payloads[HISTORY_KIND].get("meta")
+    if isinstance(history_meta, dict):
+        if full_history_rebuild:
+            history_meta["snapshot_full_history_rebuild_date"] = _today_jst_iso()
+        elif isinstance(existing_history_candidate, dict):
+            previous_meta = existing_history_candidate.get("meta")
+            if isinstance(previous_meta, dict):
+                history_meta["snapshot_full_history_rebuild_date"] = previous_meta.get(
+                    "snapshot_full_history_rebuild_date"
+                )
     results: dict[str, dict[str, Any]] = {}
 
     for kind, payload in payloads.items():
@@ -349,6 +357,19 @@ def write_dashboard_snapshots(
 def _full_history_rebuild_requested() -> bool:
     raw = os.getenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "false").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _today_jst_iso() -> str:
+    return datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
+
+
+def _should_full_history_rebuild(existing_history: dict[str, Any] | None) -> bool:
+    if _full_history_rebuild_requested() or not existing_history:
+        return True
+    meta = existing_history.get("meta")
+    if not isinstance(meta, dict):
+        return True
+    return str(meta.get("snapshot_full_history_rebuild_date") or "") != _today_jst_iso()
 
 
 def _cache_ttl_seconds() -> float:
