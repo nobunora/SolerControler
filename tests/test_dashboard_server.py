@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import gzip
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
+from threading import Thread
 
 import pytest
 
-from app.dashboard.server import _html, _static_asset
+from app.dashboard.server import Handler, _html, _static_asset, _static_version
+from app.dashboard.snapshots import BOOTSTRAP_KIND, artifact_from_payload, clear_snapshot_cache
 
 
 def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
@@ -24,14 +29,19 @@ def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
     ):
         assert f'id="{element_id}"' in html
     assert 'nonce="test-nonce"' in html
-    assert 'src="/static/dashboard.js"' in html
-    assert 'href="/static/dashboard.css"' in html
+    static_version = _static_version()
+    assert f'src="/static/dashboard.js?v={static_version}"' in html
+    assert f'href="/static/dashboard.css?v={static_version}"' in html
     assert "__DASHBOARD_DATA_PLACEHOLDER__" not in html
     assert "1. 予実レビュー（昨日まで）" in html
     assert f"window.__DASHBOARD_DATA__ = {json.dumps(payload, ensure_ascii=False)};" in html
-    assert html.index("window.__DASHBOARD_DATA__") < html.index('src="/static/dashboard.js"')
+    assert html.index("window.__DASHBOARD_DATA__") < html.index(
+        f'src="/static/dashboard.js?v={static_version}"'
+    )
     for dependency in ("dashboard_calculations.js", "dashboard_dates.js", "dashboard_api.js", "dashboard_store.js"):
-        assert html.index(f'src="/static/{dependency}"') < html.index('src="/static/dashboard.js"')
+        assert html.index(f'src="/static/{dependency}?v={static_version}"') < html.index(
+            f'src="/static/dashboard.js?v={static_version}"'
+        )
 
 
 def test_dashboard_static_assets_are_available() -> None:
@@ -82,3 +92,116 @@ def test_dashboard_dockerfile_copies_runtime_assets() -> None:
     ):
         assert f"COPY {source} {destination}" in dockerfile
         assert (root / source).exists()
+
+def _serve_dashboard_for_test() -> tuple[ThreadingHTTPServer, Thread]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_bootstrap_http_uses_precomputed_gzip_etag_without_db(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_USER", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_PASSWORD", raising=False)
+    monkeypatch.delenv("DASHBOARD_SNAPSHOT_GCS_PREFIX", raising=False)
+    monkeypatch.delenv("NIGHT_PLAN_ARCHIVE_GCS_PREFIX", raising=False)
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_LOCAL_DIR", str(tmp_path))
+    clear_snapshot_cache()
+
+    payload = {
+        "pv_daily": [{"date": "2026-09-20", "forecast_pv_total_kwh": 12.3}],
+        "forecast_hourly": [],
+        "energy_daily": [],
+        "cost_daily": [],
+        "cost_monthly": [],
+        "battery_daily": [],
+        "battery_flow_daily": [],
+        "model_parameters": [],
+        "latest_schedule": {},
+        "dashboard_warnings": [],
+        "pv_forecast_diagnostics": {},
+        "daily_review": {},
+        "daily_reviews": [],
+        "meta": {"snapshot_kind": BOOTSTRAP_KIND, "snapshot_schema_version": 1},
+    }
+    artifact = artifact_from_payload(BOOTSTRAP_KIND, payload)
+    (tmp_path / "bootstrap.json.gz").write_bytes(artifact.gzip_bytes)
+
+    def _db_must_not_be_called(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("bootstrap snapshot hit the database")
+
+    monkeypatch.setattr("app.dashboard.server.load_dashboard_slice", _db_must_not_be_called)
+
+    server, thread = _serve_dashboard_for_test()
+    try:
+        host, port = server.server_address
+        conn = HTTPConnection(host, port)
+        conn.request("GET", "/api/dashboard/bootstrap", headers={"Accept-Encoding": "gzip"})
+        response = conn.getresponse()
+        body = response.read()
+        etag = response.getheader("ETag")
+        assert response.status == 200
+        assert response.getheader("Content-Encoding") == "gzip"
+        assert response.getheader("Cache-Control") == "private, max-age=0, must-revalidate"
+        assert etag == artifact.etag
+        assert body == artifact.gzip_bytes
+        assert json.loads(gzip.decompress(body).decode("utf-8")) == payload
+        conn.close()
+
+        conn = HTTPConnection(host, port)
+        conn.request(
+            "GET",
+            "/api/dashboard/bootstrap",
+            headers={"Accept-Encoding": "gzip", "If-None-Match": str(etag)},
+        )
+        response = conn.getresponse()
+        assert response.status == 304
+        assert response.read() == b""
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        clear_snapshot_cache()
+
+
+def test_versioned_static_asset_is_precompressed_immutable_and_revalidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DASHBOARD_BASIC_USER", raising=False)
+    monkeypatch.delenv("DASHBOARD_BASIC_PASSWORD", raising=False)
+
+    server, thread = _serve_dashboard_for_test()
+    try:
+        host, port = server.server_address
+        path = f"/static/dashboard.js?v={_static_version()}"
+        conn = HTTPConnection(host, port)
+        conn.request("GET", path, headers={"Accept-Encoding": "gzip"})
+        response = conn.getresponse()
+        body = response.read()
+        etag = response.getheader("ETag")
+        assert response.status == 200
+        assert response.getheader("Content-Encoding") == "gzip"
+        assert response.getheader("Cache-Control") == "private, max-age=31536000, immutable"
+        assert etag
+        assert b"main();" in gzip.decompress(body)
+        conn.close()
+
+        conn = HTTPConnection(host, port)
+        conn.request(
+            "GET",
+            path,
+            headers={"Accept-Encoding": "gzip", "If-None-Match": str(etag)},
+        )
+        response = conn.getresponse()
+        assert response.status == 304
+        assert response.read() == b""
+        conn.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
