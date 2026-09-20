@@ -9,7 +9,7 @@ from typing import Any
 
 from google.cloud import firestore
 
-from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, apply_cumulative_baseline, calculate_daily_costs
 from app.backup.night_plan_archive import (
     build_night_plan_firestore_document,
     read_plan_file,
@@ -27,6 +27,12 @@ from app.operations.domain import (
     read_json_if_exists as _read_json_if_exists,
     read_summary as _read_summary,
     tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
+)
+from app.operations.monitoring_sync import (
+    MonitoringChangeSet,
+    classify_monitoring_rows,
+    prepare_monitoring_csvs,
+    window_from_ingested_at,
 )
 from app.configuration.environment import env
 from app.parsing.numbers import to_float, to_int
@@ -102,6 +108,54 @@ def ingest_monitoring_csvs(
     if batch_count > 0:
         batch.commit()
     return upserted
+
+
+def sync_monitoring_csvs(
+    client: Any,
+    *,
+    csv_paths: list[Path],
+    ingested_at: str,
+    full_backfill: bool = False,
+) -> MonitoringChangeSet:
+    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    prepared = prepare_monitoring_csvs(csv_paths, window=window)
+    existing_by_ts: dict[str, dict[str, Any]] = {}
+    collection = client.collection("monitoring_samples")
+    if window is None:
+        for row in prepared.rows:
+            snap = collection.document(str(row["ts"])).get()
+            if snap.exists:
+                existing = snap.to_dict() or {}
+                existing["ts"] = existing.get("ts", snap.id)
+                existing_by_ts[str(row["ts"])] = existing
+    else:
+        query = collection.where("ts", ">=", window.start_ts).where("ts", "<", window.end_ts)
+        for snap in query.stream():
+            existing = snap.to_dict() or {}
+            ts = str(existing.get("ts", snap.id))
+            existing["ts"] = ts
+            existing_by_ts[ts] = existing
+
+    changes = classify_monitoring_rows(prepared, existing_by_ts=existing_by_ts)
+    if changes.changed_count == 0:
+        return changes
+
+    batch = client.batch()
+    batch_count = 0
+    for row in changes.changed_rows:
+        source_csv = str(row.get("_source_csv", ""))
+        payload = {key: value for key, value in row.items() if not key.startswith("_")}
+        payload["source_csv"] = source_csv
+        payload["ingested_at"] = ingested_at
+        batch.set(collection.document(str(row["ts"])), payload, merge=True)
+        batch_count += 1
+        if batch_count >= 450:
+            batch.commit()
+            batch = client.batch()
+            batch_count = 0
+    if batch_count:
+        batch.commit()
+    return changes
 
 
 # readable-code-audit: skip DUP-01 — Firestore writes documents rather than relational rows and requires backend-specific merge semantics
@@ -376,6 +430,103 @@ def recalc_cost_daily(
     if batch_count > 0:
         batch.commit()
     return
+
+
+def recalc_cost_daily_from(
+    client: Any,
+    *,
+    start_date: str,
+    end_ts: str,
+    day_rate_yen_per_kwh: float,
+    updated_at: str,
+    tariff_mode: str = "flat",
+    night8_day_start_hhmm: str = "07:00",
+    night8_day_end_hhmm: str = "23:00",
+    night8_day_tier1_upper_kwh: float = 90.0,
+    night8_day_tier2_upper_kwh: float = 230.0,
+    night8_day_rate_tier1_yen: float = 31.80,
+    night8_day_rate_tier2_yen: float = 39.10,
+    night8_day_rate_tier3_yen: float = 43.62,
+    night8_night_rate_yen: float = 28.85,
+) -> int:
+    start_ts = f"{start_date}T00:00:00"
+    rows: list[dict[str, Any]] = []
+    query = (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", start_ts)
+        .where("ts", "<", end_ts)
+        .order_by("ts")
+    )
+    for doc in query.stream():
+        row = doc.to_dict() or {}
+        row["ts"] = str(row.get("ts", doc.id))
+        rows.append(row)
+    if not rows:
+        return 0
+
+    base_kwh = 0.0
+    base_yen = 0.0
+    prior_query = (
+        client.collection("cost_daily")
+        .where("date", "<", start_date)
+        .order_by("date", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    prior_rows = list(prior_query.stream())
+    if prior_rows:
+        prior = prior_rows[0].to_dict() or {}
+        base_kwh = float(prior.get("cumulative_kwh") or 0.0)
+        base_yen = float(prior.get("cumulative_yen") or 0.0)
+
+    results = calculate_daily_costs(
+        [
+            EnergyInterval(
+                timestamp=str(row.get("ts", "")),
+                load_kwh=row.get("load_kwh"),
+                buy_kwh=row.get("buy_kwh"),
+            )
+            for row in rows
+        ],
+        DailyCostPolicy(
+            tariff_mode=tariff_mode,
+            day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+            day_start_hhmm=night8_day_start_hhmm,
+            day_end_hhmm=night8_day_end_hhmm,
+            day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+            day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+            day_rate_tier1_yen=night8_day_rate_tier1_yen,
+            day_rate_tier2_yen=night8_day_rate_tier2_yen,
+            day_rate_tier3_yen=night8_day_rate_tier3_yen,
+            night_rate_yen=night8_night_rate_yen,
+        ),
+    )
+    results = apply_cumulative_baseline(results, base_kwh=base_kwh, base_yen=base_yen)
+
+    batch = client.batch()
+    count = 0
+    for result in results:
+        batch.set(
+            client.collection("cost_daily").document(result.date),
+            {
+                "date": result.date,
+                "self_consumption_kwh": result.self_consumption_kwh,
+                "savings_yen": result.savings_yen,
+                "cumulative_kwh": result.cumulative_kwh,
+                "cumulative_yen": result.cumulative_yen,
+                "updated_at": updated_at,
+            },
+            merge=True,
+        )
+        count += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count:
+        batch.commit()
+    return len(results)
+
+
 def upsert_battery_daily_metrics(
     client: Any,
     *,
@@ -549,6 +700,165 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     if count:
         batch.commit()
     return len(by_day)
+
+
+def recalc_monitoring_daily_metrics(
+    client: Any,
+    *,
+    calendar_dates: set[str],
+    dashboard_affected_dates: set[str],
+    updated_at: str,
+) -> dict[str, int]:
+    if not calendar_dates and not dashboard_affected_dates:
+        return {"dashboard": 0, "pv_charge_end": 0}
+
+    start_candidates: list[datetime] = []
+    end_candidates: list[datetime] = []
+    for value in calendar_dates:
+        day_dt = datetime.fromisoformat(value)
+        start_candidates.append(day_dt)
+        end_candidates.append(day_dt + timedelta(days=1))
+    for value in dashboard_affected_dates:
+        day_dt = datetime.fromisoformat(value)
+        start_candidates.append(day_dt - timedelta(hours=1))
+        end_candidates.append(day_dt + timedelta(days=1))
+
+    start_ts = min(start_candidates).isoformat()
+    end_ts = max(end_candidates).isoformat()
+    rows: list[dict[str, Any]] = []
+    query = (
+        client.collection("monitoring_samples")
+        .where("ts", ">=", start_ts)
+        .where("ts", "<", end_ts)
+    )
+    for doc in query.stream():
+        row = doc.to_dict() or {}
+        row["ts"] = str(row.get("ts", doc.id))
+        rows.append(row)
+
+    by_day: dict[str, dict[str, float | str | None]] = {}
+    review_night_charge_by_day: dict[str, float] = defaultdict(float)
+    latest_pv_charge_by_day: dict[str, tuple[str, float]] = {}
+
+    for row in rows:
+        ts = str(row.get("ts", "")).strip()
+        if len(ts) < 16:
+            continue
+        day_key = ts[:10]
+        minute = ts[11:16]
+        if day_key in dashboard_affected_dates:
+            acc = by_day.setdefault(
+                day_key,
+                {
+                    "actual_pv_kwh": 0.0,
+                    "actual_load_kwh": 0.0,
+                    "buy_kwh": 0.0,
+                    "sell_kwh": 0.0,
+                    "charge_kwh": 0.0,
+                    "discharge_kwh": 0.0,
+                    "day_buy_kwh": 0.0,
+                    "night_buy_kwh": 0.0,
+                    "morning_soc_percent": None,
+                    "soc_min_percent": None,
+                    "soc_max_percent": None,
+                    "day_soc_max_percent": None,
+                    "sample_count": 0.0,
+                    "first_sample_at": ts,
+                    "latest_sample_at": ts,
+                },
+            )
+            for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
+                target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
+                acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
+            buy_kwh = max(0.0, float(row.get("buy_kwh") or 0.0))
+            if "07:00" <= minute < "23:00":
+                acc["day_buy_kwh"] = float(acc["day_buy_kwh"] or 0.0) + buy_kwh
+            else:
+                acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
+            soc = to_float(row.get("soc_percent"))
+            if soc is not None:
+                acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
+                acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
+                if "07:00" <= minute < "23:00":
+                    acc["day_soc_max_percent"] = soc if acc["day_soc_max_percent"] is None else max(float(acc["day_soc_max_percent"]), soc)
+                if minute == "07:00":
+                    acc["morning_soc_percent"] = soc
+            acc["sample_count"] = float(acc["sample_count"] or 0.0) + 1.0
+            if ts < str(acc["first_sample_at"] or ""):
+                acc["first_sample_at"] = ts
+            if ts > str(acc["latest_sample_at"] or ""):
+                acc["latest_sample_at"] = ts
+
+        charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
+        review_day = day_key
+        if minute >= "23:00":
+            review_day = (datetime.fromisoformat(day_key) + timedelta(days=1)).date().isoformat()
+        if review_day in dashboard_affected_dates and (minute < "07:00" or minute >= "23:00"):
+            review_night_charge_by_day[review_day] += charge_kwh
+
+        if day_key in calendar_dates:
+            pv_kwh = max(0.0, float(row.get("pv_kwh") or 0.0))
+            soc = to_float(row.get("soc_percent"))
+            if pv_kwh > 0.0 and charge_kwh > 0.0 and soc is not None:
+                previous = latest_pv_charge_by_day.get(day_key)
+                if previous is None or ts > previous[0]:
+                    latest_pv_charge_by_day[day_key] = (ts, soc)
+
+    batch = client.batch()
+    count = 0
+    dashboard_updated = 0
+    pv_updated = 0
+    for day_key in sorted(dashboard_affected_dates):
+        metrics = by_day.get(day_key)
+        if metrics is None:
+            continue
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key, 0.0)
+        batch.set(
+            client.collection("dashboard_daily_metrics").document(day_key),
+            {"date": day_key, **metrics, "updated_at": updated_at},
+            merge=True,
+        )
+        count += 1
+        dashboard_updated += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    for day_key in sorted(calendar_dates):
+        latest = latest_pv_charge_by_day.get(day_key)
+        ref = client.collection("battery_daily_metrics").document(day_key)
+        if latest is None:
+            snap = ref.get()
+            previous_doc: dict[str, Any] = (snap.to_dict() or {}) if snap.exists else {}
+            if (
+                previous_doc.get("pv_charge_end_soc_percent") is None
+                and previous_doc.get("pv_charge_end_at") is None
+            ):
+                continue
+            pv_payload: dict[str, Any] = {
+                "date": day_key,
+                "pv_charge_end_soc_percent": None,
+                "pv_charge_end_at": None,
+                "updated_at": updated_at,
+            }
+        else:
+            ts, soc = latest
+            pv_payload = {
+                "date": day_key,
+                "pv_charge_end_soc_percent": soc,
+                "pv_charge_end_at": ts,
+                "updated_at": updated_at,
+            }
+        batch.set(ref, pv_payload, merge=True)
+        count += 1
+        pv_updated += 1
+        if count >= 450:
+            batch.commit()
+            batch = client.batch()
+            count = 0
+    if count:
+        batch.commit()
+    return {"dashboard": dashboard_updated, "pv_charge_end": pv_updated}
 
 
 def recalc_battery_end_of_day_soc(client: Any, *, updated_at: str) -> int:

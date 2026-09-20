@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, calculate_daily_costs
+from app.operations.cost_daily import DailyCostPolicy, EnergyInterval, apply_cumulative_baseline, calculate_daily_costs
 from app.operations.domain import (
     extract_battery_daily_from_summary as _extract_battery_daily_from_summary,
     extract_final_pv_source_from_plan as _extract_final_pv_source_from_plan,
@@ -21,6 +21,12 @@ from app.operations.domain import (
     read_summary as _read_summary,
     safe_json as _safe_json,
     tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
+)
+from app.operations.monitoring_sync import (
+    MonitoringChangeSet,
+    classify_monitoring_rows,
+    prepare_monitoring_csvs,
+    window_from_ingested_at,
 )
 from app.configuration.environment import env, env_float, load_dotenv_if_present
 from app.parsing.numbers import to_float, to_int
@@ -372,6 +378,76 @@ def ingest_monitoring_csvs(
     return upserted
 
 
+def sync_monitoring_csvs(
+    conn: sqlite3.Connection,
+    *,
+    csv_paths: list[Path],
+    ingested_at: str,
+    full_backfill: bool = False,
+) -> MonitoringChangeSet:
+    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    prepared = prepare_monitoring_csvs(csv_paths, window=window)
+    existing_by_ts: dict[str, dict[str, Any]] = {}
+    if window is None:
+        for row in prepared.rows:
+            existing = conn.execute(
+                """
+                SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+                FROM monitoring_samples
+                WHERE ts=?
+                """,
+                (str(row["ts"]),),
+            ).fetchone()
+            if existing is not None:
+                existing_by_ts[str(row["ts"])] = dict(existing)
+    else:
+        existing_rows = conn.execute(
+            """
+            SELECT ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh, soc_percent
+            FROM monitoring_samples
+            WHERE ts >= ? AND ts < ?
+            """,
+            (window.start_ts, window.end_ts),
+        ).fetchall()
+        existing_by_ts = {str(row["ts"]): dict(row) for row in existing_rows}
+
+    changes = classify_monitoring_rows(prepared, existing_by_ts=existing_by_ts)
+    for row in changes.changed_rows:
+        conn.execute(
+            """
+            INSERT INTO monitoring_samples (
+                ts, pv_kwh, load_kwh, sell_kwh, buy_kwh, charge_kwh, discharge_kwh,
+                soc_percent, source_csv, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(ts) DO UPDATE SET
+                pv_kwh=excluded.pv_kwh,
+                load_kwh=excluded.load_kwh,
+                sell_kwh=excluded.sell_kwh,
+                buy_kwh=excluded.buy_kwh,
+                charge_kwh=excluded.charge_kwh,
+                discharge_kwh=excluded.discharge_kwh,
+                soc_percent=excluded.soc_percent,
+                source_csv=excluded.source_csv,
+                ingested_at=excluded.ingested_at
+            """,
+            (
+                row["ts"],
+                row.get("pv_kwh"),
+                row.get("load_kwh"),
+                row.get("sell_kwh"),
+                row.get("buy_kwh"),
+                row.get("charge_kwh"),
+                row.get("discharge_kwh"),
+                row.get("soc_percent"),
+                str(row.get("_source_csv", "")),
+                ingested_at,
+            ),
+        )
+    if changes.changed_count:
+        conn.commit()
+    return changes
+
+
 def _forecast_daily_values_from_plan(data: dict[str, Any]) -> dict[str, Any]:
     """Collect the plan values written to one forecast-day database row."""
     forecast = data.get("forecast", {})
@@ -667,6 +743,97 @@ def recalc_cost_daily(
         )
     conn.commit()
     return
+
+
+def recalc_cost_daily_from(
+    conn: sqlite3.Connection,
+    *,
+    start_date: str,
+    end_ts: str,
+    day_rate_yen_per_kwh: float,
+    updated_at: str,
+    tariff_mode: str = "flat",
+    night8_day_start_hhmm: str = "07:00",
+    night8_day_end_hhmm: str = "23:00",
+    night8_day_tier1_upper_kwh: float = 90.0,
+    night8_day_tier2_upper_kwh: float = 230.0,
+    night8_day_rate_tier1_yen: float = 31.80,
+    night8_day_rate_tier2_yen: float = 39.10,
+    night8_day_rate_tier3_yen: float = 43.62,
+    night8_night_rate_yen: float = 28.85,
+) -> int:
+    start_ts = f"{start_date}T00:00:00"
+    sample_rows = conn.execute(
+        """
+        SELECT ts, load_kwh, buy_kwh
+        FROM monitoring_samples
+        WHERE ts >= ? AND ts < ?
+        ORDER BY ts
+        """,
+        (start_ts, end_ts),
+    ).fetchall()
+    if not sample_rows:
+        return 0
+    prior = conn.execute(
+        """
+        SELECT cumulative_kwh, cumulative_yen
+        FROM cost_daily
+        WHERE date < ?
+        ORDER BY date DESC
+        LIMIT 1
+        """,
+        (start_date,),
+    ).fetchone()
+    base_kwh = float(prior["cumulative_kwh"] or 0.0) if prior is not None else 0.0
+    base_yen = float(prior["cumulative_yen"] or 0.0) if prior is not None else 0.0
+    results = calculate_daily_costs(
+        [
+            EnergyInterval(
+                timestamp=str(row["ts"] or ""),
+                load_kwh=row["load_kwh"],
+                buy_kwh=row["buy_kwh"],
+            )
+            for row in sample_rows
+        ],
+        DailyCostPolicy(
+            tariff_mode=tariff_mode,
+            day_rate_yen_per_kwh=day_rate_yen_per_kwh,
+            day_start_hhmm=night8_day_start_hhmm,
+            day_end_hhmm=night8_day_end_hhmm,
+            day_tier1_upper_kwh=night8_day_tier1_upper_kwh,
+            day_tier2_upper_kwh=night8_day_tier2_upper_kwh,
+            day_rate_tier1_yen=night8_day_rate_tier1_yen,
+            day_rate_tier2_yen=night8_day_rate_tier2_yen,
+            day_rate_tier3_yen=night8_day_rate_tier3_yen,
+            night_rate_yen=night8_night_rate_yen,
+        ),
+    )
+    results = apply_cumulative_baseline(results, base_kwh=base_kwh, base_yen=base_yen)
+    for result in results:
+        conn.execute(
+            """
+            INSERT INTO cost_daily (date, self_consumption_kwh, savings_yen, cumulative_kwh, cumulative_yen, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                self_consumption_kwh=excluded.self_consumption_kwh,
+                savings_yen=excluded.savings_yen,
+                cumulative_kwh=excluded.cumulative_kwh,
+                cumulative_yen=excluded.cumulative_yen,
+                updated_at=excluded.updated_at
+            """,
+            (
+                result.date,
+                result.self_consumption_kwh,
+                result.savings_yen,
+                result.cumulative_kwh,
+                result.cumulative_yen,
+                updated_at,
+            ),
+        )
+    conn.commit()
+    return len(results)
+
+
 def upsert_battery_daily_metrics(
     conn: sqlite3.Connection,
     *,
@@ -776,6 +943,57 @@ def recalc_battery_pv_charge_end_soc(conn: sqlite3.Connection, *, updated_at: st
         )
         updated += int(cur.rowcount or 0)
     conn.commit()
+    return updated
+
+
+def recalc_battery_pv_charge_end_soc_for_dates(
+    conn: sqlite3.Connection,
+    *,
+    dates: set[str],
+    updated_at: str,
+) -> int:
+    updated = 0
+    for day in sorted(dates):
+        next_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
+        row = conn.execute(
+            """
+            SELECT ts, soc_percent
+            FROM monitoring_samples
+            WHERE ts >= ? AND ts < ?
+              AND soc_percent IS NOT NULL
+              AND COALESCE(pv_kwh, 0) > 0
+              AND COALESCE(charge_kwh, 0) > 0
+            ORDER BY ts DESC
+            LIMIT 1
+            """,
+            (f"{day}T00:00:00", f"{next_day}T00:00:00"),
+        ).fetchone()
+        if row is None:
+            cur = conn.execute(
+                """
+                UPDATE battery_daily_metrics
+                SET pv_charge_end_soc_percent = NULL, pv_charge_end_at = NULL, updated_at = ?
+                WHERE date = ?
+                  AND (pv_charge_end_soc_percent IS NOT NULL OR pv_charge_end_at IS NOT NULL)
+                """,
+                (updated_at, day),
+            )
+            updated += int(cur.rowcount or 0)
+            continue
+        soc = to_float(row["soc_percent"])
+        if soc is None:
+            continue
+        cur = conn.execute(
+            """
+            UPDATE battery_daily_metrics
+            SET pv_charge_end_soc_percent = ?, pv_charge_end_at = ?, updated_at = ?
+            WHERE date = ?
+            """,
+            (soc, str(row["ts"]), updated_at, day),
+        )
+        updated += int(cur.rowcount or 0)
+    if updated:
+        conn.commit()
     return updated
 
 

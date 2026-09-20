@@ -9,6 +9,7 @@ from typing import Any
 from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
 from app.operations.forecast_snapshot import persist_forecast_snapshots
+from app.operations.monitoring_sync import earliest_changed_month_start, window_from_ingested_at
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
@@ -19,6 +20,22 @@ def _env_bool(name: str, default: bool = True) -> bool:
     if not raw:
         return default
     return raw in {"1", "true", "yes", "on"}
+
+
+def _monitoring_full_backfill_requested() -> bool:
+    return _env_bool("DATA_MONITORING_FULL_BACKFILL", False)
+
+
+def _log_monitoring_sync(changes: Any) -> None:
+    print(
+        "[monitoring_sync] "
+        f"rows_seen={changes.rows_seen} rows_in_window={changes.rows_in_window} "
+        f"inserted={len(changes.inserts)} updated={len(changes.updates)} "
+        f"unchanged={changes.unchanged} duplicate_same={changes.duplicate_same} "
+        f"duplicate_conflict={changes.duplicate_conflict} "
+        f"changed_dates={','.join(changes.calendar_dates) or '-'} "
+        f"dashboard_affected_dates={','.join(changes.dashboard_affected_dates) or '-'}"
+    )
 
 
 def _collect_csv_paths(csv_run_dir: Path) -> list[Path]:
@@ -125,6 +142,7 @@ def _ingest_sqlite(
     try:
         sqlite_ops.ensure_schema(conn)
         csv_rows = 0
+        monitoring_changes = None
         csv_run_id = csv_run_dir.name if csv_run_dir else ""
         settings_run_id = settings_run_dir.name if settings_run_dir else ""
         run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
@@ -135,7 +153,14 @@ def _ingest_sqlite(
 
         if csv_run_dir is not None:
             csv_paths = _collect_csv_paths(csv_run_dir)
-            csv_rows = sqlite_ops.ingest_monitoring_csvs(conn, csv_paths=csv_paths, ingested_at=now_iso)
+            monitoring_changes = sqlite_ops.sync_monitoring_csvs(
+                conn,
+                csv_paths=csv_paths,
+                ingested_at=now_iso,
+                full_backfill=_monitoring_full_backfill_requested(),
+            )
+            csv_rows = monitoring_changes.changed_count
+            _log_monitoring_sync(monitoring_changes)
 
         if settings_run_dir is not None:
             summary_path = settings_run_dir / "kpnet_summary.json"
@@ -157,8 +182,13 @@ def _ingest_sqlite(
                 )
             else:
                 print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-        pv_charge_end_updated = sqlite_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
-        print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            pv_charge_end_updated = sqlite_ops.recalc_battery_pv_charge_end_soc_for_dates(
+                conn,
+                dates=set(monitoring_changes.calendar_dates),
+                updated_at=now_iso,
+            )
+            print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
         if include_night_plan:
             night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
@@ -181,20 +211,26 @@ def _ingest_sqlite(
             print("[db_pipeline] skip night plan and forecast ingestion")
         hit_rate = sqlite_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
         print(f"[db_pipeline] model hit_rate={hit_rate!r}")
-        sqlite_ops.recalc_cost_daily(
-            conn,
-            day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
-            updated_at=now_iso,
-            tariff_mode=cfg.cost_tariff_mode,
-            night8_day_start_hhmm=cfg.night8_day_start_hhmm,
-            night8_day_end_hhmm=cfg.night8_day_end_hhmm,
-            night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
-            night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
-            night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
-            night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
-            night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
-            night8_night_rate_yen=cfg.night8_night_rate_yen,
-        )
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            cost_start = earliest_changed_month_start(monitoring_changes)
+            if cost_start is not None:
+                cost_rows = sqlite_ops.recalc_cost_daily_from(
+                    conn,
+                    start_date=cost_start,
+                    end_ts=window_from_ingested_at(now_iso).end_ts,
+                    day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+                    updated_at=now_iso,
+                    tariff_mode=cfg.cost_tariff_mode,
+                    night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+                    night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+                    night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+                    night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+                    night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+                    night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+                    night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+                    night8_night_rate_yen=cfg.night8_night_rate_yen,
+                )
+                print(f"[db_pipeline] cost daily recalculated rows={cost_rows} start={cost_start}")
 
         conn.execute(
             """
@@ -226,6 +262,7 @@ def _ingest_postgres(
     try:
         postgres_ops.ensure_schema(conn)
         csv_rows = 0
+        monitoring_changes = None
         csv_run_id = csv_run_dir.name if csv_run_dir else ""
         settings_run_id = settings_run_dir.name if settings_run_dir else ""
         run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
@@ -239,7 +276,14 @@ def _ingest_postgres(
 
         if csv_run_dir is not None:
             csv_paths = _collect_csv_paths(csv_run_dir)
-            csv_rows = postgres_ops.ingest_monitoring_csvs(conn, csv_paths=csv_paths, ingested_at=now_iso)
+            monitoring_changes = postgres_ops.sync_monitoring_csvs(
+                conn,
+                csv_paths=csv_paths,
+                ingested_at=now_iso,
+                full_backfill=_monitoring_full_backfill_requested(),
+            )
+            csv_rows = monitoring_changes.changed_count
+            _log_monitoring_sync(monitoring_changes)
 
         if settings_run_dir is not None:
             summary_path = settings_run_dir / "kpnet_summary.json"
@@ -261,8 +305,13 @@ def _ingest_postgres(
                 )
             else:
                 print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-        pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc(conn, updated_at=now_iso)
-        print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            pv_charge_end_updated = postgres_ops.recalc_battery_pv_charge_end_soc_for_dates(
+                conn,
+                dates=set(monitoring_changes.calendar_dates),
+                updated_at=now_iso,
+            )
+            print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
 
         if include_night_plan:
             night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
@@ -285,20 +334,26 @@ def _ingest_postgres(
             print("[db_pipeline] skip night plan and forecast ingestion")
         hit_rate = postgres_ops.recalc_model_hit_rates(conn, updated_at=now_iso)
         print(f"[db_pipeline] model hit_rate={hit_rate!r}")
-        postgres_ops.recalc_cost_daily(
-            conn,
-            day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
-            updated_at=now_iso,
-            tariff_mode=cfg.cost_tariff_mode,
-            night8_day_start_hhmm=cfg.night8_day_start_hhmm,
-            night8_day_end_hhmm=cfg.night8_day_end_hhmm,
-            night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
-            night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
-            night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
-            night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
-            night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
-            night8_night_rate_yen=cfg.night8_night_rate_yen,
-        )
+        if monitoring_changes is not None and monitoring_changes.changed_count:
+            cost_start = earliest_changed_month_start(monitoring_changes)
+            if cost_start is not None:
+                cost_rows = postgres_ops.recalc_cost_daily_from(
+                    conn,
+                    start_date=cost_start,
+                    end_ts=window_from_ingested_at(now_iso).end_ts,
+                    day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+                    updated_at=now_iso,
+                    tariff_mode=cfg.cost_tariff_mode,
+                    night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+                    night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+                    night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+                    night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+                    night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+                    night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+                    night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+                    night8_night_rate_yen=cfg.night8_night_rate_yen,
+                )
+                print(f"[db_pipeline] cost daily recalculated rows={cost_rows} start={cost_start}")
 
         with conn.cursor() as cur:
             cur.execute(
@@ -329,17 +384,26 @@ def _ingest_firestore(
     client = firestore_ops.open_firestore()
     firestore_ops.ensure_schema(client)
     csv_rows = 0
+    monitoring_changes = None
     csv_run_id = csv_run_dir.name if csv_run_dir else ""
     settings_run_id = settings_run_dir.name if settings_run_dir else ""
     run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
     if firestore_ops.pipeline_run_exists(client, run_key=run_key):
         print(f"[db_pipeline] already ingested: {run_key}")
-        _refresh_dashboard_snapshots(cfg)
+        if settings_run_dir is not None or include_night_plan:
+            _refresh_dashboard_snapshots(cfg)
         return
 
     if csv_run_dir is not None:
         csv_paths = _collect_csv_paths(csv_run_dir)
-        csv_rows = firestore_ops.ingest_monitoring_csvs(client, csv_paths=csv_paths, ingested_at=now_iso)
+        monitoring_changes = firestore_ops.sync_monitoring_csvs(
+            client,
+            csv_paths=csv_paths,
+            ingested_at=now_iso,
+            full_backfill=_monitoring_full_backfill_requested(),
+        )
+        csv_rows = monitoring_changes.changed_count
+        _log_monitoring_sync(monitoring_changes)
 
     if settings_run_dir is not None:
         summary_path = settings_run_dir / "kpnet_summary.json"
@@ -361,10 +425,17 @@ def _ingest_firestore(
             )
         else:
             print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-    pv_charge_end_updated = firestore_ops.recalc_battery_pv_charge_end_soc(client, updated_at=now_iso)
-    print(f"[db_pipeline] battery pv_charge_end_soc updated rows={pv_charge_end_updated}")
-    dashboard_daily_updated = firestore_ops.recalc_dashboard_daily_metrics(client, updated_at=now_iso)
-    print(f"[db_pipeline] dashboard daily metrics updated rows={dashboard_daily_updated}")
+    if monitoring_changes is not None and monitoring_changes.changed_count:
+        daily_result = firestore_ops.recalc_monitoring_daily_metrics(
+            client,
+            calendar_dates=set(monitoring_changes.calendar_dates),
+            dashboard_affected_dates=set(monitoring_changes.dashboard_affected_dates),
+            updated_at=now_iso,
+        )
+        print(
+            "[db_pipeline] monitoring daily materialized "
+            f"dashboard={daily_result['dashboard']} pv_charge_end={daily_result['pv_charge_end']}"
+        )
 
     if include_night_plan:
         night_plan_path = cfg.artifacts_dir / "night_charge_plan.json"
@@ -387,20 +458,26 @@ def _ingest_firestore(
         print("[db_pipeline] skip night plan and forecast ingestion")
     hit_rate = firestore_ops.recalc_model_hit_rates(client, updated_at=now_iso)
     print(f"[db_pipeline] model hit_rate={hit_rate!r}")
-    firestore_ops.recalc_cost_daily(
-        client,
-        day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
-        updated_at=now_iso,
-        tariff_mode=cfg.cost_tariff_mode,
-        night8_day_start_hhmm=cfg.night8_day_start_hhmm,
-        night8_day_end_hhmm=cfg.night8_day_end_hhmm,
-        night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
-        night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
-        night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
-        night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
-        night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
-        night8_night_rate_yen=cfg.night8_night_rate_yen,
-    )
+    if monitoring_changes is not None and monitoring_changes.changed_count:
+        cost_start = earliest_changed_month_start(monitoring_changes)
+        if cost_start is not None:
+            cost_rows = firestore_ops.recalc_cost_daily_from(
+                client,
+                start_date=cost_start,
+                end_ts=window_from_ingested_at(now_iso).end_ts,
+                day_rate_yen_per_kwh=cfg.day_rate_yen_per_kwh,
+                updated_at=now_iso,
+                tariff_mode=cfg.cost_tariff_mode,
+                night8_day_start_hhmm=cfg.night8_day_start_hhmm,
+                night8_day_end_hhmm=cfg.night8_day_end_hhmm,
+                night8_day_tier1_upper_kwh=cfg.night8_day_tier1_upper_kwh,
+                night8_day_tier2_upper_kwh=cfg.night8_day_tier2_upper_kwh,
+                night8_day_rate_tier1_yen=cfg.night8_day_rate_tier1_yen,
+                night8_day_rate_tier2_yen=cfg.night8_day_rate_tier2_yen,
+                night8_day_rate_tier3_yen=cfg.night8_day_rate_tier3_yen,
+                night8_night_rate_yen=cfg.night8_night_rate_yen,
+            )
+            print(f"[db_pipeline] cost daily recalculated rows={cost_rows} start={cost_start}")
     firestore_ops.upsert_pipeline_run(
         client,
         run_key=run_key,
@@ -410,7 +487,14 @@ def _ingest_firestore(
         csv_rows_upserted=csv_rows,
         recorded_at=now_iso,
     )
-    _refresh_dashboard_snapshots(cfg)
+    if (
+        settings_run_dir is not None
+        or include_night_plan
+        or (monitoring_changes is not None and monitoring_changes.changed_count > 0)
+    ):
+        _refresh_dashboard_snapshots(cfg)
+    else:
+        print("[db_pipeline] dashboard snapshot: skipped (no changed inputs)")
     print("[db_pipeline] weekly backup: disabled (firestore backend)")
     print("[db_pipeline] done backend=firestore")
 

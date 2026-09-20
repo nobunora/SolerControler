@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.operations.workflow import _env_bool, _ingest_firestore, _settings_summary_successful
+from app.operations.workflow import _env_bool, _ingest_firestore, _monitoring_full_backfill_requested, _settings_summary_successful
 
 
 def _write_summary(tmp_path: Path, payload: dict[str, object]) -> Path:
@@ -47,6 +47,15 @@ def test_settings_summary_successful_rejects_summary_error(tmp_path: Path) -> No
     )
 
     assert _settings_summary_successful(summary_path) is False
+
+
+def test_monitoring_full_backfill_requires_dedicated_flag(monkeypatch) -> None:
+    monkeypatch.setenv("KP_CSV_TARGET_MONTHS", "2026-05")
+    monkeypatch.delenv("DATA_MONITORING_FULL_BACKFILL", raising=False)
+    assert _monitoring_full_backfill_requested() is False
+
+    monkeypatch.setenv("DATA_MONITORING_FULL_BACKFILL", "true")
+    assert _monitoring_full_backfill_requested() is True
 
 
 def test_night_plan_ingestion_can_be_disabled_for_actual_only_import(
