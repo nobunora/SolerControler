@@ -140,7 +140,7 @@ Import Linter契約に反するなら `operations/monitoring_sync.py` 側へ置�
 
 ### 5.2 新仕様
 
-明示 `KP_CSV_TARGET_MONTHS` がない通常実行では、JST直近4暦日が属する月だけを返す。
+通常実行では、JST直近4暦日が属する月だけを返す。`KP_CSV_TARGET_MONTHS` が明示されている場合は取得月指定として維持するが、DB同期の4日window解除は `DATA_MONITORING_FULL_BACKFILL=true` のときだけ行う。
 
 例:
 
@@ -185,7 +185,7 @@ explicit requested months
 
 単に `available` の最新月を追加して、4日window外の月が増える設計は禁止。
 
-明示backfillと通常syncのsemanticsを混ぜない。
+明示月指定とfull backfillを混同しない。full backfillは `DATA_MONITORING_FULL_BACKFILL=true` を必要とし、既定値はfalseとする。
 
 ## 6. source rowsの準備
 
