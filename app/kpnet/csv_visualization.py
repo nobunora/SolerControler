@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,21 +21,21 @@ def _resolve_months(requested: list[str], available: list[str], include_latest: 
     for month in requested:
         if month in available_set and month not in result:
             result.append(month)
-    if include_latest and available:
+    if not requested and include_latest and available:
         latest = sorted(available, key=_month_key, reverse=True)[0]
-        if latest not in result:
-            result.append(latest)
+        result.append(latest)
     return result
 
 
 def _default_csv_target_months(now: datetime | None = None) -> list[str]:
     base = now or _now_in_timezone("Asia/Tokyo")
-    current = base.strftime("%Y-%m")
-    if base.month == 1:
-        previous = f"{base.year - 1}-12"
-    else:
-        previous = f"{base.year}-{base.month - 1:02d}"
-    return [previous, current]
+    dates = [base.date() - timedelta(days=offset) for offset in range(3, -1, -1)]
+    months: list[str] = []
+    for value in dates:
+        month = value.strftime("%Y-%m")
+        if month not in months:
+            months.append(month)
+    return months
 
 
 def _parse_csv_points(csv_path: Path) -> tuple[list[datetime], list[float], list[float]]:
