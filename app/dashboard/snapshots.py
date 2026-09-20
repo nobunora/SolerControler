@@ -313,7 +313,12 @@ def write_dashboard_snapshots(
 
         storage_client = Client()
 
-    existing_history = _read_existing_history_payload(storage_client=storage_client)
+    full_history_rebuild = _full_history_rebuild_requested()
+    existing_history = (
+        None
+        if full_history_rebuild
+        else _read_existing_history_payload(storage_client=storage_client)
+    )
     payloads = build_dashboard_snapshot_payloads(db_path, existing_history=existing_history)
     results: dict[str, dict[str, Any]] = {}
 
@@ -334,9 +339,16 @@ def write_dashboard_snapshots(
             "gzip_bytes": len(artifact.gzip_bytes),
             "etag": artifact.etag,
         }
+        if kind == HISTORY_KIND:
+            results[kind]["rebuild_mode"] = "full" if full_history_rebuild else "incremental"
 
     clear_snapshot_cache()
     return results
+
+
+def _full_history_rebuild_requested() -> bool:
+    raw = os.getenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _cache_ttl_seconds() -> float:
