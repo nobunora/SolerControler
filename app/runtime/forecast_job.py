@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.operations.firestore import open_firestore
+from app.dashboard.snapshots import dashboard_snapshot_prefix, write_dashboard_snapshots
 from app.operations.forecast_persistence import persist_forecast_only_plan
 from app.runtime.command_adapter import _run
 
@@ -36,4 +37,14 @@ def main() -> int:
         f"[forecast_job] persisted target_date={target_date} immutable_snapshot_rows={snapshot_count}",
         flush=True,
     )
+    if dashboard_snapshot_prefix():
+        snapshot_result = write_dashboard_snapshots(
+            Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))
+        )
+        for kind, info in snapshot_result.items():
+            print(
+                "[forecast_job] dashboard snapshot "
+                f"kind={kind} raw_bytes={info['raw_bytes']} gzip_bytes={info['gzip_bytes']}",
+                flush=True,
+            )
     return 0
