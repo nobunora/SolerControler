@@ -185,7 +185,8 @@ def prepare_monitoring_csvs(
 ) -> PreparedMonitoringRows:
     def rows() -> Iterable[dict[str, Any]]:
         for csv_path in csv_paths:
-            yield from iter_monitoring_rows(csv_path)
+            for row in iter_monitoring_rows(csv_path):
+                yield {**row, "_source_csv": str(csv_path)}
 
     return _dedupe_rows(
         rows(),
