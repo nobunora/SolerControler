@@ -1,4 +1,4 @@
-"""Reversible live verification of the scheduled 03 forced and 07 economy paths."""
+"""Reversible live verification of the scheduled 03 forced and 07 green paths."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from app.kpnet.config import KpNetConfig
 from app.kpnet.profile_builder import (
     _build_payload,
     _pick_battery_operating_mode_code,
-    _pick_min_code,
 )
 from app.kpnet.profiles import ProfileOverrides
 from app.runtime.night_soc_controller import (
@@ -88,16 +87,12 @@ def _forced_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str
     )
 
 
-def _economy_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
-    """Fetch exactly the candidate lists required by scheduled 07 economy mode."""
+def _green_probe_candidate_maps(client: KpNetClient) -> dict[str, dict[str, str]]:
+    """Fetch exactly the candidate list required by scheduled 07 green mode."""
     return _sparse_candidate_maps(
         battery_operating_mode=client.candidate_map(
             "BatteryOperatingMode",
             "remotesetting/pcssetting/valueList/batteryoperatingmode",
-        ),
-        soc_economy_mode=client.candidate_map(
-            "SocEconomyMode",
-            "remotesetting/pcssetting/valueList/soceconomymode",
         ),
     )
 
@@ -118,20 +113,19 @@ def make_forced_probe_profile(
     )
 
 
-def make_economy_probe_profile(
+def make_green_probe_profile(
     *,
     current_profile: ProfileOverrides,
     value_maps: Mapping[str, dict[str, str]],
 ) -> ProfileOverrides:
-    """Build the scheduled-07-equivalent probe: economy mode plus economy SOC 0%."""
+    """Build the scheduled-07-equivalent probe while preserving other settings."""
     return replace(
         current_profile,
-        name="post-deploy-07-economy-probe",
+        name="post-deploy-07-green-probe",
         battery_operating_mode=_pick_battery_operating_mode_code(
             value_maps["BatteryOperatingMode"],
-            prefer="economy",
+            prefer="green",
         ),
-        soc_economy_mode=_pick_min_code(value_maps["SocEconomyMode"]),
     )
 
 
@@ -214,7 +208,7 @@ def run_settings_roundtrip(
     test_charge_start_hhmm: str | None = None,
     test_charge_end_hhmm: str | None = None,
 ) -> dict[str, object]:
-    """Prove real 03 forced and 07 economy writes, then restore the exact snapshot.
+    """Prove real 03 forced and 07 green writes, then restore the exact snapshot.
 
     The legacy target/window arguments remain accepted for entrypoint compatibility
     only. They are intentionally not mapped into the device settings because the
@@ -237,7 +231,7 @@ def run_settings_roundtrip(
         ).strip().lower() in {"1", "true", "yes", "on"},
         "status": "failed",
         "forced_proof": "not_started",
-        "economy_proof": "not_started",
+        "green_proof": "not_started",
     }
     current: dict[str, Any] | None = None
     restore_profile: ProfileOverrides | None = None
@@ -295,53 +289,41 @@ def run_settings_roundtrip(
         if elapsed < hold_seconds:
             time.sleep(hold_seconds - elapsed)
 
-        phase = "economy_candidate_fetch"
-        economy_maps = _economy_probe_candidate_maps(client)
-        restore_maps = economy_maps
-        summary["economy_candidate_maps_fetched"] = [
-            "BatteryOperatingMode",
-            "SocEconomyMode",
-        ]
-        economy_base = profile_from_current_settings(forced_readback)
-        economy_profile = make_economy_probe_profile(
-            current_profile=economy_base,
-            value_maps=economy_maps,
+        phase = "green_candidate_fetch"
+        green_maps = _green_probe_candidate_maps(client)
+        restore_maps = green_maps
+        summary["green_candidate_maps_fetched"] = ["BatteryOperatingMode"]
+        green_base = profile_from_current_settings(forced_readback)
+        green_profile = make_green_probe_profile(
+            current_profile=green_base,
+            value_maps=green_maps,
         )
-        phase = "economy_write"
-        economy_readback, economy_changed, economy_payload = _apply_and_verify(
+        phase = "green_write"
+        green_readback, green_changed, green_payload = _apply_and_verify(
             client=client,
             current=forced_readback,
-            value_maps=economy_maps,
-            profile=economy_profile,
-            required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
+            value_maps=green_maps,
+            profile=green_profile,
+            required_readback_fields=("batteryOperatingMode",),
         )
         _assert_preserved_fields(
             baseline=current,
-            observed=economy_readback,
-            allowed_changes={"batteryOperatingMode", "socEconomyMode"},
-            phase="07 economy proof",
+            observed=green_readback,
+            allowed_changes={"batteryOperatingMode"},
+            phase="07 green proof",
         )
-        summary["economy_proof"] = "passed"
-        summary["economy_changed_fields"] = economy_changed
-        summary["economy_readback_fields"] = [
-            "batteryOperatingMode",
-            "socEconomyMode",
-        ]
-        summary["economy_requested"] = {
-            "batteryOperatingMode": economy_payload["batteryOperatingMode"],
-            "socEconomyMode": economy_payload["socEconomyMode"],
-        }
-        summary["economy_observed"] = {
-            "batteryOperatingMode": str(economy_readback.get("batteryOperatingMode", "")),
-            "socEconomyMode": str(economy_readback.get("socEconomyMode", "")),
-        }
-        summary["economy_operation_id"] = getattr(client, "operation_id", None)
+        summary["green_proof"] = "passed"
+        summary["green_changed_fields"] = green_changed
+        summary["green_readback_fields"] = ["batteryOperatingMode"]
+        summary["green_requested"] = {"batteryOperatingMode": green_payload["batteryOperatingMode"]}
+        summary["green_observed"] = {"batteryOperatingMode": str(green_readback.get("batteryOperatingMode", ""))}
+        summary["green_operation_id"] = getattr(client, "operation_id", None)
 
         phase = "restore_write"
         restored, restore_changed, _ = _apply_and_verify(
             client=client,
-            current=economy_readback,
-            value_maps=economy_maps,
+            current=green_readback,
+            value_maps=green_maps,
             profile=restore_profile,
             require_change=False,
         )
@@ -381,7 +363,7 @@ def run_settings_roundtrip(
                     summary["post_failure_readback"] = "attempted"
                     current_after_failure = client.read_current_settings()
                     if restore_maps is None:
-                        restore_maps = _economy_probe_candidate_maps(client)
+                        restore_maps = _green_probe_candidate_maps(client)
                     snapshot_ok, snapshot_mismatches = compare_setting_readback(
                         current, current_after_failure, ROUNDTRIP_SETTING_FIELDS
                     )

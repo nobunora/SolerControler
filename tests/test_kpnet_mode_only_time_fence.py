@@ -326,7 +326,7 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
         monkeypatch.setattr(workflow, name, forbidden)
     monkeypatch.setattr(cloud_job, "run_kpnet_mode_only_profile", workflow.run_kpnet_mode_only_profile)
     _run_night_23(); _run_day_07()
-    assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "0"]
+    assert [payload["batteryOperatingMode"] for payload in session.confirm_payloads] == ["5", "1"]
 
     standby_payload = session.confirm_payloads[0]
     for field, value in before_07.items():
@@ -335,9 +335,9 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
         assert standby_payload[field] == value
 
     day_payload = session.confirm_payloads[1]
-    assert day_payload["socEconomyMode"] == "0"
+    assert day_payload["socEconomyMode"] == before_07["socEconomyMode"]
     for field, value in before_07.items():
-        if field in {"batteryOperatingMode", "socEconomyMode"}:
+        if field == "batteryOperatingMode":
             continue
         assert day_payload[field] == value
     assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/write/request")]) == 2
@@ -350,7 +350,6 @@ def test_slot23_07_and_mode_only_ignore_plan_firestore_manual_and_lease_failures
     assert candidate_value_lists == [
         "batteryoperatingmode",
         "batteryoperatingmode",
-        "soceconomymode",
     ]
 
 
@@ -379,4 +378,4 @@ def test_03_readback_failure_still_leaves_07_economy_independent(monkeypatch: py
     with pytest.raises(RuntimeError, match="forced"):
         cloud_job._monitor_partial_forced_and_stop(plan, clock=AtThree(), device_port=FailedForcedDevice())
     _run_day_07()
-    assert writes == ["economy"]
+    assert writes == ["green"]

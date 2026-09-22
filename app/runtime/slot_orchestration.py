@@ -123,17 +123,18 @@ def _run_adjust_03(*, plan_refresh_only: bool = False) -> None:
 # HISTORICAL_FAILURE_LOCK (2026-08-29 user-authorized time ownership; amended
 # 2026-09-18 after the observed 07:00 standby state): do not add Firestore,
 # plan, lease, owner, SOC, manual-mode, or terminal-state checks before this
-# call. At 07:00 this job owns the device and must issue exactly one economy
-# candidate/read-back write regardless of every 03 outcome. Only
-# SocEconomyMode is set to 0%; all unrelated settings retain their current
-# values. A gate can leave
+# call. At 07:00 this job owns the device and must issue exactly one green
+# candidate/read-back write regardless of every 03 outcome. Economy mode
+# prioritizes selling surplus power and cannot charge the battery, so this
+# transition must restore green mode. All unrelated settings retain their
+# current values. A gate can leave
 # the physical battery in the 03 standby state. Guarded by
 # test_slot07_has_no_cross_slot_import_or_call and
-# test_07_entrypoint_is_ast_limited_to_one_economy_call.
+# test_07_entrypoint_is_ast_limited_to_one_green_call.
 def _run_day_07() -> None:
     _cloud_call(
         "_run_settings_profile_with_retry",
-        profile="economy",
+        profile="green",
         dynamic_forced_profile=False,
-        label="07-economy",
+        label="07-green",
     )

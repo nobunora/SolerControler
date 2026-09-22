@@ -648,7 +648,7 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
     try:
         if time.monotonic() >= operation_end: raise TimeoutError("mode-only deadline expired")
         client.login(); client.open_settings_page(); current = client.read_current_settings()
-        if profile in {"standby", "forced"}:
+        if profile in {"standby", "green", "forced"}:
             maps = _minimal_mode_only_candidate_maps(client)
         elif profile == "economy":
             maps = _minimal_mode_only_candidate_maps(client, include_soc_economy=True)
@@ -668,7 +668,16 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
                 ),
             )
         elif profile == "green":
-            selected = replace(GREEN_MODE_PROFILE, battery_operating_mode=_pick_battery_operating_mode_code(maps["BatteryOperatingMode"], prefer="green"))
+            selected = _mode_only_profile_from_current_settings(
+                current,
+                name="07-green-mode-only",
+            )
+            selected = replace(
+                selected,
+                battery_operating_mode=_pick_battery_operating_mode_code(
+                    maps["BatteryOperatingMode"], prefer="green"
+                ),
+            )
         elif profile == "economy":
             selected = _mode_only_profile_from_current_settings(
                 current,
@@ -699,7 +708,7 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
             ("BatteryOperatingMode", "SocEconomyMode")
             if profile == "economy"
             else ("BatteryOperatingMode",)
-            if profile in {"standby", "forced"}
+            if profile in {"standby", "green", "forced"}
             else None
         )
         _apply_settings_profile(

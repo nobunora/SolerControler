@@ -79,24 +79,24 @@ def test_03_direct_soc_path_has_local_20260906_regression_lock() -> None:
     assert "test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable" in window
 
 
-def test_07_entrypoint_is_ast_limited_to_one_economy_call() -> None:
+def test_07_entrypoint_is_ast_limited_to_one_green_call() -> None:
     tree = ast.parse((ROOT / "app/runtime/slot_orchestration.py").read_text(encoding="utf-8"))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_run_day_07")
     calls = [node for node in ast.walk(fn) if isinstance(node, ast.Call)]
     assert len(calls) == 1
     keywords = {key.arg: key.value.value for key in calls[0].keywords if isinstance(key.value, ast.Constant)}
-    assert keywords == {"profile": "economy", "dynamic_forced_profile": False, "label": "07-economy"}
+    assert keywords == {"profile": "green", "dynamic_forced_profile": False, "label": "07-green"}
 
 
-def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
+def test_07_green_path_changes_only_operating_mode() -> None:
     workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
-    start = workflow.index('elif profile == "economy":')
-    end = workflow.index('elif profile == "forced":', start)
+    start = workflow.index('elif profile == "green":')
+    end = workflow.index('elif profile == "economy":', start)
     window = workflow[start:end]
 
     assert "_mode_only_profile_from_current_settings" in window
-    assert 'prefer="economy"' in window
-    assert "soc_economy_mode=_pick_min_code" in window
+    assert 'prefer="green"' in window
+    assert "soc_economy_mode=" not in window
     for forbidden in (
         "soc_safety_mode=",
         "soc_contact_input=",
@@ -110,13 +110,13 @@ def test_07_economy_path_changes_only_mode_and_soc_economy() -> None:
         assert forbidden not in window
 
 
-def test_07_mode_only_requires_explicit_mode_and_soc_economy_readback() -> None:
+def test_07_mode_only_requires_explicit_mode_readback() -> None:
     workflow = (ROOT / "app/kpnet/workflow.py").read_text(encoding="utf-8")
     start = workflow.index("def run_kpnet_mode_only_profile")
     window = workflow[start:]
 
-    assert 'if profile == "economy"' in window
-    assert '("batteryOperatingMode", "socEconomyMode")' in window
+    assert 'if profile in {"standby", "green", "forced"}' in window
+    assert 'name="07-green-mode-only"' in window
     assert "required_readback_fields=required_readback_fields" in window
     assert "candidate_maps_fetched=candidate_maps_fetched" in window
     assert '"message": "kpnet-settings-readback"' in workflow

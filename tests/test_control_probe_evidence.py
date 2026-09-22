@@ -28,8 +28,7 @@ def _proof() -> dict:
     evidence = {"status": "passed", "restore_verified": True, "hold_seconds": 60}
     for phase, values, candidates in (
         ("forced", {"batteryOperatingMode": "3"}, ["BatteryOperatingMode"]),
-        ("economy", {"batteryOperatingMode": "0", "socEconomyMode": "0"},
-         ["BatteryOperatingMode", "SocEconomyMode"]),
+        ("green", {"batteryOperatingMode": "1"}, ["BatteryOperatingMode"]),
     ):
         evidence.update({
             f"{phase}_proof": "passed",
@@ -41,7 +40,7 @@ def _proof() -> dict:
             f"{phase}_observed": values.copy(),
         })
     return {"status": "passed", "roundtrip_forced_proof": "passed",
-            "roundtrip_economy_proof": "passed", "roundtrip_restore_verified": True,
+            "roundtrip_green_proof": "passed", "roundtrip_restore_verified": True,
             "settings_roundtrip_evidence": evidence}
 
 
@@ -56,11 +55,11 @@ def test_device_evidence_gate(fault: str | None) -> None:
     elif fault == "restore":
         evidence["restore_verified"] = False
     elif fault == "mismatch":
-        evidence["economy_observed"]["batteryOperatingMode"] = "5"
+        evidence["green_observed"]["batteryOperatingMode"] = "5"
     elif fault == "candidate":
         evidence["forced_candidate_maps_fetched"].append("SocChargeMode")
     elif fault == "missing_zero":
-        del evidence["economy_observed"]["socEconomyMode"]
+        del evidence["green_observed"]["batteryOperatingMode"]
     result = subprocess.run(
         ["pwsh", "-NoProfile", "-Command",
          "$proof = [Console]::In.ReadToEnd() | ConvertFrom-Json -AsHashtable; "
