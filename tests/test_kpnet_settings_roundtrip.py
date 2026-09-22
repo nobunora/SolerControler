@@ -5,9 +5,9 @@ from typing import Any
 import pytest
 
 from app.kpnet.settings_roundtrip import (
-    _economy_probe_candidate_maps,
+    _green_probe_candidate_maps,
     _forced_probe_candidate_maps,
-    make_economy_probe_profile,
+    make_green_probe_profile,
     make_forced_probe_profile,
     profile_from_current_settings,
 )
@@ -62,14 +62,14 @@ def test_forced_probe_fetches_only_battery_operating_mode() -> None:
     assert maps["SocEconomyMode"] == {}
 
 
-def test_economy_probe_fetches_only_mode_and_economy_soc() -> None:
+def test_green_probe_fetches_only_battery_operating_mode() -> None:
     client = _CandidateClient()
 
-    maps = _economy_probe_candidate_maps(client)
+    maps = _green_probe_candidate_maps(client)
 
-    assert client.calls == ["BatteryOperatingMode", "SocEconomyMode"]
+    assert client.calls == ["BatteryOperatingMode"]
     assert maps["SocChargeMode"] == {}
-    assert maps["SocEconomyMode"]["0"] == "0%"
+    assert maps["SocEconomyMode"] == {}
 
 
 def test_probe_profiles_preserve_unrelated_settings() -> None:
@@ -87,15 +87,15 @@ def test_probe_profiles_preserve_unrelated_settings() -> None:
 
     forced_snapshot = dict(current)
     forced_snapshot["batteryOperatingMode"] = "3"
-    economy_base = profile_from_current_settings(forced_snapshot)
-    economy = make_economy_probe_profile(
-        current_profile=economy_base,
-        value_maps=_economy_probe_candidate_maps(client),
+    green_base = profile_from_current_settings(forced_snapshot)
+    green = make_green_probe_profile(
+        current_profile=green_base,
+        value_maps=_green_probe_candidate_maps(client),
     )
-    assert economy.battery_operating_mode == "0"
-    assert economy.soc_economy_mode == "0"
-    assert economy.soc_charge_mode == current["socChargeMode"]
-    assert economy.soc_safety_mode == current["socSafetyMode"]
+    assert green.battery_operating_mode == "1"
+    assert green.soc_economy_mode == current["socEconomyMode"]
+    assert green.soc_charge_mode == current["socChargeMode"]
+    assert green.soc_safety_mode == current["socSafetyMode"]
 
 
 def test_live_roundtrip_requires_an_exact_one_minute_hold() -> None:
@@ -112,7 +112,7 @@ def test_live_roundtrip_rejects_window_mutation() -> None:
         run_settings_roundtrip(test_charge_start_hhmm="23:59")
 
 
-def test_live_roundtrip_proves_forced_then_economy_then_restores(
+def test_live_roundtrip_proves_forced_then_green_then_restores(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import app.kpnet.settings_roundtrip as roundtrip
@@ -184,27 +184,20 @@ def test_live_roundtrip_proves_forced_then_economy_then_restores(
 
     assert summary["status"] == "passed"
     assert summary["forced_proof"] == "passed"
-    assert summary["economy_proof"] == "passed"
+    assert summary["green_proof"] == "passed"
     assert summary["restore_verified"] is True
     assert summary["forced_changed_fields"] == ["batteryOperatingMode"]
-    assert summary["economy_changed_fields"] == [
-        "batteryOperatingMode",
-        "socEconomyMode",
-    ]
-    assert summary["economy_readback_fields"] == [
-        "batteryOperatingMode",
-        "socEconomyMode",
-    ]
+    assert summary["green_changed_fields"] == ["batteryOperatingMode"]
+    assert summary["green_readback_fields"] == ["batteryOperatingMode"]
     assert candidate_calls == [
         "BatteryOperatingMode",
         "BatteryOperatingMode",
-        "SocEconomyMode",
     ]
     assert len(mutation_payloads) == 3
     assert current == initial
 
 
-def test_unknown_forced_write_never_issues_economy_or_restore(
+def test_unknown_forced_write_never_issues_green_or_restore(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import app.kpnet.settings_roundtrip as roundtrip
@@ -270,7 +263,7 @@ def test_unknown_forced_write_never_issues_economy_or_restore(
     assert raised.value.summary["failed_phase"] == "forced_write"
     assert raised.value.summary["mutation_outcome"] == "unknown"
     assert raised.value.summary["restore_after_failure"] == "suppressed_unknown_write"
-    assert raised.value.summary["economy_proof"] == "not_started"
+    assert raised.value.summary["green_proof"] == "not_started"
 
 
 def test_roundtrip_emits_restore_and_dual_proof_audit_fields() -> None:
@@ -281,6 +274,6 @@ def test_roundtrip_emits_restore_and_dual_proof_audit_fields() -> None:
     text = open(source, encoding="utf-8").read()
 
     assert '"forced_proof"' in text
-    assert '"economy_proof"' in text
+    assert '"green_proof"' in text
     assert '"restore_verified": True' in text
     assert "[settings_roundtrip]" in text

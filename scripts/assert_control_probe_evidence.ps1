@@ -3,7 +3,7 @@ param([AllowNull()][System.Collections.IDictionary]$Proof)
 $ErrorActionPreference = 'Stop'
 if ($null -eq $Proof -or $Proof['status'] -ne 'passed' -or
     $Proof['roundtrip_forced_proof'] -ne 'passed' -or
-    $Proof['roundtrip_economy_proof'] -ne 'passed' -or
+    $Proof['roundtrip_green_proof'] -ne 'passed' -or
     $Proof['roundtrip_restore_verified'] -ne $true) {
     throw 'Missing or failed device-level dual-profile evidence; release is blocked.'
 }
@@ -14,9 +14,9 @@ if ($null -eq $evidence -or $evidence['status'] -ne 'passed' -or
     $evidence['hold_seconds'] -ne 60) {
     throw 'Incomplete settings round-trip evidence; release is blocked.'
 }
-foreach ($phase in @('forced', 'economy')) {
-    $fields = if ($phase -eq 'forced') { @('batteryOperatingMode') } else { @('batteryOperatingMode', 'socEconomyMode') }
-    $candidates = if ($phase -eq 'forced') { @('BatteryOperatingMode') } else { @('BatteryOperatingMode', 'SocEconomyMode') }
+foreach ($phase in @('forced', 'green')) {
+    $fields = @('batteryOperatingMode')
+    $candidates = @('BatteryOperatingMode')
     if ($evidence["${phase}_proof"] -ne 'passed' -or
         -not $evidence["${phase}_operation_id"] -or
         (Compare-Object $candidates @($evidence["${phase}_candidate_maps_fetched"]))) {
@@ -36,4 +36,4 @@ foreach ($phase in @('forced', 'economy')) {
         }
     }
 }
-Write-Host 'Device evidence accepted: forced + economy requested/observed values and exact restoration.'
+Write-Host 'Device evidence accepted: forced + green requested/observed values and exact restoration.'

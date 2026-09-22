@@ -189,4 +189,4 @@ if ($null -ne $updateError) {
 Write-Host "Control rollout source SHA: $actualCommit"
 Write-Host "Control rollout immutable image: $immutableImage"
 Write-Host 'Updated only the image field of the existing 23/03/07 control Jobs.'
-Write-Host 'Release accepted only after the candidate image passed live CSV/plan + real 03 forced + real 07 economy + exact restore proof before production image rollout.'
+Write-Host 'Release accepted only after the candidate image passed live CSV/plan + real 03 forced + real 07 green + exact restore proof before production image rollout.'

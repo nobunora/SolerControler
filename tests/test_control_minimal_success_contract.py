@@ -79,7 +79,7 @@ def test_scheduled_07_can_require_both_final_values_and_emits_structured_evidenc
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     payload = {
-        "batteryOperatingMode": "0",
+        "batteryOperatingMode": "1",
         "socEconomyMode": "0",
         "chargeStartTimeH": "23",
     }
@@ -103,7 +103,7 @@ def test_scheduled_07_can_require_both_final_values_and_emits_structured_evidenc
 
         def read_current_settings(self) -> dict[str, Any]:
             return {
-                "batteryOperatingMode": "0",
+                "batteryOperatingMode": "1",
                 "socEconomyMode": "0",
                 "chargeStartTimeH": "23",
             }
@@ -120,26 +120,19 @@ def test_scheduled_07_can_require_both_final_values_and_emits_structured_evidenc
             "chargeStartTimeH": "23",
         },
         value_maps={},
-        profile=SimpleNamespace(name="07-economy-mode-only"),
-        required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
-        candidate_maps_fetched=("BatteryOperatingMode", "SocEconomyMode"),
+        profile=SimpleNamespace(name="07-green-mode-only"),
+        required_readback_fields=("batteryOperatingMode",),
+        candidate_maps_fetched=("BatteryOperatingMode",),
     )
 
-    assert result["batteryOperatingMode"] == "0"
+    assert result["batteryOperatingMode"] == "1"
     setting_result = summary["setting_results"][0]
     assert setting_result["changed_fields"] == ["batteryOperatingMode"]
-    assert setting_result["readback_fields"] == ["batteryOperatingMode", "socEconomyMode"]
-    assert setting_result["requested"] == {
-        "batteryOperatingMode": "0",
-        "socEconomyMode": "0",
-    }
-    assert setting_result["observed"] == {
-        "batteryOperatingMode": "0",
-        "socEconomyMode": "0",
-    }
+    assert setting_result["readback_fields"] == ["batteryOperatingMode"]
+    assert setting_result["requested"] == {"batteryOperatingMode": "1"}
+    assert setting_result["observed"] == {"batteryOperatingMode": "1"}
     assert setting_result["candidate_maps_fetched"] == [
         "BatteryOperatingMode",
-        "SocEconomyMode",
     ]
 
     records = [
@@ -149,17 +142,17 @@ def test_scheduled_07_can_require_both_final_values_and_emits_structured_evidenc
     ]
     audit = next(record for record in records if record.get("message") == "kpnet-settings-readback")
     assert audit["operation_id"] == "operation-07"
-    assert audit["readback_fields"] == ["batteryOperatingMode", "socEconomyMode"]
-    assert audit["requested"]["socEconomyMode"] == "0"
-    assert audit["observed"]["socEconomyMode"] == "0"
+    assert audit["readback_fields"] == ["batteryOperatingMode"]
+    assert audit["requested"]["batteryOperatingMode"] == "1"
+    assert audit["observed"]["batteryOperatingMode"] == "1"
 
 
-def test_scheduled_07_required_soc_economy_readback_mismatch_fails(
+def test_scheduled_07_required_green_mode_readback_mismatch_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
     payload = {
-        "batteryOperatingMode": "0",
+        "batteryOperatingMode": "1",
         "socEconomyMode": "0",
     }
     monkeypatch.setattr(
@@ -182,11 +175,11 @@ def test_scheduled_07_required_soc_economy_readback_mismatch_fails(
 
         def read_current_settings(self) -> dict[str, Any]:
             return {
-                "batteryOperatingMode": "0",
-                "socEconomyMode": "10",
+                "batteryOperatingMode": "5",
+                "socEconomyMode": "0",
             }
 
-    with pytest.raises(RuntimeError, match="socEconomyMode"):
+    with pytest.raises(RuntimeError, match="batteryOperatingMode"):
         workflow._apply_settings_profile(
             client=FakeClient(),
             cfg=SimpleNamespace(dry_run=False),
@@ -197,9 +190,9 @@ def test_scheduled_07_required_soc_economy_readback_mismatch_fails(
                 "socEconomyMode": "0",
             },
             value_maps={},
-            profile=SimpleNamespace(name="07-economy-mode-only"),
-            required_readback_fields=("batteryOperatingMode", "socEconomyMode"),
-            candidate_maps_fetched=("BatteryOperatingMode", "SocEconomyMode"),
+            profile=SimpleNamespace(name="07-green-mode-only"),
+            required_readback_fields=("batteryOperatingMode",),
+            candidate_maps_fetched=("BatteryOperatingMode",),
         )
 
 
@@ -237,7 +230,7 @@ def test_minimal_economy_candidate_maps_fetch_only_mode_and_economy_soc() -> Non
     assert maps["SocChargeMode"] == {}
 
 
-def test_probe_candidate_maps_match_forced_and_economy_scheduled_dependencies() -> None:
+def test_probe_candidate_maps_match_forced_and_green_scheduled_dependencies() -> None:
     class FakeClient:
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -245,7 +238,7 @@ def test_probe_candidate_maps_match_forced_and_economy_scheduled_dependencies() 
         def candidate_map(self, candidate_type: str, _path: str) -> dict[str, str]:
             self.calls.append(candidate_type)
             if candidate_type == "BatteryOperatingMode":
-                return {"0": "economy", "3": "forced charge", "5": "standby"}
+                return {"1": "green", "3": "forced charge", "5": "standby"}
             if candidate_type == "SocEconomyMode":
                 return {"0": "0%", "10": "10%"}
             raise AssertionError(candidate_type)
@@ -256,11 +249,11 @@ def test_probe_candidate_maps_match_forced_and_economy_scheduled_dependencies() 
     assert forced_maps["SocChargeMode"] == {}
     assert forced_maps["SocEconomyMode"] == {}
 
-    economy_client = FakeClient()
-    economy_maps = settings_roundtrip._economy_probe_candidate_maps(economy_client)  # type: ignore[arg-type]
-    assert economy_client.calls == ["BatteryOperatingMode", "SocEconomyMode"]
-    assert economy_maps["SocChargeMode"] == {}
-    assert economy_maps["SocEconomyMode"]["0"] == "0%"
+    green_client = FakeClient()
+    green_maps = settings_roundtrip._green_probe_candidate_maps(green_client)  # type: ignore[arg-type]
+    assert green_client.calls == ["BatteryOperatingMode"]
+    assert green_maps["SocChargeMode"] == {}
+    assert green_maps["SocEconomyMode"] == {}
 
 
 def test_roundtrip_mutation_readback_ignores_unrelated_field_drift(

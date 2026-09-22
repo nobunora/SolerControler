@@ -36,7 +36,7 @@ def test_control_image_only_rollout_is_commit_pinned_image_only_and_live_gated()
     assert "run_control_postdeploy_live_probe.ps1" in script
     assert "$previousImages[$jobName] = Get-ControlJobImage -JobName $jobName" in script
     assert "production 23/03/07 Job images were NOT changed" in script
-    assert "real 03 forced + real 07 economy + exact restore proof" in script
+    assert "real 03 forced + real 07 green + exact restore proof" in script
     assert "Updated only the image field of the existing 23/03/07 control Jobs." in script
 
     probe_pos = script.index("run_control_postdeploy_live_probe.ps1")
@@ -109,10 +109,10 @@ def test_postdeploy_probe_proves_readonly_prep_before_real_settings_roundtrip() 
     assert csv_pos < plan_pos < settings_pos
     assert "SETTINGS_ROUNDTRIP_TARGET_SOC" in source
     assert "roundtrip_forced_proof" in source
-    assert "roundtrip_economy_proof" in source
+    assert "roundtrip_green_proof" in source
     assert "roundtrip_restore_verified" in source
     assert 'roundtrip.get("forced_proof") != "passed"' in source
-    assert 'roundtrip.get("economy_proof") != "passed"' in source
+    assert 'roundtrip.get("green_proof") != "passed"' in source
     assert 'roundtrip.get("restore_verified") is not True' in source
 
 

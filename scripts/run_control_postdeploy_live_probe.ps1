@@ -148,4 +148,4 @@ $proof | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 -LiteralPath (Joi
 
 Write-Host "LIVE POST-DEPLOY PROBE PASSED for source $ExpectedCommit"
 Write-Host "Out-of-window override supplied: $outOfWindowAudit"
-Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 economy SET/readback -> exact snapshot restore/readback.'
+Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 green SET/readback -> exact snapshot restore/readback.'

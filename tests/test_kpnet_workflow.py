@@ -565,12 +565,31 @@ def test_mode_only_unknown_write_stops_without_a_second_write(
             self.read_calls += 1
             if self.instance_number == 0 and self.read_calls == 2:
                 raise RuntimeError("same-session readback failed")
-            if self.instance_number > 0:
-                return {"batteryOperatingMode": "1"}
-            return {"batteryOperatingMode": "1"}
+            return {
+                "batteryOperatingMode": "1",
+                "socSafetyMode": "0",
+                "socEconomyMode": "0",
+                "socContactInput": "0",
+                "socChargeMode": "0",
+                "chargeStartTimeH": "23",
+                "chargeStartTimeM": "0",
+                "chargeEndTimeH": "7",
+                "chargeEndTimeM": "0",
+                "dischargeStartTimeH": "7",
+                "dischargeStartTimeM": "0",
+                "dischargeEndTimeH": "23",
+                "dischargeEndTimeM": "0",
+                "agreementAmpere": "50",
+                "onPowerOutageMode": "0",
+                "onPowerOutageChargePowerW": "0",
+            }
 
         def collect_candidate_maps(self) -> dict[str, dict[str, str]]:
             return {"BatteryOperatingMode": {"1": "green", "3": "forced"}}
+
+        def candidate_map(self, field: str, _path: str) -> dict[str, str]:
+            assert field == "BatteryOperatingMode"
+            return {"1": "green", "3": "forced"}
 
         def confirm_setting(self, _payload: dict[str, str]) -> tuple[bool, str, str, str]:
             self.confirm_calls += 1
