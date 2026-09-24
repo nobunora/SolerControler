@@ -23,6 +23,14 @@ def main() -> int:
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
     _run([sys.executable, "kpnet_main.py"], {"KP_WORKFLOW_MODE": "csv"}, timeout_seconds=240)
     _run(
+        [sys.executable, "db_pipeline_main.py"],
+        {
+            "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
+            "DATA_PIPELINE_INCLUDE_NIGHT_PLAN": "false",
+        },
+        timeout_seconds=240,
+    )
+    _run(
         [sys.executable, "energy_model_main.py"],
         {"FORECAST_DATE_OVERRIDE": target_date},
         timeout_seconds=240,
