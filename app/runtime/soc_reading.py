@@ -22,6 +22,10 @@ class SocReading:
     source: str
     error: str | None
     observed_at: datetime | None
+    retrieved_at: datetime | None = None
+    measured_at: datetime | None = None
+    measurement_id: str | None = None
+    measurement_time_source: str = "unknown"
 
 
 def _emit_03_soc_read_attempt(*, attempt: int, max_attempts: int, outcome: str, retry_delay_seconds: float) -> None:
@@ -92,7 +96,7 @@ def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetim
     return latest_soc, latest_dt
 
 
-def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
+def _latest_realtime_soc_value(*, deadline_monotonic: float | None = None) -> float | None:
     from app.kpnet.client import KpNetClient
     from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
     from app.kpnet.workflow import KpNetConfig
@@ -138,6 +142,18 @@ def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> f
             print(f"[cloud_job_runner] KP-NET logout failed: {exc}", flush=True)
 
 
+def latest_realtime_soc_reading(*, deadline_monotonic: float | None = None) -> SocReading:
+    """One existing request path; no verified SOC measurement time is exposed yet."""
+    value = _latest_realtime_soc_value(deadline_monotonic=deadline_monotonic)
+    retrieved_at = datetime.now(ZoneInfo("UTC"))
+    return SocReading(value, "realtime", None, retrieved_at, retrieved_at=retrieved_at)
+
+
+def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
+    """Preserve the public numeric getter and its existing request count."""
+    return latest_realtime_soc_reading(deadline_monotonic=deadline_monotonic).value_percent
+
+
 def read_soc_with_fallback(
     csv_paths: list[Path],
     *,
@@ -149,6 +165,7 @@ def read_soc_with_fallback(
     deadline_monotonic: float | None = None,
     allow_realtime: bool = True,
     allow_csv_fallback: bool = True,
+    latest_structured: Callable[[], SocReading] | None = None,
 ) -> SocReading:
     attempts = max(1, env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3))
     delay_seconds = max(0.0, env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 300.0))
@@ -165,9 +182,13 @@ def read_soc_with_fallback(
                 errors.append("SOC deadline expired")
                 break
             try:
-                value = latest_realtime()
+                structured = latest_structured() if latest_structured is not None else None
+                value = structured.value_percent if latest_structured is not None else latest_realtime()
                 if value is not None:
-                    return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
+                    retrieved_at = datetime.now(ZoneInfo("UTC"))
+                    if structured is not None:
+                        return structured
+                    return SocReading(value, "realtime", None, retrieved_at, retrieved_at=retrieved_at)
                 errors.append("realtime returned no SOC")
                 outcome = "no_value"
             except Exception as exc:

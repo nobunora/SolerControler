@@ -82,6 +82,7 @@ def test_load_execution_context_preserves_loaded_values(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr("app.energy_plan.workflow.load_historical_actual_rows", lambda _: [])
     csv_path = tmp_path / "history.csv"
     coefficients = _coefficients()
     rows = [
@@ -175,6 +176,7 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
         lambda **_: {"date": "2026-07-17", "sun_hours": 8.0, "temp_c": 30.0},
     )
     monkeypatch.setattr("app.energy_plan.workflow.load_occupancy_events_from_env", lambda: [])
+    monkeypatch.setattr("app.energy_plan.workflow.load_historical_actual_rows", lambda _: [])
     weather_result = WeatherHistoryFetchResult(
             rows=[{"date": "2026-07-15", "temp": 29.0}],
             requested_dates=["2026-07-15"],

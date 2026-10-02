@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_user_authorized_20260829_time_ownership_replaces_cross_slot_gate() -> None:
     doc = (ROOT / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
     assert "2026-08-29 利用者承認" in doc
-    assert "06:45 realtime監視停止・06:50最終standby開始停止・06:55 I/O停止" in doc
+    assert "06:45 realtime監視停止、06:50最終standby開始期限、06:55 I/O停止" in doc
 
 
 def test_legacy_cross_slot_gate_has_no_scheduled_entrypoint() -> None:

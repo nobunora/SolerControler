@@ -64,11 +64,14 @@ def _physical_vector_residual_correction(
         for day, history in forecast_history.items():
             prior = history.get(hour, {})
             actual = actual_history.get(day, {}).get(hour, {})
+            actual_pv = to_float(actual.get("pv"))
+            if actual_pv is None or not math.isfinite(actual_pv):
+                continue
             prior_pv, prior_sw = to_float(prior.get("pv")) or 0.0, to_float(prior.get("shortwave")) or 0.0
             if prior_pv <= 0 or prior_sw <= 0 or shortwave <= 0 or _weather_class(prior.get("weather_code")) != cls:
                 continue
             if 0.7 * shortwave <= prior_sw <= 1.3 * shortwave:
-                residuals.append((to_float(actual.get("pv")) or 0.0) - prior_pv)
+                residuals.append(actual_pv - prior_pv)
         if not residuals:
             continue
         center = sorted(residuals)[len(residuals) // 2]

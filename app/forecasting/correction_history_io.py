@@ -11,7 +11,7 @@ from app.parsing.numbers import to_float, to_int
 
 
 def _forecast_history_start_date(*, target_date: str) -> str:
-    lookback_days = max(1, int(env_float("FORECAST_HOURLY_HISTORY_LOOKBACK_DAYS", default=60.0)))
+    lookback_days = max(1, int(env_float("FORECAST_HOURLY_HISTORY_LOOKBACK_DAYS", default=3650.0)))
     try:
         target_day = datetime.fromisoformat(target_date).date()
     except ValueError:

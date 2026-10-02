@@ -240,35 +240,17 @@ sigma bucket に分けて期待値計算します。履歴が不足する場合�
 
 ## 8. 23時・03系・07時ジョブとの関係
 
-`operation_conditions.json` は設定プロファイルの時刻ルールですが、実際の適用タイミングは `cloud_job_runner.py` が制御します。
+`operation_conditions.json`の一般プロファイルルールで、定時mode-only制御の時刻・所有権を上書きしません。現行定時経路は`slot_orchestration.py`と`night_soc_time_contract.py`が所有します。
 
-### 23時ジョブ
+| スロット | 現行動作 |
+|---|---|
+| 23時 | standbyを一回適用しread-back。CSV取得・計画保存を前提にしない。 |
+| 03時 | CSV・予報から当日計画を再生成し、必要ならforcedを開始。直接SOCが目標へ達したらstandby。100%到達後もforcedを保持する旧動作は採用しない。 |
+| 07時 | `fa3ef5c`（2026-09-22）に従いgreenを一回適用しread-back。03の成否に依存しない。`BatteryOperatingMode`以外の設定は直前値を保持。 |
 
-- CSV取得
-- 夜間計画計算
-- 設定反映
-- DB/ダッシュボード更新
+03は06:45にSOC監視終了、最終standbyの開始は06:50より前、06:55以後に外部I/Oを開始しません。03のFirestore/DB/lease/terminal-state保存を復活させません。非制御forecast所有者の処理と区別します。
 
-部分強制充電が必要な場合は、強制充電モードが設定直後から充電を始める特性を避けるため、23時時点ではグリーン待機に寄せます。
-
-### 03系ジョブ
-
-- CSV取得
-- 23時に作成した同じ対象日の計画を維持
-- 最新SOCから必要充電量を再見積もり
-- 07:00から逆算した時刻まで待機
-- 必要なら03:10頃に同じ対象日の予報を再取得
-- 計画差分がしきい値以上ならDB/ダッシュボードを更新
-- 逆算時刻で強制充電モードへ切替
-- SOC監視または07:00到達でグリーンへ戻す
-
-100%目標の場合は、目標到達後も07:00まで強制モードを維持し、早朝放電を避けます。
-
-### 07時ジョブ
-
-- 日中グリーンプロファイルを適用します。
-- `KP_FORCE_SETTINGS_PROFILE=green`
-- `KP_DYNAMIC_FORCED_PROFILE=false`
+詳細は [歴史的障害保護仕様](../agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md)、[意思決定フロー](../architecture/06-decision-flow.md)を参照してください。
 
 ## 9. 編集時の注意
 

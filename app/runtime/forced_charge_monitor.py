@@ -173,20 +173,40 @@ class ForcedChargeCompletionEstimator:
     """Estimate the next SOC confirmation time while forced charging is active."""
 
     def __init__(self, *, rate_percent_per_hour: float, confirm_before_minutes: int = 5) -> None:
-        self.rate_percent_per_hour = max(1.0, float(rate_percent_per_hour))
+        rate = float(rate_percent_per_hour)
+        self.rate_percent_per_hour = max(1.0, rate) if math.isfinite(rate) else 35.0
         self.confirm_before_minutes = max(0, int(confirm_before_minutes))
+        self.measured_at: datetime | None = None
+        self.measurement_id: str | None = None
+        self.measured_soc: float | None = None
+        self.eta: datetime | None = None
 
     def remaining_minutes(self, *, target_soc: float, latest_soc: float) -> int:
         required_percent = max(0.0, min(100.0, target_soc) - max(0.0, min(100.0, latest_soc)))
         return int(math.ceil((required_percent / self.rate_percent_per_hour) * 60.0)) if required_percent > 0 else 0
 
-    def next_check_seconds(self, *, target_soc: float, latest_soc: float | None, fallback_poll_seconds: int, cutoff_seconds: int) -> int:
+    def next_check_seconds(self, *, target_soc: float, latest_soc: float | None, fallback_poll_seconds: int, cutoff_seconds: int,
+                           measured_at: datetime | None = None, measurement_id: str | None = None,
+                           now: datetime | None = None) -> int:
         fallback = max(60, int(fallback_poll_seconds))
         cutoff = max(0, int(cutoff_seconds))
         if cutoff <= 0:
             return 0
         if latest_soc is None:
             return min(fallback, cutoff)
+        if (now is not None and now.utcoffset() is not None and measured_at is not None
+                and measured_at.utcoffset() is not None and measured_at <= now
+                and math.isfinite(self.rate_percent_per_hour) and math.isfinite(latest_soc)):
+            repeated = self.measured_at == measured_at or (measurement_id is not None and self.measurement_id == measurement_id)
+            if not repeated and (self.measured_at is None or measured_at > self.measured_at):
+                self.measured_at = measured_at
+                self.measurement_id = measurement_id
+                self.measured_soc = latest_soc
+            if self.measured_at is not None and self.measured_soc is not None:
+                gap = max(0.0, min(100.0, target_soc) - max(0.0, min(100.0, self.measured_soc)))
+                self.eta = self.measured_at + timedelta(hours=gap / self.rate_percent_per_hour)
+                delay = math.ceil((self.eta - now).total_seconds() - self.confirm_before_minutes * 60)
+                return min(max(60, delay), fallback, cutoff)
         remaining = self.remaining_minutes(target_soc=target_soc, latest_soc=latest_soc)
         if remaining <= 0:
             return 0
