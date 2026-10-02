@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def evaluate_hourly_residuals(records: list[dict[str, Any]], *, alpha: float) -> dict[str, Any]:
@@ -29,7 +30,7 @@ def evaluate_hourly_residuals(records: list[dict[str, Any]], *, alpha: float) ->
             target = datetime.fromisoformat(row["target_at"].replace("Z", "+00:00"))
             if issue.utcoffset() is None or target.utcoffset() is None or issue >= target:
                 reason = "issue_not_before_target"
-            elif target.date() != day or target.hour != hour:
+            elif target.astimezone(ZoneInfo("Asia/Tokyo")).date() != day or target.astimezone(ZoneInfo("Asia/Tokyo")).hour != hour:
                 reason = "target_mismatch"
         except (KeyError, TypeError, ValueError):
             reason = "issue_or_target_missing"

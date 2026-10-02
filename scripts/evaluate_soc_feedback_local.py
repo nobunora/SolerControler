@@ -9,15 +9,19 @@ import json
 import math
 import sys
 from dataclasses import fields
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.energy_plan.decision_feedback import build_soc_decision_feedback, build_soc_decision_prior
+from app.energy_plan.local_replay import evaluate_replay_day
 from app.energy_plan.soc_cost import SocCostModel
+
+
+def finite_nonnegative(value: Any) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
 def plan_exclusion(plan: dict[str, Any], target_date: str) -> str | None:
@@ -25,40 +29,78 @@ def plan_exclusion(plan: dict[str, Any], target_date: str) -> str | None:
     required = ("decision_id", "issued_at", "model_version", "contract_version", "price_version", "adopted_slot")
     if any(not plan.get(key) for key in required):
         return "plan_provenance_missing"
-    if plan["adopted_slot"] != "03" or plan.get("date") != target_date:
+    if plan["adopted_slot"] not in {"03", "reconstructed_experiment"} or plan.get("date") != target_date:
         return "adopted_plan_missing"
     try:
         issue = datetime.fromisoformat(plan["issued_at"].replace("Z", "+00:00"))
-        if issue.utcoffset() is None or issue.astimezone(ZoneInfo("Asia/Tokyo")).date().isoformat() != target_date:
+        boundary = datetime.fromisoformat(target_date).replace(hour=7, tzinfo=ZoneInfo("Asia/Tokyo"))
+        decision = datetime.fromisoformat(plan["decision_at"].replace("Z", "+00:00"))
+        if issue.utcoffset() is None or decision.utcoffset() is None or issue > decision or decision >= boundary:
             return "issue_invalid"
-    except (ValueError, TypeError):
+    except (KeyError, ValueError, TypeError):
         return "issue_invalid"
     optimization = plan.get("daytime_soc_optimization", {})
     cost = optimization.get("cost_model", {})
     if not isinstance(cost, dict) or any(field.name not in cost for field in fields(SocCostModel)):
         return "cost_model_incomplete"
+    if set(cost) != {field.name for field in fields(SocCostModel)}:
+        return "cost_model_invalid"
+    for key, value in cost.items():
+        if key in {"export_value_mode", "tariff_mode"}:
+            continue
+        if key in {"monthly_tariff_projection_enabled", "monthly_tier_landing_enabled"}:
+            if type(value) is not bool:
+                return "cost_model_invalid"
+        elif value is None and key == "sell_opportunity_loss_yen_per_kwh_override":
+            continue
+        elif not finite_nonnegative(value):
+            return "cost_model_invalid"
+    if (cost["export_value_mode"] not in {"neutral", "penalty", "revenue", "opportunity"}
+            or cost["tariff_mode"] not in {"flat", "night8_tiered"}
+            or not 0 < cost["charge_efficiency"] <= 1
+            or cost["day_tier2_upper_kwh"] < cost["day_tier1_upper_kwh"]):
+        return "cost_model_invalid"
     for name in ("hourly_pv_forecast_kwh", "hourly_load_forecast_kwh"):
         series = optimization.get(name, {})
-        if not isinstance(series, dict) or {str(k) for k in series} != {str(h) for h in range(24)}:
+        if not isinstance(series, dict) or not {str(h) for h in range(7, 23)} <= {str(k) for k in series}:
             return "forecast_incomplete"
-        if any(not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in series.values()):
+        if any(not finite_nonnegative(v) for v in series.values()):
             return "forecast_invalid"
     for block, name in (("inputs", "soc_now_percent"), ("result", "target_soc_7_percent"), ("result", "effective_capacity_kwh")):
         value = plan.get(block, {}).get(name)
-        if not isinstance(value, (int, float)) or not math.isfinite(value):
+        if not finite_nonnegative(value):
             return "decision_input_missing"
+    if (plan["result"]["effective_capacity_kwh"] <= 0 or plan["inputs"]["soc_now_percent"] > 100
+            or plan["result"]["target_soc_7_percent"] > 100
+            or not finite_nonnegative(plan["inputs"].get("expected_overnight_discharge_kwh"))
+            or not finite_nonnegative(plan.get("terminal_value_yen_per_kwh"))):
+        return "decision_input_missing"
     if not optimization.get("constraints") or not optimization.get("candidate_grid"):
         return "constraints_or_grid_missing"
     grid = optimization["candidate_grid"]
     if not isinstance(grid, list) or any(not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 100 for v in grid):
         return "candidate_grid_invalid"
-    peak = optimization.get("forecast_correction", {}).get("soc_peak_unmet_penalty", {}).get("target_peak_soc_percent")
-    if not isinstance(peak, (int, float)) or not math.isfinite(peak):
+    bounds = optimization["constraints"]
+    if (not isinstance(bounds, dict) or not finite_nonnegative(bounds.get("min"))
+            or not finite_nonnegative(bounds.get("max")) or bounds["max"] > 100
+            or any(not bounds["min"] <= v <= bounds["max"] for v in grid) or len(set(grid)) != len(grid)):
+        return "candidate_grid_invalid"
+    peak = optimization.get("peak_policy", {})
+    if (type(peak.get("enabled")) is not bool or not finite_nonnegative(peak.get("target_percent"))
+            or peak["target_percent"] > 100 or not finite_nonnegative(peak.get("rate_yen_per_kwh"))):
         return "peak_policy_missing"
-    for field in ("expected_peak_unmet_kwh", "expected_peak_unmet_cost_yen"):
-        value = optimization.get(field)
-        if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
-            return "peak_policy_missing"
+    scenarios = optimization.get("forecast_scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        return "scenarios_missing"
+    if any(not isinstance(s, dict) or set(s) != {"label", "probability", "pv_multiplier", "load_multiplier"}
+           or not isinstance(s["label"], str) or any(not finite_nonnegative(s[k]) for k in ("probability", "pv_multiplier", "load_multiplier")) for s in scenarios):
+        return "scenarios_invalid"
+    if abs(sum(s["probability"] for s in scenarios) - 1) > 1e-6:
+        return "scenarios_invalid"
+    for series in optimization.get("pv_variants", {}).values():
+        if (not isinstance(series, dict) or set(map(str, series)) != set(map(str, optimization["hourly_pv_forecast_kwh"]))
+                or any(not finite_nonnegative(v) for v in series.values())):
+            return "forecast_invalid"
     return None
 
 
@@ -68,6 +110,7 @@ def replay(plans: list[dict[str, Any]], csv_paths: list[Path]) -> dict[str, Any]
     outputs: list[dict[str, Any]] = []
     documents: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     seen: set[str] = set()
+    seen_days: set[tuple[tuple[str, ...], str]] = set()
     for plan in sorted(plans, key=lambda p: str(p.get("date", ""))):
         day = str(plan.get("date", ""))
         reason = plan_exclusion(plan, day)
@@ -79,8 +122,12 @@ def replay(plans: list[dict[str, Any]], csv_paths: list[Path]) -> dict[str, Any]
             raise ValueError("duplicate adopted decision")
         seen.add(identity)
         partition = tuple(str(plan[key]) for key in ("model_version", "contract_version", "price_version"))
+        if (partition, day) in seen_days:
+            raise ValueError("duplicate target date within model/contract/price partition")
+        seen_days.add((partition, day))
         history = documents.setdefault(partition, [])
         labels: list[str] = []
+        actual: dict[str, dict[int, float]] = {"pv": {}, "load": {}}
         invalid = False
         for path in csv_paths:
             try:
@@ -91,41 +138,32 @@ def replay(plans: list[dict[str, Any]], csv_paths: list[Path]) -> dict[str, Any]
                 if row.get("年月日", "").strip().replace("/", "-") != day:
                     continue
                 labels.append(row.get("時刻", "").strip())
-                for field in ("発電電力量[kWh]", "消費電力量[kWh]"):
+                for kind, field in (("pv", "発電電力量[kWh]"), ("load", "消費電力量[kWh]")):
                     try:
                         value = float(row[field])
                         invalid |= not math.isfinite(value) or value < 0
+                        hour = int(labels[-1].split(":")[0])
+                        if 7 <= hour < 23:
+                            actual[kind][hour] = actual[kind].get(hour, 0) + value
                     except (KeyError, TypeError, ValueError):
                         invalid = True
         expected = [f"{hour:02d}:{minute:02d}" for hour in range(24) for minute in (0, 30)]
         if invalid or sorted(labels) != expected:
             outputs.append({"date": day, "eligible": False, "reason": "actual_incomplete"})
             continue
-        prior = build_soc_decision_prior(feedback_docs=history, target_date=day)
-        feedback = build_soc_decision_feedback(plan=plan, csv_paths=csv_paths, target_date=day,
-                                               created_at=(datetime.fromisoformat(day) + timedelta(days=1)).replace(tzinfo=ZoneInfo("Asia/Tokyo")).isoformat(),
-                                               min_rows=32, step_percent=1.0)
-        # The existing simulator counts only 07:00-22:30 (32 intervals).
-        # All 48 source intervals were separately validated above.
-        if feedback is None or feedback["actual_summary"]["row_count"] != 32:
-            outputs.append({"date": day, "eligible": False, "reason": "actual_incomplete"})
+        try:
+            evaluated = evaluate_replay_day(plan, actual, history)
+        except ValueError as error:
+            if str(error) != "no_reachable_candidate":
+                raise
+            outputs.append({"date": day, "eligible": False, "reason": str(error)})
             continue
-        grid = set(plan["daytime_soc_optimization"]["candidate_grid"])
-        points = [point for point in feedback["points"] if point["target_soc_percent"] in grid]
-        if {point["target_soc_percent"] for point in points} != grid:
-            outputs.append({"date": day, "eligible": False, "reason": "candidate_grid_not_replayable"})
-            continue
-        best = min(points, key=lambda point: (point["objective_yen"], point["target_soc_percent"]))
-        minimum = best["objective_yen"]
-        feedback["best_target_soc_percent"] = best["target_soc_percent"]
-        feedback["min_objective_yen"] = minimum
-        feedback["points"] = [{**point, "regret_yen": round(max(0.0, point["objective_yen"] - minimum), 4)} for point in points]
-        history.append(feedback)
+        history.append(evaluated["feedback"])
         outputs.append({"date": day, "decision_id": identity, "actual_version": actual_version,
-                        "eligible": True, "prior": prior, "feedback": feedback,
+                        "eligible": True, **evaluated,
                         "created_at_basis": "reconstructed_day_complete_boundary", "validated_source_intervals": 48})
-    return {"schema_version": 1, "production_connected": False, "actual_version": actual_version,
-            "basis": "retrospective one-hour model without power limits", "records": outputs}
+    return {"schema_version": 2, "production_connected": False, "actual_version": actual_version,
+            "basis": "paired conditional-day one-hour model without power limits; not a continuous bill replay", "records": outputs}
 
 
 def main() -> int:

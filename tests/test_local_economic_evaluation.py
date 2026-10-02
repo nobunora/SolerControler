@@ -14,7 +14,7 @@ def test_missing_adopted_plan_never_learns():
 
 
 def test_complete_schema_does_not_accept_forecast_owner_as_adopted():
-    plan = {"date": "2026-10-01", "decision_id": "one", "issued_at": "2026-10-01T03:00:00+09:00",
+    plan = {"date": "2026-10-01", "decision_id": "one", "issued_at": "2026-10-01T03:00:00+09:00", "decision_at": "2026-10-01T03:00:00+09:00",
             "model_version": "v1", "contract_version": "inactive", "price_version": "p1", "adopted_slot": "02:35"}
     assert plan_exclusion(plan, plan["date"]) == "adopted_plan_missing"
     plan["adopted_slot"] = "03"
@@ -39,11 +39,13 @@ def test_financial_and_policy_breakdown(mode, export):
 
 def test_complete_plan_is_idempotent_and_corrected_actual_rebuilds(tmp_path):
     model = asdict(SocCostModel(39, 28, .93, .75, export_value_mode="neutral"))
-    plan = {"date": "2026-10-01", "decision_id": "one", "issued_at": "2026-09-30T18:00:00Z",
+    plan = {"date": "2026-10-01", "decision_id": "one", "issued_at": "2026-09-30T18:00:00Z", "decision_at": "2026-09-30T18:00:00Z",
             "model_version": "v1", "contract_version": "inactive", "price_version": "p1", "adopted_slot": "03",
-            "inputs": {"soc_now_percent": 0}, "result": {"effective_capacity_kwh": 8, "target_soc_7_percent": 50},
+            "terminal_value_yen_per_kwh": 0,
+            "inputs": {"soc_now_percent": 0, "expected_overnight_discharge_kwh": 0}, "result": {"effective_capacity_kwh": 8, "target_soc_7_percent": 50},
             "daytime_soc_optimization": {"cost_model": model, "constraints": {"min": 0, "max": 100},
-                "forecast_correction": {"soc_peak_unmet_penalty": {"target_peak_soc_percent": 0}},
+                "peak_policy": {"enabled": False, "target_percent": 0, "rate_yen_per_kwh": 0},
+                "forecast_scenarios": [{"label": "point", "probability": 1, "pv_multiplier": 1, "load_multiplier": 1}],
                 "expected_peak_unmet_kwh": 0, "expected_peak_unmet_cost_yen": 0,
                 "candidate_grid": list(range(101)), "hourly_pv_forecast_kwh": {str(h): 0 for h in range(24)},
                 "hourly_load_forecast_kwh": {str(h): 1 for h in range(24)}}}
@@ -53,6 +55,8 @@ def test_complete_plan_is_idempotent_and_corrected_actual_rebuilds(tmp_path):
     csv_path.write_text("\n".join([header, *rows]), encoding="utf-8-sig")
     first = replay([plan], [csv_path])
     assert first["records"][0]["eligible"]
+    assert first["records"][0]["actual_summary"]["load_kwh"] == 32
+    assert first["records"][0]["actual_summary"]["pv_kwh"] == 0
     assert first == replay([plan], [csv_path])
     csv_path.write_text("\n".join([header, *[r.replace(",0,1", ",0,2") for r in rows]]), encoding="utf-8-sig")
     corrected = replay([plan], [csv_path])
