@@ -64,7 +64,7 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
     _before_03_external_io()
     # No remote fallback: an archived old plan must never replace today's plan.
     if plan_path.exists() and os.getenv("ADJUST03_REGENERATE_PLAN", "true").lower() not in {"1", "true", "yes", "on"}:
-        _archive_generated_plan(plan_path)
+        _archive_generated_plan(plan_path, source="adjust03-reused")
         return True
     started = time.monotonic()
     deadline = started + seconds_until_control_cutoff(_tokyo_now())
@@ -109,7 +109,7 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
     return available
 
 
-def _archive_generated_plan(plan_path: Path) -> None:
+def _archive_generated_plan(plan_path: Path, *, source: str = "adjust03-generated") -> None:
     """Bounded audit I/O; never a device-control or 07 hand-off prerequisite.
 
     HISTORICAL_FAILURE_LOCK (badd209): no leases, old-plan fallback, Drive tail,
@@ -124,7 +124,7 @@ def _archive_generated_plan(plan_path: Path) -> None:
         return
     try:
         _before_03_external_io()
-        _run([sys.executable, "scripts/archive_plan_snapshot.py", "--plan", str(plan_path)],
+        _run([sys.executable, "scripts/archive_plan_snapshot.py", "--plan", str(plan_path), "--source", source],
              timeout_seconds=20, deadline_monotonic=time.monotonic() + min(20, remaining))
     except Exception as error:
         print(json.dumps({"message": "plan-archive", "status": "failed",

@@ -16,8 +16,9 @@ from app.operations.firestore import open_firestore
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", required=True, type=Path)
+    parser.add_argument("--source", choices=("adjust03-generated", "adjust03-reused"), default="adjust03-generated")
     args = parser.parse_args()
-    result = archive_plan_snapshot(args.plan, storage=storage.Client(), firestore=open_firestore(), source="adjust03-generated")
+    result = archive_plan_snapshot(args.plan, storage=storage.Client(), firestore=open_firestore(), source=args.source)
     print(json.dumps({"message": "plan-archive", **result}), flush=True)
     return 0
 

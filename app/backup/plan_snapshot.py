@@ -49,7 +49,8 @@ def archive_plan_snapshot(
                 "detail_gzip_size_bytes": len(stored), "generated_at": plan.get("generated_at"),
                 "record_status": "generated", "plan_json": None})
     model = (plan.get("daytime_soc_optimization") or {}).get("cost_model")
-    doc["source_revision"] = os.getenv("PLAN_SOURCE_REVISION") or None
+    doc["recorder_source_revision"] = os.getenv("PLAN_SOURCE_REVISION") or None
+    doc["source_revision"] = doc["recorder_source_revision"] if source == "adjust03-generated" else None
     doc["cost_model_sha256"] = hashlib.sha256(json.dumps(model, sort_keys=True, separators=(",", ":")).encode()).hexdigest() if model is not None else None
     # Immutable raw bytes remain recoverable if an index update fails.
     firestore.collection("night_plan_decisions").document(decision_id).set(doc, timeout=4, retry=None)

@@ -155,6 +155,16 @@ def test_generation_entrypoint_records_archive(monkeypatch, tmp_path):
     assert calls == [path]
 
 
+def test_reused_plan_does_not_claim_current_model_revision(monkeypatch, tmp_path):
+    monkeypatch.setenv('PLAN_SOURCE_REVISION', 'current-revision')
+    db = Firestore()
+    result = archive_plan_snapshot(plan_file(tmp_path), storage=Storage(), firestore=db,
+                                   source='adjust03-reused', prefix='gs://test/plans')
+    doc = db.collection('night_plan_decisions').records[result['decision_id']]
+    assert doc['source_revision'] is None
+    assert doc['recorder_source_revision'] == 'current-revision'
+
+
 def test_drive_scheduler_is_independent_and_not_deleted_when_enabled():
     source = (Path(__file__).resolve().parents[1]/'scripts/deploy_gcp_jobs.ps1').read_text(encoding='utf-8')
     assert 'Upsert-SchedulerRunJob -SchedulerName $DriveBackupSchedulerName' in source
