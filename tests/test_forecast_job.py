@@ -10,6 +10,11 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
     monkeypatch.setattr(forecast_job, "_target_date", lambda: "2026-09-03")
     monkeypatch.setattr(forecast_job, "_run", lambda command, env, **_kwargs: calls.append((command, env)))
     monkeypatch.setattr(forecast_job, "open_firestore", lambda: "client")
+    # A unit test must never rebuild/upload the real dashboard snapshot when
+    # the production gate has loaded its environment.
+    monkeypatch.setattr(forecast_job, "dashboard_snapshot_prefix", lambda: "gs://unit-test/snapshots")
+    snapshot_calls: list[Path] = []
+    monkeypatch.setattr(forecast_job, "write_dashboard_snapshots", lambda path: snapshot_calls.append(path) or {})
     persisted: list[dict] = []
     monkeypatch.setattr(forecast_job, "persist_forecast_only_plan", lambda client, **kwargs: persisted.append({"client": client, **kwargs}) or 24)
 
@@ -26,6 +31,7 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
         ([forecast_job.sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": "2026-09-03"}),
     ]
     assert persisted[0]["target_date"] == "2026-09-03"
+    assert len(snapshot_calls) == 1
 
 
 def test_forecast_job_source_has_no_control_or_settings_write_path() -> None:
