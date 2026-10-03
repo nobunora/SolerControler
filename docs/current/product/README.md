@@ -6,6 +6,7 @@
 | --- | --- |
 | 利用者・公開向けの説明 | [PUBLIC_DESCRIPTION_JA.md](PUBLIC_DESCRIPTION_JA.md) |
 | 時刻別の判断順・責務 | [意思決定フロー](../architecture/06-decision-flow.md) |
+| SOC時刻・前日補正・判断学習・売電評価の実装前案 | [詳細実装仕様](../architecture/SOC_ECONOMIC_OPTIMIZATION_IMPLEMENTATION_SPEC_JA.md)（レビュー済み案・未実装） |
 | `operation_conditions.json` の編集・反映 | [OPERATION_CONDITIONS_GUIDE.md](OPERATION_CONDITIONS_GUIDE.md) |
 | 消費電力量の予測 | [CONSUMPTION_FORECAST_MODEL_JA.md](CONSUMPTION_FORECAST_MODEL_JA.md) |
 | 東・南・西アレイのPV予測 | [PV_ARRAY_FORECAST_JA.md](PV_ARRAY_FORECAST_JA.md) |

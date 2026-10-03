@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.forecasting.consumption import ConsumptionForecast, forecast_daily_consumption
+from app.forecasting.actual_history_io import load_historical_actual_rows
 from app.energy_plan import (
     EnergyPlanOutput as EnergyModelOutput,
     ForecastInputPort,
@@ -180,7 +181,9 @@ class _DefaultHistoricalInputPort:
         return _csv_paths_from_env_or_latest(artifacts_dir)
 
     def read_rows(self, csv_paths: list[Path]) -> list[dict[str, Any]]:
-        return _read_rows(csv_paths)
+        recent_rows = _read_rows(csv_paths)
+        historical_rows = load_historical_actual_rows(recent_rows)
+        return sorted(historical_rows + recent_rows, key=lambda row: row["dt"]) if historical_rows else recent_rows
 
     def fit_coefficients(self, csv_paths: list[Path]) -> EnergyModelCoefficients:
         return fit_coefficients_from_csv(csv_paths)

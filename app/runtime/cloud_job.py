@@ -20,7 +20,10 @@ from app.runtime.command_adapter import _env_float, _env_int, _run, _run_operati
 from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator, estimate_forced_charge_rate_percent_per_hour
 from app.runtime.night_soc_operational_contract import SLOT03_PLATFORM_RETRY_DELAY_SECONDS
 from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS, may_start_final_standby, must_stop_forced_monitoring, may_start_03_io, seconds_until_control_cutoff, seconds_until_forced_monitor_cutoff
-from app.runtime.soc_reading import SocReading, latest_csv_soc_reading, latest_realtime_soc_percent, read_soc_with_fallback
+from app.runtime.soc_reading import SocReading, latest_csv_soc_reading, latest_realtime_soc_percent, latest_realtime_soc_reading, read_soc_with_fallback
+
+# Preserve the legacy numeric callback injection seam without a second page read.
+_DEFAULT_REALTIME_SOC_GETTER = latest_realtime_soc_percent
 from app.settings.forced_charge import ForcedChargeSettings
 
 
@@ -151,6 +154,8 @@ class _RunnerMonitorDevicePort:
         return read_soc_with_fallback(
             csv_paths,
             latest_realtime=lambda: latest_realtime_soc_percent(deadline_monotonic=deadline),
+            latest_structured=(lambda: latest_realtime_soc_reading(deadline_monotonic=deadline))
+            if latest_realtime_soc_percent is _DEFAULT_REALTIME_SOC_GETTER else None,
             latest_csv=latest_csv_soc_reading,
             env_int=lambda name, default: _env_int(name, default),
             env_float=lambda name, default: _env_float(name, default),
@@ -325,7 +330,16 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
             if latest >= target:
                 print(f"[cloud_job_runner] 03-monitor stop reason=target_reached latest={latest:.2f}% target={target:.2f}%", flush=True)
                 standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
-            delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
+            delay = estimator.next_check_seconds(
+                target_soc=target, latest_soc=latest,
+                fallback_poll_seconds=settings.poll_interval_seconds,
+                cutoff_seconds=seconds_until_control_cutoff(now()),
+                measured_at=reading.measured_at, measurement_id=reading.measurement_id, now=now(),
+            )
+            print(json.dumps({"message": "03-monitor-timing", "measurement_time_source": reading.measurement_time_source,
+                              "measured_at": None if reading.measured_at is None else reading.measured_at.isoformat(),
+                              "eta": None if reading.measured_at is None or estimator.eta is None else estimator.eta.isoformat(),
+                              "next_check_seconds": delay}, separators=(",", ":")), flush=True)
             if delay <= 0: break
             clock.sleep(delay)
         print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
