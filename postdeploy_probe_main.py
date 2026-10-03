@@ -75,6 +75,13 @@ def main() -> int:
         summary["roundtrip_green_proof"] = roundtrip.get("green_proof")
         summary["roundtrip_restore_verified"] = roundtrip.get("restore_verified")
         summary["settings_roundtrip_evidence"] = roundtrip
+        if os.getenv("EXTENDED_CONTROL_LIVE_PROBE", "false").lower() == "true":
+            from app.runtime.control_live_probe import run_controller_probe
+
+            controller = run_controller_probe(plan_path)
+            summary["controller_probe"] = controller
+            if controller.get("status") != "passed" or controller.get("restore_verified") is not True:
+                raise RuntimeError("extended controller probe did not verify restoration")
         summary["status"] = "passed"
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True), flush=True)
         return 0

@@ -1,4 +1,4 @@
-param([AllowNull()][System.Collections.IDictionary]$Proof)
+param([AllowNull()][System.Collections.IDictionary]$Proof, [switch]$RequireController)
 
 $ErrorActionPreference = 'Stop'
 if ($null -eq $Proof -or $Proof['status'] -ne 'passed' -or
@@ -37,3 +37,34 @@ foreach ($phase in @('forced', 'green')) {
     }
 }
 Write-Host 'Device evidence accepted: forced + green requested/observed values and exact restoration.'
+if ($RequireController) {
+    $controller = $Proof['controller_probe']
+    if ($null -eq $controller -or $controller['status'] -ne 'passed' -or
+        $controller['target_reached'] -ne $true -or $controller['restore_verified'] -ne $true -or
+        $controller['restored_field_count'] -ne 14 -or $controller['storage_scope'] -ne 'control_live_probes' -or
+        $controller['mutation_outcome'] -eq 'unknown') {
+        throw 'Extended controller storage/target/restoration proof missing or failed.'
+    }
+    foreach ($name in @('generated_plan', 'monitor_plan')) {
+        if ($controller[$name]['status'] -ne 'verified' -or
+            $controller[$name]['detail_sha256'] -notmatch '^[0-9a-f]{64}$' -or
+            -not $controller[$name]['raw_gzip_base64']) {
+            throw "Extended controller archive proof missing: $name"
+        }
+    }
+    $writes = @($controller['writes'])
+    if ($writes.Count -ne 2) { throw 'Expected one forced and one standby controller write.' }
+    for ($i = 0; $i -lt 2; $i++) {
+        $expected = @('3', '5')[$i]
+        if ([string]$writes[$i]['requested'] -ne $expected -or [string]$writes[$i]['observed'] -ne $expected -or
+            (Compare-Object @('batteryOperatingMode') @($writes[$i]['changed_fields']))) {
+            throw 'Controller SET/read-back proof is incomplete.'
+        }
+    }
+    $readings = @($controller['readings'])
+    if ($readings.Count -lt 2 -or $readings[-1]['source'] -ne 'realtime' -or
+        $null -eq $readings[-1]['soc'] -or [double]$readings[-1]['soc'] -lt [double]$controller['target_soc']) {
+        throw 'Target stop lacks a real SOC observation.'
+    }
+    Write-Host 'Controller evidence accepted: archive/index, real SOC, forced/standby and restoration.'
+}

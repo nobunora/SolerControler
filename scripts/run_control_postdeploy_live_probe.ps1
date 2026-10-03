@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ImmutableImage,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
+    [switch]$ExtendedControlProbe,
     [switch]$AllowOutOfWindowLiveProbe,
     [switch]$RunSlot23StandbyRecovery,
     [string]$Job23Name = 'solar-battery-23',
@@ -55,6 +56,13 @@ $probeEnvironment = if ($RunSlot23StandbyRecovery) {
 } else {
     "CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,KP_NET_UNKNOWN_EXIT_ZERO=true,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 }
+$extendedValue = if ($ExtendedControlProbe) { 'true' } else { 'false' }
+$probeEnvironment += ",EXTENDED_CONTROL_LIVE_PROBE=$extendedValue"
+if ($ExtendedControlProbe) {
+    $probeDigest = ($ImmutableImage -split '@')[-1]
+    $probeEnvironment += ",PLAN_SOURCE_REVISION=$ExpectedCommit,PLAN_IMAGE_DIGEST=$probeDigest"
+}
+$probeTimeout = if ($ExtendedControlProbe) { 1800 } else { 900 }
 
 function Assert-NoRunningExecution {
     param([string]$JobName)
@@ -101,14 +109,18 @@ Assert-NoRunningExecution -JobName $ProbeJobName
     --command python `
     --args $probeEntrypoint `
     --max-retries 0 `
-    --task-timeout 900 `
+    --task-timeout $probeTimeout `
     --update-env-vars $probeEnvironment | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw 'Failed to update the dedicated post-deploy probe Job.'
 }
 
 $executionJson = (& $gcloud run jobs execute $ProbeJobName --region $region --project $projectId --wait --format json) -join "`n"
-if ($LASTEXITCODE -ne 0) {
+$executionExit = $LASTEXITCODE
+$evidenceDirectory = Join-Path $repoRoot 'artifacts/deployment_state'
+New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
+$executionJson | Set-Content -Encoding utf8 -LiteralPath (Join-Path $evidenceDirectory "live-execution-$ExpectedCommit.json")
+if ($executionExit -ne 0) {
     if ($RunSlot23StandbyRecovery) {
         throw 'LIVE SLOT-23 STANDBY RECOVERY FAILED: the candidate-only mode write/read-back did not complete successfully.'
     }
@@ -123,6 +135,13 @@ if ($RunSlot23StandbyRecovery) {
 }
 
 $execution = $executionJson | ConvertFrom-Json -AsHashtable
+foreach ($conditionName in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
+    $condition = @($execution['status']['conditions'] | Where-Object { $_['type'] -eq $conditionName })
+    if ($condition.Count -ne 1 -or $condition[0]['status'] -ne 'True') {
+        throw "Probe terminal condition not successful: $conditionName"
+    }
+}
+if ([int]$execution['status']['failedCount'] -gt 0) { throw 'Probe has failed tasks.' }
 $executionName = [string]$execution['metadata']['name']
 if (-not $executionName) { throw 'Probe execution identity is missing; release is blocked.' }
 # gcloud.cmd drops embedded quotes on Windows. Query a quote-free job filter,
@@ -132,6 +151,7 @@ $proof = $null
 for ($attempt = 0; $attempt -lt 12; $attempt++) {
     $logJson = (& $gcloud logging read $filter --project $projectId --freshness 1d --limit 100 --format json) -join "`n"
     if ($LASTEXITCODE -ne 0) { throw 'Probe evidence query failed; release is blocked.' }
+    $logJson | Set-Content -Encoding utf8 -LiteralPath (Join-Path $evidenceDirectory "live-logs-$ExpectedCommit.json")
     foreach ($record in @($logJson | ConvertFrom-Json -AsHashtable)) {
         if ($record['labels']['run.googleapis.com/execution_name'] -eq $executionName) {
             $proof = $record['jsonPayload']
@@ -141,7 +161,7 @@ for ($attempt = 0; $attempt -lt 12; $attempt++) {
     if ($null -ne $proof) { break }
     Start-Sleep -Seconds 5
 }
-& (Join-Path $PSScriptRoot 'assert_control_probe_evidence.ps1') -Proof $proof
+& (Join-Path $PSScriptRoot 'assert_control_probe_evidence.ps1') -Proof $proof -RequireController:$ExtendedControlProbe
 $evidenceDirectory = Join-Path $repoRoot 'artifacts/deployment_state'
 New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
 $proof | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $evidenceDirectory "live-proof-$ExpectedCommit.json")
