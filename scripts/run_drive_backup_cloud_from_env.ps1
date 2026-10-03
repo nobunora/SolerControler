@@ -1,4 +1,8 @@
-param([ValidateSet('data')][string]$Mode = 'data')
+param(
+    [ValidateSet('data')][string]$Mode = 'data',
+    [switch]$UpdateScheduledJobMemory,
+    [string]$ScheduledJobName = 'solar-drive-backup'
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -32,6 +36,13 @@ $passwordSecret = Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
 $jobName = "solar-drive-backup-manual-$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))-$PID"
 $image = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:latest"
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
+# Detailed plans and the 14-generation quota fallback exceed the default 512Mi.
+# This is the same bounded allocation used by the scheduled backup job.
+$backupMemory = '2Gi'
+if ($UpdateScheduledJobMemory) {
+    & $gcloud run jobs update $ScheduledJobName --project $projectId --region $region --memory $backupMemory
+    if ($LASTEXITCODE -ne 0) { throw 'Scheduled Drive backup memory update failed.' }
+}
 $created = $false
 $backupSucceeded = $false
 $cleanupSucceeded = $true
@@ -44,6 +55,7 @@ try {
         '--image', $image,
         '--service-account', $serviceAccount,
         '--task-timeout', '1800',
+        '--memory', $backupMemory,
         '--max-retries', '0',
         '--command', 'python',
         '--args', "scripts/backup_drive.py,--mode,$Mode,--folder-id,$folderId,--pretty",

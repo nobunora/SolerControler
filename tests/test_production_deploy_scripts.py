@@ -661,3 +661,14 @@ def test_production_env_loader_rejects_a_missing_required_value(tmp_path: Path) 
 
     assert completed.returncode != 0
     assert "missing or empty" in completed.stderr
+
+
+def test_scheduled_and_manual_backups_have_explicit_memory_for_plan_generations() -> None:
+    deploy = (ROOT / "scripts" / "deploy_gcp_jobs.ps1").read_text(encoding="utf-8")
+    backup = (ROOT / "scripts" / "run_drive_backup_cloud_from_env.ps1").read_text(encoding="utf-8")
+    drive_deploy = next(line for line in deploy.splitlines() if "run jobs deploy $DriveBackupJobName" in line)
+    assert "--memory 2Gi" in drive_deploy
+    assert "$backupMemory = '2Gi'" in backup
+    assert "'--memory', $backupMemory" in backup
+    assert "if ($UpdateScheduledJobMemory)" in backup
+    assert "--memory $backupMemory" in backup

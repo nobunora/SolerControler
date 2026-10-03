@@ -729,7 +729,7 @@ if (-not $SkipJobDeploy) {
     # Dedicated forecast owner: no CLOUD_JOB_SLOT and no control entrypoint.
     # 600 seconds is bounded well inside the 02:30-03:00 JST isolation window.
     if (-not $SkipForecastJobDeploy) { Invoke-GCloud run jobs deploy $ForecastJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --command python --args forecast_job_main.py --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
-    if ($driveBackupFolderResolved) { Invoke-GCloud run jobs deploy $DriveBackupJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 0 --command python --args "scripts/backup_drive.py,--mode,data" --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
+    if ($driveBackupFolderResolved) { Invoke-GCloud run jobs deploy $DriveBackupJobName --project $ProjectId --region $Region --image $image --service-account $runSa --memory 2Gi --task-timeout 1800 --max-retries 0 --command python --args "scripts/backup_drive.py,--mode,data" --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
     # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): the live settings
     # probe is explicit, non-scheduled, and must never be retried automatically.
     if (-not $SkipSettingsRoundTripJobDeploy) { Invoke-GCloud run jobs deploy $SettingsRoundTripJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false" --set-secrets $secretEnvArg }
