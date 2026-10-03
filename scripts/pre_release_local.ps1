@@ -1,6 +1,5 @@
 param(
     [switch]$SkipInstall,
-    [switch]$EnforceQualityAudit,
     [switch]$CheckPrerequisites
 )
 
@@ -33,32 +32,13 @@ if ($CheckPrerequisites) {
 }
 
 if (-not $SkipInstall) {
-    python -m pip install -r .\requirements-dev.txt uv
+    python -m pip install -r .\requirements-dev.txt
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 }
 
-function Invoke-AdvisoryQualityCheck {
-    param(
-        [string]$Name,
-        [scriptblock]$Command
-    )
-
-    $output = @(& $Command 2>&1)
-    $exitCode = $LASTEXITCODE
-    $output | Select-Object -First 40
-    if ($exitCode -eq 0) {
-        Write-Host "$Name passed."
-        return
-    }
-
-    $message = "$Name reported diagnostics (exit code $exitCode)."
-    if ($EnforceQualityAudit) {
-        throw $message
-    }
-    Write-Warning "$message Run with -EnforceQualityAudit after the findings are resolved."
-}
-
-Write-Host "Running code-quality audit before tests."
+# The release contract is fixed in docs/current/ops/QUALITY_GATE_JA.md.
+# Every check below is mandatory; exploratory tools are not release checks.
+Write-Host "Running mandatory code-quality checks before tests."
 
 python -m ruff check .
 if ($LASTEXITCODE -ne 0) { throw "ruff failed" }
@@ -69,24 +49,16 @@ if (-not (Test-Path $importLinter)) { throw "Import Linter executable was not fo
 & $importLinter
 if ($LASTEXITCODE -ne 0) { throw "import-linter failed" }
 
-Invoke-AdvisoryQualityCheck -Name "Import Linter (energy plan boundary)" -Command {
-    & $importLinter --config .\config\importlinter_advisory.ini
-}
-
-$pythonExecutable = python -c "import sys; print(sys.executable)"
-Invoke-AdvisoryQualityCheck -Name "ty" -Command {
-    python -m uv tool run ty check . --python $pythonExecutable --output-format concise
-}
-Invoke-AdvisoryQualityCheck -Name "deptry" -Command {
-    python -m uv tool run deptry .
-}
+python -m mypy app scripts --no-incremental
+if ($LASTEXITCODE -ne 0) { throw "full project mypy failed" }
 
 $javaScriptFiles = @(Get-TrackedJavaScriptFiles)
 if ($javaScriptFiles.Count -gt 0) {
     npx --yes oxlint @javaScriptFiles
     if ($LASTEXITCODE -ne 0) { throw "oxlint failed" }
-    Invoke-AdvisoryQualityCheck -Name "tsc" -Command {
-        npx --yes --package typescript tsc --allowJs --checkJs --noEmit --target ES2022 --lib ES2022,DOM @javaScriptFiles
+    foreach ($file in $javaScriptFiles) {
+        node --check $file
+        if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $file" }
     }
 }
 
@@ -104,9 +76,6 @@ if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript module tests failed" }
 
 node .\tests\test_dashboard_bootstrap.js
 if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript bootstrap test failed" }
-
-python -m mypy app scripts --no-incremental
-if ($LASTEXITCODE -ne 0) { throw "full project mypy failed" }
 
 python .\scripts\security_check.py
 if ($LASTEXITCODE -ne 0) { throw "security_check failed" }
