@@ -62,8 +62,9 @@ def _run_csv_with_retry(*, label: str) -> None:
 
 def _ensure_night_plan_available(plan_path: Path) -> bool:
     _before_03_external_io()
-    # Regenerate locally only.  03 has no Firestore fallback/persistence path.
+    # No remote fallback: an archived old plan must never replace today's plan.
     if plan_path.exists() and os.getenv("ADJUST03_REGENERATE_PLAN", "true").lower() not in {"1", "true", "yes", "on"}:
+        _archive_generated_plan(plan_path)
         return True
     started = time.monotonic()
     deadline = started + seconds_until_control_cutoff(_tokyo_now())
@@ -88,6 +89,8 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
         )
         raise
     available = plan_path.exists()
+    if available:
+        _archive_generated_plan(plan_path)
     print(
         "[cloud_job_runner] 03-prep "
         + json.dumps(
@@ -104,6 +107,28 @@ def _ensure_night_plan_available(plan_path: Path) -> bool:
         flush=True,
     )
     return available
+
+
+def _archive_generated_plan(plan_path: Path) -> None:
+    """Bounded audit I/O; never a device-control or 07 hand-off prerequisite.
+
+    HISTORICAL_FAILURE_LOCK (badd209): no leases, old-plan fallback, Drive tail,
+    or 07 gates. Approved storage recovery adds only a bounded subprocess.
+    """
+    if os.getenv("DATA_BACKEND", "").lower() != "firestore":
+        return
+    remaining = seconds_until_forced_monitor_cutoff(_tokyo_now())
+    # Reserve time for preparation/control and do not approach the final fence.
+    if remaining < 60:
+        print('{"message":"plan-archive","status":"skipped_time_budget"}', flush=True)
+        return
+    try:
+        _before_03_external_io()
+        _run([sys.executable, "scripts/archive_plan_snapshot.py", "--plan", str(plan_path)],
+             timeout_seconds=20, deadline_monotonic=time.monotonic() + min(20, remaining))
+    except Exception as error:
+        print(json.dumps({"message": "plan-archive", "status": "failed",
+                          "exception_type": type(error).__name__}), flush=True)
 
 
 def _read_plan_meta(path: Path) -> dict[str, Any]:

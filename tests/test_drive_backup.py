@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import pytest
 from pathlib import Path
 
 from googleapiclient.errors import HttpError
@@ -92,10 +93,16 @@ class _FakeDriveFiles:
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
         self.updated = 0
+        self.payloads = {}
 
     def create(self, **kwargs: object) -> _FakeRequest:
         self.created.append(kwargs)
+        media = kwargs['media_body']
+        self.payloads[str(len(self.created))] = media.getbytes(0, media.size())
         return _FakeRequest({"id": str(len(self.created)), "name": str(kwargs["body"])})
+
+    def get_media(self, *, fileId, **kwargs):
+        return _Request(self.payloads[fileId])
 
     def update(self, **_kwargs: object) -> _FakeRequest:
         self.updated += 1
@@ -193,6 +200,12 @@ class _ExistingDriveFiles:
 
     def update(self, *, fileId: str, **_kwargs: object) -> _Request:
         self.updated.append(fileId)
+        media = _kwargs['media_body']
+        raw = media.getbytes(0, media.size())
+        if fileId == 'snapshot':
+            self.snapshot = raw
+        else:
+            self.manifest = json.loads(raw)
         return _Request({"id": fileId})
 
 
@@ -202,6 +215,15 @@ class _ExistingDriveService:
 
     def files(self) -> _ExistingDriveFiles:
         return self.file_api
+
+
+def test_data_backup_rejects_corrupt_drive_readback(monkeypatch, tmp_path):
+    monkeypatch.setattr('app.backup.drive.download_drive_file_bytes', lambda *args, **kwargs: b'corrupt')
+    service = _FakeDriveService()
+    with pytest.raises(ValueError, match='read-back mismatch'):
+        export_data_backup(service=service, folder_id='folder', client=_EmptyFirestoreClient(), out_dir=tmp_path)
+    # No manifest is published for an unverified snapshot.
+    assert len(service.file_api.created) == 1
 
 
 def test_data_backup_falls_back_to_cumulative_existing_files_for_service_account_quota(tmp_path: Path) -> None:

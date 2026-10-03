@@ -23,6 +23,7 @@ from app.domain.constants import FileConstants
 from app.operations.sync import TABLE_SPECS
 from app.operations.firestore import open_firestore
 from app.backup.device import build_device_settings_snapshot
+from app.backup.plan_snapshot import embed_plan_detail
 
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
@@ -59,6 +60,7 @@ DATA_MANIFEST_NAME = "data_manifest.json"
 DATA_BACKUP_PREFIX = "data_snapshot"
 DATA_MANIFEST_PREFIX = "data_manifest"
 DEVICE_BACKUP_PREFIX = "device_settings"
+PLAN_BACKUP_COLLECTIONS = ("night_charge_plans", "night_plan_decisions", "forecast_plans", "forecast_hourly_snapshots")
 
 
 @dataclass(frozen=True)
@@ -178,6 +180,7 @@ def build_firestore_snapshot(
     client: Any | None = None,
     *,
     captured_at: datetime | None = None,
+    storage_client: Any | None = None,
 ) -> dict[str, Any]:
     firestore_client = client or open_firestore()
     captured_at = captured_at or utc_now()
@@ -188,8 +191,19 @@ def build_firestore_snapshot(
         rows.sort(key=lambda row: _row_sort_key(table_name, row))
         collections[table_name] = rows
         counts[table_name] = len(rows)
+    # Backup scope is independent of SQLite synchronization/read-path tables.
+    for name in PLAN_BACKUP_COLLECTIONS:
+        rows = [dict(doc.to_dict() or {}) | {"_doc_id": doc.id} for doc in firestore_client.collection(name).stream()]
+        if name in {"night_charge_plans", "night_plan_decisions"} and rows:
+            if storage_client is None:
+                from google.cloud.storage import Client
+                storage_client = Client()
+            rows = [embed_plan_detail(row, storage=storage_client) for row in rows]
+        rows.sort(key=lambda row: str(row["_doc_id"]))
+        collections[name] = rows
+        counts[name] = len(rows)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "backend": "firestore",
         "captured_at_utc": captured_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "collections": collections,
@@ -397,6 +411,9 @@ def _build_cumulative_data_archive(
     previous_manifest = read_drive_json(service, folder_id=folder_id, file_name=DATA_MANIFEST_NAME)
     generations: list[dict[str, Any]] = []
     if previous_snapshot:
+        # Keep the previous archive locally before updating the quota fallback.
+        write_gzip_json(previous_snapshot, out_path.with_name(f"data_previous-{current_generation_id}.json.gz"))
+    if previous_snapshot:
         if previous_snapshot.get("backup_type") == "data_generations":
             generations = [entry for entry in previous_snapshot.get("generations", []) if isinstance(entry, dict)]
         elif previous_snapshot.get("backend") == "firestore":
@@ -458,7 +475,8 @@ def _upload_data_generation(
     target_dir: Path,
 ) -> dict[str, Any]:
     try:
-        upload_new_file(service, folder_id=folder_id, file_name=snapshot_name, local_path=snapshot_path, mime_type="application/gzip")
+        uploaded = upload_new_file(service, folder_id=folder_id, file_name=snapshot_name, local_path=snapshot_path, mime_type="application/gzip")
+        _verify_uploaded_data(service, uploaded, snapshot_path)
         upload_new_file(service, folder_id=folder_id, file_name=manifest_name, local_path=manifest_path, mime_type="application/json")
         return {"mode": "immutable_files", "generation_count": 1}
     except Exception as error:
@@ -474,13 +492,14 @@ def _upload_data_generation(
             device_snapshot=device_snapshot,
             out_path=archive_path,
         )
-        upload_or_update_file(
+        uploaded = upload_or_update_file(
             service,
             folder_id=folder_id,
             file_name=DATA_BACKUP_NAME,
             local_path=archive_artifact.path,
             mime_type="application/gzip",
         )
+        _verify_uploaded_data(service, uploaded, archive_path)
         upload_or_update_file(
             service,
             folder_id=folder_id,
@@ -489,6 +508,15 @@ def _upload_data_generation(
             mime_type="application/json",
         )
         return {"mode": "cumulative_existing_file", "generation_count": generation_count}
+
+
+def _verify_uploaded_data(service: Any, uploaded: dict[str, Any], path: Path) -> None:
+    file_id = str(uploaded.get("id") or "")
+    if not file_id:
+        raise ValueError("Drive upload returned no file ID")
+    remote = download_drive_file_bytes(service, file_id=file_id)
+    if hashlib.sha256(remote).hexdigest() != hash_file(path):
+        raise ValueError("Drive data backup read-back mismatch")
 
 
 def make_backup_generation_id(captured_at: datetime | None = None) -> str:
