@@ -7,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from google.api_core.exceptions import PreconditionFailed
+from google.api_core.exceptions import AlreadyExists, PreconditionFailed
 
 from app.backup.plan_snapshot import archive_plan_snapshot, embed_plan_detail, restore_snapshot_payload
 from app.backup.drive import build_firestore_snapshot
@@ -49,10 +49,20 @@ class Document:
         self.id = key
 
     def set(self, doc, **_kwargs):
-        self.records[self.id] = dict(doc)
+        self.records[self.id] = {**self.records.get(self.id, {}), **doc} if _kwargs.get('merge') else dict(doc)
+
+    def create(self, doc, **_kwargs):
+        if self.id in self.records:
+            raise AlreadyExists('exists')
+        self.set(doc)
+
+    def get(self, **kwargs):
+        if kwargs.get('transaction'):
+            assert not kwargs['transaction'].writes
+        return self
 
     def to_dict(self):
-        return self.records[self.id]
+        return self.records.get(self.id)
 
 
 class Collection:
@@ -73,11 +83,40 @@ class Firestore:
     def collection(self, name):
         return self.collections.setdefault(name, Collection())
 
+    def transaction(self, **kwargs):
+        assert kwargs['max_attempts'] == 1
+        return Transaction()
+
+
+class Transaction:
+    _max_attempts = 1
+    _read_only = False
+    _id = b'local-test'
+
+    def __init__(self):
+        self.writes = []
+
+    def _clean_up(self):
+        self.writes.clear()
+
+    def _begin(self, **kwargs):
+        pass
+
+    def set(self, ref, value, **kwargs):
+        self.writes.append((ref, value, kwargs))
+
+    def _commit(self):
+        for ref, value, kwargs in self.writes:
+            ref.set(value, **kwargs)
+
+    def _rollback(self):
+        self.writes.clear()
+
 
 def plan_file(tmp_path, target=45):
     path = tmp_path/'plan.json'
     path.write_text(json.dumps({'forecast': {'date': '2026-10-03'},
-                               'generated_at': '2026-10-02T18:01:00Z',
+                               'generated_at': '2026-10-02T18:01:00Z' if target == 45 else '2026-10-02T18:02:00Z',
                                'inputs': {'soc_now_percent': 10},
                                'result': {'target_soc_7_percent': target}}), encoding='utf-8')
     return path
@@ -171,3 +210,69 @@ def test_drive_scheduler_is_independent_and_not_deleted_when_enabled():
     assert 'Upsert-SchedulerRunJob -SchedulerName $DriveBackupSchedulerName' in source
     assert 'if (-not $driveBackupFolderResolved) { Delete-RunJobIfExists -Name $DriveBackupJobName }' in source
     assert '--args "scripts/backup_drive.py,--mode,data"' in source
+
+
+def test_retry_keeps_first_provenance_and_latest_does_not_roll_back(monkeypatch, tmp_path):
+    storage, db = Storage(), Firestore()
+    monkeypatch.setenv('PLAN_SOURCE_REVISION', 'original')
+    path = plan_file(tmp_path)
+    original = path.read_bytes()
+    kwargs = dict(storage=storage, firestore=db, prefix='gs://test/plans')
+    first = archive_plan_snapshot(path, source='adjust03-generated', **kwargs)
+    old_doc = dict(db.collection('night_plan_decisions').records[first['decision_id']])
+    newer = json.loads(original)
+    newer['generated_at'] = '2026-10-02T18:05:00Z'
+    newer['result']['target_soc_7_percent'] = 65
+    path.write_text(json.dumps(newer), encoding='utf-8')
+    archive_plan_snapshot(path, source='adjust03-generated', **kwargs)
+    expected_latest = dict(db.collection('night_charge_plans').records['latest'])
+    path.write_bytes(original)
+    monkeypatch.setenv('PLAN_SOURCE_REVISION', 'new-recorder')
+    archive_plan_snapshot(path, source='adjust03-reused', **kwargs)
+    assert db.collection('night_plan_decisions').records[first['decision_id']] == old_doc
+    assert db.collection('night_charge_plans').records['latest'] == expected_latest
+    assert db.collection('night_charge_plans').records['2026-10-03']['detail_sha256'] == expected_latest['detail_sha256']
+
+
+def test_restore_conflicting_destination_does_not_write_other_plans(tmp_path):
+    import hashlib
+    raw1 = plan_file(tmp_path).read_bytes()
+    raw2 = plan_file(tmp_path, 70).read_bytes()
+    snapshot = {'collections': {'night_plan_decisions': [
+        {'plan_json': r.decode(), 'detail_sha256': hashlib.sha256(r).hexdigest()} for r in (raw1, raw2)]}}
+    destination = tmp_path/'restored'
+    destination.mkdir()
+    conflict = destination/f'2026-10-03--{hashlib.sha256(raw2).hexdigest()}.json'
+    conflict.write_bytes(b'keep me')
+    with pytest.raises(ValueError, match='conflicts'):
+        restore_snapshot_payload(snapshot, destination)
+    assert list(destination.iterdir()) == [conflict]
+    assert conflict.read_bytes() == b'keep me'
+
+
+@pytest.mark.parametrize('payload', [{}, {'collections': {}}, {'backup_type': 'data_generations', 'generations': [None]}])
+def test_invalid_or_empty_restore_is_not_success(tmp_path, payload):
+    with pytest.raises(ValueError):
+        restore_snapshot_payload(payload, tmp_path/'invalid')
+    assert not list((tmp_path/'invalid').glob('*.json'))
+
+
+def test_deploy_does_not_claim_checkout_revision_for_reused_image():
+    source = (Path(__file__).resolve().parents[1]/'scripts/deploy_gcp_jobs.ps1').read_text(encoding='utf-8')
+    assert 'if ($SkipBuild -or $sourceChanges.Count -gt 0) { $planSourceRevision = "" }' in source
+    assert '"PLAN_IMAGE_DIGEST=$imageDigest"' in source
+
+
+def test_transaction_abort_does_not_overwrite_read_models(monkeypatch, tmp_path):
+    from google.api_core.exceptions import Aborted
+    storage, db = Storage(), Firestore()
+    kwargs = dict(storage=storage, firestore=db, source='adjust03-generated', prefix='gs://test/plans')
+    archive_plan_snapshot(plan_file(tmp_path), **kwargs)
+    original = dict(db.collection('night_charge_plans').records['latest'])
+    def abort(_self):
+        raise Aborted('concurrent update')
+    monkeypatch.setattr(Transaction, '_commit', abort)
+    with pytest.raises(ValueError, match='Failed to commit'):
+        archive_plan_snapshot(plan_file(tmp_path, 60), **kwargs)
+    assert db.collection('night_charge_plans').records['latest'] == original
+    assert len(db.collection('night_plan_decisions').records) == 2

@@ -226,6 +226,24 @@ def test_data_backup_rejects_corrupt_drive_readback(monkeypatch, tmp_path):
     assert len(service.file_api.created) == 1
 
 
+@pytest.mark.parametrize('previous', [b'broken-gzip', gzip.compress(b'[]'), gzip.compress(b'{"unexpected":true}'), gzip.compress(b'{}')])
+def test_cumulative_backup_never_overwrites_invalid_previous_archive(tmp_path, previous):
+    files = _ExistingDriveFiles(previous, {})
+    with pytest.raises(ValueError):
+        export_data_backup(service=_ExistingDriveService(files), folder_id='folder',
+                           client=_EmptyFirestoreClient(), out_dir=tmp_path)
+    assert files.updated == []
+
+
+def test_cumulative_backup_rejects_previous_manifest_mismatch(tmp_path):
+    previous = gzip.compress(json.dumps({'backend': 'firestore', 'collections': {}}).encode())
+    files = _ExistingDriveFiles(previous, {'archive_sha256': 'wrong'})
+    with pytest.raises(ValueError, match='checksum mismatch'):
+        export_data_backup(service=_ExistingDriveService(files), folder_id='folder',
+                           client=_EmptyFirestoreClient(), out_dir=tmp_path)
+    assert files.updated == []
+
+
 def test_data_backup_falls_back_to_cumulative_existing_files_for_service_account_quota(tmp_path: Path) -> None:
     previous = {
         "schema_version": 1,

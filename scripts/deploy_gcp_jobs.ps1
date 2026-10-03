@@ -547,8 +547,13 @@ if (-not $SkipSecretSetup) {
 
 $planSourceRevision = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $planSourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve plan source revision' }
+$sourceChanges = @(git status --porcelain --untracked-files=normal)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect build source state' }
+# A reused image (or a dirty build) cannot claim the checkout's commit as its source.
+if ($SkipBuild -or $sourceChanges.Count -gt 0) { $planSourceRevision = "" }
 $commonEnv = @(
     "PLAN_SOURCE_REVISION=$planSourceRevision",
+    "PLAN_IMAGE_DIGEST=$imageDigest",
     "TIMEZONE=Asia/Tokyo",
     "DRY_RUN=false",
     "ARTIFACTS_DIR=artifacts",

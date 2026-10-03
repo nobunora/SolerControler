@@ -10,9 +10,9 @@
 
 設定済みNIGHT_PLAN_ARCHIVE_GCS_PREFIX（または既存の日次prefix）配下の`decisions/<date>/<sha256>.json.gz`に、JSON原本のバイト列を保存する。作成時に世代一致条件0を付けて上書きを禁止し、同一内容の再試行は読戻し一致を確認して再利用する。
 
-Firestoreの`night_plan_decisions/<date>--<sha256>`が各版の索引。`night_charge_plans/<date>`と`latest`は既存読取との互換参照として同じ詳細オブジェクトを指す。GCSに保存された原本と、03-plan-provenanceログのplan_sha256を対応づける。
+Firestoreの`night_plan_decisions/<date>--<sha256>`が各版の索引。初回だけ作成し、同じ原本の再送で生成元・初回時刻を上書きしない。`night_charge_plans/<date>`と`latest`は既存読取との互換参照として同じ詳細オブジェクトを指す。日付・生成時刻を比較するtransactionで更新し、古い再送や同時更新による巻戻りを防ぐ。生成時刻が同じ別内容は順序を確定できないため、互換参照は既存のものを保持する。GCSに保存された原本と、03-plan-provenanceログのplan_sha256を対応づける。
 
-索引には生成時刻、原本SHA、コードのPLAN_SOURCE_REVISION、費用モデルのハッシュを保持する。コード版はデプロイ時のgit HEADから設定するため、通常のクリーンなデプロイ手順を使う。`record_status=generated`であり、実機が適用したことを示す状態ではない。03-plan-provenanceと実機read-backによる採用確認を別途行う。
+索引には生成時刻、原本SHA、コードのPLAN_SOURCE_REVISION、PLAN_IMAGE_DIGEST、費用モデルのハッシュを保持する。SkipBuildまたは作業差分がある場合は生成元コミットを不明とし、解決済みのimmutable image digestを残す。再利用したJSONでは現在のコード版・イメージを生成元とせず、記録処理の版として区別する。`record_status=generated`であり、実機が適用したことを示す状態ではない。03-plan-provenanceと実機read-backによる採用確認を別途行う。
 
 GCS保存後にFirestoreが失敗しても原本は残る。索引の自動修復は今回含めていない。孤立オブジェクトは原本を回収して同一JSONの保存処理を再実行すれば索引を再作成できるが、日付/latestも更新するため、本番への再投入は日付・影響を確認して実施する。
 
@@ -22,7 +22,7 @@ GCS保存後にFirestoreが失敗しても原本は残る。索引の自動修�
 
 同期用TABLE_SPECSは変更しない。バックアップだけにnight_charge_plans、night_plan_decisions、forecast_plans、forecast_hourly_snapshotsを追加する。詳細計画はGCS URIだけでなく、ハッシュを照合した原本JSON文字列をplan_jsonとして同梱する。参照切れや破損はバックアップ失敗とし、完全成功として扱わない。
 
-Driveへ書いたデータファイルを再取得しSHA一致を確認してからmanifestを公開する。容量制約時の累積形式は従来どおり最大14世代。更新前の累積内容をローカルにも退避するが、使い捨てCloud Run内の退避だけで永久保全を保証しない。長期の原本はGCSのimmutable objectに残る。GCSも同時に失われる場合の保持期間は別の運用設計課題。
+Driveへ書いたデータファイルを再取得しSHA一致を確認してからmanifestを公開する。既存の累積アーカイブが壊れている、形式が不明、manifestに記載のSHAと不一致の場合は、過去データなしとして上書きせず失敗する。容量制約時の累積形式は従来どおり最大14世代。更新前の累積内容をローカルにも退避するが、使い捨てCloud Run内の退避だけで永久保全を保証しない。長期の原本はGCSのimmutable objectに残る。GCSも同時に失われる場合の保持期間は別の運用設計課題。
 
 ## ローカル復元
 
@@ -32,7 +32,7 @@ Driveへ書いたデータファイルを再取得しSHA一致を確認してか
 python scripts/restore_plan_snapshot.py <downloaded-data.json.gz> <isolated-output-directory>
 ```
 
-単体collections形式とgenerations[].snapshot形式の双方を読む。全計画のハッシュ検証後に日付・SHA由来のファイルへ保存し、同じ名前の異なる内容は上書きしない。古いバックアップが詳細JSONを含まない場合は復元可能と偽らず失敗する。
+単体collections形式とgenerations[].snapshot形式の双方を読む。全計画のハッシュと全出力先の既存内容を事前検証してから、日付・SHA由来のファイルへ保存する。既知の競合が後続ファイルにあっても先頭ファイルだけを書き込まない。同じ名前の異なる内容は上書きしない。古いバックアップが詳細JSONを含まない場合や形式不正の場合は復元可能と偽らず失敗する。書込み中のディスク障害まで含めた複数ファイルの原子性は保証しない。
 
 ## 検証と本番確認
 

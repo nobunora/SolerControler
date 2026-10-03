@@ -369,15 +369,20 @@ def _is_drive_storage_quota_error(error: Exception) -> bool:
     return isinstance(error, HttpError) and error.resp.status == 403 and "storage quota" in str(error).lower()
 
 
-def _read_drive_gzip_json(service: Any, *, folder_id: str, file_name: str) -> dict[str, Any] | None:
+def _read_drive_gzip_json(service: Any, *, folder_id: str, file_name: str, expected_sha256: str | None = None) -> dict[str, Any] | None:
     existing = find_drive_file(service, folder_id=folder_id, file_name=file_name)
     if not existing:
         return None
+    raw = download_drive_file_bytes(service, file_id=existing["id"])
+    if expected_sha256 and hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError("existing Drive data archive checksum mismatch")
     try:
-        payload = json.loads(gzip.decompress(download_drive_file_bytes(service, file_id=existing["id"])).decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
+        payload = json.loads(gzip.decompress(raw).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("existing Drive data archive is corrupt") from error
+    if not isinstance(payload, dict):
+        raise ValueError("existing Drive data archive is not an object")
+    return payload
 
 
 def _legacy_generation_entry(
@@ -407,17 +412,23 @@ def _build_cumulative_data_archive(
     out_path: Path,
     max_generations: int = 14,
 ) -> tuple[BackupArtifact, BackupArtifact, int]:
-    previous_snapshot = _read_drive_gzip_json(service, folder_id=folder_id, file_name=DATA_BACKUP_NAME)
     previous_manifest = read_drive_json(service, folder_id=folder_id, file_name=DATA_MANIFEST_NAME)
+    previous_snapshot = _read_drive_gzip_json(service, folder_id=folder_id, file_name=DATA_BACKUP_NAME,
+                                             expected_sha256=(previous_manifest or {}).get("archive_sha256"))
     generations: list[dict[str, Any]] = []
-    if previous_snapshot:
+    if previous_snapshot is not None:
         # Keep the previous archive locally before updating the quota fallback.
         write_gzip_json(previous_snapshot, out_path.with_name(f"data_previous-{current_generation_id}.json.gz"))
-    if previous_snapshot:
+    if previous_snapshot is not None:
         if previous_snapshot.get("backup_type") == "data_generations":
-            generations = [entry for entry in previous_snapshot.get("generations", []) if isinstance(entry, dict)]
-        elif previous_snapshot.get("backend") == "firestore":
+            entries = previous_snapshot.get("generations")
+            if not isinstance(entries, list) or any(not isinstance(entry, dict) or not isinstance(entry.get("snapshot"), dict) for entry in entries):
+                raise ValueError("invalid existing backup generations")
+            generations = entries
+        elif previous_snapshot.get("backend") == "firestore" and isinstance(previous_snapshot.get("collections"), dict):
             generations.append(_legacy_generation_entry(snapshot=previous_snapshot, manifest=previous_manifest))
+        else:
+            raise ValueError("unrecognized existing data backup format")
     generations.append(
         {
             "generation_id": current_generation_id,
