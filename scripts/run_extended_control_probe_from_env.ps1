@@ -1,5 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$StatePath,
+    [switch]$ChargeWindowFixture,
     [switch]$Resume
 )
 
@@ -18,11 +19,12 @@ $passedGates = @(Get-ChildItem artifacts/deployment_state/preflight-*.json | For
     Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -AsHashtable
 } | Where-Object { $_['repository_commit'] -eq $commit -and $_['status'] -eq 'passed' })
 if ($passedGates.Count -eq 0) { throw 'Run production_deployment_gate.ps1 -RunPreRelease for this commit first.' }
-$state = @{kind='extended_control_probe'; repository_commit=$commit; status='running'; build='not_started'; probe='not_started'}
+$state = @{kind='extended_control_probe'; repository_commit=$commit; status='running'; build='not_started'; probe='not_started'; charge_window_fixture=[bool]$ChargeWindowFixture}
 if (Test-Path -LiteralPath $StatePath) {
     if (-not $Resume) { throw 'Existing probe state requires -Resume.' }
     $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable
     if ($state['repository_commit'] -ne $commit) { throw 'Probe resume commit mismatch.' }
+    if ([bool]$state['charge_window_fixture'] -ne [bool]$ChargeWindowFixture) { throw 'Probe resume fixture mismatch.' }
     if ($state['status'] -eq 'complete') { Write-Host 'Extended probe already complete.'; exit 0 }
     if ($state['probe'] -eq 'running' -or $state['build'] -eq 'running') {
         throw 'An interrupted stage is inconclusive; inspect its cloud terminal state before another execution.'
@@ -52,7 +54,7 @@ try {
     $state['image_digest'] = $digest
     if ($state['probe'] -ne 'success') {
         $state['probe'] = 'running'; Save-ProbeState
-        & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') -ExpectedCommit $commit -ImmutableImage $image -ExtendedControlProbe
+        & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') -ExpectedCommit $commit -ImmutableImage $image -ExtendedControlProbe -ChargeWindowFixture:$ChargeWindowFixture
         $state['probe'] = 'success'; Save-ProbeState
     }
     $proof = Get-Content "artifacts/deployment_state/live-proof-$commit.json" -Raw | ConvertFrom-Json -AsHashtable

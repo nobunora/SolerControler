@@ -5,6 +5,7 @@ param(
     [string]$ImmutableImage,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
     [switch]$ExtendedControlProbe,
+    [switch]$ChargeWindowFixture,
     [switch]$AllowOutOfWindowLiveProbe,
     [switch]$RunSlot23StandbyRecovery,
     [string]$Job23Name = 'solar-battery-23',
@@ -56,8 +57,9 @@ $probeEnvironment = if ($RunSlot23StandbyRecovery) {
 } else {
     "CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false,SETTINGS_ROUNDTRIP_TARGET_SOC=50,KP_NET_UNKNOWN_EXIT_ZERO=true,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 }
-$extendedValue = if ($ExtendedControlProbe) { 'true' } else { 'false' }
-$probeEnvironment += ",EXTENDED_CONTROL_LIVE_PROBE=$extendedValue"
+if ($ChargeWindowFixture -and -not $ExtendedControlProbe) { throw 'Charging-window fixture requires the explicit extended probe.' }
+# Opt-in applies to this execution only, never to future ordinary roundtrips.
+$probeEnvironment += ',EXTENDED_CONTROL_LIVE_PROBE=false,EXTENDED_CONTROL_PROBE_CHARGE_WINDOW_FIXTURE=false'
 if ($ExtendedControlProbe) {
     $probeDigest = ($ImmutableImage -split '@')[-1]
     $probeEnvironment += ",PLAN_SOURCE_REVISION=$ExpectedCommit,PLAN_IMAGE_DIGEST=$probeDigest"
@@ -115,7 +117,12 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Failed to update the dedicated post-deploy probe Job.'
 }
 
-$executionJson = (& $gcloud run jobs execute $ProbeJobName --region $region --project $projectId --wait --format json) -join "`n"
+$executeArgs = @('run', 'jobs', 'execute', $ProbeJobName, '--region', $region, '--project', $projectId, '--wait', '--format', 'json')
+if ($ExtendedControlProbe) {
+    $fixtureValue = if ($ChargeWindowFixture) { 'true' } else { 'false' }
+    $executeArgs += @('--update-env-vars', "EXTENDED_CONTROL_LIVE_PROBE=true,EXTENDED_CONTROL_PROBE_CHARGE_WINDOW_FIXTURE=$fixtureValue")
+}
+$executionJson = (& $gcloud @executeArgs) -join "`n"
 $executionExit = $LASTEXITCODE
 $evidenceDirectory = Join-Path $repoRoot 'artifacts/deployment_state'
 New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null

@@ -78,7 +78,10 @@ def main() -> int:
         if os.getenv("EXTENDED_CONTROL_LIVE_PROBE", "false").lower() == "true":
             from app.runtime.control_live_probe import run_controller_probe
 
-            controller = run_controller_probe(plan_path)
+            controller = run_controller_probe(
+                plan_path,
+                charge_window_fixture=os.getenv("EXTENDED_CONTROL_PROBE_CHARGE_WINDOW_FIXTURE", "false").lower() == "true",
+            )
             summary["controller_probe"] = controller
             if controller.get("status") != "passed" or controller.get("restore_verified") is not True:
                 raise RuntimeError("extended controller probe did not verify restoration")

@@ -88,6 +88,35 @@ class ProbeDevice:
         self.readings: list[dict[str, Any]] = []
         self.writes: list[dict[str, Any]] = []
 
+    def prepare_charging_window(self) -> dict[str, Any]:
+        """Explicit physical fixture: standby while enabling the current hour.
+
+        This is never called by a scheduled owner or the 60-second roundtrip.
+        The caller retains the original snapshot for final restoration.
+        """
+        self.clock.check()
+        hour = datetime.now(ZoneInfo('Asia/Tokyo')).hour
+        if hour >= 22:
+            raise RuntimeError('charging-window fixture must finish before the 23 owner')
+        fields = ('batteryOperatingMode', 'chargeStartTimeH', 'chargeStartTimeM', 'chargeEndTimeH', 'chargeEndTimeM')
+        current = self.client.read_current_settings()
+        maps = _forced_probe_candidate_maps(self.client)
+        fixture = replace(profile_from_current_settings(current), name='live-probe-charge-window',
+                          battery_operating_mode=_pick_battery_operating_mode_code(maps['BatteryOperatingMode'], prefer='standby'),
+                          charge_start_h=str(hour), charge_start_m='0', charge_end_h=str(hour + 1), charge_end_m='0')
+        try:
+            observed, changed, requested = _apply_and_verify(
+                client=self.client, current=current, value_maps=maps, profile=fixture,
+                required_readback_fields=ROUNDTRIP_SETTING_FIELDS,
+            )
+        except KpNetUnknownWriteError:
+            self.unknown_write = True
+            raise
+        _assert_preserved_fields(baseline=self.initial, observed=observed, allowed_changes=set(fields), phase='charging window fixture')
+        self.initial = observed
+        return {'changed_fields': changed, 'requested': {key: requested[key] for key in fields},
+                'observed': {key: str(observed[key]) for key in fields}, 'readback_verified': True}
+
     def read_soc(self, csv_paths: list[Path]) -> SocReading:
         self.clock.check()
         deadline = min(self.clock.deadline, time.monotonic() + 60)
@@ -142,7 +171,7 @@ def verify_archive(path: Path, *, db: Any, storage_client: Any, prefix: str) -> 
     return result
 
 
-def run_controller_probe(plan_path: Path) -> dict[str, Any]:
+def run_controller_probe(plan_path: Path, *, charge_window_fixture: bool = False) -> dict[str, Any]:
     cfg = KpNetConfig.from_env()
     if cfg.dry_run:
         raise RuntimeError('live controller probe requires DRY_RUN=false')
@@ -159,6 +188,7 @@ def run_controller_probe(plan_path: Path) -> dict[str, Any]:
         if not prefix:
             raise RuntimeError('probe archive prefix missing')
         run_id = uuid4().hex
+        summary['probe_run_id'] = run_id
         db = ProbeFirestore(open_firestore(), run_id)
         storage_client = storage.Client()
         probe_prefix = f'{prefix.rstrip("/")}/live-probes/{run_id}'
@@ -184,6 +214,9 @@ def run_controller_probe(plan_path: Path) -> dict[str, Any]:
         probe_path = plan_path.with_name('live_probe_plan.json')
         probe_path.write_text(json.dumps(plan, ensure_ascii=False), encoding='utf-8')
         summary['monitor_plan'] = verify_archive(probe_path, db=db, storage_client=storage_client, prefix=probe_prefix)
+        if charge_window_fixture:
+            client.deadline_monotonic = time.monotonic() + 180
+            summary['charging_window_fixture'] = device.prepare_charging_window()
         clock = ProbeClock()  # Budget starts after preparation, before any forced write.
         device.clock = clock
         summary['readings'] = device.readings

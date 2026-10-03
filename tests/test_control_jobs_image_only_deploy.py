@@ -85,7 +85,10 @@ def test_live_probe_is_guarded_non_retrying_and_uses_exact_deployed_image() -> N
     assert "--max-retries 0" in script
     assert "$probeTimeout = if ($ExtendedControlProbe) { 1800 } else { 900 }" in script
     assert "--task-timeout $probeTimeout" in script
-    assert "run jobs execute $ProbeJobName" in script
+    assert "@('run', 'jobs', 'execute', $ProbeJobName" in script
+    assert "& $gcloud @executeArgs" in script
+    assert "EXTENDED_CONTROL_LIVE_PROBE=false,EXTENDED_CONTROL_PROBE_CHARGE_WINDOW_FIXTURE=false" in script
+    assert "EXTENDED_CONTROL_LIVE_PROBE=true,EXTENDED_CONTROL_PROBE_CHARGE_WINDOW_FIXTURE=$fixtureValue" in script
     assert "LIVE POST-DEPLOY PROBE PASSED" in script
 
 
