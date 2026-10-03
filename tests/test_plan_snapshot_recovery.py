@@ -95,6 +95,7 @@ def test_versions_retry_backup_and_offline_restore(tmp_path):
     second = archive_plan_snapshot(path, **kwargs)
     assert first['decision_id'] != second['decision_id']
     assert len(storage.blobs) == 2
+    assert db.collection('night_charge_plans').records['latest']['plan_json'].encode() == second_bytes
     snapshot = build_firestore_snapshot(db, storage_client=storage)
     assert snapshot['counts']['night_plan_decisions'] == 2
     assert all(r['record_status'] == 'generated' for r in snapshot['collections']['night_plan_decisions'])

@@ -57,7 +57,9 @@ def archive_plan_snapshot(
     # Compatibility read models point to the same verified immutable object.
     collection = firestore.collection("night_charge_plans")
     collection.document(day).set(doc, timeout=4, retry=None)
-    collection.document("latest").set(doc, timeout=4, retry=None)
+    # Preserve the existing inline latest read path; dashboard bootstrap must
+    # not add a GCS round trip merely because immutable archival was enabled.
+    collection.document("latest").set({**doc, "plan_json": raw.decode("utf-8")}, timeout=4, retry=None)
     return {"decision_id": decision_id, "date": day, "detail_sha256": sha, "status": "verified"}
 
 
