@@ -167,6 +167,28 @@ def test_backup_rejects_bad_inline_hash():
         embed_plan_detail({'plan_json': '{}', 'detail_sha256': 'wrong'}, storage=Storage())
 
 
+def test_legacy_missing_original_does_not_block_other_plan_backup(tmp_path):
+    storage, db = Storage(), Firestore()
+    path = plan_file(tmp_path)
+    archive_plan_snapshot(path, storage=storage, firestore=db, source='adjust03-generated', prefix='gs://test/plans')
+    legacy = {'date': '2026-07-12', 'plan_json': None, 'detail_gcs_uri': None, 'detail_sha256': 'original-hash'}
+    db.collection('night_charge_plans').records['2026-07-12'] = legacy
+    snapshot = build_firestore_snapshot(db, storage_client=storage)
+    assert snapshot['plan_details_unavailable'] == 1
+    saved = next(r for r in snapshot['collections']['night_charge_plans'] if r['date'] == '2026-07-12')
+    assert saved['detail_sha256'] == 'original-hash'
+    assert saved['detail_backup_status'] == 'unavailable_legacy'
+    restored = restore_snapshot_payload(snapshot, tmp_path/'restored')
+    assert [p.read_bytes() for p in restored] == [path.read_bytes()]
+    with pytest.raises(ValueError, match='no restorable'):
+        restore_snapshot_payload({'collections': {'night_charge_plans': [saved]}}, tmp_path/'legacy-only')
+
+
+def test_missing_original_of_new_decision_is_still_an_error():
+    with pytest.raises(ValueError, match='invalid GCS URI'):
+        embed_plan_detail({'decision_id': 'new', 'plan_json': None}, storage=Storage(), allow_legacy_summary=True)
+
+
 def test_archive_failure_and_time_budget_do_not_gate_control(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv('DATA_BACKEND', 'firestore')
     monkeypatch.setattr(cloud_job, '_tokyo_now', lambda: datetime(2026, 10, 3, 3, 0, tzinfo=ZoneInfo('Asia/Tokyo')))

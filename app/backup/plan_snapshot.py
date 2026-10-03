@@ -118,6 +118,8 @@ def restore_snapshot_payload(snapshot: dict[str, Any], destination: Path) -> lis
             for row in generation.get("collections", {}).get(name, []):
                 text = row.get("plan_json")
                 if not isinstance(text, str) or not text:
+                    if name == "night_charge_plans" and row.get("detail_backup_status") == "unavailable_legacy" and not row.get("decision_id"):
+                        continue
                     raise ValueError("backup missing embedded plan detail")
                 raw = text.encode("utf-8")
                 sha = hashlib.sha256(raw).hexdigest()
@@ -139,13 +141,19 @@ def restore_snapshot_payload(snapshot: dict[str, Any], destination: Path) -> lis
     return result
 
 
-def embed_plan_detail(doc: dict[str, Any], *, storage: Any) -> dict[str, Any]:
+def embed_plan_detail(doc: dict[str, Any], *, storage: Any, allow_legacy_summary: bool = False) -> dict[str, Any]:
     """Make the backup self-contained; fail instead of archiving a broken URI."""
     text = doc.get("plan_json")
     if isinstance(text, str) and text:
         raw = text.encode("utf-8")
     else:
-        bucket, name = _parse_gs_uri(str(doc.get("detail_gcs_uri") or doc.get("detail_uri") or ""))
+        uri = str(doc.get("detail_gcs_uri") or doc.get("detail_uri") or "")
+        if not uri and allow_legacy_summary and not doc.get("decision_id"):
+            # Old summaries can retain the original SHA even after losing the
+            # original JSON. Preserve that evidence without inventing detail or
+            # preventing backup of unrelated, recoverable records.
+            return {**doc, "detail_backup_status": "unavailable_legacy"}
+        bucket, name = _parse_gs_uri(uri)
         blob = storage.bucket(bucket).blob(name)
         raw = blob.download_as_bytes(raw_download=True, timeout=30)
         try:
@@ -157,4 +165,4 @@ def embed_plan_detail(doc: dict[str, Any], *, storage: Any) -> dict[str, Any]:
         raise ValueError("backup source checksum mismatch")
     if not isinstance(json.loads(raw), dict):
         raise ValueError("backup source is not a plan")
-    return {**doc, "plan_json": raw.decode("utf-8"), "detail_sha256": sha}
+    return {**doc, "plan_json": raw.decode("utf-8"), "detail_sha256": sha, "detail_backup_status": "verified"}
