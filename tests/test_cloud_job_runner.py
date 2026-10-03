@@ -415,6 +415,10 @@ def test_03_successful_plan_generation_reaches_monitor(
     plan_path = tmp_path / "plan.json"
     monitor_calls: list[Path] = []
     monotonic_values = iter((20.0, 21.25))
+    # Archival has its own bounded-I/O tests. Do not let production DATA_BACKEND
+    # change this orchestration test's clock or subprocess call sequence.
+    archive_calls: list[Path] = []
+    monkeypatch.setattr(cloud_job, "_archive_generated_plan", lambda path: archive_calls.append(path))
     monkeypatch.setattr(cloud_job, "_night_plan_path", lambda: plan_path)
     monkeypatch.setattr(cloud_job, "_before_03_external_io", lambda: None)
     monkeypatch.setattr(cloud_job, "_run_csv_with_retry", lambda **_kwargs: None)
@@ -429,6 +433,7 @@ def test_03_successful_plan_generation_reaches_monitor(
     assert '"outcome":"success"' in output
     assert '"usable_plan_exists":true' in output
     assert monitor_calls == [plan_path]
+    assert archive_calls == [plan_path]
 
 
 def test_slot07_has_no_cross_slot_import_or_call() -> None:

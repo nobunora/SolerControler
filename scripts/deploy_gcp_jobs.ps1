@@ -545,7 +545,15 @@ if (-not $SkipSecretSetup) {
     Invoke-GCloud secrets add-iam-policy-binding $passwordSecret --member "serviceAccount:$runSa" --role "roles/secretmanager.secretAccessor" --project $ProjectId | Out-Null
 }
 
+$planSourceRevision = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $planSourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve plan source revision' }
+$sourceChanges = @(git status --porcelain --untracked-files=normal)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect build source state' }
+# A reused image (or a dirty build) cannot claim the checkout's commit as its source.
+if ($SkipBuild -or $sourceChanges.Count -gt 0) { $planSourceRevision = "" }
 $commonEnv = @(
+    "PLAN_SOURCE_REVISION=$planSourceRevision",
+    "PLAN_IMAGE_DIGEST=$imageDigest",
     "TIMEZONE=Asia/Tokyo",
     "DRY_RUN=false",
     "ARTIFACTS_DIR=artifacts",
@@ -721,6 +729,7 @@ if (-not $SkipJobDeploy) {
     # Dedicated forecast owner: no CLOUD_JOB_SLOT and no control entrypoint.
     # 600 seconds is bounded well inside the 02:30-03:00 JST isolation window.
     if (-not $SkipForecastJobDeploy) { Invoke-GCloud run jobs deploy $ForecastJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --command python --args forecast_job_main.py --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
+    if ($driveBackupFolderResolved) { Invoke-GCloud run jobs deploy $DriveBackupJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 1800 --max-retries 0 --command python --args "scripts/backup_drive.py,--mode,data" --set-env-vars "$commonEnvArg" --set-secrets $secretEnvArg }
     # HISTORICAL_FAILURE_LOCK (ee84e43, bf48f42, 5e46ff8): the live settings
     # probe is explicit, non-scheduled, and must never be retried automatically.
     if (-not $SkipSettingsRoundTripJobDeploy) { Invoke-GCloud run jobs deploy $SettingsRoundTripJobName --project $ProjectId --region $Region --image $image --service-account $runSa --task-timeout 600 --max-retries 0 --set-env-vars "$commonEnvArg,CLOUD_JOB_SLOT=settings-roundtrip,DRY_RUN=false" --set-secrets $secretEnvArg }
@@ -732,6 +741,7 @@ if (-not $SkipIamSetup) {
     Invoke-GCloud run jobs add-iam-policy-binding $Job03Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
     Invoke-GCloud run jobs add-iam-policy-binding $Job07Name --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
     Invoke-GCloud run jobs add-iam-policy-binding $ForecastJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null
+    if ($driveBackupFolderResolved) { Invoke-GCloud run jobs add-iam-policy-binding $DriveBackupJobName --project $ProjectId --region $Region --member "serviceAccount:$schedulerSa" --role "roles/run.invoker" | Out-Null }
 }
 
 function Upsert-SchedulerRunJob {
@@ -761,14 +771,18 @@ if (-not $SkipSchedulerDeploy) {
     Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-03" -Schedule "0 3 * * *" -TargetJobName $Job03Name
     Upsert-SchedulerRunJob -SchedulerName "solar-battery-run-07" -Schedule "0 7 * * *" -TargetJobName $Job07Name
     if (-not $SkipForecastSchedulerDeploy) { Upsert-SchedulerRunJob -SchedulerName $ForecastSchedulerName -Schedule "30 2 * * *" -TargetJobName $ForecastJobName }
+    if ($driveBackupFolderResolved) {
+        Upsert-SchedulerRunJob -SchedulerName $DriveBackupSchedulerName -Schedule $DriveBackupSchedule -TargetJobName $DriveBackupJobName
+        Resume-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
+    }
     Write-Host "Keep 23:00 scheduler enabled for battery mode control."
     Resume-SchedulerIfExists -Name "solar-battery-run-23" -Location $SchedulerRegion
 }
 if (-not $SkipLegacyResourceCleanup) {
     Delete-SchedulerIfExists -Name $SheetsSchedulerName -Location $SchedulerRegion
-    Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion
+    if (-not $driveBackupFolderResolved) { Delete-SchedulerIfExists -Name $DriveBackupSchedulerName -Location $SchedulerRegion }
     Delete-RunJobIfExists -Name $SheetsJobName
-    Delete-RunJobIfExists -Name $DriveBackupJobName
+    if (-not $driveBackupFolderResolved) { Delete-RunJobIfExists -Name $DriveBackupJobName }
 }
 
 if ((-not $SkipSchedulerDeploy) -and $LegacySchedulerRegionToPause -and ($LegacySchedulerRegionToPause -ne $SchedulerRegion)) {

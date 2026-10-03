@@ -12,7 +12,7 @@ Read this first. Keep work evidence-based, small, and reviewable.
 - Open only the files and line ranges needed for the task.
 - Do not scan all docs, all source, generated files, caches, logs, or artifacts.
 - Prefer focused tests near the changed code.
-- Before running any tests, invoke the `code-quality-audit` Skill and complete its applicable Ruff, ty, deptry, Oxlint, and tsc checks. Triage findings before test execution; fix only verified issues and report configuration gaps separately.
+- Before running any tests, invoke the `code-quality-audit` Skill and complete the applicable mandatory checks fixed in `docs/current/ops/QUALITY_GATE_JA.md` and `scripts/pre_release_local.ps1`. Python typing uses mypy; exploratory ty/deptry/ad-hoc tsc and the proposed energy-plan boundary are excluded from the release gate for the documented reasons. Triage findings before test execution; fix only verified issues.
 - Ruffはlint（`python -m ruff check .`）だけに使用する。formatterの実行、format checkの追加、Ruffによる一括整形は行わない。
 
 ## Change Style
