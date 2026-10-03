@@ -113,3 +113,19 @@ def test_normalization_does_not_invent_zero_zero_peak_rate():
     with pytest.raises(ValueError, match="enabled_peak_rate_unrecoverable"):
         normalize_saved_plan(p, issued_at=p["issued_at"], pv_variants={}, grid_step_percent=1,
                              terminal_value_factor=0, legacy_projection_enabled=False)
+
+
+def test_per_variant_scenarios_reach_the_optimizer_and_are_validated():
+    p = plan(); o = p["daytime_soc_optimization"]
+    o["hourly_pv_forecast_kwh"]["7"] = 4
+    o["hourly_load_forecast_kwh"]["7"] = 4
+    o["pv_variants"] = {name: dict(o["hourly_pv_forecast_kwh"]) for name in ("baseline", "half")}
+    o["forecast_scenarios_by_variant"] = {
+        "baseline": [{"label": "low", "probability": 1, "pv_multiplier": 0, "load_multiplier": 1}],
+        "half": [{"label": "point", "probability": 1, "pv_multiplier": 1, "load_multiplier": 1}]}
+    assert plan_exclusion(p, p["date"]) is None
+    r = evaluate_replay_day(p, actual(), [])["comparisons"]
+    assert r["baseline:plain"]["selected"]["target_soc_percent"] == 50
+    assert r["half:plain"]["selected"]["target_soc_percent"] == 0
+    del o["forecast_scenarios_by_variant"]["half"]
+    assert plan_exclusion(p, p["date"]) == "variant_scenarios_invalid"

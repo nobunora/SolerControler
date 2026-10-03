@@ -24,6 +24,16 @@ def finite_nonnegative(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
+def valid_scenarios(scenarios: Any) -> bool:
+    if not isinstance(scenarios, list) or not scenarios:
+        return False
+    if any(not isinstance(s, dict) or set(s) != {"label", "probability", "pv_multiplier", "load_multiplier"}
+           or not isinstance(s["label"], str) or not s["label"]
+           or any(not finite_nonnegative(s[k]) for k in ("probability", "pv_multiplier", "load_multiplier")) for s in scenarios):
+        return False
+    return abs(sum(s["probability"] for s in scenarios) - 1) <= 1e-6
+
+
 def plan_exclusion(plan: dict[str, Any], target_date: str) -> str | None:
     """Require explicit provenance; old parser defaults cannot prove completeness."""
     required = ("decision_id", "issued_at", "model_version", "contract_version", "price_version", "adopted_slot")
@@ -92,11 +102,13 @@ def plan_exclusion(plan: dict[str, Any], target_date: str) -> str | None:
     scenarios = optimization.get("forecast_scenarios")
     if not isinstance(scenarios, list) or not scenarios:
         return "scenarios_missing"
-    if any(not isinstance(s, dict) or set(s) != {"label", "probability", "pv_multiplier", "load_multiplier"}
-           or not isinstance(s["label"], str) or any(not finite_nonnegative(s[k]) for k in ("probability", "pv_multiplier", "load_multiplier")) for s in scenarios):
+    if not valid_scenarios(scenarios):
         return "scenarios_invalid"
-    if abs(sum(s["probability"] for s in scenarios) - 1) > 1e-6:
-        return "scenarios_invalid"
+    variant_scenarios = optimization.get("forecast_scenarios_by_variant")
+    if variant_scenarios is not None:
+        if (not isinstance(variant_scenarios, dict) or set(variant_scenarios) != set(optimization.get("pv_variants", {"baseline": None}))
+                or any(not valid_scenarios(s) for s in variant_scenarios.values())):
+            return "variant_scenarios_invalid"
     for series in optimization.get("pv_variants", {}).values():
         if (not isinstance(series, dict) or set(map(str, series)) != set(map(str, optimization["hourly_pv_forecast_kwh"]))
                 or any(not finite_nonnegative(v) for v in series.values())):

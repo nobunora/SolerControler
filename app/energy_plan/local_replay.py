@@ -63,12 +63,13 @@ def evaluate_replay_day(
     # No current actual is passed to selection or prior construction.
     selections = {}
     for name, raw_pv in variants.items():
+        variant_scenarios = tuple(ForecastScenario(**s) for s in opt["forecast_scenarios_by_variant"][name]) if "forecast_scenarios_by_variant" in opt else scenarios
         pv = {int(h): v for h, v in raw_pv.items()}
         features = {"forecast_pv_kwh": sum(pv.get(h, 0) for h in range(7, 23)),
                     "forecast_load_kwh": sum(forecast_load[h] for h in range(7, 23))}
         prior = build_soc_decision_prior(history, target_date=plan["date"], target_features=features)
         for learning in (False, True):
-            candidates = [evaluate(t, pv, forecast_load, scenarios, prior if learning else None) for t in grid]
+            candidates = [evaluate(t, pv, forecast_load, variant_scenarios, prior if learning else None) for t in grid]
             selected = min(candidates, key=lambda r: (r["objective_yen"], r["target_soc_percent"]))
             selections[f"{name}:{'learned' if learning else 'plain'}"] = {
                 "selected": selected, "prior": prior if learning else {"applied": False}}
