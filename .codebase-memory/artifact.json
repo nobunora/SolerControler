@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "6786f885cf322e1e397186492781c0ee900e6e61",
-    "indexed_at": "2026-10-03T04:22:50Z",
+    "commit": "e308ba8c8a0114d72ea17e34d5befa53c9b0f087",
+    "indexed_at": "2026-10-03T12:14:05Z",
     "project": "Solar-storage-review",
-    "nodes": 3320,
-    "edges": 16676,
-    "original_size": 13369344,
-    "compressed_size": 1836516,
-    "compression_level": 3
+    "nodes": 3352,
+    "edges": 16893,
+    "original_size": 9240576,
+    "compressed_size": 1068473,
+    "compression_level": 9
 }
