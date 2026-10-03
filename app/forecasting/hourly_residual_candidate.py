@@ -50,6 +50,7 @@ def evaluate_hourly_residuals(records: list[dict[str, Any]], *, alpha: float) ->
         if reason:
             output.append({**row, "eligible": False, "excluded_reason": reason})
             continue
+        assert isinstance(q, (int, float)) and isinstance(actual, (int, float))
         key = (str(version) + ":" + row["basis"], str(kind), hour)
         prior = state.get(key, 0.0)
         candidate = max(0.0, q + prior)
@@ -66,8 +67,8 @@ def evaluate_hourly_residuals(records: list[dict[str, Any]], *, alpha: float) ->
             daily[row["date"]] = daily.get(row["date"], 0.0) + row[name] - row["actual"]
         longest = streak = 0
         previous: date | None = None
-        for day, error in sorted(daily.items()):
-            current = date.fromisoformat(day)
+        for day_text, error in sorted(daily.items()):
+            current = date.fromisoformat(day_text)
             consecutive = previous is not None and (current - previous).days == 1
             streak = (streak + 1 if consecutive else 1) if error < 0 else 0
             longest = max(longest, streak)

@@ -31,7 +31,7 @@ def valid_scenarios(scenarios: Any) -> bool:
            or not isinstance(s["label"], str) or not s["label"]
            or any(not finite_nonnegative(s[k]) for k in ("probability", "pv_multiplier", "load_multiplier")) for s in scenarios):
         return False
-    return abs(sum(s["probability"] for s in scenarios) - 1) <= 1e-6
+    return bool(abs(sum(s["probability"] for s in scenarios) - 1) <= 1e-6)
 
 
 def plan_exclusion(plan: dict[str, Any], target_date: str) -> str | None:
@@ -133,7 +133,7 @@ def replay(plans: list[dict[str, Any]], csv_paths: list[Path]) -> dict[str, Any]
         if identity in seen:
             raise ValueError("duplicate adopted decision")
         seen.add(identity)
-        partition = tuple(str(plan[key]) for key in ("model_version", "contract_version", "price_version"))
+        partition = (str(plan["model_version"]), str(plan["contract_version"]), str(plan["price_version"]))
         if (partition, day) in seen_days:
             raise ValueError("duplicate target date within model/contract/price partition")
         seen_days.add((partition, day))

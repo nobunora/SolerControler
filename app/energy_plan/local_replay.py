@@ -34,7 +34,10 @@ def evaluate_replay_day(
     scenarios = tuple(ForecastScenario(**s) for s in opt["forecast_scenarios"])
     uncertainty = PvForecastUncertainty(1, 0, 0, 0, "explicit_replay_scenarios")
 
-    def evaluate(target, pv, load, scenario_set, prior=None):
+    def evaluate(
+        target: float, pv: dict[int, float], load: dict[int, float],
+        scenario_set: tuple[ForecastScenario, ...], prior: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         prior = prior or {}
         candidate = evaluate_soc_candidate(
             target_soc_percent=target, soc_now_percent=plan["inputs"]["soc_now_percent"],
@@ -61,7 +64,7 @@ def evaluate_replay_day(
     forecast_load = {int(h): v for h, v in opt["hourly_load_forecast_kwh"].items()}
     variants = opt.get("pv_variants", {"baseline": opt["hourly_pv_forecast_kwh"]})
     # No current actual is passed to selection or prior construction.
-    selections = {}
+    selections: dict[str, Any] = {}
     for name, raw_pv in variants.items():
         variant_scenarios = tuple(ForecastScenario(**s) for s in opt["forecast_scenarios_by_variant"][name]) if "forecast_scenarios_by_variant" in opt else scenarios
         pv = {int(h): v for h, v in raw_pv.items()}

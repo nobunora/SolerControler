@@ -33,8 +33,8 @@ def recalibrate_scenarios(
         forecasts = row.get("pv_forecasts", {})
         actuals = [row.get("actual_pv"), row.get("actual_load")]
         denominators = [row.get("load_forecast"), *(forecasts.get(v) for v in variants)]
-        valid_actual = all(type(v) in (int, float) and math.isfinite(v) and v >= 0 for v in actuals)
-        valid_forecast = all(type(v) in (int, float) and math.isfinite(v) and v > 0 for v in denominators)
+        valid_actual = all(isinstance(v, (int, float)) and type(v) in (int, float) and math.isfinite(v) and v >= 0 for v in actuals)
+        valid_forecast = all(isinstance(v, (int, float)) and type(v) in (int, float) and math.isfinite(v) and v > 0 for v in denominators)
         if not valid_actual or not valid_forecast:
             excluded.append({"date": row["date"], "reason": "invalid_actual" if not valid_actual else "invalid_forecast_denominator"})
             continue

@@ -183,7 +183,11 @@ def read_soc_with_fallback(
                 break
             try:
                 structured = latest_structured() if latest_structured is not None else None
-                value = structured.value_percent if latest_structured is not None else latest_realtime()
+                if latest_structured is not None:
+                    assert structured is not None
+                    value = structured.value_percent
+                else:
+                    value = latest_realtime()
                 if value is not None:
                     retrieved_at = datetime.now(ZoneInfo("UTC"))
                     if structured is not None:
