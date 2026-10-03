@@ -198,7 +198,7 @@ def build_firestore_snapshot(
             if storage_client is None:
                 from google.cloud.storage import Client
                 storage_client = Client()
-            rows = [embed_plan_detail(row, storage=storage_client) for row in rows]
+            rows = [embed_plan_detail(row, storage=storage_client, allow_legacy_summary=name == "night_charge_plans") for row in rows]
         rows.sort(key=lambda row: str(row["_doc_id"]))
         collections[name] = rows
         counts[name] = len(rows)
@@ -208,6 +208,7 @@ def build_firestore_snapshot(
         "captured_at_utc": captured_at.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "collections": collections,
         "counts": counts,
+        "plan_details_unavailable": sum(row.get("detail_backup_status") == "unavailable_legacy" for row in collections.get("night_charge_plans", [])),
     }
 
 
