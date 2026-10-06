@@ -114,6 +114,60 @@ def recover(client):
     )
 
 
+@pytest.mark.parametrize("kind", ["snapshot", "mutable", "legacy"])
+def test_forecast_identity_survives_sync_and_sqlite_dashboard(monkeypatch, tmp_path, kind):
+    from app.dashboard.repositories import DashboardLoadRequest
+    from app.dashboard.sqlite_repository import load_sqlite_query_snapshot
+    from app.operations import sync
+
+    client = Client(plan())
+    if kind == "snapshot":
+        recover(client)
+    else:
+        rows = [{"date": DAY, "hour": hour, "forecast_pv_kwh": 0.1,
+                 "forecast_load_kwh": 0.2, "source": "forecast-only-hourly",
+                 "updated_at": "2026-10-06T02:30:00+09:00"}
+                for hour in range(24)]
+        if kind == "mutable":
+            for row in rows:
+                row.update(forecast_run_id="original-run", forecast_issued_at="2026-10-06T02:30:00+09:00")
+        client.data["forecast_hourly"] = {str(row["hour"]): row for row in rows}
+    monkeypatch.setattr(sync, "_open_firestore_client", lambda **kwargs: client)
+    path = tmp_path / "validation.db"
+    assert sync.sync_firestore_to_sqlite(sqlite_path=path)["forecast_hourly"] == 24
+    local = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly
+    remote = repository._firestore_forecast_hourly_between(client, start_date=DAY, end_date_iso=DAY)
+    for left, right in zip(local, remote, strict=True):
+        for field in ("forecast_run_id", "forecast_issued_at"):
+            assert (field in left) == (field in right)
+            assert left.get(field) == right.get(field)
+    local_energy = _build_energy_daily(start_date=DAY, end_date_iso=DAY, pv_daily=[], monitoring_daily=[], forecast_hourly=local)
+    remote_energy = _build_energy_daily(start_date=DAY, end_date_iso=DAY, pv_daily=[], monitoring_daily=[], forecast_hourly=remote)
+    assert local_energy == remote_energy
+
+
+def test_forecast_identity_schema_migration_and_upsert(tmp_path):
+    from app.operations import sqlite as sqlite_ops, sync
+
+    conn = sqlite_ops.open_db(tmp_path / "legacy.db")
+    try:
+        sqlite_ops.ensure_schema(conn)
+        conn.execute("ALTER TABLE forecast_hourly DROP COLUMN forecast_run_id")
+        conn.execute("ALTER TABLE forecast_hourly DROP COLUMN forecast_issued_at")
+        sqlite_ops.ensure_schema(conn)
+        row = {"date": DAY, "hour": 0, "forecast_pv_kwh": 0.1, "forecast_load_kwh": 0.2,
+               "updated_at": "2026-10-06T03:03:19+09:00", "forecast_run_id": "original",
+               "forecast_issued_at": "2026-10-06T03:03:19+09:00"}
+        sync._sqlite_upsert_row(conn, "forecast_hourly", row)
+        row["forecast_run_id"] = "replacement"
+        sync._sqlite_upsert_row(conn, "forecast_hourly", row)
+        stored = dict(conn.execute("SELECT * FROM forecast_hourly").fetchone())
+        assert stored["forecast_run_id"] == "replacement"
+        assert stored["forecast_issued_at"] == row["forecast_issued_at"]
+    finally:
+        conn.close()
+
+
 def test_failed_forecast_day_recovers_original_and_both_consumers_match(monkeypatch):
     client = Client(plan())
     result = recover(client)

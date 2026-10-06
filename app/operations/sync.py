@@ -118,6 +118,8 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
         "columns": ("run_key", "slot", "csv_run_id", "settings_run_id", "csv_rows_upserted", "recorded_at"),
     },
     "forecast_hourly": {
+        # HISTORICAL_FAILURE_LOCK: synchronize original run identity with values;
+        # validation/storage replicas must not lose the selected forecast vintage.
         "key_cols": ("date", "hour"),
         "columns": (
             "date",
@@ -134,6 +136,8 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "forecast_relative_humidity_percent",
             "forecast_dew_point_c",
             "forecast_wind_speed_10m",
+            "forecast_run_id",
+            "forecast_issued_at",
             "source",
             "is_reconstructed",
             "forecast_reconstruction_id",
@@ -292,8 +296,8 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_dew_point_c, forecast_wind_speed_10m,
                 source, is_reconstructed, forecast_reconstruction_id,
                 forecast_reconstructed_at, forecast_reconstruction_model_version,
-                forecast_reconstruction_basis, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                forecast_reconstruction_basis, updated_at, forecast_run_id, forecast_issued_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.get("date"),
@@ -316,7 +320,9 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 row.get("forecast_reconstructed_at"),
                 row.get("forecast_reconstruction_model_version"),
                 row.get("forecast_reconstruction_basis"),
-                row.get("updated_at") or row.get("forecast_reconstructed_at"),
+                row.get("updated_at") or row.get("forecast_reconstructed_at") or row.get("forecast_issued_at"),
+                row.get("forecast_run_id"),
+                row.get("forecast_issued_at"),
             ),
         )
         return
@@ -368,8 +374,8 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_dew_point_c, forecast_wind_speed_10m,
                 source, is_reconstructed, forecast_reconstruction_id,
                 forecast_reconstructed_at, forecast_reconstruction_model_version,
-                forecast_reconstruction_basis, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                forecast_reconstruction_basis, updated_at, forecast_run_id, forecast_issued_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
@@ -389,6 +395,8 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 forecast_reconstructed_at=excluded.forecast_reconstructed_at,
                 forecast_reconstruction_model_version=excluded.forecast_reconstruction_model_version,
                 forecast_reconstruction_basis=excluded.forecast_reconstruction_basis,
+                forecast_run_id=excluded.forecast_run_id,
+                forecast_issued_at=excluded.forecast_issued_at,
                 updated_at=excluded.updated_at
             """,
             (
@@ -412,7 +420,9 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 row.get("forecast_reconstructed_at"),
                 row.get("forecast_reconstruction_model_version"),
                 row.get("forecast_reconstruction_basis"),
-                row.get("updated_at") or row.get("forecast_reconstructed_at"),
+                row.get("updated_at") or row.get("forecast_reconstructed_at") or row.get("forecast_issued_at"),
+                row.get("forecast_run_id"),
+                row.get("forecast_issued_at"),
             ),
         )
         return
