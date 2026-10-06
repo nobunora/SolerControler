@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -47,18 +48,27 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
             if 0 <= hour <= 23:
                 hours.add(hour)
 
+    # HISTORICAL_FAILURE_LOCK: missing forecasts must not become valid zero rows.
+    # Legacy PV models cover 07-22, sunrise models 05-22. Only hours outside
+    # the declared model window may be implicit night-time zero; gaps inside it
+    # and every missing load remain unavailable for persistence validation.
+    pv_start = 5 if any(str(hour) in pv_by_hour or hour in pv_by_hour for hour in (5, 6)) else 7
     rows: list[dict[str, Any]] = []
     for hour in sorted(hours):
-        pv_kwh = to_float(pv_by_hour.get(str(hour), pv_by_hour.get(hour))) or 0.0
-        load_kwh = to_float(load_by_hour.get(str(hour), load_by_hour.get(hour))) or 0.0
+        pv_kwh = to_float(pv_by_hour.get(str(hour), pv_by_hour.get(hour)))
+        if pv_by_hour and str(hour) not in pv_by_hour and hour not in pv_by_hour and (hour < pv_start or hour > 22):
+            pv_kwh = 0.0
+        load_kwh = to_float(load_by_hour.get(str(hour), load_by_hour.get(hour)))
+        pv_kwh = pv_kwh if pv_kwh is not None and math.isfinite(pv_kwh) and pv_kwh >= 0.0 else None
+        load_kwh = load_kwh if load_kwh is not None and math.isfinite(load_kwh) and load_kwh >= 0.0 else None
         weather = weather_by_hour.get(hour, {})
         rows.append(
             {
                 "date": forecast_date,
                 "hour": hour,
-                "forecast_pv_kwh": round(max(0.0, pv_kwh), 4),
-                "forecast_load_kwh": round(max(0.0, load_kwh), 4),
-                "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4),
+                "forecast_pv_kwh": round(pv_kwh, 4) if pv_kwh is not None else None,
+                "forecast_load_kwh": round(load_kwh, 4) if load_kwh is not None else None,
+                "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4) if pv_kwh is not None and load_kwh is not None else None,
                 "forecast_weather_code": to_int(weather.get("weather_code")),
                 "forecast_precipitation_mm": to_float(weather.get("precipitation_mm")),
                 "forecast_precipitation_probability": to_float(weather.get("precipitation_probability")),
@@ -76,6 +86,8 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
 def extract_final_pv_totals_from_plan(data: dict[str, Any]) -> dict[str, float | str | None]:
     hourly_rows = extract_hourly_forecast_from_plan(data)
     if hourly_rows:
+        if any(row.get("forecast_pv_kwh") is None for row in hourly_rows):
+            return {field: None for field in ("total_kwh", "morning_kwh", "midday_kwh", "evening_kwh", "peak_kw")}
         total = morning = midday = evening = peak = 0.0
         for row in hourly_rows:
             hour = to_int(row.get("hour"))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,12 @@ from app.parsing.numbers import to_float, to_int
 
 
 def _complete_hourly_rows(rows: list[dict[str, Any]], *, target_date: str) -> bool:
+    # HISTORICAL_FAILURE_LOCK: validate values before replacing any saved vintage.
+    if any(
+        (value := to_float(row.get(field))) is None or not math.isfinite(value) or value < 0.0
+        for row in rows for field in ("forecast_pv_kwh", "forecast_load_kwh")
+    ):
+        return False
     return len(rows) == 24 and {row.get("date") for row in rows} == {target_date} and {
         row.get("hour") for row in rows
     } == set(range(24))

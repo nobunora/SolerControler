@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "6786f885cf322e1e397186492781c0ee900e6e61",
-    "indexed_at": "2026-10-03T04:22:50Z",
-    "project": "Solar-storage-review",
-    "nodes": 3320,
-    "edges": 16676,
-    "original_size": 13369344,
-    "compressed_size": 1836516,
-    "compression_level": 3
+    "commit": "ffcc1fb24bff7c6b65c4247e59b4f6f047984ad4",
+    "indexed_at": "2026-10-06T23:41:31Z",
+    "project": "C-VSC-SolerControler",
+    "nodes": 7407,
+    "edges": 23548,
+    "original_size": 17629184,
+    "compressed_size": 3426634,
+    "compression_level": 9
 }

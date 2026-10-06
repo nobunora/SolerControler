@@ -113,9 +113,13 @@ def _metadata_matches_forecast_row(row: dict[str, Any], metadata: dict[str, Any]
         row_run_id = str(row.get("forecast_run_id") or "").strip()
         return bool(metadata_run_id and row_run_id == metadata_run_id)
 
-    # The base mutable Firestore reader intentionally exposes updated_at but not
-    # forecast_run_id. New forecast-only persistence writes the same updated_at to
-    # forecast_hourly and forecast_plans atomically, which is a stable same-run join key.
+    row_run_id = str(row.get("forecast_run_id") or "").strip()
+    # HISTORICAL_FAILURE_LOCK: explicit run identity takes precedence over
+    # legacy timestamp joins; never attach metadata from a different forecast.
+    if row_run_id and metadata_run_id:
+        return row_run_id == metadata_run_id
+    # Legacy mutable evidence can have only updated_at. Forecast-only persistence
+    # writes it atomically with metadata, retaining this older same-run join key.
     metadata_updated_at = str(metadata.get("_forecast_updated_at") or "").strip()
     row_updated_at = str(row.get("updated_at") or "").strip()
     if metadata_updated_at or row_updated_at:

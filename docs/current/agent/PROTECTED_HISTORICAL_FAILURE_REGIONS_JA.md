@@ -39,6 +39,26 @@
 
 ## 履歴の扱い
 
+### 予想履歴と表示の共通契約（2026-10-06障害）
+
+保護対象は `app/operations/forecast_recovery.py::recover_missing_forecast_snapshots`、
+`app/runtime/forecast_job.py::main`、`app/operations/domain.py::extract_hourly_forecast_from_plan`、
+`app/operations/forecast_persistence.py::_complete_hourly_rows`、
+`app/dashboard/aggregation.py::_build_energy_daily`、
+`app/dashboard/firestore_repository.py::_build_firestore_daily_reviews`、
+`app/dashboard/history_reconstruction.py::_metadata_matches_forecast_row` の
+`HISTORICAL_FAILURE_LOCK` コメントと以下の契約である。
+
+- 7月16日の `93e8c3c` は予想抽出を共通化し、9月3日の `7899423` / `76f1e91` は原本スナップショットから履歴を回復した。9月18日の `a69146b` はSOC表示の正本を統一した。いずれも予想ジョブ失敗後の保存済み制御計画の取り込みを保証しておらず、レビューのPV直接参照が残っていた。
+- 9月3日の `894e9f3` で予想専用ジョブを追加し、9月24日の `9692635` で実績取り込みを追加したが、当日対象・計画取り込み無効のため過去の欠損を回復しなかった。10月6日の起動失敗では、計画の最終PV 3.5021 kWhが残る一方、グラフのPVは欠損、消費は過去実績の代替推計になった。
+- レビューとグラフのPV・消費は同じ日別集計・同じ選択済み時間別予想を使用する。別の計画結果や日別PVから片側だけを上書きしない。
+- 非制御の予想ジョブは実績・表示更新より前に、直近31日以内の欠損原本だけを保存済み計画から取り込む。有効な原本は保持し、当時の生成時刻・実行IDを維持する。過去日の再予想や後日再計算を当時の原本として保存しない。
+- 時間別値の欠損・非有限値をゼロに偽装しない。モデル出力窓外の夜間PVゼロは維持し、24時間の数値検証に失敗した結果で有効な保存値を置き換えない。
+- ダッシュボードGETからアーカイブを取得しない。初期bootstrap・履歴遅延読取・事前生成データの高速経路を維持する。実機制御の時刻所有権やDB非依存性は維持する。
+
+変更時は `tests/test_forecast_history_contract.py` と
+`tests/test_night_soc_protected_contract.py` を必須とする。コメント削除・契約変更は利用者の明示承認と、上記障害の回帰検証を伴う場合だけ許可する。
+
 上表のコミットは、単なる設計案ではなく、このリポジトリで実際に行われた障害対応または再発防止修正の境界である。新しい設計へ移行する場合も、旧境界を先にテストで置き換え、保護対象の削除理由を同じ変更に記録する。
 
 ## 03時の実機確認基準
