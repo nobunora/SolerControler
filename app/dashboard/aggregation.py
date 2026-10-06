@@ -217,9 +217,11 @@ def _build_energy_daily(
         pv = pv_by_day.get(day)
         sunshine_forecast_pv = _forecast_pv_kwh(pv)
         hourly_source = hourly_source_by_day.get(day, "forecast_hourly")
+        # HISTORICAL_FAILURE_LOCK: 2026-10-06 forecast history divergence.
+        # Keep PV/load on the same selected hourly vintage for every consumer;
+        # never replace one side with a daily aggregate from another run.
         paired_hourly = (
-            hourly_source in {"forecast_hourly_snapshot", _RECONSTRUCTED_FORECAST_SOURCE}
-            and day in hourly_pv_by_day
+            day in hourly_pv_by_day
             and day in hourly_load_by_day
         )
         forecast_pv = hourly_pv_by_day.get(day) if paired_hourly else sunshine_forecast_pv

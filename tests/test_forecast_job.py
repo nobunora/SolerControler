@@ -10,6 +10,8 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
     monkeypatch.setattr(forecast_job, "_target_date", lambda: "2026-09-03")
     monkeypatch.setattr(forecast_job, "_run", lambda command, env, **_kwargs: calls.append((command, env)))
     monkeypatch.setattr(forecast_job, "open_firestore", lambda: "client")
+    recovered: list[dict] = []
+    monkeypatch.setattr(forecast_job, "recover_missing_forecast_snapshots", lambda client, **kwargs: recovered.append({"client": client, **kwargs}) or {})
     # A unit test must never rebuild/upload the real dashboard snapshot when
     # the production gate has loaded its environment.
     monkeypatch.setattr(forecast_job, "dashboard_snapshot_prefix", lambda: "gs://unit-test/snapshots")
@@ -31,6 +33,7 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
         ([forecast_job.sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": "2026-09-03"}),
     ]
     assert persisted[0]["target_date"] == "2026-09-03"
+    assert recovered[0]["target_date"] == "2026-09-03"
     assert len(snapshot_calls) == 1
 
 

@@ -553,7 +553,9 @@ def _build_firestore_daily_reviews(
         result = _nested_dict(plan, "result")
         plan_forecast = _nested_dict(plan, "forecast")
         analog_day = _plan_analog_summary(plan, None).get("analog_date")
-        forecast_load = sum(max(0.0, to_float(row.get("forecast_load_kwh")) or 0.0) for row in hourly)
+        # HISTORICAL_FAILURE_LOCK: 2026-10-06 review/chart forecast divergence.
+        # Energy daily owns the selected PV/load pair. Control-plan results are
+        # decision evidence and must not override the displayed forecast vintage.
         review = {
             "date": review_date,
             "review_date": review_date,
@@ -564,9 +566,9 @@ def _build_firestore_daily_reviews(
             "target_soc_percent": battery.get("setting_soc_target_percent") if battery.get("setting_soc_target_percent") is not None else result.get("target_soc_7_percent"),
             "actual_morning_soc_percent": metrics.get("morning_soc_percent"),
             "forecast_night_charge_kwh": battery.get("night_charge_kwh") if battery.get("night_charge_kwh") is not None else result.get("required_night_charge_kwh"),
-            "forecast_pv_kwh": result.get("final_predicted_pv_kwh", actual.get("forecast_pv_kwh")),
-            "forecast_load_kwh": forecast_load if hourly else actual.get("forecast_load_kwh"),
-            "forecast_load_source": "forecast_hourly" if hourly else "energy_daily_fallback",
+            "forecast_pv_kwh": actual.get("forecast_pv_kwh"),
+            "forecast_load_kwh": actual.get("forecast_load_kwh"),
+            "forecast_load_source": actual.get("forecast_load_source"),
             "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
             "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
             "actual_pv_kwh": actual.get("actual_pv_kwh"),
@@ -602,14 +604,25 @@ def _firestore_forecast_hourly_between(
             "forecast_charge_kwh",
             "source",
             "updated_at",
+            "forecast_run_id",
+            "forecast_issued_at",
         ],
     )
     mutable_dates: set[str] = set()
+    for row in rows:
+        # Preserve legacy payloads while exposing identity for new saved vintages.
+        for field in ("forecast_run_id", "forecast_issued_at"):
+            if row.get(field) is None:
+                row.pop(field, None)
     for day in {str(row.get("date")) for row in rows if row.get("date")}:
         day_rows = [row for row in rows if str(row.get("date")) == day]
         hours = {int(str(row.get("hour"))) for row in day_rows if str(row.get("hour", "")).isdigit()}
-        values_complete = all(to_float(row.get("forecast_pv_kwh")) is not None and to_float(row.get("forecast_load_kwh")) is not None for row in day_rows)
-        if len(day_rows) == 24 and hours == set(range(24)) and values_complete:
+        values_complete = all(
+            (value := to_float(row.get(field))) is not None and math.isfinite(value) and value >= 0.0
+            for row in day_rows for field in ("forecast_pv_kwh", "forecast_load_kwh")
+        )
+        run_ids = {str(row.get("forecast_run_id") or "") for row in day_rows}
+        if len(day_rows) == 24 and hours == set(range(24)) and values_complete and len(run_ids) == 1:
             mutable_dates.add(day)
     # A partial mutable day is not a usable daily forecast. Discard it entirely
     # so a selected immutable run can replace it without mixing vintages.

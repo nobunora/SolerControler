@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.operations.firestore import open_firestore
 from app.dashboard.snapshots import dashboard_snapshot_prefix, write_dashboard_snapshots
 from app.operations.forecast_persistence import persist_forecast_only_plan
+from app.operations.forecast_recovery import recover_missing_forecast_snapshots
 from app.runtime.command_adapter import _run
 
 
@@ -21,6 +22,14 @@ def main() -> int:
     target_date = _target_date()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
+    # HISTORICAL_FAILURE_LOCK: recover prior saved forecasts before refreshing
+    # actuals/bootstrap; a successful new day must not leave yesterday missing.
+    client = open_firestore()
+    recovery = recover_missing_forecast_snapshots(
+        client, target_date=target_date,
+        recorded_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    )
+    print(f"[forecast_job] forecast recovery {recovery}", flush=True)
     _run([sys.executable, "kpnet_main.py"], {"KP_WORKFLOW_MODE": "csv"}, timeout_seconds=240)
     _run(
         [sys.executable, "db_pipeline_main.py"],
@@ -36,7 +45,7 @@ def main() -> int:
         timeout_seconds=240,
     )
     snapshot_count = persist_forecast_only_plan(
-        open_firestore(),
+        client,
         plan_path=plan_path,
         target_date=target_date,
         timezone_name="Asia/Tokyo",
