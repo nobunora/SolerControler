@@ -17,7 +17,7 @@ class PruneBlocked(RuntimeError):
     """Safe failure without cloud identifiers or credentials."""
 
 
-def verify_oci(root: Path, digest: str, seen: set[str] | None = None) -> set[str]:
+def verify_oci(root: Path, digest: str, seen: set[str] | None = None, *, is_manifest: bool = True) -> set[str]:
     seen = set() if seen is None else seen
     if digest in seen:
         return seen
@@ -27,17 +27,21 @@ def verify_oci(root: Path, digest: str, seen: set[str] | None = None) -> set[str
     if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest[7:]:
         raise PruneBlocked("OCI backup missing or corrupt")
     seen.add(digest)
+    if not is_manifest:
+        return seen  # Image configuration and layers need byte verification only.
     try:
         document = json.loads(path.read_bytes())
     except (ValueError, UnicodeDecodeError):
-        return seen  # Compressed layer, already byte-verified.
-    if not isinstance(document, dict):
-        return seen
-    children = document.get("manifests", []) + document.get("layers", [])
+        raise PruneBlocked("Invalid OCI manifest") from None
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise PruneBlocked("Invalid OCI manifest")
+    for child in document.get("manifests", []):
+        verify_oci(root, child["digest"], seen)
+    children = document.get("layers", [])
     if document.get("config"):
         children.append(document["config"])
     for child in children:
-        verify_oci(root, child["digest"], seen)
+        verify_oci(root, child["digest"], seen, is_manifest=False)
     return seen
 
 

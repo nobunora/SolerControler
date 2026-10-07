@@ -41,6 +41,31 @@ def test_partial_release_cannot_authorize_pruning(module, tmp_path, monkeypatch)
         module.Pruner(tmp_path, state, tmp_path / "missing-acceptance.json", tmp_path / "review")
 
 
+def test_oci_index_walk_verifies_real_configuration_without_treating_env_as_descriptors(module, tmp_path):
+    def put(value):
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+        (tmp_path / digest[7:]).write_bytes(raw)
+        return digest
+
+    layer = put(b"compressed layer")
+    config = put({"architecture": "amd64", "os": "linux", "config": {"Env": ["A=B"]}, "rootfs": {"type": "layers"}})
+    image = put({"schemaVersion": 2, "config": {"digest": config}, "layers": [{"digest": layer}]})
+    index = put({"schemaVersion": 2, "manifests": [{"digest": image}]})
+    assert module.verify_oci(tmp_path, index) == {index, image, config, layer}
+    (tmp_path / config[7:]).write_bytes(b"corrupt")
+    with pytest.raises(module.PruneBlocked, match="missing or corrupt"):
+        module.verify_oci(tmp_path, index)
+
+
+def test_image_configuration_alone_cannot_authorize_image_recovery(module, tmp_path):
+    raw = json.dumps({"config": {"Env": ["A=B"]}}).encode()
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    (tmp_path / digest[7:]).write_bytes(raw)
+    with pytest.raises(module.PruneBlocked, match="Invalid OCI manifest"):
+        module.verify_oci(tmp_path, digest)
+
+
 def test_currently_referenced_image_and_rollback_are_never_delete_candidates(module, tmp_path, monkeypatch):
     pruner = module.Pruner.__new__(module.Pruner)
     pruner.project = "unit-test"
