@@ -39,7 +39,7 @@ POLL_SECONDS = 20
 
 
 def _valid_soc(value: object) -> float | None:
-    if value is None or isinstance(value, bool):
+    if not isinstance(value, (int, float, str)) or isinstance(value, bool):
         return None
     try:
         numeric = float(value)
@@ -83,6 +83,8 @@ def run_soc_cycle_probe() -> dict[str, object]:
         # Use the deployed direct/semantic parsers and a bounded read request;
         # reserve the full restoration budget even if SOC requests time out.
         previous_deadline = client.deadline_monotonic
+        if previous_deadline is None:
+            raise RuntimeError("SOC probe requires a bounded device deadline")
         client.deadline_monotonic = min(previous_deadline, cutoff, time.monotonic() + 45)
         try:
             if time.monotonic() >= client.deadline_monotonic:
@@ -99,7 +101,9 @@ def run_soc_cycle_probe() -> dict[str, object]:
 
     def emit_sample(value: float | None) -> None:
         sample = {"elapsed_seconds": round(time.monotonic() - started, 2), "soc_percent": value}
-        summary["samples"].append(sample)
+        samples = summary["samples"]
+        if isinstance(samples, list):
+            samples.append(sample)
         print(json.dumps({"message": "soc-cycle-sample", **sample}, sort_keys=True), flush=True)
 
     def stop_and_verify() -> None:
