@@ -73,10 +73,13 @@ if ($SocCycleProbe) {
     $encoded = (& python -c $encoder $sourcePath).Trim()
     if ($LASTEXITCODE -ne 0 -or -not $encoded) { throw 'SOC probe source encoding failed.' }
     $code = "exec(__import__('zlib').decompress(__import__('base64').b64decode('$encoded')))"
-    $overrideArgs = '^~^-c~' + $code
+    # gcloud.cmd consumes caret delimiters on Windows. Use the documented
+    # JSON flags-file path so both Python arguments survive without shell escaping.
+    $flagsPath = Join-Path $SocCycleEvidenceDirectory 'execution-flags.private.json'
+    @{ '--args' = @('-c', $code); '--update-env-vars' = @{ DRY_RUN = 'false'; SOC_CYCLE_PROBE_AUTHORIZED = 'true' } } |
+        ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $flagsPath -Encoding utf8
     $executeArgs = @('run', 'jobs', 'execute', $jobName, '--project', $projectId, '--region', $region,
-                    '--wait', '--format=json', '--args', $overrideArgs,
-                    '--update-env-vars', 'DRY_RUN=false,SOC_CYCLE_PROBE_AUTHORIZED=true')
+                    '--wait', '--format=json', '--flags-file', $flagsPath)
     $executionText = (& $gcloud @executeArgs) -join "`n"
     $executeExit = $LASTEXITCODE
     $executionText | Set-Content -LiteralPath (Join-Path $SocCycleEvidenceDirectory 'execution.private.json') -Encoding utf8
