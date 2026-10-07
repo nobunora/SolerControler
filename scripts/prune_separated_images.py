@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 import requests
@@ -16,7 +17,7 @@ class PruneBlocked(RuntimeError):
     """Safe failure without cloud identifiers or credentials."""
 
 
-def verify_oci(root: Path, digest: str, seen: set[str] | None = None) -> set[str]:
+def verify_oci(root: Path, digest: str, seen: set[str] | None = None, *, is_manifest: bool = True) -> set[str]:
     seen = set() if seen is None else seen
     if digest in seen:
         return seen
@@ -26,17 +27,21 @@ def verify_oci(root: Path, digest: str, seen: set[str] | None = None) -> set[str
     if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest[7:]:
         raise PruneBlocked("OCI backup missing or corrupt")
     seen.add(digest)
+    if not is_manifest:
+        return seen  # Image configuration and layers need byte verification only.
     try:
         document = json.loads(path.read_bytes())
     except (ValueError, UnicodeDecodeError):
-        return seen  # Compressed layer, already byte-verified.
-    if not isinstance(document, dict):
-        return seen
-    children = document.get("manifests", []) + document.get("layers", [])
+        raise PruneBlocked("Invalid OCI manifest") from None
+    if not isinstance(document, dict) or document.get("schemaVersion") != 2:
+        raise PruneBlocked("Invalid OCI manifest")
+    for child in document.get("manifests", []):
+        verify_oci(root, child["digest"], seen)
+    children = document.get("layers", [])
     if document.get("config"):
         children.append(document["config"])
     for child in children:
-        verify_oci(root, child["digest"], seen)
+        verify_oci(root, child["digest"], seen, is_manifest=False)
     return seen
 
 
@@ -138,14 +143,28 @@ class Pruner:
             resolved.add(ref)
         return resolved, jobs, snapshots
 
+    def scheduler_jobs(self) -> list[dict[str, Any]]:
+        # Cloud Asset Search does not support Cloud Scheduler Job assets.
+        # Enumerate every location advertised by Scheduler itself; the .env
+        # location alone cannot prove that a manual job is globally unreferenced.
+        base = f"https://cloudscheduler.googleapis.com/v1/projects/{self.project}/locations"
+        locations = self.pages(base, "locations", {"pageSize": 1000})
+        if not locations:
+            raise PruneBlocked("Scheduler location inventory is empty")
+        schedules: list[dict[str, Any]] = []
+        for location in locations:
+            region = location.get("locationId", "")
+            if not re.fullmatch(r"[a-z][a-z0-9-]+", region):
+                raise PruneBlocked("Scheduler location inventory is invalid")
+            schedules.extend(self.pages(f"{base}/{region}/jobs", "jobs", {"pageSize": 500}))
+        return schedules
+
     def run(self, *, apply: bool = False, retire_manual_backups: bool = False) -> dict[str, Any]:
         refs, jobs, snapshots = self.references()
         (self.output / "references.private.json").write_text(json.dumps(snapshots, indent=2), encoding="utf-8")
         retired = 0
         if retire_manual_backups:
-            assets = self.pages(f"https://cloudasset.googleapis.com/v1/projects/{self.project}:searchAllResources", "results",
-                                {"pageSize": 500, "assetTypes": ["cloudscheduler.googleapis.com/Job"]})
-            schedules = [self.get("https://cloudscheduler.googleapis.com/v1/" + asset["name"].removeprefix("//cloudscheduler.googleapis.com/")) for asset in assets]
+            schedules = self.scheduler_jobs()
             if not schedules:
                 raise PruneBlocked("Scheduler reference inventory is empty")
             targets = [row.get("httpTarget", {}).get("uri", "") for row in schedules]
@@ -167,7 +186,10 @@ class Pruner:
                 retired += 1
             if apply and retired:
                 refs, _, _ = self.references()
-        repos = self.pages(f"https://artifactregistry.googleapis.com/v1/projects/{self.project}/locations/-/repositories", "repositories", {"pageSize": 1000})
+        # Reuse the complete-backup inventory: the REST repository endpoint
+        # rejects locations/-; gcloud enumerates the project's locations.
+        repos: list[dict[str, Any]] = json.loads(self.cloud([
+            "artifacts", "repositories", "list", "--project", self.project, "--format=json"]))
         images = []
         for repo in repos:
             if repo.get("format") == "DOCKER":
