@@ -13,11 +13,13 @@ import json
 import math
 import os
 import time
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 from app.kpnet.config import KpNetConfig
 from app.kpnet.profile_builder import _pick_battery_operating_mode_code
+from app.kpnet.profiles import ProfileOverrides
 from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
 from app.kpnet.settings_roundtrip import (
     ROUNDTRIP_SETTING_FIELDS,
@@ -70,9 +72,9 @@ def run_soc_cycle_probe() -> dict[str, object]:
         "forced_readback_verified": False, "standby_readback_verified": False,
         "soc_target_settings_changed": False, "samples": [],
     }
-    current = None
-    restore_profile = None
-    maps = None
+    current: dict[str, Any] | None = None
+    restore_profile: ProfileOverrides | None = None
+    maps: dict[str, dict[str, str]] | None = None
     mutated = False
     restored = False
     unknown = False
@@ -108,6 +110,8 @@ def run_soc_cycle_probe() -> dict[str, object]:
 
     def stop_and_verify() -> None:
         nonlocal standby_verified
+        if current is None or maps is None:
+            raise RuntimeError("probe stop requires the initial settings and candidate map")
         observed = client.read_current_settings()
         base = profile_from_current_settings(observed)
         stop = replace(base, name="one-percent-probe-stop", battery_operating_mode=
@@ -191,7 +195,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
     except Exception as exc:
         summary.update({"error_type": type(exc).__name__, "failed_phase": phase})
     finally:
-        if mutated and not restored and current is not None:
+        if mutated and not restored and current is not None and maps is not None and restore_profile is not None:
             if unknown:
                 _read_only_snapshot_after_unknown(client=client, initial=current, summary=summary)
             else:
