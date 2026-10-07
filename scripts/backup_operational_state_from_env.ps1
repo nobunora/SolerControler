@@ -2,7 +2,8 @@ param(
     [string]$OutDir = "artifacts/backups/operational",
     [switch]$Complete,
     [switch]$RecoverRequiredImages,
-    [string]$ResumePath = ""
+    [string]$ResumePath = "",
+    [string]$SeedPath = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +48,7 @@ if ($Complete) {
     try {
         $captureArgs = @('--output', $completeDir)
         if ($RecoverRequiredImages) { $captureArgs += '--recover-required-images' }
+        if ($SeedPath) { $captureArgs += @('--seed', $SeedPath) }
         & python (Join-Path $PSScriptRoot 'backup_complete_remote.py') @captureArgs
         if ($LASTEXITCODE -ne 0) { throw 'Full backup is incomplete; see its local manifest.' }
     } finally {
@@ -56,6 +58,7 @@ if ($Complete) {
     return
 }
 if ($ResumePath) { throw 'ResumePath requires Complete.' }
+if ($SeedPath) { throw 'SeedPath requires Complete.' }
 if ($RecoverRequiredImages) { throw 'RecoverRequiredImages requires Complete.' }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $generationDir = Join-Path $OutDir $stamp

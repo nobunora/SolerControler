@@ -129,6 +129,22 @@ def test_cached_image_export_requires_explicit_authorization(backup,module,monke
     assert backup.manifest['remote_writes']==0
 
 
+def test_seed_reuses_only_verified_immutable_bytes_and_retains_original(backup,module,tmp_path,monkeypatch):
+    seed=tmp_path/'seed';seed.mkdir()
+    relative='registry/oci/blobs/sha256/'+'a'*64
+    original=seed/relative;original.parent.mkdir(parents=True);original.write_bytes(b'original')
+    (seed/'manifest.private.json').write_text(json.dumps({'project':'test-project','files':{
+        relative:{'sha256':module.sha256(original)},'configuration/cloud_run_jobs.json':{'sha256':'unused'}}}))
+    backup.seed_immutable_files(seed)
+    assert (backup.output/relative).read_bytes()==b'original'
+    assert not (backup.output/'configuration/cloud_run_jobs.json').exists()
+    response=SimpleNamespace(raw=SimpleNamespace(stream=lambda *a,**k:iter([b'new'])),close=lambda:None)
+    monkeypatch.setattr(backup,'request',lambda *a,**k:response)
+    backup.download('unused',backup.output/relative,digest=hashlib.sha256(b'new').hexdigest())
+    assert original.read_bytes()==b'original'
+    assert (backup.output/relative).read_bytes()==b'new'
+
+
 @pytest.mark.parametrize('short_execution_name',[False,True])
 def test_cached_image_export_records_replacement_and_resumes_without_reposting(backup,monkeypatch,short_execution_name):
     backup.recover_required_images=True

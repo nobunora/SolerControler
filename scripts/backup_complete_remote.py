@@ -14,6 +14,7 @@ import gzip
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import time
@@ -57,6 +58,29 @@ class Backup:
             self.manifest = {'schema_version':1, 'project':self.project, 'started_at':datetime.now(timezone.utc).isoformat(),
                              'remote_writes':0, 'stages':{}, 'gaps':[], 'files':{}}
         self.save()
+
+    def seed_immutable_files(self, source: Path) -> None:
+        """Reuse verified object/OCI bytes; recapture every mutable inventory."""
+        source=source.resolve()
+        if source==self.output:raise ReadFailure('Seed must be a different backup generation')
+        manifest=json.loads((source/'manifest.private.json').read_text(encoding='utf-8'))
+        if manifest['project']!=self.project:raise ReadFailure('Seed project mismatch')
+        for relative,metadata in manifest['files'].items():
+            parts=Path(relative).parts
+            if parts[:2]!=('storage','objects') and parts[:4]!=('registry','oci','blobs','sha256'):continue
+            old=(source/relative).resolve();new=(self.output/relative).resolve()
+            if not old.is_relative_to(source) or not new.is_relative_to(self.output):
+                raise ReadFailure('Seed file escapes backup directory')
+            if not old.is_file() or sha256(old)!=metadata['sha256']:
+                raise ReadFailure('Seed file checksum mismatch')
+            if new.exists():
+                if sha256(new)!=metadata['sha256']:raise ReadFailure('Seed destination checksum mismatch')
+                continue
+            new.parent.mkdir(parents=True,exist_ok=True)
+            # Existing downloads are replaced atomically, never overwritten in
+            # place. A hard link therefore cannot mutate the older generation.
+            try:os.link(old,new)
+            except OSError:shutil.copyfile(old,new)
 
     def save(self) -> None:
         temp = self.manifest_path.with_suffix('.tmp')
@@ -558,7 +582,7 @@ class Backup:
 
 
 def main() -> int:
-    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--verify-only',action='store_true');parser.add_argument('--recover-required-images',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--verify-only',action='store_true');parser.add_argument('--recover-required-images',action='store_true');parser.add_argument('--seed',type=Path);args=parser.parse_args()
     if args.verify_only:
         root=args.output.resolve()
         manifest=json.loads((root/'manifest.private.json').read_text(encoding='utf-8'))
@@ -572,7 +596,9 @@ def main() -> int:
         verification['gaps']=len(manifest['gaps'])
         print(json.dumps(verification))
         return 0 if manifest['status']=='complete' else 2
-    return Backup(args.output,recover_required_images=args.recover_required_images).run()
+    backup=Backup(args.output,recover_required_images=args.recover_required_images)
+    if args.seed:backup.seed_immutable_files(args.seed)
+    return backup.run()
 
 
 if __name__=='__main__':
