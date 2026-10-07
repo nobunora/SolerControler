@@ -18,7 +18,7 @@ def _target_date() -> str:
     return datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
 
 
-def main() -> int:
+def main(*, publish_read_models: bool = True) -> int:
     target_date = _target_date()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
     plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
@@ -54,7 +54,7 @@ def main() -> int:
         f"[forecast_job] persisted target_date={target_date} immutable_snapshot_rows={snapshot_count}",
         flush=True,
     )
-    if dashboard_snapshot_prefix():
+    if publish_read_models and dashboard_snapshot_prefix():
         snapshot_result = write_dashboard_snapshots(
             Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))
         )

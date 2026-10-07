@@ -142,6 +142,9 @@ for ($attempt = 0; $attempt -lt 12; $attempt++) {
     if ($null -ne $proof) { break }
     Start-Sleep -Seconds 5
 }
+if ($SeparatedRuntime -and ($null -eq $proof -or $proof['producer_source_revision'] -ne $ExpectedCommit)) {
+    throw 'Published calculation source differs from the release; control rollout is blocked.'
+}
 & (Join-Path $PSScriptRoot 'assert_control_probe_evidence.ps1') -Proof $proof
 $evidenceDirectory = Join-Path $repoRoot 'artifacts/deployment_state'
 New-Item -ItemType Directory -Force -Path $evidenceDirectory | Out-Null
