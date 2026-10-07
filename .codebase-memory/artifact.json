@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "fd022e7a94abc40d8190b639722d9f5471042d07",
-    "indexed_at": "2026-10-07T08:21:49Z",
+    "commit": "c57acd2b1b16f16f3468377c9132cdb1cf9ec160",
+    "indexed_at": "2026-10-07T08:48:37Z",
     "project": "C-VSC-SolerControler",
-    "nodes": 7595,
-    "edges": 24996,
+    "nodes": 7596,
+    "edges": 25043,
     "original_size": 18415616,
-    "compressed_size": 3555934,
+    "compressed_size": 3565205,
     "compression_level": 9
 }
