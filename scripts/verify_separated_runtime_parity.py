@@ -53,9 +53,26 @@ class ReplayDevice:
         self.events.append(("mode", profile, dynamic_forced_profile))
 
 
-def verify(backup: Path, baseline: str) -> dict[str, Any]:
+def verify_calculation_source(baseline: str, approved_patch_sha256: str = "") -> dict[str, Any]:
+    if approved_patch_sha256 and not re.fullmatch(r"[0-9a-f]{64}", approved_patch_sha256):
+        raise ValueError("approved calculation patch must be a SHA-256")
+    patch = subprocess.check_output(
+        ["git", "diff", "--no-ext-diff", "--no-color", "--binary", baseline, "--",
+         "app/energy_model", "app/forecasting", "app/energy_plan/workflow.py",
+         "app/operations/forecast_persistence.py", "app/operations/forecast_recovery.py"],
+        text=True, encoding="utf-8",
+    )
+    digest = hashlib.sha256(patch.encode("utf-8")).hexdigest() if patch else ""
+    if digest != approved_patch_sha256:
+        raise AssertionError("canonical calculation/publication source differs from the explicitly approved patch")
+    return {"canonical_calculation_source_unchanged": not bool(patch),
+            "approved_calculation_patch_sha256": digest}
+
+
+def verify(backup: Path, baseline: str, *, approved_calculation_patch_sha256: str = "") -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{40}", baseline):
         raise ValueError("baseline must be a full Git commit SHA")
+    calculation_evidence = verify_calculation_source(baseline, approved_calculation_patch_sha256)
     source = subprocess.check_output(["git", "show", baseline + ":app/runtime/cloud_job.py"], text=True, encoding="utf-8")
     old: Any = ModuleType("_frozen_cloud_job")
     sys.modules[old.__name__] = old
@@ -113,13 +130,8 @@ def verify(backup: Path, baseline: str) -> dict[str, Any]:
             os.environ["KP_NET_MODE_ONLY_23_03_07"] = original_env
     if len(rows) < 4:
         raise ValueError("four production decision archives are required")
-    unchanged = subprocess.check_output(["git", "diff", baseline, "--", "app/energy_model", "app/forecasting",
-                                         "app/energy_plan/workflow.py", "app/operations/forecast_persistence.py",
-                                         "app/operations/forecast_recovery.py"], text=True)
-    if unchanged:
-        raise AssertionError("canonical calculation/publication source changed")
     return {"status": "passed", "baseline": baseline, "plans": rows,
-            "canonical_calculation_source_unchanged": True,
+            **calculation_evidence,
             "scope": "saved production decisions, byte/value preservation and simulated device traces; not physical-device proof"}
 
 
@@ -128,8 +140,9 @@ def main() -> int:
     parser.add_argument("--backup", type=Path, required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--approved-calculation-patch-sha256", default="")
     args = parser.parse_args()
-    result = verify(args.backup, args.baseline)
+    result = verify(args.backup, args.baseline, approved_calculation_patch_sha256=args.approved_calculation_patch_sha256)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Parity passed: {len(result['plans'])} production plans; original bytes, values, control traces and timing match")

@@ -41,6 +41,18 @@
 
 ## 履歴の扱い
 
+### PV残差の欠損と実測0（2026-10-07障害）
+
+`app/forecasting/correction_model.py::_physical_vector_residual_correction` と
+`app/forecasting/correction_calculations.py::actual_hourly_totals_by_day` の
+`HISTORICAL_FAILURE_LOCK` は、欠損・NULL・非有限・負のPVを実測0として学習しない契約である。
+10/6の保存入力では139件中111件が欠損で、物理予想7.6392 kWhが3.5021 kWhへ下方補正された。
+有効な実績との組だけでは8.1773 kWhとなった。この差を天気の誤差として扱わない。
+無効な計測区間を含む時間はPVキーを除外し、後続の有効区間で復活させない。
+日別の比率学習にもこの欠損を0として戻さない。実測0と有効な負残差は保持する。
+`tests/test_physical_pv_residual_quality.py` が欠損、集計順序、実測0、負残差、履歴期間差の回帰を固定する。
+保存済みの過去予想は当時の原本として保持し、この修正で後日の計算値へ置き換えない。
+
 ### 予想履歴と表示の共通契約（2026-10-06障害）
 
 保護対象は `app/operations/forecast_recovery.py::recover_missing_forecast_snapshots`、

@@ -55,7 +55,13 @@ def actual_hourly_totals_by_day(
         if day >= target_date:
             continue
         bucket = by_day.setdefault(day, {}).setdefault(observed_at.hour, {"pv": 0.0, "load": 0.0})
-        bucket["pv"] += max(0.0, to_float(row.get("pv")) or 0.0)
+        # HISTORICAL_FAILURE_LOCK: An invalid interval invalidates that hour's PV.
+        # Removing the key preserves unavailability, including when later intervals are valid.
+        pv = to_float(row.get("pv"))
+        if pv is None or pv < 0:
+            bucket.pop("pv", None)
+        elif "pv" in bucket:
+            bucket["pv"] += pv
         bucket["load"] += max(0.0, to_float(row.get("load")) or 0.0)
     return by_day
 
@@ -66,6 +72,9 @@ def daily_pairs_for_ratio(
 ) -> list[tuple[str, float, float]]:
     pairs: list[tuple[str, float, float]] = []
     for day in sorted(set(forecast_history) & set(actual_history)):
+        # A missing hourly value must not become a zero in the daily training pair either.
+        if any(to_float(values.get(key)) is None for values in actual_history[day].values()):
+            continue
         forecast_total = sum(max(0.0, values.get(key, 0.0)) for values in forecast_history[day].values())
         actual_total = sum(max(0.0, values.get(key, 0.0)) for values in actual_history[day].values())
         if forecast_total > 0:

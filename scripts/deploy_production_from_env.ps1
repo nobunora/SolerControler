@@ -1,6 +1,8 @@
 param(
     [switch]$ValidateOnly,
     [switch]$SeparatedRuntime,
+    [string]$ApprovedCalculationPatchSha256 = '',
+    [switch]$AllowOutOfWindowLiveProbe,
     [switch]$SkipPreRelease,
     [switch]$SkipJobBuild,
     [switch]$SkipJobDeploy,
@@ -112,8 +114,12 @@ if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -e
         throw 'Separated runtime requires auto/full scope; an explicit non-control scope must never be expanded to a control release.'
     }
     if (-not $StatePath) { throw 'Separated runtime release requires an explicit StatePath.' }
-    & (Join-Path $PSScriptRoot 'deploy_separated_runtime.ps1') -StatePath $StatePath -Resume:$Resume
+    & (Join-Path $PSScriptRoot 'deploy_separated_runtime.ps1') -StatePath $StatePath -Resume:$Resume `
+        -ApprovedCalculationPatchSha256 $ApprovedCalculationPatchSha256 -AllowOutOfWindowLiveProbe:$AllowOutOfWindowLiveProbe
     return
+}
+if ($ApprovedCalculationPatchSha256 -or $AllowOutOfWindowLiveProbe) {
+    throw 'Explicit calculation approval and one-shot probe override require the separated runtime layout.'
 }
 
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))

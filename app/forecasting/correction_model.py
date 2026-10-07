@@ -56,6 +56,7 @@ def _physical_vector_residual_correction(
     target = {to_int(item.get("hour")): item for item in hourly_weather if isinstance(item, dict) and to_int(item.get("hour")) is not None}
     spread = max(0.01, env_float("PHYSICAL_PV_VECTOR_RESIDUAL_SPREAD_KWH", default=0.6))
     corrected, applied = dict(hourly_pv), []
+    excluded_actual_samples = 0
     for hour, value in hourly_pv.items():
         weather = target.get(hour, {})
         shortwave = to_float(weather.get("shortwave_radiation_w_m2")) or 0.0
@@ -68,7 +69,13 @@ def _physical_vector_residual_correction(
             if prior_pv <= 0 or prior_sw <= 0 or shortwave <= 0 or _weather_class(prior.get("weather_code")) != cls:
                 continue
             if 0.7 * shortwave <= prior_sw <= 1.3 * shortwave:
-                residuals.append((to_float(actual.get("pv")) or 0.0) - prior_pv)
+                # HISTORICAL_FAILURE_LOCK: Missing telemetry is not measured zero.
+                # Keep real zero and valid negative residuals; never restore an or-0 fallback.
+                actual_pv = to_float(actual.get("pv"))
+                if actual_pv is None or actual_pv < 0:
+                    excluded_actual_samples += 1
+                    continue
+                residuals.append(actual_pv - prior_pv)
         if not residuals:
             continue
         center = sorted(residuals)[len(residuals) // 2]
@@ -76,7 +83,8 @@ def _physical_vector_residual_correction(
         weight = (len(residuals) / (len(residuals) + 2.0)) * (spread ** 2 / (spread ** 2 + variance))
         corrected[hour] = max(0.0, value + weight * center)
         applied.append({"hour": hour, "count": len(residuals), "weight": round(weight, 4), "residual_kwh": round(center, 4)})
-    return corrected, {"enabled": True, "spread_kwh": spread, "applied": applied}
+    return corrected, {"enabled": True, "spread_kwh": spread, "applied": applied,
+                       "excluded_actual_samples": excluded_actual_samples}
 
 
 def _temperature_features_for_day(

@@ -49,6 +49,17 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 旧imageの削除は、このwrapperの完了だけで許可しない。実データ一致、画面確認、
 現行imageのOCI保存・SHA検査、全Job/service/復帰revisionの参照確認を別途要求する。
 
+移行完了後の承認済み計算修正では、`-ApprovedCalculationPatchSha256` にレビュー・テスト済みの
+canonical計算差分のSHA-256を明示する。対象はparity検査が従来から保護している計算・公開ソース。
+未指定なら従来どおり差分を拒否し、指定時もその正確な差分以外を拒否する。
+保存原本の一致・旧監視との操作/時刻トレース検査は引き続き必須。stateに差分ハッシュを保存し、
+Resumeでも同じ承認値を要求する。検証済みコミットへの固定と通常の本番ゲートは省略しない。
+今回のPV欠損修正を、移行時の計算一致検査の恒久的な無効化として扱わない。
+
+通常の制御反映は07:15〜22:29 JSTに行う。時間外の明示承認された一回限りの反映では
+既存の `-AllowOutOfWindowLiveProbe` を正式入口から渡し、stateへ記録できる。
+並行Jobの拒否、実機mode-only往復、60秒保持、元設定のread-back、03/07の時刻所有権は維持する。
+
 最初は必ず高レベルの公式ラッパーを使用します。
 
 ```powershell
