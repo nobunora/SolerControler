@@ -165,7 +165,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
         # suppress every subsequent mutation, including automatic restoration.
         mutated = True
         forced_readback, changed, _ = _apply_and_verify(client=client, current=current, value_maps=maps,
-                                                       profile=forced, required_readback_fields=("batteryOperatingMode",))
+                                                       profile=forced, required_readback_fields=tuple(sorted(allowed_changes)))
         _assert_preserved_fields(baseline=current, observed=forced_readback,
                                 allowed_changes=allowed_changes, phase="probe forced")
         summary.update({"forced_readback_verified": True, "forced_changed_fields": changed,
