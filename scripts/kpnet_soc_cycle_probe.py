@@ -80,6 +80,10 @@ def run_soc_cycle_probe() -> dict[str, object]:
     unknown = False
     standby_verified = False
     phase = "initial_read"
+    temporary_window = os.getenv("SOC_CYCLE_PROBE_TEMPORARY_WINDOW") == "true"
+    allowed_changes = {"batteryOperatingMode"}
+    if temporary_window:
+        allowed_changes.update({"chargeStartTimeH", "chargeStartTimeM", "chargeEndTimeH", "chargeEndTimeM"})
 
     def read_soc() -> float | None:
         # Use the deployed direct/semantic parsers and a bounded read request;
@@ -119,7 +123,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
         stopped, changed, _ = _apply_and_verify(client=client, current=observed, value_maps=maps,
                                                profile=stop, require_change=False,
                                                required_readback_fields=("batteryOperatingMode",))
-        _assert_preserved_fields(baseline=current, observed=stopped, allowed_changes={"batteryOperatingMode"}, phase="probe stop")
+        _assert_preserved_fields(baseline=current, observed=stopped, allowed_changes=allowed_changes, phase="probe stop")
         if any(field != "batteryOperatingMode" for field in changed):
             raise RuntimeError("probe stop changed unrelated settings")
         standby_verified = True
@@ -131,6 +135,8 @@ def run_soc_cycle_probe() -> dict[str, object]:
         client.open_settings_page()
         current = client.read_current_settings()
         restore_profile = profile_from_current_settings(current)
+        summary["initial_charge_window"] = {field: str(current[field]) for field in
+                                            ("chargeStartTimeH", "chargeStartTimeM", "chargeEndTimeH", "chargeEndTimeM")}
         maps = _forced_probe_candidate_maps(client)
         forced = make_forced_probe_profile(current_profile=restore_profile, value_maps=maps)
         if str(current["batteryOperatingMode"]) == forced.battery_operating_mode:
@@ -144,6 +150,14 @@ def run_soc_cycle_probe() -> dict[str, object]:
         target = baseline + 1
         summary.update({"initial_soc_percent": baseline, "target_soc_percent": target})
         emit_sample(baseline)
+        if temporary_window:
+            # Explicit diagnostic-only exception: the mode-only production owner
+            # and fixed 60-second probe stay unchanged. A daylight physical cycle
+            # needs an active device charging window, which is restored afterward.
+            window_now = datetime.now(ZoneInfo("Asia/Tokyo"))
+            forced = replace(forced, charge_start_h=str(window_now.hour), charge_start_m="0",
+                             charge_end_h=str(window_now.hour + 1), charge_end_m="0")
+            summary["temporary_charge_window"] = {"start_hour": window_now.hour, "end_hour": window_now.hour + 1}
         if time.monotonic() >= cutoff - 120:
             raise RuntimeError("not enough bounded probe budget to begin charging")
         phase = "forced_write"
@@ -153,7 +167,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
         forced_readback, changed, _ = _apply_and_verify(client=client, current=current, value_maps=maps,
                                                        profile=forced, required_readback_fields=("batteryOperatingMode",))
         _assert_preserved_fields(baseline=current, observed=forced_readback,
-                                allowed_changes={"batteryOperatingMode"}, phase="probe forced")
+                                allowed_changes=allowed_changes, phase="probe forced")
         summary.update({"forced_readback_verified": True, "forced_changed_fields": changed,
                         "forced_observed_mode": str(forced_readback["batteryOperatingMode"])})
         phase = "soc_monitor"

@@ -28,6 +28,7 @@ def harness(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(probe, "_validate_current_plan", lambda plan, now, require_evidence: plan)
     current = {field: "50" for field in probe.ROUNDTRIP_SETTING_FIELDS}
     current["batteryOperatingMode"] = "1"
+    current.update({"chargeStartTimeH": "23", "chargeStartTimeM": "0", "chargeEndTimeH": "7", "chargeEndTimeM": "0"})
     reads = [34.0, 34.0, 35.0]
     writes = []
 
@@ -62,6 +63,12 @@ def harness(monkeypatch: pytest.MonkeyPatch):
         writes.append(mode)
         changed = [] if mode == current["batteryOperatingMode"] else ["batteryOperatingMode"]
         current["batteryOperatingMode"] = mode
+        for field, attr in (("chargeStartTimeH", "charge_start_h"), ("chargeStartTimeM", "charge_start_m"),
+                            ("chargeEndTimeH", "charge_end_h"), ("chargeEndTimeM", "charge_end_m")):
+            value = getattr(profile, attr)
+            if current[field] != value:
+                current[field] = value
+                changed.append(field)
         return dict(current), changed, {"batteryOperatingMode": mode}
 
     monkeypatch.setattr(probe, "_apply_and_verify", apply)
@@ -143,3 +150,25 @@ def test_unauthorized_probe_is_rejected_before_any_network(harness, monkeypatch)
     monkeypatch.delenv("SOC_CYCLE_PROBE_AUTHORIZED")
     with pytest.raises(RuntimeError, match="one-shot authorization"):
         probe.run_soc_cycle_probe()
+
+
+def test_temporary_daytime_charge_window_is_explicit_and_exactly_restored(harness, monkeypatch):
+    monkeypatch.setenv("SOC_CYCLE_PROBE_TEMPORARY_WINDOW", "true")
+    _, writes, current, _ = harness
+    summary = probe.run_soc_cycle_probe()
+    assert summary["status"] == "passed"
+    assert summary["temporary_charge_window"] == {"start_hour": 19, "end_hour": 20}
+    assert set(summary["forced_changed_fields"]) == {"batteryOperatingMode", "chargeStartTimeH", "chargeEndTimeH"}
+    assert current["chargeStartTimeH"] == "23" and current["chargeEndTimeH"] == "7"
+    assert writes == ["3", "5", "1"]
+    assert summary["restore_verified"] is True
+
+
+def test_real_zero_soc_is_valid_and_stops_after_one_point(harness):
+    reads, writes, _, _ = harness
+    reads[:] = [0, 0, 1]
+    summary = probe.run_soc_cycle_probe()
+    assert summary["status"] == "passed"
+    assert summary["initial_soc_percent"] == 0
+    assert summary["target_soc_percent"] == 1
+    assert writes == ["3", "5", "1"]

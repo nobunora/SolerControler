@@ -8,6 +8,7 @@ param(
     [double]$SettingsRoundTripTargetSoc = 50,
     [switch]$TestExecution,
     [switch]$SocCycleProbe,
+    [switch]$SocCycleTemporaryWindow,
     [string]$PreflightStatePath = '',
     [string]$SocCycleEvidenceDirectory = 'artifacts/deployment_state/soc-cycle'
 )
@@ -23,6 +24,10 @@ $region = Get-RequiredProductionEnv 'GCP_REGION'
 $jobName = "solar-battery-$Slot"
 if ($Slot -eq 'forecast') { $jobName = 'solar-forecast-daily' }
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
+
+if ($SocCycleTemporaryWindow -and -not $SocCycleProbe) {
+    throw 'A temporary device charge window is only permitted for the explicit SOC cycle probe.'
+}
 
 if ($SocCycleProbe) {
     if ($Slot -ne 'settings-roundtrip' -or -not $TestExecution -or $DryRun -or $PlanRefreshOnly) {
@@ -76,7 +81,9 @@ if ($SocCycleProbe) {
     # gcloud.cmd consumes caret delimiters on Windows. Use the documented
     # JSON flags-file path so both Python arguments survive without shell escaping.
     $flagsPath = Join-Path $SocCycleEvidenceDirectory 'execution-flags.private.json'
-    @{ '--args' = @('-c', $code); '--update-env-vars' = @{ DRY_RUN = 'false'; SOC_CYCLE_PROBE_AUTHORIZED = 'true' } } |
+    $probeEnv = @{ DRY_RUN = 'false'; SOC_CYCLE_PROBE_AUTHORIZED = 'true'; SOC_CYCLE_PROBE_TEMPORARY_WINDOW = 'false' }
+    if ($SocCycleTemporaryWindow) { $probeEnv['SOC_CYCLE_PROBE_TEMPORARY_WINDOW'] = 'true' }
+    @{ '--args' = @('-c', $code); '--update-env-vars' = $probeEnv } |
         ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $flagsPath -Encoding utf8
     $executeArgs = @('run', 'jobs', 'execute', $jobName, '--project', $projectId, '--region', $region,
                     '--wait', '--format=json', '--flags-file', $flagsPath)
@@ -89,7 +96,8 @@ if ($SocCycleProbe) {
         $condition = $execution.status.conditions | Where-Object { $_.type -eq $type } | Select-Object -First 1
         if (-not $condition -or [string]$condition.status -ne 'True') { throw "SOC cycle condition failed: $type" }
     }
-    if ([int]$execution.status.failedCount -gt 0) { throw 'SOC cycle execution has failed tasks.' }
+    $failedCount = if ($execution.status.PSObject.Properties.Name -contains 'failedCount') { [int]$execution.status.failedCount } else { 0 }
+    if ($failedCount -gt 0) { throw 'SOC cycle execution has failed tasks.' }
     $filter = "resource.type=cloud_run_job AND resource.labels.job_name=$jobName AND jsonPayload.message=soc-cycle-probe"
     $logText = (& $gcloud logging read $filter --project $projectId --limit 20 --freshness 1h --format json) -join "`n"
     if ($LASTEXITCODE -ne 0) { throw 'SOC cycle audit retrieval failed.' }
