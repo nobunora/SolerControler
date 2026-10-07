@@ -182,7 +182,10 @@ class Pruner:
                 retired += 1
             if apply and retired:
                 refs, _, _ = self.references()
-        repos = self.pages(f"https://artifactregistry.googleapis.com/v1/projects/{self.project}/locations/-/repositories", "repositories", {"pageSize": 1000})
+        # Reuse the complete-backup inventory: the REST repository endpoint
+        # rejects locations/-; gcloud enumerates the project's locations.
+        repos: list[dict[str, Any]] = json.loads(self.cloud([
+            "artifacts", "repositories", "list", "--project", self.project, "--format=json"]))
         images = []
         for repo in repos:
             if repo.get("format") == "DOCKER":

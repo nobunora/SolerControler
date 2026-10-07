@@ -55,8 +55,13 @@ def test_currently_referenced_image_and_rollback_are_never_delete_candidates(mod
     active, rollback, retired = prefix + "a" * 64, prefix + "b" * 64, prefix + "c" * 64
     rows = [{"uri": uri, "uploadTime": time} for uri, time in [(active, "1"), (rollback, "3"), (retired, "0")]]
     monkeypatch.setattr(pruner, "references", lambda: ({active}, [], []))
-    monkeypatch.setattr(pruner, "pages", lambda url, key, params: [{"name": "repo", "format": "DOCKER"}] if key == "repositories" else rows)
-    monkeypatch.setattr(pruner, "cloud", lambda *args: pytest.fail("read-only review must not delete"))
+    monkeypatch.setattr(pruner, "pages", lambda url, key, params: rows)
+
+    def cloud(args):
+        assert args[:3] == ["artifacts", "repositories", "list"], "read-only review must not delete"
+        return json.dumps([{"name": "repo", "format": "DOCKER"}])
+
+    monkeypatch.setattr(pruner, "cloud", cloud)
     verified = []
     monkeypatch.setattr(module, "verify_oci", lambda root, digest, seen=None: verified.append(digest))
     result = pruner.run()
