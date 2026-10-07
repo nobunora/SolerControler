@@ -60,9 +60,9 @@ def run_soc_cycle_probe() -> dict[str, object]:
     cfg = KpNetConfig.from_env()
     if cfg.dry_run:
         raise RuntimeError("SOC cycle acceptance requires a live execution")
-    plan = _validate_current_plan(FirestorePlanStore().fetch(now.date().isoformat()), now, require_evidence=True)
     started = time.monotonic()
     cutoff = started + MAX_MONITOR_SECONDS
+    plan = _validate_current_plan(FirestorePlanStore().fetch(now.date().isoformat()), now, require_evidence=True)
     client = KpNetClient(cfg, deadline_monotonic=cutoff + RESTORE_RESERVE_SECONDS)
     summary: dict[str, object] = {
         "message": "soc-cycle-probe", "status": "failed", "scope": "daytime_physical_cycle",
