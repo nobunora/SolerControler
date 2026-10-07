@@ -1,0 +1,4 @@
+# Production display uses Firestore and precomputed GCS snapshots.
+-c constraints-runtime.txt
+google-cloud-firestore
+google-cloud-storage

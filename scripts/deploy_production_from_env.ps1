@@ -1,5 +1,6 @@
 param(
     [switch]$ValidateOnly,
+    [switch]$SeparatedRuntime,
     [switch]$SkipPreRelease,
     [switch]$SkipJobBuild,
     [switch]$SkipJobDeploy,
@@ -103,6 +104,12 @@ if ($ValidateOnly) {
     & (Join-Path $PSScriptRoot 'check_production_env.ps1') -CheckCloud
     if ($LASTEXITCODE -ne 0) { throw 'Production environment validation failed.' }
     Write-Host 'Production deployment configuration is valid. No deployment was performed.'
+    return
+}
+
+if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated') {
+    if (-not $StatePath) { throw 'Separated runtime release requires an explicit StatePath.' }
+    & (Join-Path $PSScriptRoot 'deploy_separated_runtime.ps1') -StatePath $StatePath -Resume:$Resume
     return
 }
 

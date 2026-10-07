@@ -1,0 +1,9 @@
+# Calculation, persistence, and the existing scheduled Drive data backup.
+-c constraints-runtime.txt
+requests
+beautifulsoup4
+numpy
+scikit-learn
+google-cloud-firestore
+google-cloud-storage
+google-api-python-client

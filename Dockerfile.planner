@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 KP_CSV_PLOT_ENABLED=false
+COPY requirements-planner.txt constraints-runtime.txt ./
+# Only Drive and Sheets are used by the retained backup/export adapters.
+# Other Google API discovery documents account for most of that SDK's bytes.
+RUN pip install --no-cache-dir -r requirements-planner.txt && python -c "import pathlib, googleapiclient; p=pathlib.Path(googleapiclient.__file__).parent/'discovery_cache'/'documents'; [x.unlink() for x in p.glob('*.json') if x.name not in {'drive.v3.json','sheets.v4.json'}]"
+COPY app ./app
+COPY config ./config
+COPY scripts ./scripts
+COPY main.py kpnet_main.py energy_model_main.py db_pipeline_main.py forecast_job_main.py planner_job_main.py sheets_export_main.py ./
+RUN python -c "import planner_job_main; from google.auth.credentials import AnonymousCredentials; from googleapiclient.discovery import build; build('drive','v3',credentials=AnonymousCredentials(),static_discovery=True)"
+ENTRYPOINT ["python", "planner_job_main.py"]

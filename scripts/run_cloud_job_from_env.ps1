@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('23', '03', '07', 'settings-roundtrip')]
+    [ValidateSet('23', '03', '07', 'settings-roundtrip', 'forecast')]
     [string]$Slot,
     [switch]$DryRun,
     [switch]$PlanRefreshOnly,
@@ -18,6 +18,7 @@ Import-ProductionEnv
 $projectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
 $region = Get-RequiredProductionEnv 'GCP_REGION'
 $jobName = "solar-battery-$Slot"
+if ($Slot -eq 'forecast') { $jobName = 'solar-forecast-daily' }
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
 
 function Assert-LatestDryRunExecution {
@@ -78,6 +79,6 @@ if ($Slot -eq 'settings-roundtrip') {
 }
 & $gcloud @arguments
 if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job failed: $jobName" }
-if ($DryRun) {
+if ($DryRun -or $Slot -eq 'forecast') {
     Assert-LatestDryRunExecution -JobName $jobName -ProjectId $projectId -Region $region
 }

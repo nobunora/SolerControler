@@ -135,7 +135,7 @@ def _read_plan_meta(path: Path) -> dict[str, Any]:
     raw_bytes = path.read_bytes()
     raw = json.loads(raw_bytes)
     result = raw.get("result", {})
-    from app.energy_plan.night_plan import build_night_plan_provenance
+    from app.domain.plan_provenance import build_night_plan_provenance
     from app.runtime.night_soc_controller import make_plan_snapshot
     try:
         snapshot = make_plan_snapshot(raw)
@@ -230,7 +230,7 @@ def _emit_03_terminal_audit(
 # immediate SOC check, then standby=5 on target/failure before 06:55; a forced
 # read-back mismatch gets one standby attempt and preserves the original error.
 # Guarded by test_03_mismatch_is_not_reapplied_and_does_not_gate_07.
-def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | None = None, device_port: MonitorDevicePort | None = None, status_port: object | None = None) -> None:
+def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | None = None, device_port: MonitorDevicePort | None = None, status_port: object | None = None, charge_rate_info: dict[str, Any] | None = None) -> None:
     del status_port
     clock = clock or _SystemMonitorClock(); device = device_port or _RunnerMonitorDevicePort()
     zone = ZoneInfo("Asia/Tokyo")
@@ -311,7 +311,9 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
     # and test_03_three_consecutive_monitor_soc_failures_switch_to_standby.
     consecutive_soc_failures = 0
     try:
-        rate_info = estimate_forced_charge_rate_percent_per_hour(paths)
+        # Separated runtime passes the same CSV-derived estimator result from
+        # its calculation owner. The legacy default and SOC/time guards stay intact.
+        rate_info = charge_rate_info if charge_rate_info is not None else estimate_forced_charge_rate_percent_per_hour(paths)
         estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
         while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
             reading = device.read_soc(paths); latest = reading.value_percent
