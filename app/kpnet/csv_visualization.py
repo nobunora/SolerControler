@@ -5,10 +5,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 from app.kpnet.rules import _now_in_timezone
 
 
@@ -70,6 +66,12 @@ def _parse_csv_points(csv_path: Path) -> tuple[list[datetime], list[float], list
 
 
 def _plot_csvs(csv_paths: list[Path], output_path: Path) -> dict[str, Any]:
+    # The mode-only controller imports CSV month helpers but never plots.
+    # Keep plotting dependencies inside the actual plotting boundary.
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     all_points: list[tuple[datetime, float, float]] = []
     for path in csv_paths:
         dts, gens, socs = _parse_csv_points(path)

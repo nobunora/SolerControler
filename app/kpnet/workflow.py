@@ -9,8 +9,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
 from app.kpnet import build_settings_intent
 from app.kpnet.rules import (
     _in_time_window as _in_time_window,  # noqa: F401
@@ -44,9 +42,6 @@ from app.configuration.environment import load_dotenv_if_present
 from app.runtime.night_soc_operational_contract import SLOT23_PRESERVED_FIELDS
 
 __all__ = ["KpNetConfig", "run_kpnet_workflow", "main"]
-
-matplotlib.use("Agg")
-
 
 def _setup_logging() -> None:
     logging.basicConfig(
@@ -94,7 +89,9 @@ def _run_csv_phase(
         csv_paths.append(csv_path)
         summary["csv_downloads"].append({"month": month, "path": str(csv_path)})
 
-    summary["plot"] = _plot_csvs(csv_paths, plot_path)
+    summary["plot"] = (_plot_csvs(csv_paths, plot_path)
+                       if os.getenv("KP_CSV_PLOT_ENABLED", "true").lower() in {"true", "1", "yes"}
+                       else {"status": "disabled"})
     LOGGER.info("Plot generated: %s", plot_path)
 
 

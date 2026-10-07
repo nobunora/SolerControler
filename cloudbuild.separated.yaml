@@ -1,0 +1,14 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: planner
+    args: ['build', '-t', '${_PLANNER_IMAGE}', '-f', 'Dockerfile.planner', '.']
+  - name: gcr.io/cloud-builders/docker
+    id: control
+    waitFor: ['-']
+    args: ['build', '-t', '${_CONTROL_IMAGE}', '-f', 'Dockerfile.control', '.']
+  - name: gcr.io/cloud-builders/docker
+    id: web
+    waitFor: ['-']
+    args: ['build', '-t', '${_WEB_IMAGE}', '-f', 'Dockerfile.web', '.']
+images: ['${_PLANNER_IMAGE}', '${_CONTROL_IMAGE}', '${_WEB_IMAGE}']
+timeout: 1200s

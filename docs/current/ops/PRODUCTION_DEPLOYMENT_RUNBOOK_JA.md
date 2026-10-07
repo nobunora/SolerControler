@@ -32,6 +32,22 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 
 ## 2. 通常デプロイ
 
+### 役割分離版への移行と継続運用
+
+2026-10-07に承認された役割分離版は、計算・制御・画面を用途別にbuildする。
+既存wrapperでは単一runnerを再配布してしまうため、正式入口に`-SeparatedRuntime`を追加した。
+`scripts/deploy_production_from_env.ps1 -SeparatedRuntime -StatePath artifacts/deployment_state/production-<開始時刻>.json`を使う。
+移行後はGit管理外`.env`の`SOLAR_RUNTIME_LAYOUT=separated`で通常入口もこの経路に固定する。
+`SOLAR_RECOVERY_BACKUP_PATH`には保存済み完全バックアップのローカルパスを指定する。
+ゲート、保存済み原本との比較、運用設定backup、3役割build、計算Job更新・実行、
+同じ制御imageでのforced/green各SET/read-backと60秒保持・元モード復元、制御Job更新、
+画面更新、公式07 DryRun、Drive backup、digest/ready revision検査の順に記録する。
+計算のCSV/model成功証跡は保存計画に含め、制御probeが同じ原本の鮮度・日付・SHAを検証する。
+制御側ではCSV/model計算を繰り返さない。機器試験は既存mode-only往復処理を使い、SOC設定は変更しない。
+`-Resume`で省略できるのは`success`工程だけ。制御工程`running`は復元・実行終端の調査前に再実行しない。
+旧imageの削除は、このwrapperの完了だけで許可しない。実データ一致、画面確認、
+現行imageのOCI保存・SHA検査、全Job/service/復帰revisionの参照確認を別途要求する。
+
 最初は必ず高レベルの公式ラッパーを使用します。
 
 ```powershell

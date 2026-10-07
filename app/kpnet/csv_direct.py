@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import json
 import logging
 from datetime import datetime
@@ -120,7 +122,9 @@ def run_csv_workflow() -> int:
             csv_paths.append(path)
             summary["csv_downloads"].append({"month": month, "path": str(path)})
 
-        summary["plot"] = _plot_csvs(csv_paths, plot_path)
+        summary["plot"] = (_plot_csvs(csv_paths, plot_path)
+                           if os.getenv("KP_CSV_PLOT_ENABLED", "true").lower() in {"true", "1", "yes"}
+                           else {"status": "disabled"})
         return_code = 0
     except Exception as exc:
         LOGGER.exception("KP-NET direct CSV workflow failed")

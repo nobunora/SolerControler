@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ExpectedCommit,
     [switch]$SkipBuild,
+    [switch]$SeparatedRuntime,
     [switch]$AllowOutOfWindowLiveProbe,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
@@ -28,6 +29,7 @@ $projectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
 $region = Get-RequiredProductionEnv 'GCP_REGION'
 $repository = Get-RequiredProductionEnv 'GCP_RUNNER_REPOSITORY'
 $imageName = Get-RequiredProductionEnv 'GCP_RUNNER_IMAGE_NAME'
+if ($SeparatedRuntime) { $imageName += '-control' }
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
 
 $actualCommit = (git rev-parse HEAD).Trim()
@@ -69,6 +71,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $imageTag = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:git-$actualCommit"
 if (-not $SkipBuild) {
+    if ($SeparatedRuntime) { throw 'Separated runtime images must be built together by the production wrapper.' }
     $ignoreFile = Join-Path $repoRoot '.gcloudignore-runner'
     & $gcloud builds submit `
         --config (Join-Path $repoRoot 'cloudbuild.runner.yaml') `
@@ -107,21 +110,30 @@ function Get-ControlJobImage {
 
 $jobs = @($Job23Name, $Job03Name, $Job07Name)
 $previousImages = @{}
+$previousEntrypoints = @{}
 foreach ($jobName in $jobs) {
     & $gcloud run jobs describe $jobName --region $region --project $projectId | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Production control Job does not already exist: $jobName"
     }
     $previousImages[$jobName] = Get-ControlJobImage -JobName $jobName
+    if ($SeparatedRuntime) {
+        $jobJson = ((& $gcloud run jobs describe $jobName --region $region --project $projectId --format json) -join "`n") | ConvertFrom-Json -AsHashtable
+        if ($LASTEXITCODE -ne 0) { throw 'Could not preserve the previous control entrypoint.' }
+        $previousEntrypoints[$jobName] = $jobJson.spec.template.spec.template.spec.containers[0]
+    }
 }
 
 # Prove the exact candidate image on the dedicated live-probe Job BEFORE any
 # production 23/03/07 Job image is changed. A failed probe therefore leaves all
 # scheduled production control Jobs untouched.
 $probeError = $null
+$roleProbeArgs = @{}
+if ($SeparatedRuntime) { $roleProbeArgs.SeparatedRuntime = $true }
 try {
     if ($AllowOutOfWindowLiveProbe) {
         & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
+            @roleProbeArgs `
             -ExpectedCommit $actualCommit `
             -ImmutableImage $immutableImage `
             -ProbeJobName $ProbeJobName `
@@ -131,6 +143,7 @@ try {
             -Job07Name $Job07Name
     } else {
         & (Join-Path $PSScriptRoot 'run_control_postdeploy_live_probe.ps1') `
+            @roleProbeArgs `
             -ExpectedCommit $actualCommit `
             -ImmutableImage $immutableImage `
             -ProbeJobName $ProbeJobName `
@@ -155,7 +168,9 @@ $updatedJobs = @()
 $updateError = $null
 try {
     foreach ($jobName in $jobs) {
-        & $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null
+        $entryArgs = @()
+        if ($SeparatedRuntime) { $entryArgs = @('--command', 'python', '--args', 'control_job_main.py') }
+        & $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage @entryArgs | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to update production control Job image: $jobName"
         }
@@ -166,6 +181,12 @@ try {
         if ($observedImage -ne $immutableImage) {
             throw "Production control Job image verification failed for ${jobName}: observed=$observedImage expected=$immutableImage"
         }
+        if ($SeparatedRuntime) {
+            $observedJob = ((& $gcloud run jobs describe $jobName --region $region --project $projectId --format json) -join "`n") | ConvertFrom-Json -AsHashtable
+            $container = $observedJob.spec.template.spec.template.spec.containers[0]
+            if ($LASTEXITCODE -ne 0 -or ($container.command -join ',') -ne 'python' -or
+                ($container.args -join ',') -ne 'control_job_main.py') { throw 'Control role entrypoint verification failed.' }
+        }
     }
 } catch {
     $updateError = $_
@@ -175,7 +196,12 @@ if ($null -ne $updateError) {
     $rollbackFailures = @()
     foreach ($jobName in $updatedJobs) {
         $previousImage = [string]$previousImages[$jobName]
-        & $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage | Out-Null
+        $restoreEntryArgs = @()
+        if ($SeparatedRuntime) {
+            $previous = $previousEntrypoints[$jobName]
+            $restoreEntryArgs = @("--command=$($previous.command -join ',')", "--args=$($previous.args -join ',')")
+        }
+        & $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage @restoreEntryArgs | Out-Null
         if ($LASTEXITCODE -ne 0) {
             $rollbackFailures += $jobName
         }

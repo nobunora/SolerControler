@@ -28,9 +28,11 @@ def test_control_image_only_rollout_is_commit_pinned_image_only_and_live_gated()
 
     update_lines = [line.strip() for line in script.splitlines() if "run jobs update" in line]
     assert update_lines == [
-        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage | Out-Null",
-        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage | Out-Null",
+        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $immutableImage @entryArgs | Out-Null",
+        "& $gcloud run jobs update $jobName --region $region --project $projectId --image $previousImage @restoreEntryArgs | Out-Null",
     ]
+    assert "if ($SeparatedRuntime) { $entryArgs = @('--command', 'python', '--args', 'control_job_main.py') }" in script
+    assert '$restoreEntryArgs = @("--command=$($previous.command -join' in script
 
     assert "07:15 through 22:29 JST" in script
     assert "run_control_postdeploy_live_probe.ps1" in script

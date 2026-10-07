@@ -6,6 +6,7 @@ param(
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip',
     [switch]$AllowOutOfWindowLiveProbe,
     [switch]$RunSlot23StandbyRecovery,
+    [switch]$SeparatedRuntime,
     [string]$Job23Name = 'solar-battery-23',
     [string]$Job03Name = 'solar-battery-03',
     [string]$Job07Name = 'solar-battery-07'
@@ -49,7 +50,7 @@ if ($RunSlot23StandbyRecovery -and -not $AllowOutOfWindowLiveProbe) {
     throw 'Slot-23 standby recovery requires the explicit one-shot out-of-window authorization.'
 }
 $outOfWindowAudit = if ($AllowOutOfWindowLiveProbe) { 'true' } else { 'false' }
-$probeEntrypoint = if ($RunSlot23StandbyRecovery) { 'cloud_job_runner.py' } else { 'postdeploy_probe_main.py' }
+$probeEntrypoint = if ($SeparatedRuntime) { 'control_job_main.py' } elseif ($RunSlot23StandbyRecovery) { 'cloud_job_runner.py' } else { 'postdeploy_probe_main.py' }
 $probeEnvironment = if ($RunSlot23StandbyRecovery) {
     "CLOUD_JOB_SLOT=23,DRY_RUN=false,KP_NET_UNKNOWN_EXIT_ZERO=false,LIVE_PROBE_OUT_OF_WINDOW_AUTHORIZED=$outOfWindowAudit"
 } else {
@@ -148,4 +149,8 @@ $proof | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 -LiteralPath (Joi
 
 Write-Host "LIVE POST-DEPLOY PROBE PASSED for source $ExpectedCommit"
 Write-Host "Out-of-window override supplied: $outOfWindowAudit"
-Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 green SET/readback -> exact snapshot restore/readback.'
+if ($SeparatedRuntime) {
+    Write-Host 'Verified: published canonical CSV/model calculation -> original plan SHA/freshness -> real forced/green SET/readback -> exact restore/readback.'
+} else {
+    Write-Host 'Verified: KP-NET CSV download -> plan generation -> real 03 forced SET/readback -> real 07 green SET/readback -> exact snapshot restore/readback.'
+}

@@ -1,0 +1,9 @@
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY requirements-control.txt constraints-runtime.txt ./
+RUN pip install --no-cache-dir -r requirements-control.txt
+COPY app ./app
+COPY cloud_job_runner.py control_job_main.py ./
+RUN python -c "import control_job_main; from zoneinfo import ZoneInfo; ZoneInfo('Asia/Tokyo')"
+ENTRYPOINT ["python", "control_job_main.py"]

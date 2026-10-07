@@ -1,6 +1,7 @@
 param(
     [ValidateSet('data')][string]$Mode = 'data',
     [switch]$UpdateScheduledJobMemory,
+    [switch]$SeparatedRuntime,
     [string]$ScheduledJobName = 'solar-drive-backup'
 )
 
@@ -27,6 +28,7 @@ $projectId = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
 $region = Get-RequiredProductionEnv 'GCP_REGION'
 $repository = Get-RequiredProductionEnv 'GCP_RUNNER_REPOSITORY'
 $imageName = Get-RequiredProductionEnv 'GCP_RUNNER_IMAGE_NAME'
+if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated') { $imageName += '-planner' }
 $serviceAccount = Get-RequiredProductionEnv 'GCP_RUN_SERVICE_ACCOUNT'
 $firestoreProject = Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID'
 $firestoreDatabase = Get-RequiredProductionEnv 'FIRESTORE_DATABASE_ID'
