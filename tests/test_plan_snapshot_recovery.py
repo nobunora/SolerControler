@@ -4,6 +4,7 @@ import gzip
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -225,6 +226,36 @@ def test_reused_plan_does_not_claim_current_model_revision(monkeypatch, tmp_path
     doc = db.collection('night_plan_decisions').records[result['decision_id']]
     assert doc['source_revision'] is None
     assert doc['recorder_source_revision'] == 'current-revision'
+
+
+def test_planner_publishes_exact_same_original_to_control_and_existing_dashboard(monkeypatch, tmp_path):
+    from app.separated_runtime import planner
+    path = plan_file(tmp_path)
+    body = json.loads(path.read_bytes())
+    body['result'].update(required_night_charge_kwh=7.2, effective_capacity_kwh=10)
+    path.write_text(json.dumps(body), encoding='utf-8')
+    original = path.read_bytes()
+    db, storage = Firestore(), Storage()
+    published, snapshots = [], []
+    monkeypatch.setenv('KP_NIGHT_PLAN_PATH', str(path))
+    monkeypatch.setenv('NIGHT_PLAN_ARCHIVE_GCS_PREFIX', 'gs://test/plans')
+    monkeypatch.setenv('PLAN_SOURCE_REVISION', 'a' * 40)
+    monkeypatch.setattr(planner.forecast_job, 'main', lambda **kw: 0)
+    monkeypatch.setattr(planner.forecast_job, '_target_date', lambda: '2026-10-03')
+    monkeypatch.setattr(planner, 'open_firestore', lambda: db)
+    monkeypatch.setattr(planner.storage, 'Client', lambda: storage)
+    monkeypatch.setattr(planner, 'upsert_model_parameters_from_plan', lambda *a, **kw: None)
+    monkeypatch.setattr(planner, 'estimate_forced_charge_rate_percent_per_hour', lambda *a: {'percent_per_hour': 20})
+    monkeypatch.setattr(planner, 'FirestorePlanStore', lambda: SimpleNamespace(publish=published.append))
+    monkeypatch.setattr(planner, 'dashboard_snapshot_prefix', lambda: 'test')
+    monkeypatch.setattr(planner, 'write_dashboard_snapshots', lambda *a: snapshots.append(db.collection('night_charge_plans').records['latest']['plan_json']))
+    assert planner.main() == 0
+    day = db.collection('night_charge_plans').records['2026-10-03']
+    latest = db.collection('night_charge_plans').records['latest']
+    assert published[0].raw_json.encode() == original == latest['plan_json'].encode()
+    assert day['detail_sha256'] == latest['detail_sha256'] == published[0].sha256
+    assert day['source_revision'] == published[0].producer_source_revision == 'a' * 40
+    assert snapshots == [published[0].raw_json]
 
 
 def test_drive_scheduler_is_independent_and_not_deleted_when_enabled():

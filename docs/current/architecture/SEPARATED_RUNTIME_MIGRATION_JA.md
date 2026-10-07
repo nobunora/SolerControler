@@ -6,6 +6,8 @@
 
 計算用imageは既存のforecast jobを実行し、同じ予想・計画を保存する。制御用imageはその計画の原本を読み、既存のmode-only操作・SOC監視を使う。表示用imageは既存dashboardを使う。検査は制御候補と同じimageで別の入口から実行する。
 
+画面の経路はbrowser→HTML/既存bootstrap API→GCS事前集計である。そのwriterは計算完了後、既存`archive_plan_snapshot`で不変原本と`night_charge_plans`の当日/latestを更新し、制御用採用版の公開後に同じ原本から事前集計を更新する。03の生成を移す際、このlatest更新を落としてはならない。画面endpoint・初期request数・履歴の遅延読取・cache契約は変えない。
+
 制御用に科学計算・描画・Drive・PostgreSQL SDKを含めない。計算用と表示用の依存は、既存の使用経路と起動検証を根拠に選ぶ。依存の版は取得済みimageから確認し、制約ファイルで固定する。既存のmathematical model変更をこの構成移行へ混ぜない。欠損実績の残差処理は既知の別問題であり、同一入力の比較と独立して扱う。
 
 ## 保護する契約

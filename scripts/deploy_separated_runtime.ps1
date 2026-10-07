@@ -114,6 +114,9 @@ Invoke-Stage 'inventory' {
 }
 Invoke-Stage 'build' {
     $substitutions = "_PLANNER_IMAGE=$($roles.planner):git-$commit,_CONTROL_IMAGE=$($roles.control):git-$commit,_WEB_IMAGE=$($roles.web):git-$commit"
+    $cacheCommit = Get-ProductionEnv 'SOLAR_RUNTIME_BUILD_CACHE_COMMIT' $commit
+    if ($cacheCommit -notmatch '^[0-9a-f]{40}$') { throw 'Runtime build cache must name a fixed source commit.' }
+    $substitutions += ",_PLANNER_CACHE_IMAGE=$($roles.planner):git-$cacheCommit,_CONTROL_CACHE_IMAGE=$($roles.control):git-$cacheCommit,_WEB_CACHE_IMAGE=$($roles.web):git-$cacheCommit"
     # One context upload and one build for each role. No uncommitted sources,
     # credentials, backups, logs or model artifacts may enter this context.
     Invoke-Cloud @('builds', 'submit', '--config', 'cloudbuild.separated.yaml', '--ignore-file', '.gcloudignore-separated',
@@ -129,7 +132,7 @@ Invoke-Stage 'planner' {
     foreach ($job in @('solar-forecast-daily', 'solar-drive-backup')) { Assert-Idle $job }
     Invoke-Cloud @('run', 'jobs', 'update', 'solar-forecast-daily', '--region', $region, '--project', $project,
         '--image', (Get-Image 'planner'), '--command', 'python', '--args', 'planner_job_main.py',
-        '--update-env-vars', "PLAN_SOURCE_REVISION=$commit,KP_CSV_PLOT_ENABLED=false") | Out-Null
+        '--update-env-vars', "PLAN_SOURCE_REVISION=$commit,PLAN_IMAGE_DIGEST=$($state.image_digests.planner),KP_CSV_PLOT_ENABLED=false") | Out-Null
     # Retain the existing backup command, arguments, memory, SA and secret refs.
     Invoke-Cloud @('run', 'jobs', 'update', 'solar-drive-backup', '--region', $region, '--project', $project,
         '--image', (Get-Image 'planner')) | Out-Null

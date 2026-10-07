@@ -38,6 +38,7 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 既存wrapperでは単一runnerを再配布してしまうため、正式入口に`-SeparatedRuntime`を追加した。
 `scripts/deploy_production_from_env.ps1 -SeparatedRuntime -StatePath artifacts/deployment_state/production-<開始時刻>.json`を使う。
 移行後はGit管理外`.env`の`SOLAR_RUNTIME_LAYOUT=separated`で通常入口もこの経路に固定する。
+この移行経路は`auto/full`のみ受け付ける。非制御scopeを指定したときは制御操作へ拡大せず、明示的に拒否する。
 `SOLAR_RECOVERY_BACKUP_PATH`には保存済み完全バックアップのローカルパスを指定する。
 ゲート、保存済み原本との比較、運用設定backup、3役割build、計算Job更新・実行、
 同じ制御imageでのforced/green各SET/read-backと60秒保持・元モード復元、制御Job更新、

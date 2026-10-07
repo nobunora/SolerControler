@@ -53,3 +53,12 @@ def test_separated_release_retains_live_probe_gate_before_control_changes():
     control = (ROOT / "scripts/deploy_control_jobs_image_only.ps1").read_text()
     assert control.index("run_control_postdeploy_live_probe.ps1") < control.index("run jobs update $jobName")
     assert "@roleProbeArgs" in control and "@restoreEntryArgs" in control
+
+
+def test_separated_backup_reuses_the_deployed_immutable_planner():
+    backup = (ROOT / "scripts/run_drive_backup_cloud_from_env.ps1").read_text()
+    assert "run jobs describe $ScheduledJobName" in backup
+    assert "Scheduled backup does not reference a verified immutable planner image" in backup
+    assert backup.index("$expectedPackage") < backup.index("'run', 'jobs', 'deploy'")
+    release = (ROOT / "scripts/deploy_production_from_env.ps1").read_text()
+    assert "if ($DeploymentScope -notin @('auto', 'full'))" in release

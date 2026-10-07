@@ -113,8 +113,9 @@ def verify(backup: Path, baseline: str) -> dict[str, Any]:
             os.environ["KP_NET_MODE_ONLY_23_03_07"] = original_env
     if len(rows) < 4:
         raise ValueError("four production decision archives are required")
-    unchanged = subprocess.check_output(["git", "diff", baseline, "--", "app/energy_model", "app/operations/forecast_persistence.py",
-                                         "app/operations/forecast_recovery.py", "app/runtime/forecast_job.py"], text=True)
+    unchanged = subprocess.check_output(["git", "diff", baseline, "--", "app/energy_model", "app/forecasting",
+                                         "app/energy_plan/workflow.py", "app/operations/forecast_persistence.py",
+                                         "app/operations/forecast_recovery.py"], text=True)
     if unchanged:
         raise AssertionError("canonical calculation/publication source changed")
     return {"status": "passed", "baseline": baseline, "plans": rows,
