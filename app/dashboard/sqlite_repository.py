@@ -104,7 +104,12 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 """, (start_date, end_date_iso)).fetchall())
         forecast_hourly: list[dict[str, Any]] = []
         if _sqlite_table_exists(conn, "forecast_hourly"):
-            forecast_hourly = _rows_to_dicts(conn.execute("""
+            # HISTORICAL_FAILURE_LOCK: preserve the same run/issued-at evidence as
+            # Firestore; flattening a validation replica must not erase provenance.
+            identity_fields = ("forecast_run_id", "forecast_issued_at")
+            columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(forecast_hourly)")}
+            identity_sql = "".join(f", fh.{name}" for name in identity_fields if name in columns)
+            forecast_hourly = _rows_to_dicts(conn.execute(f"""
                 WITH hourly_actuals AS (
                     SELECT substr(ts,1,10) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour,
                            COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
@@ -139,7 +144,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
-                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at,
+                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql},
                        fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
                        fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis
                 FROM forecast_hourly fh
@@ -147,6 +152,10 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
                 WHERE fh.date >= ? AND fh.date <= ? ORDER BY fh.date, fh.hour
                 """, (start_date, end_date_iso, start_date, end_date_iso, start_date, end_date_iso)).fetchall())
+            for row in forecast_hourly:
+                for name in identity_fields:
+                    if row.get(name) is None:
+                        row.pop(name, None)
         history_start = (start_obj - timedelta(days=14)).isoformat()
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []
