@@ -46,6 +46,11 @@ def _build_selected_pv_forecast(
     physical_history, history_source = _load_forecast_hourly_history(
         target_date=context.target_date
     )
+    if context.history_selection:
+        # HISTORICAL_FAILURE_LOCK: stored SQLite history must not widen the
+        # explicitly selected seven observed forecast days during PV calibration.
+        selected_days = {row["dt"].date().isoformat() for row in context.rows}
+        physical_history = {day: values for day, values in physical_history.items() if day in selected_days}
     physical_candidate = build_physical_pv_candidate(
         rows=context.rows,
         forecast_history=physical_history,

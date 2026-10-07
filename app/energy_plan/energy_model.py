@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -120,6 +120,11 @@ def _row_float(row: dict[str, float | str | datetime], key: str) -> float:
 
 def fit_coefficients_from_csv(csv_paths: Iterable[Path]) -> EnergyModelCoefficients:
     rows = _read_rows(csv_paths)
+    return fit_coefficients_from_rows(rows)
+
+
+def fit_coefficients_from_rows(rows: list[dict[str, float | str | datetime]]) -> EnergyModelCoefficients:
+    """Reuse coefficient fitting on the selected observed forecast days."""
     if len(rows) < 3:
         raise ValueError("CSV件数が不足しているため係数推定できません")
 
@@ -133,6 +138,10 @@ def fit_coefficients_from_csv(csv_paths: Iterable[Path]) -> EnergyModelCoefficie
     x: list[list[float]] = []
     y: list[float] = []
     for i in range(1, len(rows)):
+        current_timestamp, previous_timestamp = rows[i]["dt"], rows[i - 1]["dt"]
+        if isinstance(current_timestamp, datetime) and isinstance(previous_timestamp, datetime):
+            if current_timestamp - previous_timestamp != timedelta(minutes=30):
+                continue
         s0 = _row_float(rows[i - 1], "soc")
         s1 = _row_float(rows[i], "soc")
         if np.isnan(s0) or np.isnan(s1):

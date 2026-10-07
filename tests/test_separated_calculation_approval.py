@@ -46,3 +46,13 @@ def test_malformed_calculation_approval_is_rejected(source_repo):
     _, baseline = source_repo
     with pytest.raises(ValueError):
         verify_calculation_source(baseline, "not-a-digest")
+
+
+def test_energy_plan_modules_cannot_bypass_calculation_approval(source_repo):
+    source, baseline = source_repo
+    history = source.parents[1] / "energy_plan" / "monitoring_history.py"
+    history.parent.mkdir(parents=True)
+    history.write_text("history_days = 7\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", str(history)], check=True)
+    with pytest.raises(AssertionError):
+        verify_calculation_source(baseline)

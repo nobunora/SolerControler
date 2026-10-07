@@ -24,6 +24,7 @@ from app.energy_plan.workflow import (
     _prepare_night_charge,
     _run_soc_optimization,
     _soc_cap_or_unbounded,
+    _DefaultHistoricalInputPort,
 )
 
 
@@ -100,7 +101,7 @@ def test_load_execution_context_preserves_loaded_values(
     monkeypatch.setattr("app.energy_plan.workflow._forecast_from_env_or_api", lambda **_: forecast)
     monkeypatch.setattr("app.energy_plan.workflow.load_occupancy_events_from_env", lambda: [])
 
-    context = _load_execution_context(EnergyModelConfig.from_env())
+    context = _load_execution_context(EnergyModelConfig.from_env(), historical_input=_DefaultHistoricalInputPort())
 
     assert context.csv_paths == [csv_path]
     assert context.rows is rows
@@ -205,7 +206,7 @@ def test_consumption_bundle_preserves_forecast_and_diagnostics(
     monkeypatch.setattr("app.energy_plan.workflow.forecast_daily_consumption", lambda *_, **__: expected)
 
     bundle = _build_consumption_forecasts(
-        _load_execution_context(EnergyModelConfig.from_env()),
+        _load_execution_context(EnergyModelConfig.from_env(), historical_input=_DefaultHistoricalInputPort()),
         weather_history_port=WeatherPort(),
     )
 

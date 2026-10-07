@@ -4,7 +4,7 @@ import csv
 import math
 import os
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
@@ -29,6 +29,7 @@ from app.energy_plan.energy_model import (
     NightChargeResult,
     compute_night_charge_target,
     fit_coefficients_from_csv,
+    fit_coefficients_from_rows,
     to_dict,
 )
 from app.forecasting.occupancy import (
@@ -49,6 +50,10 @@ from app.energy_plan.soc_cost import (
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
 from app.configuration.environment import load_dotenv_if_present
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
+from app.energy_plan.monitoring_history import (
+    load_monitoring_history, merge_monitoring_rows, recent_forecast_rows,
+    validate_current_billing_history,
+)
 from app.energy_plan.weather_history import (
     archive_weather_history,
     forecast_weather_row,
@@ -173,6 +178,8 @@ class EnergyModelContext:
     target_date: str
     latest_soc_percent: float
     occupancy_events: list[OccupancyScheduleEvent]
+    billing_rows: list[dict[str, Any]] | None = None
+    history_selection: dict[str, object] = field(default_factory=dict)
 
 
 class _DefaultHistoricalInputPort:
@@ -303,8 +310,8 @@ def _read_rows(csv_paths: Iterable[Path]) -> list[dict[str, Any]]:
                 rows.append(
                     {
                         "dt": dt,
-                        "load": fv("消費電力量[kWh]"),
-                        "pv": fv("発電電力量[kWh]"),
+                        "load": _to_optional_float(row.get("消費電力量[kWh]")),
+                        "pv": _to_optional_float(row.get("発電電力量[kWh]")),
                         "sell": fv("売電電力量[kWh]"),
                         "buy": fv("買電電力量[kWh]"),
                         "charge": fv("充電電力量[kWh]"),
@@ -734,8 +741,6 @@ def _load_execution_context(
     forecast_source = forecast_input or _DefaultForecastInputPort()
     csv_paths = history.locate_csv_paths(config.artifacts_dir)
     rows = history.read_rows(csv_paths)
-    coefficients = history.fit_coefficients(csv_paths)
-    historical_profile = history.build_historical_profile(rows)
     forecast = forecast_source.load_forecast(
         latitude=config.latitude,
         longitude=config.longitude,
@@ -747,6 +752,26 @@ def _load_execution_context(
         if rows and rows[-1]["soc"] == rows[-1]["soc"]
         else 30.0
     )
+    billing_rows = None
+    selection: dict[str, object] = {}
+    if historical_input is None:
+        billing_rows = merge_monitoring_rows(load_monitoring_history(target_date=target_date), rows)
+        rows = recent_forecast_rows(billing_rows, target_date=target_date)
+        selected_days = sorted({row["dt"].date().isoformat() for row in rows})
+        selection = {"policy": "latest_7_complete_observed_days", "days": selected_days, "sample_count": len(rows), "requested_day_count": 7}
+        if not rows:
+            raise RuntimeError("no complete observed days are available for forecasting")
+        validate_current_billing_history(billing_rows, target_date=target_date)
+        fitting_rows = [
+            {"dt": row["dt"], "pv": float(row["pv"]), "sell": float(row.get("sell") or 0.0),
+             "chg": float(row.get("charge") or 0.0), "dchg": float(row.get("discharge") or 0.0),
+             "soc": float(row["soc"]) if row.get("soc") is not None else float("nan")}
+            for row in rows
+        ]
+        coefficients = fit_coefficients_from_rows(fitting_rows)
+    else:
+        coefficients = history.fit_coefficients(csv_paths)
+    historical_profile = history.build_historical_profile(rows)
     return EnergyModelContext(
         config=config,
         csv_paths=csv_paths,
@@ -757,6 +782,8 @@ def _load_execution_context(
         target_date=target_date,
         latest_soc_percent=latest_soc,
         occupancy_events=history.load_occupancy_events(),
+        billing_rows=billing_rows,
+        history_selection=selection,
     )
 
 
@@ -791,6 +818,7 @@ def _build_consumption_forecasts(
     joined_training_dates = consumption_history_dates & set(weather_history.received_dates)
     diagnostics: dict[str, object] = {
         **asdict(weather_history),
+        "history_selection": context.history_selection,
         "rows": None,
         "requested_start_date": (
             weather_history.requested_dates[0] if weather_history.requested_dates else None
@@ -884,11 +912,11 @@ def _prepare_night_charge(
     )
     expected_overnight_discharge_kwh = 0.0
     monthly_day_buy = _monthly_day_buy_kwh_before_target(
-        context.rows,
+        context.billing_rows if context.billing_rows is not None else context.rows,
         target_date=context.target_date,
     )
     expected_rest_of_month = _expected_rest_of_month_day_buy_kwh(
-        context.rows,
+        context.billing_rows if context.billing_rows is not None else context.rows,
         target_date=context.target_date,
     )
     inputs = NightChargeInputs(

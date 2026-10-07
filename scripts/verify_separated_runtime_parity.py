@@ -58,7 +58,7 @@ def verify_calculation_source(baseline: str, approved_patch_sha256: str = "") ->
         raise ValueError("approved calculation patch must be a SHA-256")
     patch = subprocess.check_output(
         ["git", "diff", "--no-ext-diff", "--no-color", "--binary", baseline, "--",
-         "app/energy_model", "app/forecasting", "app/energy_plan/workflow.py",
+         "app/energy_model", "app/forecasting", "app/energy_plan",
          "app/operations/forecast_persistence.py", "app/operations/forecast_recovery.py"],
         text=True, encoding="utf-8",
     )
