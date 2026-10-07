@@ -18,8 +18,10 @@ import sqlite3
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import quote
 
 import requests
@@ -39,7 +41,7 @@ def sha256(path: Path) -> str:
 
 
 class Backup:
-    def __init__(self, output: Path, *, recover_required_images=False):
+    def __init__(self, output: Path, *, recover_required_images: bool=False) -> None:
         self.recover_required_images=recover_required_images
         self.output = output.resolve()
         self.output.mkdir(parents=True, exist_ok=True)
@@ -56,12 +58,12 @@ class Backup:
                              'remote_writes':0, 'stages':{}, 'gaps':[], 'files':{}}
         self.save()
 
-    def save(self):
+    def save(self) -> None:
         temp = self.manifest_path.with_suffix('.tmp')
         temp.write_text(json.dumps(self.manifest, ensure_ascii=False, indent=2), encoding='utf-8')
         temp.replace(self.manifest_path)
 
-    def write(self, name, data, *, secret=False):
+    def write(self, name: str, data: Any, *, secret: bool=False) -> Path:
         path = self.output / name
         path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps(data, ensure_ascii=False).encode('utf-8')
@@ -70,7 +72,7 @@ class Backup:
         path.write_bytes(content)
         return path
 
-    def request(self, url, *, method='GET', params=None, body=None, headers=None, stream=False, retry=True):
+    def request(self, url: str, *, method: str='GET', params: dict[str, Any] | None=None, body: dict[str, Any] | None=None, headers: dict[str, str] | None=None, stream: bool=False, retry: bool=True) -> requests.Response:
         attempts=4 if retry else 1
         for attempt in range(attempts):
             try:
@@ -92,7 +94,7 @@ class Backup:
             return response
         raise ReadFailure('Network read failed')
 
-    def pages(self, url, key, *, params=None, method='GET', body=None):
+    def pages(self, url: str, key: str, *, params: dict[str, Any] | None=None, method: str='GET', body: dict[str, Any] | None=None) -> Iterator[list[Any]]:
         token = None
         while True:
             query = dict(params or {})
@@ -104,12 +106,12 @@ class Backup:
             token = data.get('nextPageToken')
             if not token: break
 
-    def items(self, *args, **kwargs):
+    def items(self, *args: Any, **kwargs: Any) -> list[Any]:
         return [item for page in self.pages(*args, **kwargs) for item in page]
 
-    def optional(self, category, url, **kwargs):
+    def optional(self, category: str, url: str, **kwargs: Any) -> dict[str, Any]:
         try:
-            return self.request(url, **kwargs).json()
+            return cast(dict[str, Any], self.request(url, **kwargs).json())
         except ReadFailure as exc:
             if exc.api_reason=='SERVICE_DISABLED':
                 return {'not_applicable':'API was not enabled at capture time'}
@@ -117,7 +119,7 @@ class Backup:
             self.save()
             return {'unavailable':str(exc)}
 
-    def download(self, url, path, *, params=None, headers=None, digest=None, md5=None):
+    def download(self, url: str, path: Path, *, params: dict[str, Any] | None=None, headers: dict[str, str] | None=None, digest: str | None=None, md5: str | None=None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             if digest and sha256(path)==digest:return
@@ -135,7 +137,7 @@ class Backup:
             raise ReadFailure('Downloaded object MD5 mismatch')
         temporary.replace(path)
 
-    def firestore(self):
+    def firestore(self) -> dict[str, Any]:
         base = 'https://firestore.googleapis.com/v1/'
         databases = self.items(base+f'projects/{self.project}/databases','databases')
         self.write('firestore/databases.json',databases)
@@ -156,7 +158,7 @@ class Backup:
                             for document in page:
                                 if 'updateTime' in document:
                                     stream.write(json.dumps(document,ensure_ascii=False)+'\n'); total+=1;count+=1
-                            def child_collections(document):
+                            def child_collections(document: dict[str, Any]) -> tuple[str, list[Any]]:
                                 child=document['name']
                                 ids=self.items(base+child+':listCollectionIds','collectionIds',method='POST',body={'pageSize':1000,'readTime':read_time})
                                 return child,ids
@@ -166,7 +168,7 @@ class Backup:
         self.write('firestore/collections.json',collections)
         return {'databases':len(databases),'documents':total,'collections':len(collections),'read_time':read_time,'wire_format':'Firestore REST typed values'}
 
-    def firestore_settings(self):
+    def firestore_settings(self) -> dict[str, Any]:
         databases=json.loads((self.output/'firestore/databases.json').read_text(encoding='utf-8'))
         count=0
         for index,database in enumerate(databases):
@@ -180,7 +182,7 @@ class Backup:
         self.manifest['gaps']=[g for g in self.manifest['gaps'] if g['category'] not in ['firestore_indexes','firestore_field_settings']]
         return {'indexes':count,'databases':len(databases)}
 
-    def storage(self):
+    def storage(self) -> dict[str, Any]:
         buckets = self.items(f'https://storage.googleapis.com/storage/v1/b?project={self.project}','items')
         self.write('storage/buckets.json',buckets)
         count, size, soft_count = 0,0,0
@@ -212,7 +214,7 @@ class Backup:
             print('Storage bucket copied; objects',len(objects),'soft-deleted',len(soft),flush=True)
         return {'buckets':len(buckets),'readable_generations':count,'bytes':size,'soft_deleted_generations':soft_count}
 
-    def recover_cloud_run_image(self, uri, repos):
+    def recover_cloud_run_image(self, uri: str, repos: list[dict[str, Any]]) -> str:
         """Copy a required cached image into an existing repo, only with opt-in.
 
         This creates a recovery artifact; it never executes or updates a job.
@@ -269,11 +271,11 @@ class Backup:
                 matches=[r['uri'] for r in rows if any(r['uri']==d or r['uri'].endswith('@'+d) for d in exported)]
                 if len(matches)!=1:raise ReadFailure('Exported image could not be resolved uniquely')
                 export['recovery_reference']=matches[0];self.write(path,export)
-                return matches[0]
+                return cast(str, matches[0])
             time.sleep(5)
         raise ReadFailure('Cached image export still running; resume with the same backup')
 
-    def registry(self):
+    def registry(self) -> dict[str, Any]:
         # gcloud's repository list omits registryUri; derive it from the resource.
         result=subprocess.run(['pwsh','-NoProfile','-File','scripts/gcloud.ps1','artifacts','repositories','list','--project',self.project,'--format=json'],capture_output=True,text=True,encoding='utf-8')
         if result.returncode: raise ReadFailure('Repository inventory failed')
@@ -281,7 +283,7 @@ class Backup:
         images=[];blobs=set()
         auth='Basic '+base64.b64encode(('oauth2accesstoken:'+os.environ['SOLAR_BACKUP_READ_TOKEN']).encode()).decode()
         accept=', '.join(['application/vnd.oci.image.index.v1+json','application/vnd.docker.distribution.manifest.list.v2+json','application/vnd.oci.image.manifest.v1+json','application/vnd.docker.distribution.manifest.v2+json'])
-        def capture(host,package,digest):
+        def capture(host: str, package: str, digest: str) -> dict[str, Any]:
             target=self.output/'registry/oci/blobs/sha256'/digest.split(':',1)[1]
             url=f'https://{host}/v2/{package}/manifests/{digest}'
             self.download(url,target,headers={'Authorization':auth,'Accept':accept},digest=digest.split(':',1)[1])
@@ -305,7 +307,7 @@ class Backup:
                 descriptors.append(descriptor);images.append(image)
                 print('Container copied and digest verified;',len(images),'images',flush=True)
         deployed_refs=set()
-        def collect_refs(value):
+        def collect_refs(value: Any) -> None:
             if isinstance(value,dict):
                 for key,item in value.items():
                     if key=='image' and isinstance(item,str):deployed_refs.add(item)
@@ -342,7 +344,7 @@ class Backup:
         self.write('registry/oci/index.json',{'schemaVersion':2,'manifests':descriptors})
         return {'repositories':len(repos),'images':len(images),'additional_deployed_digests':extra,'unique_blobs':len(blobs),'stored_bytes':sum(p.stat().st_size for p in (self.output/'registry/oci/blobs/sha256').glob('*'))}
 
-    def configuration(self):
+    def configuration(self) -> dict[str, Any]:
         project=self.project;prefix=f'projects/{project}'
         specs={
             'project':f'https://cloudresourcemanager.googleapis.com/v1/{prefix}',
@@ -382,7 +384,7 @@ class Backup:
                 self.write(f'configuration/{collection}-{i}-iam.json',iam,secret=True)
         return {'inventory_categories':len(config),'encrypted':False}
 
-    def secrets(self):
+    def secrets(self) -> dict[str, Any]:
         base='https://secretmanager.googleapis.com/v1/'
         secrets=self.items(base+f'projects/{self.project}/secrets','secrets',params={'pageSize':1000})
         output=[];values=0
@@ -401,7 +403,7 @@ class Backup:
         self.write('secrets/secret_versions.private.json',output,secret=True)
         return {'secrets':len(secrets),'enabled_version_payloads':values,'encrypted':False}
 
-    def logs(self):
+    def logs(self) -> dict[str, Any]:
         path=self.output/'logs/all_retained_entries.jsonl.gz';path.parent.mkdir(parents=True,exist_ok=True)
         count=0
         with gzip.open(path,'wt',encoding='utf-8') as stream:
@@ -409,7 +411,7 @@ class Backup:
                 for row in page:stream.write(json.dumps(row,ensure_ascii=False)+'\n');count+=1
         return {'entries':count,'period':'all entries still retained by provider'}
 
-    def local(self):
+    def local(self) -> dict[str, Any]:
         directory=self.output/'local';directory.mkdir(exist_ok=True)
         for name in ['.env']:
             (directory/name).write_bytes(Path(name).read_bytes())
@@ -426,7 +428,7 @@ class Backup:
         revision=subprocess.run(['git','rev-parse','HEAD'],check=True,capture_output=True,text=True).stdout.strip()
         return {'source_revision':revision,'git_bundle_verified':True,'env_encrypted':False,'sqlite_backup':True}
 
-    def drive(self):
+    def drive(self) -> dict[str, Any]:
         folder=os.environ.get('DRIVE_BACKUP_FOLDER_ID')
         if not folder:return {'configured':False}
         params={'q':f"'{folder}' in parents and trashed=false",'fields':'nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime)','pageSize':1000,'supportsAllDrives':'true','includeItemsFromAllDrives':'true'}
@@ -456,14 +458,19 @@ class Backup:
             import google.auth
             import google.auth.transport.requests
             try:
+                credentials: Any
                 credentials,_=google.auth.default(scopes=['https://www.googleapis.com/auth/drive.readonly'])
                 credentials.refresh(google.auth.transport.requests.Request())
+                if not credentials.token:
+                    raise ReadFailure('Drive credentials did not provide an access token')
                 self.session.headers['Authorization']='Bearer '+credentials.token
                 rows=self.items('https://www.googleapis.com/drive/v3/files','files',params=params)
             except Exception:
                 self.manifest['gaps'].append({'category':'drive_archive','reason':'Drive read authorization unavailable'})
                 self.session.headers['Authorization']=original
                 return {'configured':True,'copied':False}
+        if rows is None:
+            raise ReadFailure('Drive file inventory was not obtained')
         for item in rows:
             if item['mimeType'].startswith('application/vnd.google-apps.'):
                 self.manifest['gaps'].append({'category':'drive_native_file','reason':'Native export required'});continue
@@ -474,7 +481,7 @@ class Backup:
         self.session.headers['Authorization']=original
         return {'configured':True,'files':len(rows)}
 
-    def verify_local_restore(self):
+    def verify_local_restore(self) -> dict[str, Any]:
         """Rehydrate wire documents offline, checking every field and path."""
         database=sqlite3.connect(':memory:')
         database.execute('create table restored_documents (name text primary key, wire_json text not null)')
@@ -502,7 +509,7 @@ class Backup:
             json.loads(path.read_bytes())
         return {'firestore_documents_rehydrated':count,'plaintext_secret_read_verified':True,'cloud_restore_executed':False}
 
-    def run(self):
+    def run(self) -> int:
         self.manifest['status']='incomplete'
         self.save()
         for name in ['local','firestore','firestore_settings','storage','configuration','secrets','drive','logs','registry']:
@@ -511,7 +518,8 @@ class Backup:
             legacy_categories={'drive':{'drive_archive','drive_native_file'},
                                'storage':{'soft_deleted_object'},
                                'registry':{'deployed_image_unavailable','non_docker_repository'}}
-            relevant=lambda gap:gap.get('stage')==name or gap.get('category') in legacy_categories.get(name,set())
+            def relevant(gap: dict[str, Any]) -> bool:
+                return gap.get('stage')==name or gap.get('category') in legacy_categories.get(name,set())
             has_gaps=any(relevant(gap) for gap in self.manifest['gaps'])
             if self.manifest['stages'].get(name,{}).get('status')=='success' and not has_gaps:
                 for filename,checksum in self.manifest['stages'][name].get('files',{}).items():
@@ -525,7 +533,7 @@ class Backup:
             print('Backup stage:',name,flush=True)
             try:
                 result=getattr(self,name)()
-                def belongs(path):
+                def belongs(path: Path) -> bool:
                     relative=path.relative_to(self.output)
                     if relative.parts[0]!=('firestore' if name=='firestore_settings' else name):return False
                     settings=path.name.endswith(('-indexes.json','-fields.json'))
@@ -549,7 +557,7 @@ class Backup:
         return 0 if self.manifest['status']=='complete' else 2
 
 
-def main():
+def main() -> int:
     parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--verify-only',action='store_true');parser.add_argument('--recover-required-images',action='store_true');args=parser.parse_args()
     if args.verify_only:
         root=args.output.resolve()
