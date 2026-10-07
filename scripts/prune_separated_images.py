@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 import requests
@@ -138,14 +139,28 @@ class Pruner:
             resolved.add(ref)
         return resolved, jobs, snapshots
 
+    def scheduler_jobs(self) -> list[dict[str, Any]]:
+        # Cloud Asset Search does not support Cloud Scheduler Job assets.
+        # Enumerate every location advertised by Scheduler itself; the .env
+        # location alone cannot prove that a manual job is globally unreferenced.
+        base = f"https://cloudscheduler.googleapis.com/v1/projects/{self.project}/locations"
+        locations = self.pages(base, "locations", {"pageSize": 1000})
+        if not locations:
+            raise PruneBlocked("Scheduler location inventory is empty")
+        schedules: list[dict[str, Any]] = []
+        for location in locations:
+            region = location.get("locationId", "")
+            if not re.fullmatch(r"[a-z][a-z0-9-]+", region):
+                raise PruneBlocked("Scheduler location inventory is invalid")
+            schedules.extend(self.pages(f"{base}/{region}/jobs", "jobs", {"pageSize": 500}))
+        return schedules
+
     def run(self, *, apply: bool = False, retire_manual_backups: bool = False) -> dict[str, Any]:
         refs, jobs, snapshots = self.references()
         (self.output / "references.private.json").write_text(json.dumps(snapshots, indent=2), encoding="utf-8")
         retired = 0
         if retire_manual_backups:
-            assets = self.pages(f"https://cloudasset.googleapis.com/v1/projects/{self.project}:searchAllResources", "results",
-                                {"pageSize": 500, "assetTypes": ["cloudscheduler.googleapis.com/Job"]})
-            schedules = [self.get("https://cloudscheduler.googleapis.com/v1/" + asset["name"].removeprefix("//cloudscheduler.googleapis.com/")) for asset in assets]
+            schedules = self.scheduler_jobs()
             if not schedules:
                 raise PruneBlocked("Scheduler reference inventory is empty")
             targets = [row.get("httpTarget", {}).get("uri", "") for row in schedules]
