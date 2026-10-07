@@ -108,6 +108,9 @@ if ($ValidateOnly) {
 }
 
 if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated') {
+    if ($DeploymentScope -notin @('auto', 'full')) {
+        throw 'Separated runtime requires auto/full scope; an explicit non-control scope must never be expanded to a control release.'
+    }
     if (-not $StatePath) { throw 'Separated runtime release requires an explicit StatePath.' }
     & (Join-Path $PSScriptRoot 'deploy_separated_runtime.ps1') -StatePath $StatePath -Resume:$Resume
     return

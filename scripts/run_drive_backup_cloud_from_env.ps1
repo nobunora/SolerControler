@@ -38,6 +38,15 @@ $passwordSecret = Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
 $jobName = "solar-drive-backup-manual-$((Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss'))-$PID"
 $image = "$region-docker.pkg.dev/$projectId/$repository/${imageName}:latest"
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
+if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated') {
+    # Reuse the exact deployed planner, never an absent/stale mutable tag.
+    $image = ((& $gcloud run jobs describe $ScheduledJobName --project $projectId --region $region `
+        --format 'value(spec.template.spec.template.spec.containers[0].image)') -join '').Trim()
+    $expectedPackage = "$region-docker.pkg.dev/$projectId/$repository/${imageName}@sha256:"
+    if ($LASTEXITCODE -ne 0 -or -not $image.StartsWith($expectedPackage) -or $image -notmatch '@sha256:[0-9a-f]{64}$') {
+        throw 'Scheduled backup does not reference a verified immutable planner image.'
+    }
+}
 # Detailed plans and the 14-generation quota fallback exceed the default 512Mi.
 # This is the same bounded allocation used by the scheduled backup job.
 $backupMemory = '2Gi'
