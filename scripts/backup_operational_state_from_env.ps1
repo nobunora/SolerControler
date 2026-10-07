@@ -1,5 +1,8 @@
 param(
-    [string]$OutDir = "artifacts/backups/operational"
+    [string]$OutDir = "artifacts/backups/operational",
+    [switch]$Complete,
+    [switch]$RecoverRequiredImages,
+    [string]$ResumePath = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +29,34 @@ $secretNames = @(
     Get-RequiredProductionEnv 'KP_MONITOR_PASSWORD_SECRET'
 )
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
+if ($Complete) {
+    # Disaster recovery requires raw data, object/image bytes, and secret values;
+    # the redacted operational inventory below is intentionally not a full backup.
+    $completeDir = $ResumePath
+    if (-not $completeDir) {
+        $completeStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+        $completeDir = Join-Path $OutDir "complete-$completeStamp"
+    }
+    New-Item -ItemType Directory -Force -Path $completeDir | Out-Null
+    $completeDir = (Resolve-Path -LiteralPath $completeDir).Path
+    $backupSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    & icacls $completeDir /inheritance:r /grant:r "*$($backupSid):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict backup directory access.' }
+    $env:SOLAR_BACKUP_READ_TOKEN = (& $gcloud auth print-access-token 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $env:SOLAR_BACKUP_READ_TOKEN) { throw 'Backup authentication failed.' }
+    try {
+        $captureArgs = @('--output', $completeDir)
+        if ($RecoverRequiredImages) { $captureArgs += '--recover-required-images' }
+        & python (Join-Path $PSScriptRoot 'backup_complete_remote.py') @captureArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Full backup is incomplete; see its local manifest.' }
+    } finally {
+        Remove-Item Env:SOLAR_BACKUP_READ_TOKEN -ErrorAction SilentlyContinue
+    }
+    Write-Host "Full backup verified: $completeDir"
+    return
+}
+if ($ResumePath) { throw 'ResumePath requires Complete.' }
+if ($RecoverRequiredImages) { throw 'RecoverRequiredImages requires Complete.' }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $generationDir = Join-Path $OutDir $stamp
 New-Item -ItemType Directory -Force -Path $generationDir | Out-Null
