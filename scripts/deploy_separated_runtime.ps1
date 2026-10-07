@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$StatePath,
-    [switch]$Resume
+    [switch]$Resume,
+    [string]$ApprovedCalculationPatchSha256 = '',
+    [switch]$AllowOutOfWindowLiveProbe
 )
 
 Set-StrictMode -Version Latest
@@ -18,6 +20,9 @@ $webRepo = Get-RequiredProductionEnv 'GCP_DASHBOARD_REPOSITORY'
 $webName = Get-RequiredProductionEnv 'GCP_DASHBOARD_IMAGE_NAME'
 $webService = Get-RequiredProductionEnv 'GCP_DASHBOARD_SERVICE'
 $commit = (git rev-parse HEAD).Trim()
+if ($ApprovedCalculationPatchSha256 -and $ApprovedCalculationPatchSha256 -notmatch '^[0-9a-f]{64}$') {
+    throw 'Approved calculation patch must be a SHA-256.'
+}
 if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$' -or @(git status --porcelain --untracked-files=all).Count) {
     throw 'Separated release requires a fixed commit and a clean worktree.'
 }
@@ -37,6 +42,10 @@ if ($Resume) {
     if ($state.repository_commit -ne $commit -or $state.kind -ne 'separated_runtime_deployment') {
         throw 'Resume state does not belong to this commit and release layout.'
     }
+    if ([string]$state['approved_calculation_patch_sha256'] -ne $ApprovedCalculationPatchSha256 -or
+        [bool]$state['allow_out_of_window_live_probe'] -ne [bool]$AllowOutOfWindowLiveProbe) {
+        throw 'Resume requires the same explicit calculation approval and probe-window option.'
+    }
     # Ambiguous device writes must be inspected before resuming. Never repeat a
     # live round-trip because the outer shell lost its response.
     if ($state.stages.control.status -eq 'running') {
@@ -45,7 +54,9 @@ if ($Resume) {
 } else {
     if (Test-Path -LiteralPath $StatePath) { throw 'State already exists; use Resume.' }
     $state = [ordered]@{ kind = 'separated_runtime_deployment'; schema_version = 1; repository_commit = $commit
-        status = 'running'; stages = [ordered]@{}; image_digests = [ordered]@{} }
+        status = 'running'; stages = [ordered]@{}; image_digests = [ordered]@{}
+        approved_calculation_patch_sha256 = $ApprovedCalculationPatchSha256
+        allow_out_of_window_live_probe = [bool]$AllowOutOfWindowLiveProbe }
     foreach ($name in $stageNames) { $state.stages[$name] = [ordered]@{ status = 'not_started' } }
 }
 
@@ -106,8 +117,10 @@ Invoke-Stage 'preflight' {
 }
 Invoke-Stage 'parity' {
     $backup = Get-RequiredProductionEnv 'SOLAR_RECOVERY_BACKUP_PATH'
-    & python (Join-Path $PSScriptRoot 'verify_separated_runtime_parity.py') --backup $backup `
-        --baseline fd022e7a94abc40d8190b639722d9f5471042d07 --output (Join-Path $stateRoot "parity-$commit.json")
+    $parityArgs = @('--backup', $backup, '--baseline', 'fd022e7a94abc40d8190b639722d9f5471042d07',
+                    '--output', (Join-Path $stateRoot "parity-$commit.json"))
+    if ($ApprovedCalculationPatchSha256) { $parityArgs += @('--approved-calculation-patch-sha256', $ApprovedCalculationPatchSha256) }
+    & python (Join-Path $PSScriptRoot 'verify_separated_runtime_parity.py') @parityArgs
 }
 Invoke-Stage 'inventory' {
     & (Join-Path $PSScriptRoot 'backup_operational_state_from_env.ps1')
@@ -141,7 +154,8 @@ Invoke-Stage 'calculation' {
     & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot forecast
 }
 Invoke-Stage 'control' {
-    & (Join-Path $PSScriptRoot 'deploy_control_jobs_image_only.ps1') -ExpectedCommit $commit -SkipBuild -SeparatedRuntime
+    & (Join-Path $PSScriptRoot 'deploy_control_jobs_image_only.ps1') -ExpectedCommit $commit -SkipBuild -SeparatedRuntime `
+        -AllowOutOfWindowLiveProbe:$AllowOutOfWindowLiveProbe
 }
 Invoke-Stage 'web' {
     Invoke-Cloud @('run', 'services', 'update', $webService, '--region', $region, '--project', $project,
