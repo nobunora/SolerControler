@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.backup.night_plan_archive import read_plan_file
+from app.energy_plan.soc_cost import simulate_daytime_soc_percent
 from app.operations.domain import (
     extract_final_pv_source_from_plan,
     extract_final_pv_totals_from_plan,
@@ -53,6 +54,17 @@ def persist_forecast_only_plan(
     planned_target_soc_percent = to_float(plan_result.get("target_soc_7_percent"))
     planned_night_charge_kwh = to_float(plan_result.get("required_night_charge_kwh"))
     planned_capacity_kwh = to_float(plan_result.get("effective_capacity_kwh"))
+    planned_hourly_soc_percent: dict[str, float] = {}
+    if (planned_target_soc_percent is not None and 0.0 <= planned_target_soc_percent <= 100.0
+            and planned_capacity_kwh is not None and math.isfinite(planned_capacity_kwh)
+            and planned_capacity_kwh > 0.0):
+        planned_hourly_soc_percent = {
+            str(hour): soc for hour, soc in simulate_daytime_soc_percent(
+                target_soc_percent=planned_target_soc_percent, capacity_kwh=planned_capacity_kwh,
+                hourly_load_kwh={int(row["hour"]): float(row["forecast_load_kwh"]) for row in hourly_rows},
+                hourly_pv_kwh={int(row["hour"]): float(row["forecast_pv_kwh"]) for row in hourly_rows},
+            ).items()
+        }
 
     now = recorded_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     snapshot_rows = build_forecast_snapshot_rows(data, ingested_at=now, timezone=timezone_name)
@@ -124,6 +136,7 @@ def persist_forecast_only_plan(
             "planned_target_soc_percent": planned_target_soc_percent,
             "planned_night_charge_kwh": planned_night_charge_kwh,
             "planned_capacity_kwh": planned_capacity_kwh,
+            "planned_hourly_soc_percent": planned_hourly_soc_percent,
             "forecast_json": json.dumps(forecast, ensure_ascii=False, separators=(",", ":")),
             "updated_at": now,
         },

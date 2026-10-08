@@ -93,6 +93,11 @@ def _forecast_plan_metadata_by_date(
             metadata["forecast_night_charge_kwh"] = night_charge
         if capacity is not None and capacity > 0.0:
             metadata["forecast_capacity_kwh"] = capacity
+        hourly_soc = row.get("planned_hourly_soc_percent")
+        if isinstance(hourly_soc, dict):
+            valid_soc = {str(hour): to_float(hourly_soc.get(str(hour))) for hour in range(7, 24)}
+            if all(value is not None and 0.0 <= value <= 100.0 for value in valid_soc.values()):
+                metadata["_forecast_hourly_soc_percent"] = valid_soc
         if not metadata:
             continue
         run_id = str(row.get("forecast_run_id") or "").strip()
@@ -147,6 +152,10 @@ def _with_forecast_plan_metadata(
             for key in ("forecast_target_soc_percent", "forecast_night_charge_kwh", "forecast_capacity_kwh"):
                 if key in metadata:
                     item.setdefault(key, metadata[key])
+            hourly_soc = metadata.get("_forecast_hourly_soc_percent", {})
+            soc = hourly_soc.get(str(item.get("hour")))
+            if soc is not None:
+                item.setdefault("forecast_soc_percent", soc)
         enriched.append(item)
     return enriched
 

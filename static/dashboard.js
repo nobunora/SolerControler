@@ -1135,6 +1135,12 @@
             else energyKwh += net / dischargeEff;
           }
           energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
+          if (row.forecast_soc_percent != null) {
+            const plannedSoc = Number(row.forecast_soc_percent);
+            if (Number.isFinite(plannedSoc) && plannedSoc >= 0 && plannedSoc <= 100) {
+              return Math.round(plannedSoc * 10) / 10;
+            }
+          }
           return Math.round((socAtHourStart / capacityKwh) * 1000) / 10;
         }
         if (hour < 7 && row.actual_soc_percent != null) {

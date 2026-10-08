@@ -116,7 +116,7 @@ def recover(client):
 
 def test_forecast_persists_capacity_from_the_same_plan_without_control_writes(tmp_path):
     value = plan()
-    value["result"] = {"effective_capacity_kwh": 8.1}
+    value["result"] = {"effective_capacity_kwh": 8.1, "target_soc_7_percent": 28.0}
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(value), encoding="utf-8")
     client = Client(value)
@@ -124,6 +124,9 @@ def test_forecast_persists_capacity_from_the_same_plan_without_control_writes(tm
     persist_forecast_only_plan(client, plan_path=path, target_date=DAY, timezone_name="Asia/Tokyo")
 
     assert client.data["forecast_plans"][DAY]["planned_capacity_kwh"] == pytest.approx(8.1)
+    soc = client.data["forecast_plans"][DAY]["planned_hourly_soc_percent"]
+    assert set(soc) == {str(hour) for hour in range(7, 24)}
+    assert soc["7"] == pytest.approx(28.0)
     assert "battery_daily_metrics" not in client.data
     assert client.plan_reads == []
 

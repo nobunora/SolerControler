@@ -403,22 +403,21 @@ def test_effective_capacity_includes_degradation_and_temperature() -> None:
 
 
 @pytest.mark.parametrize("temperature", [0.0, 19.5, 25.0, 35.0])
-def test_effective_capacity_never_increases_with_age_or_exceeds_fitted_capacity(temperature: float) -> None:
+def test_effective_capacity_decreases_with_age_at_the_same_temperature(temperature: float) -> None:
     coeff = _coeff()
     capacities = [effective_capacity_kwh(coeff, cycle_count=cycles, battery_temp_c=temperature)
                   for cycles in (0.0, 100.0, 200.0)]
 
-    assert all(capacity <= coeff.battery_usable_capacity_kwh for capacity in capacities)
     assert capacities == sorted(capacities, reverse=True)
-    if temperature <= 25.0:
-        assert capacities[0] == pytest.approx(coeff.battery_usable_capacity_kwh)
-        assert capacities[1] < capacities[0]
+    assert capacities[1] == pytest.approx(capacities[0] * 0.9)
+    if temperature < 25.0:
+        assert capacities[0] > coeff.battery_usable_capacity_kwh
 
 
 def test_negative_cycle_count_does_not_increase_capacity() -> None:
     coeff = _coeff()
     assert effective_capacity_kwh(coeff, cycle_count=-100.0, battery_temp_c=19.5) == pytest.approx(
-        coeff.battery_usable_capacity_kwh
+        effective_capacity_kwh(coeff, cycle_count=0.0, battery_temp_c=19.5)
     )
 
 

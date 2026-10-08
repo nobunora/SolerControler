@@ -257,12 +257,22 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         except Exception:
             standby_outcome = "failed"
             raise
+    def log_event(payload: dict[str, Any]) -> None:
+        # Observability must never change the SOC/time ownership contract.
+        try:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+        except Exception:
+            pass
     def log_soc(reading: SocReading) -> None:
         latest = reading.value_percent
         action = "soc_unavailable" if latest is None else "target_reached" if latest >= target else "continue"
         value = "none" if latest is None else f"{latest:.2f}%"
         observed_at = "none" if reading.observed_at is None else reading.observed_at.isoformat()
         print(f"[cloud_job_runner] 03-monitor soc value={value} source={reading.source} observed_at={observed_at} target={target:.2f}% action={action}", flush=True)
+        log_event({"message": "03-monitor-soc", "soc_percent": latest,
+                   "source": reading.source, "retrieved_at": observed_at,
+                   "timestamp_kind": "retrieval", "device_measured_at": None,
+                   "target_soc_percent": target, "action": action})
     try:
         initial = device.read_soc(paths); latest = initial.value_percent
         log_soc(initial)
@@ -315,6 +325,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         # its calculation owner. The legacy default and SOC/time guards stay intact.
         rate_info = charge_rate_info if charge_rate_info is not None else estimate_forced_charge_rate_percent_per_hour(paths)
         estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
+        def log_next_check(delay: int, soc: float | None) -> None:
+            log_event({"message": "03-monitor-next-check", "next_check_seconds": delay,
+                       "soc_percent": soc, "target_soc_percent": target,
+                       "rate_percent_per_hour": float(rate_info["percent_per_hour"]),
+                       "confirm_before_minutes": settings.completion_confirm_before_minutes})
         while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
             reading = device.read_soc(paths); latest = reading.value_percent
             latest_reading = reading
@@ -346,6 +361,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
                 )
                 if delay <= 0:
                     break
+                log_next_check(delay, None)
                 clock.sleep(delay)
                 continue
             consecutive_soc_failures = 0
@@ -354,6 +370,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
                 standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
             delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
             if delay <= 0: break
+            log_next_check(delay, latest)
             clock.sleep(delay)
         print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
         standby("03-monitor-cutoff-standby")
