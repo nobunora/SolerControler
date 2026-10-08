@@ -138,7 +138,10 @@ def _hourly_weather_map(forecast: dict[str, object]) -> dict[int, dict[str, floa
         shortwave = to_float(item.get("shortwave_radiation_w_m2"))
         if hour is None or shortwave is None:
             continue
-        h = int(hour)
+        # TIME_INTERVAL_CONTRACT: Open-Meteo labels the preceding hour's mean.
+        # Radiation at 09:00 belongs to 08:00-09:00, whose geometry is at 08:30.
+        # Keep provider timestamps intact; normalize only this calculation view.
+        h = int(hour) - 1
         if h in OUTPUT_HOURS:
             out[h] = {"shortwave": max(0.0, shortwave)}
     return out
@@ -286,9 +289,9 @@ def _historical_scales(
         if day is None or day_text not in actual:
             continue
         shortwave_by_hour = {
-            hour: {"shortwave": max(0.0, float(values.get("shortwave", 0.0)))}
+            hour - 1: {"shortwave": max(0.0, float(values.get("shortwave", 0.0)))}
             for hour, values in by_hour.items()
-            if hour in HOURS and values.get("shortwave") is not None
+            if hour - 1 in HOURS and values.get("shortwave") is not None
         }
         if not shortwave_by_hour:
             continue
@@ -345,9 +348,9 @@ def _derive_radiation_scale(
         if day is None or day_text not in actual:
             continue
         shortwave_by_hour = {
-            hour: {"shortwave": max(0.0, float(values.get("shortwave", 0.0)))}
+            hour - 1: {"shortwave": max(0.0, float(values.get("shortwave", 0.0)))}
             for hour, values in by_hour.items()
-            if hour in HOURS and values.get("shortwave") is not None
+            if hour - 1 in HOURS and values.get("shortwave") is not None
         }
         if not shortwave_by_hour:
             continue
@@ -524,6 +527,7 @@ def build_physical_pv_candidate(
                 "west": env_float("PHYSICAL_PV_PANEL_WEIGHT_WEST", default=1.0),
             },
             "shortwave_hours": sorted(shortwave_by_hour),
+            "shortwave_source_hour_offset": 1,
         },
         "data_quality": {
             "global_days": global_count,

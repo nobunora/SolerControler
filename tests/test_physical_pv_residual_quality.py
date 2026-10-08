@@ -14,9 +14,14 @@ def residual_settings(monkeypatch):
 
 def correct(actual_history, forecast_history=None):
     return _physical_vector_residual_correction(
-        forecast_history=forecast_history or {"2026-10-05": {10: {"pv": 1.0, "shortwave": 500.0, "weather_code": 3}}},
+        forecast_history=forecast_history or {"2026-10-05": {
+            10: {"pv": 1.0, "weather_code": 3}, 11: {"shortwave": 500.0},
+        }},
         actual_history=actual_history,
-        forecast={"hourly_weather": [{"hour": 10, "shortwave_radiation_w_m2": 500.0, "weather_code": 3}]},
+        forecast={"hourly_weather": [
+            {"hour": 10, "weather_code": 3},
+            {"hour": 11, "shortwave_radiation_w_m2": 500.0},
+        ]},
         hourly_pv={10: 1.0},
     )
 
@@ -41,9 +46,13 @@ def test_measured_zero_and_valid_negative_residual_are_preserved(actual, expecte
 
 
 def test_unmatched_history_cannot_change_residual_or_confidence():
-    valid_history = {"2026-10-05": {10: {"pv": 1.0, "shortwave": 500.0, "weather_code": 3}}}
+    valid_history = {"2026-10-05": {
+        10: {"pv": 1.0, "weather_code": 3}, 11: {"shortwave": 500.0},
+    }}
     extended = {**valid_history, **{
-        f"2026-09-{day:02}": {10: {"pv": 1.0, "shortwave": 500.0, "weather_code": 3}}
+        f"2026-09-{day:02}": {
+            10: {"pv": 1.0, "weather_code": 3}, 11: {"shortwave": 500.0},
+        }
         for day in range(1, 25)
     }}
     actual = {"2026-10-05": {10: {"pv": 1.5}}}
