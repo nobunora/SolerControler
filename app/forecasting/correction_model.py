@@ -59,13 +59,17 @@ def _physical_vector_residual_correction(
     excluded_actual_samples = 0
     for hour, value in hourly_pv.items():
         weather = target.get(hour, {})
-        shortwave = to_float(weather.get("shortwave_radiation_w_m2")) or 0.0
+        # TIME_INTERVAL_CONTRACT: match the physical model's generation interval.
+        # Only previous-hour-mean radiation comes from hour+1. Saved PV, actuals,
+        # and instantaneous weather codes keep their original generation hour.
+        shortwave = to_float(target.get(hour + 1, {}).get("shortwave_radiation_w_m2")) or 0.0
         cls = _weather_class(weather.get("weather_code"))
         residuals = []
         for day, history in forecast_history.items():
             prior = history.get(hour, {})
             actual = actual_history.get(day, {}).get(hour, {})
-            prior_pv, prior_sw = to_float(prior.get("pv")) or 0.0, to_float(prior.get("shortwave")) or 0.0
+            prior_pv = to_float(prior.get("pv")) or 0.0
+            prior_sw = to_float(history.get(hour + 1, {}).get("shortwave")) or 0.0
             if prior_pv <= 0 or prior_sw <= 0 or shortwave <= 0 or _weather_class(prior.get("weather_code")) != cls:
                 continue
             if 0.7 * shortwave <= prior_sw <= 1.3 * shortwave:
@@ -84,6 +88,7 @@ def _physical_vector_residual_correction(
         corrected[hour] = max(0.0, value + weight * center)
         applied.append({"hour": hour, "count": len(residuals), "weight": round(weight, 4), "residual_kwh": round(center, 4)})
     return corrected, {"enabled": True, "spread_kwh": spread, "applied": applied,
+                       "shortwave_source_hour_offset": 1,
                        "excluded_actual_samples": excluded_actual_samples}
 
 
