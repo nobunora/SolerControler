@@ -203,8 +203,9 @@ def effective_capacity_kwh(
     battery_temp_c: float,
     temp_ref_c: float = 25.0,
 ) -> float:
-    cycle_factor = max(0.6, 1.0 - coeff.battery_cycle_capacity_fade_per_cycle * cycle_count)
-    temp_factor = max(0.7, 1.0 + coeff.battery_temp_coeff_per_deg * (battery_temp_c - temp_ref_c))
+    # Capacity corrections may reduce the fitted capacity, never restore aging losses.
+    cycle_factor = min(1.0, max(0.6, 1.0 - coeff.battery_cycle_capacity_fade_per_cycle * max(0.0, cycle_count)))
+    temp_factor = min(1.0, max(0.7, 1.0 + coeff.battery_temp_coeff_per_deg * (battery_temp_c - temp_ref_c)))
     return coeff.battery_usable_capacity_kwh * cycle_factor * temp_factor
 
 

@@ -52,6 +52,7 @@ def persist_forecast_only_plan(
     plan_result: dict[str, Any] = result_value if isinstance(result_value, dict) else {}
     planned_target_soc_percent = to_float(plan_result.get("target_soc_7_percent"))
     planned_night_charge_kwh = to_float(plan_result.get("required_night_charge_kwh"))
+    planned_capacity_kwh = to_float(plan_result.get("effective_capacity_kwh"))
 
     now = recorded_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     snapshot_rows = build_forecast_snapshot_rows(data, ingested_at=now, timezone=timezone_name)
@@ -122,6 +123,7 @@ def persist_forecast_only_plan(
             "forecast_issued_at": forecast_issued_at or None,
             "planned_target_soc_percent": planned_target_soc_percent,
             "planned_night_charge_kwh": planned_night_charge_kwh,
+            "planned_capacity_kwh": planned_capacity_kwh,
             "forecast_json": json.dumps(forecast, ensure_ascii=False, separators=(",", ":")),
             "updated_at": now,
         },

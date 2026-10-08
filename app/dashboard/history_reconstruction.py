@@ -86,10 +86,13 @@ def _forecast_plan_metadata_by_date(
         metadata: dict[str, Any] = {}
         target_soc = to_float(row.get("planned_target_soc_percent"))
         night_charge = to_float(row.get("planned_night_charge_kwh"))
+        capacity = to_float(row.get("planned_capacity_kwh"))
         if target_soc is not None and 0.0 <= target_soc <= 100.0:
             metadata["forecast_target_soc_percent"] = target_soc
         if night_charge is not None and night_charge >= 0.0:
             metadata["forecast_night_charge_kwh"] = night_charge
+        if capacity is not None and capacity > 0.0:
+            metadata["forecast_capacity_kwh"] = capacity
         if not metadata:
             continue
         run_id = str(row.get("forecast_run_id") or "").strip()
@@ -141,7 +144,7 @@ def _with_forecast_plan_metadata(
         item = dict(row)
         metadata = metadata_by_date.get(str(item.get("date") or ""))
         if metadata and _metadata_matches_forecast_row(item, metadata):
-            for key in ("forecast_target_soc_percent", "forecast_night_charge_kwh"):
+            for key in ("forecast_target_soc_percent", "forecast_night_charge_kwh", "forecast_capacity_kwh"):
                 if key in metadata:
                     item.setdefault(key, metadata[key])
         enriched.append(item)

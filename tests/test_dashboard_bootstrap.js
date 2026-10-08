@@ -69,7 +69,9 @@ const context = {
           { date: "2026-07-20", hour: 0, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 42 },
           { date: "2026-07-20", hour: 6, forecast_pv_kwh: 0, forecast_load_kwh: 0.2, forecast_charge_kwh: 0, actual_soc_percent: 48 },
           { date: "2026-07-20", hour: 7, forecast_pv_kwh: 0.4937, forecast_load_kwh: 1.4005, forecast_charge_kwh: 0 },
-        ],
+          { date: "2026-07-20", hour: 8, forecast_pv_kwh: 1, forecast_load_kwh: 0, forecast_charge_kwh: 1 },
+          { date: "2026-07-20", hour: 9, forecast_pv_kwh: 0, forecast_load_kwh: 0, forecast_charge_kwh: 0 },
+        ].map((row) => ({ ...row, forecast_capacity_kwh: 5 })),
         energy_daily: isHistory
           ? [
               { date: "2026-07-17", forecast_pv_kwh: 999, actual_pv_kwh: 999, forecast_load_kwh: 999, actual_load_kwh: 999 },
@@ -165,7 +167,7 @@ setImmediate(async () => {
   assert.match(elements.get("hourlyForecastNote").textContent, /予想SOCピーク 07:00ごろ 77%/);
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
   const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "予想SOC(%)"));
-  assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77]);
+  assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77, 57.9, 76.9]);
   assert.deepEqual({ min: hourlyChart.options.scales.y.min, max: hourlyChart.options.scales.y.max }, { min: 0, max: 5 });
   assert.deepEqual({ min: hourlyChart.options.scales.y2.min, max: hourlyChart.options.scales.y2.max }, { min: 0, max: 100 });
   assert.equal(hourlyChart.options.scales.y.ticks.count, hourlyChart.options.scales.y2.ticks.count);

@@ -1096,7 +1096,12 @@
       const sch = store.latestSchedule || {};
       const batteryRow = date ? store.battery.get(date) : null;
       const targetSocRaw = plannedBatteryValues(batteryRow, sch).targetSocPercent;
-      const capacityKwh = Math.max(0.1, modelParam("battery_usable_capacity_kwh", 9.0));
+      // Use the capacity frozen with this forecast, including its aging reductions.
+      const forecastCapacities = Array.from(new Set(rows
+        .map((row) => Number(row.forecast_capacity_kwh))
+        .filter((value) => Number.isFinite(value) && value > 0)));
+      const capacityKwh = Math.max(0.1, forecastCapacities.length === 1
+        ? forecastCapacities[0] : modelParam("battery_usable_capacity_kwh", 9.0));
       const roundTripEff = Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9)));
       const chargeEff = Math.sqrt(roundTripEff);
       const dischargeEff = Math.sqrt(roundTripEff);
