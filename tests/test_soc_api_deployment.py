@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -49,3 +51,27 @@ def test_separated_release_requires_soc_credentials_and_live_readback():
     assert "--data-file" in binding
     assert "--update-secrets" in binding
     assert "Remove-Item -LiteralPath $temporary.FullName" in binding
+
+
+def test_control_image_contains_importable_soc_acceptance_probe(tmp_path):
+    """Replay the image's COPY manifest without repository imports leaking in."""
+    dockerfile = (ROOT / "Dockerfile.control").read_text(encoding="utf-8")
+    for line in dockerfile.splitlines():
+        if not line.startswith("COPY "):
+            continue
+        *sources, destination = shlex.split(line)[1:]
+        target = tmp_path / destination
+        for source in sources:
+            origin = ROOT / source
+            if origin.is_dir():
+                shutil.copytree(origin, target, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__", "artifacts"))
+            else:
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(origin, target / origin.name)
+    code = (f"import sys; sys.path.insert(0, {str(tmp_path)!r}); "
+            "import control_job_main; from scripts.kpnet_soc_api_probe import run_probe; "
+            "assert callable(run_probe)")
+    result = subprocess.run([sys.executable, "-I", "-c", code], cwd=tmp_path,
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
