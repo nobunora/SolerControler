@@ -15,6 +15,21 @@
 
 ## 1. 事前確認
 
+### SOC API 認証と実測確認（2026-10-10）
+
+SOC はアプリの `get-measurement-data/v2` に `measureFlg=GW` を送って取得する。
+Web HTML と遅延CSVのSOC取得経路は削除済み。秘密のJSON束はGit管理外 `.env` の
+`KP_SOC_API_CREDENTIALS_JSON`、Secret Manager名は `KP_SOC_API_CREDENTIALS_SECRET` に設定する。
+値を表示・ログ・PRへ記録しない。ローカルの読み取り専用確認は
+`scripts/run_soc_api_probe_from_env.ps1` を使う。
+
+役割分離版の正式デプロイは `soc_api_credentials` 工程で
+`scripts/configure_soc_api_from_env.ps1` を実行し、03監視と検証Jobだけにsecretを接続する。
+`-ValidateOnly` はJSON構造だけを検証し、secretやJobを変更しない。
+実機往復試験の前後で同じSOC取得経路を実行し、測定時刻・取得時刻・SOCを記録する。
+認証キーが失効・更新された場合は同じ正式経路で差し替え、取得試験を再実行する。
+API取得成功だけでは充電停止や設定復元の成功とは扱わず、従来の実機往復試験も維持する。
+
 ```powershell
 git status --short
 pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease

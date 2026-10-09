@@ -20,7 +20,7 @@ from app.kpnet.client import KpNetClient, KpNetUnknownWriteError
 from app.kpnet.config import KpNetConfig
 from app.kpnet.profile_builder import _pick_battery_operating_mode_code
 from app.kpnet.profiles import ProfileOverrides
-from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
+from app.runtime.soc_reading import latest_realtime_soc_reading
 from app.kpnet.settings_roundtrip import (
     ROUNDTRIP_SETTING_FIELDS,
     _apply_and_verify,
@@ -86,7 +86,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
         allowed_changes.update({"chargeStartTimeH", "chargeStartTimeM", "chargeEndTimeH", "chargeEndTimeM"})
 
     def read_soc() -> float | None:
-        # Use the deployed direct/semantic parsers and a bounded read request;
+        # Use the same fresh API SOC path as the deployed monitor;
         # reserve the full restoration budget even if SOC requests time out.
         previous_deadline = client.deadline_monotonic
         if previous_deadline is None:
@@ -95,11 +95,7 @@ def run_soc_cycle_probe() -> dict[str, object]:
         try:
             if time.monotonic() >= client.deadline_monotonic:
                 return None
-            value = _valid_soc(client.read_realtime_soc_percent())
-            if value is None and time.monotonic() < client.deadline_monotonic:
-                response = client._get("remotevisualization/simplevisualization/enduser", stage="soc-cycle-semantic-fallback")
-                value = _valid_soc(extract_realtime_soc_percent_resilient(response.text))
-            return value
+            return _valid_soc(latest_realtime_soc_reading(deadline_monotonic=client.deadline_monotonic).value_percent)
         except Exception:
             return None
         finally:

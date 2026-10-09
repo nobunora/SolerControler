@@ -36,7 +36,7 @@ $roles = [ordered]@{
     control = "$region-docker.pkg.dev/$project/$runnerRepo/${runnerName}-control"
     web = "$region-docker.pkg.dev/$project/$webRepo/$webName"
 }
-$stageNames = @('preflight', 'parity', 'inventory', 'build', 'planner', 'calculation', 'control', 'web', 'smoke', 'drive_backup', 'verification')
+$stageNames = @('preflight', 'parity', 'inventory', 'build', 'planner', 'calculation', 'soc_api_credentials', 'control', 'web', 'smoke', 'drive_backup', 'verification')
 if ($Resume) {
     $state = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable
     if ($state.repository_commit -ne $commit -or $state.kind -ne 'separated_runtime_deployment') {
@@ -152,6 +152,9 @@ Invoke-Stage 'planner' {
 }
 Invoke-Stage 'calculation' {
     & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot forecast
+}
+Invoke-Stage 'soc_api_credentials' {
+    & (Join-Path $PSScriptRoot 'configure_soc_api_from_env.ps1')
 }
 Invoke-Stage 'control' {
     & (Join-Path $PSScriptRoot 'deploy_control_jobs_image_only.ps1') -ExpectedCommit $commit -SkipBuild -SeparatedRuntime `

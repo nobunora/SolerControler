@@ -45,7 +45,8 @@ class _Device:
 
     def read_soc(self, _paths: list[Path]) -> SocReading:
         self.soc_read_count += 1
-        return SocReading(next(self.soc), "fake", None, datetime(2099, 1, 1, tzinfo=JST))
+        return SocReading(next(self.soc), "fake", None, datetime(2099, 1, 1, tzinfo=JST),
+                          datetime(2099, 1, 1, 0, 0, 8, tzinfo=JST))
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
         self.calls.append(profile)
@@ -85,8 +86,9 @@ def test_03_logs_soc_and_adaptive_delay_near_target(tmp_path, monkeypatch, capsy
     readings = [row for row in records if row.get("message") == "03-monitor-soc"]
     waits = [row for row in records if row.get("message") == "03-monitor-next-check"]
     assert [row["soc_percent"] for row in readings] == [10.0, 20.0, 27.0, 28.0]
-    assert all(row["timestamp_kind"] == "retrieval" and row["device_measured_at"] is None for row in readings)
+    assert all(row["timestamp_kind"] == "device_measurement" for row in readings)
     assert all(row["source"] == "fake" and row["retrieved_at"] for row in readings)
+    assert all(row["device_measured_at"] != row["retrieved_at"] for row in readings)
     assert [row["next_check_seconds"] for row in waits] == [180, 60]
     assert clock.elapsed == 240
     assert device.calls == ["forced", "standby"]

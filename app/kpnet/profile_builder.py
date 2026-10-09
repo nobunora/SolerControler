@@ -5,14 +5,13 @@ import csv
 import logging
 import math
 import os
-import re
 import statistics
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from app.domain.constants import SOCBounds, validate_soc_percent
+from app.domain.constants import SOCBounds
 from app.kpnet.monitoring_history import iter_charge_soc_points
 from app.kpnet.plan import NightChargePlan, load_night_charge_plan
 from app.kpnet.profiles import FORCED_CHARGE_PROFILE, GREEN_MODE_PROFILE, ProfileOverrides
@@ -21,7 +20,6 @@ from app.kpnet.rules import _minutes_to_hm, _night_window_contract, _parse_hhmm
 from app.kpnet.rules import _in_time_window
 from app.configuration.environment import env
 from app.parsing.numbers import to_float
-from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
     from app.kpnet.config import KpNetConfig
@@ -242,33 +240,6 @@ def _pick_battery_operating_mode_code(
     )
 
 
-def _extract_simple_visualization_soc_percent(html: str) -> float | None:
-    soup = BeautifulSoup(html, "html.parser")
-    for table in soup.select("table.data_table_bt"):
-        if not table.select_one(
-            ".fa-battery-full, .fa-battery-three-quarters, .fa-battery-half, "
-            ".fa-battery-quarter, .fa-battery-empty"
-        ):
-            continue
-        value_headers = [th for th in table.select("th") if not th.select_one('[class*="fa-battery-"]')]
-        soc_column = next(
-            (index for index, header in enumerate(value_headers) if "蓄電残量" in header.get_text(" ", strip=True)),
-            None,
-        )
-        if soc_column is None:
-            continue
-        for row in table.select("tr"):
-            cells = row.select("td")
-            if soc_column >= len(cells):
-                continue
-            cell = cells[soc_column]
-            if "rb_cell" not in (cell.get("class") or []):
-                continue
-            raw_value = cell.get_text(" ", strip=True)
-            match = re.fullmatch(r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*%?\s*", raw_value)
-            if match:
-                return validate_soc_percent(float(match.group(1)), raw=raw_value)
-    return None
 
 
 _load_night_charge_plan = load_night_charge_plan
@@ -792,5 +763,4 @@ def _build_payload(
         if str(current.get(key, "")) != payload[key]:
             changed_fields.append(key)
     return payload, changed_fields
-
 

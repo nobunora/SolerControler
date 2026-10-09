@@ -72,11 +72,17 @@ def main() -> int:
             now = cloud_job._tokyo_now()
             plan = _validate_current_plan(FirestorePlanStore().fetch(now.date().isoformat()), now,
                                           require_evidence=True)
+            # Verify the production SOC path before any device mutation, and again
+            # after the mandatory round-trip has restored the original settings.
+            from scripts.kpnet_soc_api_probe import run_probe
+            soc_before = run_probe()
             evidence = run_settings_roundtrip()
+            soc_after = run_probe()
             passed = (evidence.get("status") == "passed" and evidence.get("forced_proof") == "passed"
                       and evidence.get("green_proof") == "passed" and evidence.get("restore_verified") is True)
             summary = {"message": "postdeploy-live-probe", "csv": "passed", "plan": "passed",
                        "calculation_evidence": "published_canonical_workflow",
+                       "soc_api": "passed", "soc_api_before": soc_before, "soc_api_after": soc_after,
                        "producer_source_revision": plan.producer_source_revision,
                        "settings_roundtrip": "passed" if passed else "failed", "settings_roundtrip_evidence": evidence,
                        "roundtrip_forced_proof": evidence.get("forced_proof"),

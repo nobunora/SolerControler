@@ -45,16 +45,11 @@ def harness(monkeypatch: pytest.MonkeyPatch):
         def read_current_settings(self):
             return dict(current)
 
-        def read_realtime_soc_percent(self):
-            return reads.pop(0) if reads else None
-
-        def _get(self, path, *, stage):
-            return SimpleNamespace(text="<html></html>")
-
         def logout(self):
             pass
 
     monkeypatch.setattr(probe, "KpNetClient", Client)
+    monkeypatch.setattr(probe, "latest_realtime_soc_reading", lambda **kwargs: SimpleNamespace(value_percent=reads.pop(0) if reads else None))
     monkeypatch.setattr(probe, "_forced_probe_candidate_maps", lambda client: {"BatteryOperatingMode": {"1": "グリーン", "3": "強制充電", "5": "待機"}})
 
     def apply(**kwargs):

@@ -38,7 +38,7 @@
 - Login: success
 - Available months: `2026-06`, `2026-05`, `2026-04`
 - Downloaded month: `2026-06`
-- CSV path: `artifacts/local-smoke-kpnet/20260620-222658/csv/infoMeasureMulti30Min_EU_00HX25X02077_202606_20260620222700.csv`
+- CSV path: `artifacts/local-smoke-kpnet/20260620-222658/csv/infoMeasureMulti30Min_EU_REDACTED_DEVICE_202606_20260620222700.csv`
 - Plot generated: `artifacts/local-smoke-kpnet/20260620-222658/kpi_plot.png`
 - Logout: success
 

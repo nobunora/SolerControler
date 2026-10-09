@@ -22,7 +22,6 @@ from app.kpnet.workflow import (
     _apply_settings_profile,
     _build_dynamic_forced_profile,
     _default_csv_target_months,
-    _extract_simple_visualization_soc_percent,
     _in_time_window,
     _load_night_charge_plan,
     _parse_hhmm,
@@ -269,79 +268,20 @@ def test_csv_phase_reports_requested_months_that_are_temporarily_unavailable(
     assert [item["month"] for item in summary["csv_downloads"]] == ["2026-09"]
 
 
-def test_extract_simple_visualization_soc_percent_from_battery_table() -> None:
-    html = """
-    <table class="data_table01 data_table_bt">
-      <tr>
-        <th class="l_cell" rowspan="2"><i class="fas fa-battery-three-quarters"></i><br>蓄電池</th>
-        <th>運転状態</th><th class="rt_cell">蓄電残量</th>
-      </tr>
-      <tr><td>充電</td><td class="rb_cell"> 78 <span>%</span></td></tr>
-    </table>
-    """
 
-    assert _extract_simple_visualization_soc_percent(html) == 78.0
+
+
+
+
+
+
+
+
+
+
+
+def test_default_csv_target_months_crosses_year_boundary() -> None:
     assert _default_csv_target_months(datetime(2026, 1, 1, 4, 0)) == ["2025-12", "2026-01"]
-
-
-@pytest.mark.parametrize(
-    "icon",
-    ["full", "three-quarters", "half", "quarter", "empty"],
-)
-def test_extract_simple_visualization_soc_supports_battery_icons(icon: str) -> None:
-    html = f"""
-    <table class="data_table_bt">
-      <tr><th rowspan="2"><i class="fa fa-battery-{icon}"></i></th><th>運転状態</th><th>蓄電残量</th></tr>
-      <tr><td class="rb_cell">3</td><td class="rb_cell">25 <span>%</span></td></tr>
-    </table>
-    """
-
-    assert _extract_simple_visualization_soc_percent(html) == 25.0
-
-
-def test_extract_simple_visualization_soc_uses_matching_header_and_battery_table() -> None:
-    html = """
-    <table class="data_table_bt">
-      <tr><th>発電量</th></tr><tr><td class="rb_cell">99 <span>%</span></td></tr>
-    </table>
-    <table class="data_table_bt">
-      <tr><th rowspan="2"><i class="fa fa-battery-quarter"></i></th><th>蓄電残量</th><th>運転状態</th></tr>
-      <tr><td class="rb_cell">24 <span>%</span></td><td class="rb_cell">1</td></tr>
-    </table>
-    """
-
-    assert _extract_simple_visualization_soc_percent(html) == 24.0
-
-
-@pytest.mark.parametrize("value", ["0", "100", "78.5"])
-def test_extract_simple_visualization_soc_accepts_valid_bounds(value: str) -> None:
-    html = f"""
-    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
-    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
-    """
-
-    assert _extract_simple_visualization_soc_percent(html) == float(value)
-
-
-@pytest.mark.parametrize("value", ["-0.1", "100.1", "780"])
-def test_extract_simple_visualization_soc_rejects_out_of_range(value: str) -> None:
-    html = f"""
-    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
-    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
-    """
-
-    with pytest.raises(ValueError, match="SOC out of range"):
-        _extract_simple_visualization_soc_percent(html)
-
-
-@pytest.mark.parametrize("value", ["--", "20 80", "nan", "inf"])
-def test_extract_simple_visualization_soc_rejects_unparseable_values(value: str) -> None:
-    html = f"""
-    <table class="data_table_bt"><tr><th><i class="fa fa-battery-half"></i></th><th>蓄電残量</th></tr>
-    <tr><td class="rb_cell">{value} <span>%</span></td></tr></table>
-    """
-
-    assert _extract_simple_visualization_soc_percent(html) is None
 
 
 def test_pick_battery_operating_mode_code_supports_standby() -> None:
