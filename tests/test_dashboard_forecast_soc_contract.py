@@ -178,6 +178,8 @@ def test_firestore_history_read_joins_same_mutable_vintage_forecast_soc_metadata
                     "updated_at": updated_at,
                     "planned_target_soc_percent": 68.5,
                     "planned_night_charge_kwh": 2.75,
+                    "planned_capacity_kwh": 7.8,
+                    "planned_hourly_soc_percent": {str(hour): 68.5 + hour - 7 for hour in range(7, 24)},
                 }
             ]
         }
@@ -192,6 +194,10 @@ def test_firestore_history_read_joins_same_mutable_vintage_forecast_soc_metadata
     assert len(rows) == 24
     assert {row["forecast_target_soc_percent"] for row in rows} == {68.5}
     assert {row["forecast_night_charge_kwh"] for row in rows} == {2.75}
+    assert {row["forecast_capacity_kwh"] for row in rows} == {7.8}
+    assert rows[7]["forecast_soc_percent"] == 68.5
+    assert rows[15]["forecast_soc_percent"] == 76.5
+    assert "forecast_soc_percent" not in rows[6]
 
 
 def test_later_mutable_forecast_metadata_does_not_attach_to_older_mutable_rows(
@@ -216,6 +222,8 @@ def test_later_mutable_forecast_metadata_does_not_attach_to_older_mutable_rows(
                     "forecast_run_id": "run-late",
                     "updated_at": "2026-09-04T22:30:00Z",
                     "planned_target_soc_percent": 77.0,
+                    "planned_capacity_kwh": 6.5,
+                    "planned_hourly_soc_percent": {str(hour): 80.0 for hour in range(7, 24)},
                 }
             ]
         }
@@ -224,6 +232,8 @@ def test_later_mutable_forecast_metadata_does_not_attach_to_older_mutable_rows(
     rows = firestore_forecast_hourly_with_reconstruction(client, start_date=day, end_date_iso=day)
 
     assert all("forecast_target_soc_percent" not in row for row in rows)
+    assert all("forecast_capacity_kwh" not in row for row in rows)
+    assert all("forecast_soc_percent" not in row for row in rows)
 
 
 def test_snapshot_soc_metadata_requires_same_forecast_run_id(

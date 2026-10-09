@@ -103,6 +103,9 @@ function Resolve-DeploymentScope {
 }
 
 if ($ValidateOnly) {
+    if ($DeploymentScope -in @('auto', 'full', 'runner')) {
+        & (Join-Path $PSScriptRoot 'configure_soc_api_from_env.ps1') -ValidateOnly
+    }
     & (Join-Path $PSScriptRoot 'check_production_env.ps1') -CheckCloud
     if ($LASTEXITCODE -ne 0) { throw 'Production environment validation failed.' }
     Write-Host 'Production deployment configuration is valid. No deployment was performed.'
@@ -345,6 +348,9 @@ if ($SkipForecastSchedulerDeploy) { $jobDeployArgs.SkipForecastSchedulerDeploy =
 if ($SkipSettingsRoundTripJobDeploy) { $jobDeployArgs.SkipSettingsRoundTripJobDeploy = $true }
 Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -Action {
     & (Join-Path $PSScriptRoot 'deploy_gcp_jobs.ps1') @jobDeployArgs
+    if ($resolvedScope -in @('runner', 'full') -and -not $SkipJobDeploy) {
+        & (Join-Path $PSScriptRoot 'configure_soc_api_from_env.ps1')
+    }
 }
 
 $dashboardImage = "$region-docker.pkg.dev/$projectId/$dashboardRepository/${dashboardImageName}:latest"

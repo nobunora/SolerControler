@@ -45,7 +45,8 @@ class _Device:
 
     def read_soc(self, _paths: list[Path]) -> SocReading:
         self.soc_read_count += 1
-        return SocReading(next(self.soc), "fake", None, datetime(2099, 1, 1, tzinfo=JST))
+        return SocReading(next(self.soc), "fake", None, datetime(2099, 1, 1, tzinfo=JST),
+                          datetime(2099, 1, 1, 0, 0, 8, tzinfo=JST))
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
         self.calls.append(profile)
@@ -70,6 +71,42 @@ def _json_plan(path: Path, payload: dict[str, object]) -> Path:
 def _terminal_audits(output: str) -> list[dict[str, object]]:
     records = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
     return [record for record in records if record.get("message") == "03-terminal-audit"]
+
+
+def test_03_logs_soc_and_adaptive_delay_near_target(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setenv("ADJUST03_FORCE_MONITOR_POLL_SECONDS", "180")
+    monkeypatch.setenv("ADJUST03_COMPLETION_CONFIRM_BEFORE_MINUTES", "5")
+    device = _Device([10.0, 20.0, 27.0, 28.0])
+    clock = _Clock(datetime(2099, 1, 1, 3, tzinfo=JST))
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 28), clock=clock, device_port=device,
+        charge_rate_info={"percent_per_hour": 60.0},
+    )
+    records = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+    readings = [row for row in records if row.get("message") == "03-monitor-soc"]
+    waits = [row for row in records if row.get("message") == "03-monitor-next-check"]
+    assert [row["soc_percent"] for row in readings] == [10.0, 20.0, 27.0, 28.0]
+    assert all(row["timestamp_kind"] == "device_measurement" for row in readings)
+    assert all(row["source"] == "fake" and row["retrieved_at"] for row in readings)
+    assert all(row["device_measured_at"] != row["retrieved_at"] for row in readings)
+    assert [row["next_check_seconds"] for row in waits] == [180, 60]
+    assert clock.elapsed == 240
+    assert device.calls == ["forced", "standby"]
+
+
+def test_03_structured_monitor_logging_failure_does_not_change_control(tmp_path, monkeypatch) -> None:
+    original = cloud_job.json.dumps
+    def failing_monitor_dump(value, **kwargs):
+        if isinstance(value, dict) and str(value.get("message", "")).startswith("03-monitor-"):
+            raise ValueError("log encoding failed")
+        return original(value, **kwargs)
+    monkeypatch.setattr(cloud_job.json, "dumps", failing_monitor_dump)
+    device = _Device([10.0, 27.0, 28.0])
+    _monitor_partial_forced_and_stop(
+        _plan(tmp_path / "plan.json", 28), clock=_Clock(datetime(2099, 1, 1, 3, tzinfo=JST)),
+        device_port=device, charge_rate_info={"percent_per_hour": 60.0},
+    )
+    assert device.calls == ["forced", "standby"]
 
 
 @pytest.mark.parametrize("target", [0, 30, 50, 80, 100])

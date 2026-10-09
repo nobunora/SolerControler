@@ -382,6 +382,7 @@ def _simulate_day(
     hourly_pv_kwh: dict[int, float],
     pv_multiplier: float,
     load_multiplier: float,
+    hourly_soc_percent: dict[int, float] | None = None,
 ) -> tuple[float, float, float, int | None, float]:
     """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
 
@@ -392,6 +393,8 @@ def _simulate_day(
     first_full_hour: int | None = None
 
     for hour in range(7, 23):
+        if hourly_soc_percent is not None:
+            hourly_soc_percent[hour] = _bounded_soc(100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
         load = max(0.0, hourly_load_kwh.get(hour, 0.0)) * max(0.0, load_multiplier)
         pv = max(0.0, hourly_pv_kwh.get(hour, 0.0)) * max(0.0, pv_multiplier)
         net = pv - load
@@ -411,7 +414,24 @@ def _simulate_day(
 
     max_soc = (100.0 * max_energy / capacity_kwh) if capacity_kwh > 0 else 0.0
     end_soc = (100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
+    if hourly_soc_percent is not None:
+        hourly_soc_percent[23] = _bounded_soc(end_soc)
     return buy_kwh, sell_kwh, _bounded_soc(max_soc), first_full_hour, _bounded_soc(end_soc)
+
+
+def simulate_daytime_soc_percent(
+    *, target_soc_percent: float, capacity_kwh: float,
+    hourly_load_kwh: dict[int, float], hourly_pv_kwh: dict[int, float],
+) -> dict[int, float]:
+    """Expose hour-start SOC from the optimizer's unscaled baseline replay."""
+    hourly_soc: dict[int, float] = {}
+    _simulate_day(
+        start_energy_kwh=capacity_kwh * _bounded_soc(target_soc_percent) / 100.0,
+        capacity_kwh=capacity_kwh, hourly_load_kwh=hourly_load_kwh,
+        hourly_pv_kwh=hourly_pv_kwh, pv_multiplier=1.0, load_multiplier=1.0,
+        hourly_soc_percent=hourly_soc,
+    )
+    return hourly_soc
 
 
 def _decision_prior_cost_yen(

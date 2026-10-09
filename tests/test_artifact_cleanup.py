@@ -21,7 +21,7 @@ def test_cleanup_keeps_replay_inputs_but_flags_generated_outputs(tmp_path: Path)
 
     _touch(replay / "replay.db", age_days=40, now=now)
     _touch(replay / "night_charge_plan.json", age_days=40, now=now)
-    _touch(replay / "20260701-010101" / "csv" / "infoMeasureMulti30Min_EU_00HX25X02077_202607.csv", age_days=40, now=now)
+    _touch(replay / "20260701-010101" / "csv" / "infoMeasureMulti30Min_EU_TEST_GATEWAY_202607.csv", age_days=40, now=now)
     _touch(replay / "20260701-010101" / "kpnet_summary.json", age_days=40, now=now)
 
     candidates = collect_cleanup_candidates(artifacts, now=now)
@@ -29,7 +29,7 @@ def test_cleanup_keeps_replay_inputs_but_flags_generated_outputs(tmp_path: Path)
 
     assert rels["replay/20260621-000000-000-20260701-010101/replay.db"] == "regenerable_replay_output"
     assert rels["replay/20260621-000000-000-20260701-010101/night_charge_plan.json"] == "regenerable_replay_output"
-    assert "replay/20260621-000000-000-20260701-010101/20260701-010101/csv/infoMeasureMulti30Min_EU_00HX25X02077_202607.csv" not in rels
+    assert "replay/20260621-000000-000-20260701-010101/20260701-010101/csv/infoMeasureMulti30Min_EU_TEST_GATEWAY_202607.csv" not in rels
     assert "replay/20260621-000000-000-20260701-010101/20260701-010101/kpnet_summary.json" not in rels
 
 

@@ -20,7 +20,7 @@ from app.runtime.command_adapter import _env_float, _env_int, _run, _run_operati
 from app.runtime.forced_charge_monitor import ForcedChargeCompletionEstimator, estimate_forced_charge_rate_percent_per_hour
 from app.runtime.night_soc_operational_contract import SLOT03_PLATFORM_RETRY_DELAY_SECONDS
 from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS, may_start_final_standby, must_stop_forced_monitoring, may_start_03_io, seconds_until_control_cutoff, seconds_until_forced_monitor_cutoff
-from app.runtime.soc_reading import SocReading, latest_csv_soc_reading, latest_realtime_soc_percent, read_soc_with_fallback
+from app.runtime.soc_reading import SocReading, latest_realtime_soc_reading, read_realtime_soc_with_retry
 from app.settings.forced_charge import ForcedChargeSettings
 
 
@@ -168,20 +168,17 @@ class _RunnerMonitorDevicePort:
         deadline = min(monitor_cutoff, operation_start + SOC_OPERATION_MAX_SECONDS)
         # HISTORICAL_FAILURE_LOCK (2026-09-06 SOC 100% target stopped at 65%):
         # 変更禁止:
-        # - 03 control must use the live KP-NET visualization SOC.
-        # - allow_csv_fallback=False を削除、可変化、True化しない。
+        # - 2026-10-10 user-authorized replacement: fresh KP-NET API SOC only.
+        # - HTML/CSV fallback is removed; never restore a cached control source.
         # - 遅れて公開される計測CSVをSOC到達・停止判定へ使用しない。
         # CSVは充電速度推定専用であり、現在SOCの制御入力ではない。
         # Guarded by test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable.
-        return read_soc_with_fallback(
-            csv_paths,
-            latest_realtime=lambda: latest_realtime_soc_percent(deadline_monotonic=deadline),
-            latest_csv=latest_csv_soc_reading,
+        return read_realtime_soc_with_retry(
+            latest_realtime=lambda: latest_realtime_soc_reading(deadline_monotonic=deadline),
             env_int=lambda name, default: _env_int(name, default),
             env_float=lambda name, default: _env_float(name, default),
             deadline_monotonic=deadline,
             allow_realtime=deadline - operation_start >= SOC_OPERATION_MAX_SECONDS,
-            allow_csv_fallback=False,
         )
 
     def apply_profile(self, *, profile: str, dynamic_forced_profile: bool, label: str) -> None:
@@ -257,12 +254,24 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         except Exception:
             standby_outcome = "failed"
             raise
+    def log_event(payload: dict[str, Any]) -> None:
+        # Observability must never change the SOC/time ownership contract.
+        try:
+            print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+        except Exception:
+            pass
     def log_soc(reading: SocReading) -> None:
         latest = reading.value_percent
         action = "soc_unavailable" if latest is None else "target_reached" if latest >= target else "continue"
         value = "none" if latest is None else f"{latest:.2f}%"
         observed_at = "none" if reading.observed_at is None else reading.observed_at.isoformat()
         print(f"[cloud_job_runner] 03-monitor soc value={value} source={reading.source} observed_at={observed_at} target={target:.2f}% action={action}", flush=True)
+        log_event({"message": "03-monitor-soc", "soc_percent": latest,
+                   "source": reading.source,
+                   "retrieved_at": None if reading.retrieved_at is None else reading.retrieved_at.isoformat(),
+                   "timestamp_kind": "device_measurement",
+                   "device_measured_at": None if reading.observed_at is None else reading.observed_at.isoformat(),
+                   "target_soc_percent": target, "action": action})
     try:
         initial = device.read_soc(paths); latest = initial.value_percent
         log_soc(initial)
@@ -315,6 +324,11 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
         # its calculation owner. The legacy default and SOC/time guards stay intact.
         rate_info = charge_rate_info if charge_rate_info is not None else estimate_forced_charge_rate_percent_per_hour(paths)
         estimator = ForcedChargeCompletionEstimator(rate_percent_per_hour=float(rate_info["percent_per_hour"]), confirm_before_minutes=settings.completion_confirm_before_minutes)
+        def log_next_check(delay: int, soc: float | None) -> None:
+            log_event({"message": "03-monitor-next-check", "next_check_seconds": delay,
+                       "soc_percent": soc, "target_soc_percent": target,
+                       "rate_percent_per_hour": float(rate_info["percent_per_hour"]),
+                       "confirm_before_minutes": settings.completion_confirm_before_minutes})
         while may_start_03_io(now()) and not must_stop_forced_monitoring(now()):
             reading = device.read_soc(paths); latest = reading.value_percent
             latest_reading = reading
@@ -346,6 +360,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
                 )
                 if delay <= 0:
                     break
+                log_next_check(delay, None)
                 clock.sleep(delay)
                 continue
             consecutive_soc_failures = 0
@@ -354,6 +369,7 @@ def _monitor_partial_forced_and_stop(plan_path: Path, *, clock: MonitorClock | N
                 standby("03-target-reached-standby"); _emit_03_terminal_audit(plan, stop_reason="target_reached", latest=reading, standby_attempted=standby_attempted, standby_outcome=standby_outcome); return
             delay = estimator.next_check_seconds(target_soc=target, latest_soc=latest, fallback_poll_seconds=settings.poll_interval_seconds, cutoff_seconds=seconds_until_control_cutoff(now()))
             if delay <= 0: break
+            log_next_check(delay, latest)
             clock.sleep(delay)
         print(f"[cloud_job_runner] 03-monitor stop reason=monitor_cutoff target={target:.2f}%", flush=True)
         standby("03-monitor-cutoff-standby")

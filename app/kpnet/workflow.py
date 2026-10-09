@@ -29,7 +29,6 @@ from app.kpnet.profile_builder import (
     _build_dynamic_green_profile,
     _build_payload,
     _enabled_sorted_rules,
-    _extract_simple_visualization_soc_percent as _extract_simple_visualization_soc_percent,
     _load_operation_conditions,
     _pick_min_code,
     _pick_battery_operating_mode_code,

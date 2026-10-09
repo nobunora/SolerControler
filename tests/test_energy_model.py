@@ -402,6 +402,25 @@ def test_effective_capacity_includes_degradation_and_temperature() -> None:
     assert effective_capacity_kwh(coeff, cycle_count=100.0, battery_temp_c=35.0) == pytest.approx(8.1)
 
 
+@pytest.mark.parametrize("temperature", [0.0, 19.5, 25.0, 35.0])
+def test_effective_capacity_decreases_with_age_at_the_same_temperature(temperature: float) -> None:
+    coeff = _coeff()
+    capacities = [effective_capacity_kwh(coeff, cycle_count=cycles, battery_temp_c=temperature)
+                  for cycles in (0.0, 100.0, 200.0)]
+
+    assert capacities == sorted(capacities, reverse=True)
+    assert capacities[1] == pytest.approx(capacities[0] * 0.9)
+    if temperature < 25.0:
+        assert capacities[0] > coeff.battery_usable_capacity_kwh
+
+
+def test_negative_cycle_count_does_not_increase_capacity() -> None:
+    coeff = _coeff()
+    assert effective_capacity_kwh(coeff, cycle_count=-100.0, battery_temp_c=19.5) == pytest.approx(
+        effective_capacity_kwh(coeff, cycle_count=0.0, battery_temp_c=19.5)
+    )
+
+
 def test_monthly_day_buy_uses_billing_close_day(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOC_MONTHLY_TIER_CLOSE_DAY", "14")
     rows = [

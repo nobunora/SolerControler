@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from pathlib import Path
 
 
@@ -29,6 +30,7 @@ def _require_line(path: Path, needle: str, failures: list[str]) -> None:
 def _check_sensitive_env_values(
     root: Path, env_map: dict[str, str], failures: list[str]
 ) -> None:
+    env_map = dict(env_map)
     credential_keys = {
         "DASHBOARD_BASIC_PASSWORD",
         "DASHBOARD_BASIC_USER",
@@ -38,7 +40,22 @@ def _check_sensitive_env_values(
         "MONITOR_PASSWORD",
         "MONITOR_USERNAME",
         "PGPASSWORD",
+        "KP_SOC_API_CREDENTIALS_JSON",
     }
+    if env_map.get("KP_SOC_API_CREDENTIALS_JSON"):
+        try:
+            bundle = json.loads(env_map["KP_SOC_API_CREDENTIALS_JSON"])
+            parts = {"authorization": bundle["authorization"], "api_key": bundle["api_key"],
+                     **{f"{section}_{key}": bundle[section][key]
+                        for section in ("user", "gateway") for key in ("id", "password")}}
+            for name, value in parts.items():
+                if not isinstance(value, str):
+                    raise ValueError
+                key = "KP_SOC_API_" + name.upper()
+                env_map[key] = value
+                credential_keys.add(key)
+        except (ValueError, KeyError, TypeError):
+            failures.append("SOC API credential JSON is invalid")
     sensitive_keys = {
         key
         for key in env_map

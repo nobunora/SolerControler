@@ -76,7 +76,19 @@ def verify(backup: Path, baseline: str, *, approved_calculation_patch_sha256: st
     source = subprocess.check_output(["git", "show", baseline + ":app/runtime/cloud_job.py"], text=True, encoding="utf-8")
     old: Any = ModuleType("_frozen_cloud_job")
     sys.modules[old.__name__] = old
-    exec(compile(source, "<trusted-git-baseline>", "exec"), old.__dict__)
+    # The user-authorized API migration removed HTML/CSV SOC entrypoints. Load
+    # the baseline's own dependency only while importing the offline replay;
+    # never restore those retired entrypoints in production modules.
+    soc_source = subprocess.check_output(["git", "show", baseline + ":app/runtime/soc_reading.py"], text=True, encoding="utf-8")
+    frozen_soc: Any = ModuleType("_frozen_soc_reading")
+    sys.modules[frozen_soc.__name__] = frozen_soc
+    exec(compile(soc_source, "<trusted-soc-baseline>", "exec"), frozen_soc.__dict__)
+    current_soc = sys.modules["app.runtime.soc_reading"]
+    try:
+        sys.modules["app.runtime.soc_reading"] = frozen_soc
+        exec(compile(source, "<trusted-git-baseline>", "exec"), old.__dict__)
+    finally:
+        sys.modules["app.runtime.soc_reading"] = current_soc
     rate = {"percent_per_hour": 20.0, "source": "same-frozen-input-in-both-runtimes"}
     old.estimate_forced_charge_rate_percent_per_hour = lambda paths: rate
     saved_path = cloud_job._night_plan_path

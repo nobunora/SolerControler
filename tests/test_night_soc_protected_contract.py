@@ -67,13 +67,14 @@ def test_protected_boundaries_have_local_20260829_locks() -> None:
 
 def test_03_direct_soc_path_has_local_20260906_regression_lock() -> None:
     source = (ROOT / "app/runtime/cloud_job.py").read_text(encoding="utf-8")
-    window = _local_window(source, "allow_csv_fallback=False", size=1200)
+    window = _local_window(source, "return read_realtime_soc_with_retry(", size=1200)
 
     assert "HISTORICAL_FAILURE_LOCK" in window
     assert "2026-09-06" in window
-    assert "live KP-NET visualization SOC" in window
+    assert "fresh KP-NET API SOC only" in window
     assert "変更禁止" in window
-    assert "allow_csv_fallback=False" in window
+    assert "latest_csv_soc_reading" not in source
+    assert "HTML/CSV fallback is removed" in window
     assert "単発の取得失敗でstandbyへ遷移しない" in source
     assert "正常値を取得したら連続失敗回数を0へ戻す" in source
     assert "test_runner_soc_path_never_uses_delayed_csv_when_realtime_is_unavailable" in window

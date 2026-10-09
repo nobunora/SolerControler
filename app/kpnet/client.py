@@ -19,7 +19,6 @@ from app.kpnet.client_support import (
     extract_title as _extract_title,
 )
 from app.kpnet.config import KpNetConfig
-from app.kpnet.profile_builder import _extract_simple_visualization_soc_percent
 
 
 class KpNetUnknownWriteError(RuntimeError):
@@ -213,12 +212,6 @@ class KpNetClient:
     def logout(self) -> None:
         """Compatibility alias for local-only resource release; no network I/O."""
         self.close()
-
-    def read_realtime_soc_percent(self) -> float | None:
-        html = self._get(
-            "remotevisualization/simplevisualization/enduser", stage="realtime-soc"
-        ).text
-        return _extract_simple_visualization_soc_percent(html)
 
     def open_csv_measure_page(self) -> tuple[list[str], str]:
         response = self._post(

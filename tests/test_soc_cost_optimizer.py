@@ -8,7 +8,25 @@ from app.energy_plan.soc_cost import (
     SocCostModel,
     evaluate_soc_candidate,
     optimize_soc_by_expected_cost,
+    simulate_daytime_soc_percent,
+    _simulate_day,
 )
+
+
+def test_dashboard_soc_curve_matches_optimizer_peak_and_end() -> None:
+    load = {hour: 0.5 for hour in range(7, 23)}
+    pv = {hour: 1.0 for hour in range(8, 15)}
+    curve = simulate_daytime_soc_percent(
+        target_soc_percent=28.0, capacity_kwh=8.7, hourly_load_kwh=load, hourly_pv_kwh=pv,
+    )
+    replay = _simulate_day(
+        start_energy_kwh=8.7 * 0.28, capacity_kwh=8.7, hourly_load_kwh=load,
+        hourly_pv_kwh=pv, pv_multiplier=1.0, load_multiplier=1.0,
+    )
+    assert curve[7] == pytest.approx(28.0)
+    assert max(curve, key=lambda hour: curve[hour]) == 15
+    assert max(curve.values()) == pytest.approx(replay[2])
+    assert curve[23] == pytest.approx(replay[4])
 
 
 def test_cost_optimizer_replays_may_27_tradeoff() -> None:

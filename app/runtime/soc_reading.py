@@ -1,18 +1,14 @@
-"""SOC acquisition and fallback decisions for the Cloud Job monitor."""
+"""Fresh API SOC acquisition and bounded retries for the Cloud Job monitor."""
 
 from __future__ import annotations
 
-import csv
 import json
-import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
-from app.domain.constants import validate_soc_percent
+from app.kpnet.soc_api import KpNetSocClient
 from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS
 
 
@@ -22,6 +18,7 @@ class SocReading:
     source: str
     error: str | None
     observed_at: datetime | None
+    retrieved_at: datetime | None = None
 
 
 def _emit_03_soc_read_attempt(*, attempt: int, max_attempts: int, outcome: str, retry_delay_seconds: float) -> None:
@@ -63,92 +60,27 @@ def _retry_sleep_seconds(
     return max(0.0, min(configured_delay_seconds, fair_share))
 
 
-def latest_csv_soc_reading(csv_paths: list[Path]) -> tuple[float | None, datetime | None]:
-    latest_dt: datetime | None = None
-    latest_soc: float | None = None
-    for csv_path in csv_paths:
-        if not csv_path.exists():
-            continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
-            for row in csv.DictReader(csv_file):
-                date_text = (row.get("年月日") or "").strip()
-                time_text = (row.get("時刻") or "").strip()
-                soc_text = (row.get("蓄電残量(SOC)[%]") or "").strip()
-                if not date_text or not time_text or not soc_text:
-                    continue
-                try:
-                    observed_at = datetime.strptime(f"{date_text} {time_text}", "%Y/%m/%d %H:%M")
-                    soc_percent = validate_soc_percent(float(soc_text), raw=soc_text)
-                except (TypeError, ValueError):
-                    print(
-                        f"[cloud_job_runner] invalid CSV SOC skipped: value={soc_text!r} "
-                        f"date={date_text} time={time_text}",
-                        flush=True,
-                    )
-                    continue
-                if latest_dt is None or observed_at > latest_dt:
-                    latest_dt = observed_at
-                    latest_soc = soc_percent
-    return latest_soc, latest_dt
-
-
-def latest_realtime_soc_percent(*, deadline_monotonic: float | None = None) -> float | None:
-    from app.kpnet.client import KpNetClient
-    from app.kpnet.realtime_soc_parser import extract_realtime_soc_percent_resilient
-    from app.kpnet.workflow import KpNetConfig
-
+def latest_realtime_soc_reading(*, deadline_monotonic: float | None = None) -> SocReading:
     operation_start = time.monotonic()
     operation_deadline = deadline_monotonic if deadline_monotonic is not None else operation_start + SOC_OPERATION_MAX_SECONDS
     if operation_deadline <= operation_start:
         raise TimeoutError("SOC deadline expired")
-    client = KpNetClient(KpNetConfig.from_env(), deadline_monotonic=operation_deadline)
-    client.login()
+    client = KpNetSocClient(deadline_monotonic=operation_deadline)
     try:
-        value = client.read_realtime_soc_percent()
-        if value is not None:
-            return value
-
-        # The normal parser intentionally remains the first path.  If KP-NET keeps
-        # the semantic labels but changes presentation-only CSS/icon markup, make one
-        # additional read-only request and parse only a clearly identified battery/SOC
-        # table.  This never opens the settings page and never crosses a mutation boundary.
-        response = client._get(
-            "remotevisualization/simplevisualization/enduser",
-            stage="realtime-soc-semantic-fallback",
-        )
-        fallback_value = extract_realtime_soc_percent_resilient(response.text)
-        try:
-            print(
-                json.dumps(
-                    {
-                        "message": "03-soc-parser-fallback",
-                        "result": "numeric" if fallback_value is not None else "no_value",
-                    },
-                    separators=(",", ":"),
-                ),
-                flush=True,
-            )
-        except Exception:
-            pass
-        return fallback_value
+        sample = client.read_soc()
+        return SocReading(sample.value_percent, "realtime", None, sample.measured_at, sample.retrieved_at)
     finally:
-        try:
-            client.logout()
-        except Exception as exc:
-            print(f"[cloud_job_runner] KP-NET logout failed: {exc}", flush=True)
+        client.close()
 
 
-def read_soc_with_fallback(
-    csv_paths: list[Path],
+def read_realtime_soc_with_retry(
     *,
-    latest_realtime: Callable[[], float | None],
-    latest_csv: Callable[[list[Path]], tuple[float | None, datetime | None]],
+    latest_realtime: Callable[[], SocReading | None],
     env_int: Callable[[str, int], int],
     env_float: Callable[[str, float], float],
     sleep: Callable[[float], None] = time.sleep,
     deadline_monotonic: float | None = None,
     allow_realtime: bool = True,
-    allow_csv_fallback: bool = True,
 ) -> SocReading:
     attempts = max(1, env_int("ADJUST03_REALTIME_SOC_RETRY_ATTEMPTS", 3))
     delay_seconds = max(0.0, env_float("ADJUST03_REALTIME_SOC_RETRY_DELAY_SECONDS", 300.0))
@@ -165,13 +97,13 @@ def read_soc_with_fallback(
                 errors.append("SOC deadline expired")
                 break
             try:
-                value = latest_realtime()
-                if value is not None:
-                    return SocReading(value, "realtime", None, datetime.now(ZoneInfo("UTC")))
+                reading = latest_realtime()
+                if reading is not None and reading.value_percent is not None:
+                    return reading
                 errors.append("realtime returned no SOC")
                 outcome = "no_value"
             except Exception as exc:
-                errors.append(str(exc))
+                errors.append(type(exc).__name__)
                 outcome = "error"
             remaining_attempts = attempts - attempt
             remaining_budget = max(0.0, operation_deadline - time.monotonic())
@@ -189,19 +121,4 @@ def read_soc_with_fallback(
             if sleep_seconds > 0:
                 sleep(sleep_seconds)
 
-    if not allow_csv_fallback:
-        errors.append("CSV SOC fallback disabled")
-        return SocReading(None, "unavailable", "; ".join(errors), None)
-
-    csv_value, csv_observed_at = latest_csv(csv_paths)
-    if csv_value is not None and csv_observed_at is not None:
-        timezone_name = os.getenv("TIMEZONE", "Asia/Tokyo").strip() or "Asia/Tokyo"
-        observed_local = csv_observed_at.replace(tzinfo=ZoneInfo(timezone_name))
-        max_age_minutes = env_int("ADJUST03_CSV_SOC_MAX_AGE_MINUTES", 120)
-        age = datetime.now(ZoneInfo(timezone_name)) - observed_local
-        if timedelta(0) <= age <= timedelta(minutes=max_age_minutes):
-            return SocReading(csv_value, "csv", "; ".join(errors) or None, observed_local)
-        errors.append(f"CSV SOC is stale: observed_at={csv_observed_at.isoformat()}")
-    else:
-        errors.append("CSV SOC unavailable")
-    return SocReading(None, "unavailable", "; ".join(errors), csv_observed_at)
+    return SocReading(None, "unavailable", "; ".join(errors), None)

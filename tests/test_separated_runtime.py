@@ -225,4 +225,20 @@ def test_probe_requires_both_physical_proofs_and_restoration(monkeypatch, forced
     monkeypatch.setattr(control, "FirestorePlanStore", lambda: SimpleNamespace(fetch=lambda *a, **kw: plan))
     monkeypatch.setattr(control, "run_settings_roundtrip", lambda: {
         "status": "passed", "forced_proof": forced, "green_proof": green, "restore_verified": restored})
+    monkeypatch.setattr("scripts.kpnet_soc_api_probe.run_probe", lambda: {"status": "passed", "soc_percent": 14})
     assert control.main() == expected
+
+
+def test_soc_api_failure_prevents_live_probe_device_mutation(monkeypatch):
+    plan = PublishedPlan.from_bytes(raw_plan(), target_date="2099-01-01", charge_rate_info=RATE,
+                                   producer_source_revision="a" * 40, inputs_verified=True)
+    monkeypatch.setenv("CLOUD_JOB_SLOT", "settings-roundtrip")
+    monkeypatch.setattr(control, "install_unknown_write_guard", lambda: None)
+    monkeypatch.setattr(cloud_job, "_tokyo_now", lambda: Clock().at)
+    monkeypatch.setattr(control, "FirestorePlanStore", lambda: SimpleNamespace(fetch=lambda *a, **kw: plan))
+    monkeypatch.setattr(control, "run_settings_roundtrip", lambda: pytest.fail("SOC failure must precede mutation"))
+    def unavailable():
+        raise RuntimeError("SOC API unavailable")
+    monkeypatch.setattr("scripts.kpnet_soc_api_probe.run_probe", unavailable)
+    with pytest.raises(RuntimeError, match="SOC API unavailable"):
+        control.main()
