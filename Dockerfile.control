@@ -5,5 +5,6 @@ COPY requirements-control.txt constraints-runtime.txt ./
 RUN pip install --no-cache-dir -r requirements-control.txt
 COPY app ./app
 COPY cloud_job_runner.py control_job_main.py ./
-RUN python -c "import control_job_main; from zoneinfo import ZoneInfo; ZoneInfo('Asia/Tokyo')"
+COPY scripts/kpnet_soc_api_probe.py ./scripts/
+RUN python -c "import control_job_main; from scripts.kpnet_soc_api_probe import run_probe; from zoneinfo import ZoneInfo; ZoneInfo('Asia/Tokyo')"
 ENTRYPOINT ["python", "control_job_main.py"]
