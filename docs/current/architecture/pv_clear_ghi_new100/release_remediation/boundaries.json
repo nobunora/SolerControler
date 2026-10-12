@@ -280,10 +280,38 @@
         "finally restore",
         "Assert-ProofTerminal"
       ],
-      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix",
+      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix; existing flagsPath/restorePath generated CLI keys --image/--command/--args only; execution/ownership/restoration guards preserved",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "9c408c0e1f00c826ff07a9b36f48b5f845c158966c08c7c6fb75ca2eb6812104"
+      "implemented_source_sha256": "78987161fc4fb9b5b8bc748065c5a7e852d0d9246bf2a721f7802051c55108d8",
+      "variables": [
+        "flagsPath",
+        "restorePath"
+      ],
+      "flag_dict_contract": [
+        {
+          "variable": "flagsPath",
+          "operation": "update",
+          "keys": [
+            "--image",
+            "--command",
+            "--args"
+          ]
+        },
+        {
+          "variable": "restorePath",
+          "operation": "restore",
+          "keys": [
+            "--image",
+            "--command",
+            "--args"
+          ]
+        }
+      ],
+      "associated_tests": [
+        "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
+        "tests/test_separated_release_repair_order.py::test_server_proof_restores_dedicated_job_without_environment_or_control_writes"
+      ]
     },
     {
       "stage": "R06",
@@ -304,10 +332,35 @@
         "exact execution",
         "finally Job restore"
       ],
-      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest",
+      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest; existing flagsPath/restorePath generated CLI keys --command/--args only; execution/ownership/restoration guards preserved",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "bd6e34cc1ce0d1848a78e14c013d2d59554b78403533b341551b003373993274"
+      "implemented_source_sha256": "202903607f834d0ac5b8d7e2ef9adf9e824ab028e9e34dc90a21ee39a33806ad",
+      "variables": [
+        "flagsPath",
+        "restorePath"
+      ],
+      "flag_dict_contract": [
+        {
+          "variable": "flagsPath",
+          "operation": "update",
+          "keys": [
+            "--command",
+            "--args"
+          ]
+        },
+        {
+          "variable": "restorePath",
+          "operation": "restore",
+          "keys": [
+            "--command",
+            "--args"
+          ]
+        }
+      ],
+      "associated_tests": [
+        "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names"
+      ]
     },
     {
       "stage": "R07",

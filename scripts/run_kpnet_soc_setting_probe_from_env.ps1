@@ -100,7 +100,7 @@ $before | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $privat
 $entry = 'import sys;from app.kpnet.soc_setting_probe import run_soc_setting_probe;run_soc_setting_probe(target_soc_percent=float(sys.argv[1]))'
 $argsForProbe = @('-c', $entry, [string]$TargetSoc)
 $flagsPath = Join-Path $privateDirectory 'probe-update.private.json'
-@{ command = 'python'; args = $argsForProbe } | ConvertTo-Json -Depth 8 |
+@{ '--command' = 'python'; '--args' = $argsForProbe } | ConvertTo-Json -Depth 8 |
     Set-Content -LiteralPath $flagsPath -Encoding utf8
 $updated = $false
 $restored = $false
@@ -135,7 +135,7 @@ try {
 finally {
     if ($updated) {
         $restorePath = Join-Path $privateDirectory 'restore.private.json'
-        @{ command = ($previous.command -join ','); args = @($previous.args) } | ConvertTo-Json -Depth 8 |
+        @{ '--command' = ($previous.command -join ','); '--args' = @($previous.args) } | ConvertTo-Json -Depth 8 |
             Set-Content -LiteralPath $restorePath -Encoding utf8
         try {
             Assert-SocIdle $ProbeJobName | Out-Null

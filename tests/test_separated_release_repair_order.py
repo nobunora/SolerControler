@@ -82,9 +82,10 @@ if (($Args[0..2] -join ' ') -eq 'run jobs executions') {
 if (($Args[0..2] -join ' ') -eq 'run jobs describe') { Get-Content -Raw (Join-Path $root 'job.json'); exit 0 }
 if (($Args[0..2] -join ' ') -eq 'run jobs update') {
  $flags=Get-Content -Raw $Args[([array]::IndexOf($Args,'--flags-file')+1)]|ConvertFrom-Json -AsHashtable
+ if($flags.Count -ne 3 -or -not $flags.ContainsKey('--image') -or -not $flags.ContainsKey('--command') -or -not $flags.ContainsKey('--args')){throw 'Unrecognized flags-file arguments: option keys require -- prefix'}
  $job=Get-Content -Raw (Join-Path $root 'job.json')|ConvertFrom-Json -AsHashtable
  $c=$job.spec.template.spec.template.spec.containers[0]
- foreach($key in @('image','command','args')){if($key -eq 'image'){$c[$key]=$flags[$key]}else{$c[$key]=@($flags[$key])}}
+ foreach($key in @('image','command','args')){if($key -eq 'image'){$c[$key]=$flags['--'+$key]}else{$c[$key]=@($flags['--'+$key])}}
  $job|ConvertTo-Json -Depth 40|Set-Content (Join-Path $root 'job.json');'updated';exit 0
 }
 if (($Args[0..2] -join ' ') -eq 'run jobs execute') {

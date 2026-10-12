@@ -76,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='adapter-proof-') as d:
  sys.exit(code)
 '@
 $flagsPath = Join-Path $privateDirectory 'proof-update.private.json'
-@{ image = $ImmutablePlannerImage; command = 'python'; args = @('-c', $loader, $bundleUri, $bundleSha, [string]$bundle.generation, $imageDigest) } |
+@{ '--image' = $ImmutablePlannerImage; '--command' = 'python'; '--args' = @('-c', $loader, $bundleUri, $bundleSha, [string]$bundle.generation, $imageDigest) } |
     ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $flagsPath -Encoding utf8
 $attemptedUpdate = $false
 $restored = $false
@@ -130,7 +130,7 @@ try {
 finally {
     if ($attemptedUpdate) {
         $restorePath = Join-Path $privateDirectory 'restore.private.json'
-        @{ image = $previous.image; command = ($previous.command -join ','); args = @($previous.args) } |
+        @{ '--image' = $previous.image; '--command' = ($previous.command -join ','); '--args' = @($previous.args) } |
             ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $restorePath -Encoding utf8
         try {
             Assert-ProofIdle $ProbeJobName

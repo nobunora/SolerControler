@@ -48,6 +48,43 @@ if($parameters.ContainsKey('Rows')){
                           capture_output=True, text=True, encoding='utf-8', timeout=20)
 
 
+@pytest.mark.parametrize('script,options', [
+    ('scripts/run_server_adapter_proof_from_env.ps1', {'--image', '--command', '--args'}),
+    ('scripts/run_kpnet_soc_setting_probe_from_env.ps1', {'--command', '--args'}),
+])
+def test_actual_update_and_restore_flags_emit_cli_option_names(tmp_path, script, options):
+    pwsh = shutil.which('pwsh')
+    if not pwsh:
+        pytest.skip('PowerShell is required to evaluate the actual flags-file emitters')
+    driver = tmp_path / 'emit-flags.ps1'
+    driver.write_text('''param([string]$Source,[string]$OutputDirectory)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'Source parse failed'}
+$pipelines=@($ast.FindAll({param($node)
+ $node -is [System.Management.Automation.Language.PipelineAst] -and
+ ($node.Extent.Text.Contains('Set-Content -LiteralPath $flagsPath') -or $node.Extent.Text.Contains('Set-Content -LiteralPath $restorePath'))
+},$true))
+if($pipelines.Count -ne 2){throw 'Expected one update and one restore flags emitter'}
+$ImmutablePlannerImage='test-image';$loader='test-loader';$bundleUri='test-bundle'
+$bundleSha='test-sha';$bundle=@{generation=1};$imageDigest='test-digest'
+$argsForProbe=@('-c','test-entry','30')
+$previous=@{image='test-original';command=@('python');args=@('original.py')}
+$flagsPath=Join-Path $OutputDirectory 'update.json'
+$restorePath=Join-Path $OutputDirectory 'restore.json'
+foreach($pipeline in $pipelines){. ([scriptblock]::Create($pipeline.Extent.Text))}
+''', encoding='utf-8')
+    result = subprocess.run([pwsh, '-NoProfile', '-File', str(driver), str(ROOT / script), str(tmp_path)],
+                            capture_output=True, text=True, encoding='utf-8', timeout=20)
+    assert result.returncode == 0, result.stderr
+    for name in ('update.json', 'restore.json'):
+        flags = json.loads((tmp_path / name).read_text(encoding='utf-8-sig'))
+        assert set(flags) == options
+        assert flags['--command'] == 'python'
+        assert isinstance(flags['--args'], list) and flags['--args']
+
+
 @pytest.mark.parametrize('clock,override,accepted', [
     ('03:05', False, False), ('03:05', True, False), ('03:15', True, True),
     ('03:20', False, False), ('06:44', True, True), ('06:45', True, False),
