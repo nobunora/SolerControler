@@ -110,6 +110,8 @@ FAILの最小診断としてadapter_proof.mainの既存安全builderを再利用
 
 実safe chainから確認したharness修正はRpcRecorder.__getattr__のbatch_get_documents戻り値だけをiter(list(response))とし、SDK DocumentReference.getのnext(iterator,None)契約を保持する。eagerなstream消費・計測・RPC timeout/retry・commit後ACK欠落注入は保持する。runの既存recorder復元をfinallyの先頭へ移し、cleanup RPCではoriginal transportを使う。Firestore document.deleteはcommit RPCを使うため、未消費のdrop_commit_ackをcleanupへ持ち込まない。flagを強制解除せずbindingの対象範囲を分ける。ローカルactualSDK2.31のfake GAPIC/no-network回帰と、target2.34 wheel/source419のiterator契約・native frameを別証拠にする。app/SDK version/全期限/retry/protected source変更0、全workflow proofは次native receiptを待つ。
 
+GCS2.19のBlob.reloadは既存blob.generationをqueryへ含める。別clientのCASが世代を更新してもinitial Blobの古いgenerationは自動更新されないため、winnerのupload ACKから(payload,generation)を返し、同generationを指定した新Blobでread-backする。generationをlatest無条件GETから推定しない。initial/checkpoint/restore uploadのACKgenerationもread-back前に保持し、cleanupはその選択済generationだけを削除する。本文はoperation_idのraw UTF-8、CAS winnerは同rawに-a/-bを付した値であり、別のownership metadataを追加しない。actualStorageSDK2.19/fake resource callbacksのローカル回帰は世代非保持bucketモデルで競合・原本checkpoint復元・exact cleanup・各ACK後読戻し失敗を検証する。native server proof、ADC refresh、fullpack/Drive/browser証拠へ昇格せず、全timeout4/retryNone/世代条件を保持する。
+
 ## 出口・引継ぎ
 
 R05へbuild adapter receipt/SDK版/digest/fixture SHA/owned native revisions/generations/cleanupを渡す。raw/state/pack/全originals/Drive/nativepaging/browserの後段receiptはR03/R05が取得する。G07 CLOSEDは両stageの必要証拠が全てPASSの時だけ、G04もfull workflowの同vintage/実績source/writer/性能が揃うまでOPEN。source/local回帰は実serverの代用にしない。

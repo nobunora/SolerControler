@@ -460,6 +460,47 @@
         "tests/test_firestore_native_harness.py::test_actual_cleanup_restores_original_rpc_before_delete_commit_and_retains_primary",
         "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit"
       ]
+    },
+    {
+      "stage": "R04",
+      "path": "tests/g07/gcs_server_cases.py",
+      "symbols": [
+        "run",
+        "run.compete"
+      ],
+      "variables": [
+        "winning_raw",
+        "generation",
+        "blob",
+        "checkpoint_generation",
+        "candidate",
+        "target",
+        "winners"
+      ],
+      "change": "Test harness only: capture each upload ACK generation before same-generation reload/readback; compete returns (candidate, ACK generation), and the winner is rebound to a generation-pinned Blob for readback, restore and existing exact-generation cleanup. App/flags/classes/SDK version/deadline/retry and case ownership unchanged",
+      "existing": true,
+      "baseline_source_revision": "403a8e6ef95d51b472af167524c2d66a819ac1d6",
+      "source_sha256": "0ab2916738194f571cc0f79753572230af11950991f2beee28c30f902d5ccaca",
+      "implemented_source_sha256": "7fede1af0764734a6555655ac3eede4df8b6159870db61ee7354d3f030064bba",
+      "new_classes": "none",
+      "new_functions": "none",
+      "new_flags": "none",
+      "ack_generation_contract": {
+        "compete_success_return": "tuple[bytes, int]",
+        "compete_precondition_failure_return": null,
+        "winner_binding": [
+          "winning_raw",
+          "generation"
+        ],
+        "readback": "upload ACK generation pinned before reload; reload/download require the same generation",
+        "cleanup": "existing operation-owned delete uses the last acknowledged generation",
+        "rpc_timeout_seconds": 4,
+        "rpc_retry": null,
+        "acceptance": "Actual SDK 2.19 no-network boundary regression; real-server acceptance pending"
+      },
+      "associated_tests": [
+        "tests/test_gcs_native_harness.py::test_actual_storage_sdk_ack_generations_survive_cas_restore_and_exact_cleanup"
+      ]
     }
   ],
   "protected": [

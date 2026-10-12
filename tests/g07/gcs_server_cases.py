@@ -38,8 +38,8 @@ def run(fixture: dict) -> list[dict]:
                       "reason_code": "initial_refresh_observed" if refresh_observed else "initial_refresh_unobserved"})
         raw = fixture["operation_id"].encode()
         blob.upload_from_string(raw, if_generation_match=0, timeout=4, retry=None)
-        blob.reload(timeout=4, retry=None)
         generation = int(blob.generation)
+        blob.reload(if_generation_match=generation, timeout=4, retry=None)
         assert blob.download_as_bytes(if_generation_match=generation, timeout=4, retry=None) == raw
         try:
             blob.upload_from_string(b"stale", if_generation_match=0, timeout=4, retry=None)
@@ -59,7 +59,7 @@ def run(fixture: dict) -> list[dict]:
                 barrier.wait(timeout=10)
                 try:
                     target.upload_from_string(candidate, if_generation_match=generation, timeout=4, retry=None)
-                    return candidate
+                    return candidate, int(target.generation)
                 except PreconditionFailed:
                     return None
             finally:
@@ -68,9 +68,10 @@ def run(fixture: dict) -> list[dict]:
             futures = [pool.submit(compete, candidate) for candidate in (raw + b"-a", raw + b"-b")]
             winners = [result for future in futures if (result := future.result(timeout=15)) is not None]
         assert len(winners) == 1
-        blob.reload(timeout=4, retry=None)
-        generation = int(blob.generation)
-        assert blob.download_as_bytes(if_generation_match=generation, timeout=4, retry=None) == winners[0]
+        winning_raw, generation = winners[0]
+        blob = client.bucket(fixture["bucket"]).blob(names[0], generation=generation)
+        blob.reload(if_generation_match=generation, timeout=4, retry=None)
+        assert blob.download_as_bytes(if_generation_match=generation, timeout=4, retry=None) == winning_raw
         cases.append({"name": "gcs_two_actual_clients_cas", "status": "PASS"})
         step = "selected_generation_restore"
         if len(names) < 2:
@@ -78,18 +79,18 @@ def run(fixture: dict) -> list[dict]:
                              "reason_code": "second_owned_checkpoint_object_required"}]
         checkpoint = client.bucket(fixture["bucket"]).blob(names[1])
         checkpoint.upload_from_string(raw, if_generation_match=0, timeout=4, retry=None)
-        checkpoint.reload(timeout=4, retry=None)
         checkpoint_generation = int(checkpoint.generation)
+        checkpoint.reload(if_generation_match=checkpoint_generation, timeout=4, retry=None)
         selected = checkpoint.download_as_bytes(if_generation_match=checkpoint_generation, timeout=4, retry=None)
         assert selected == raw
         blob.upload_from_string(selected, if_generation_match=generation, timeout=4, retry=None)
-        blob.reload(timeout=4, retry=None)
         generation = int(blob.generation)
+        blob.reload(if_generation_match=generation, timeout=4, retry=None)
         restored = blob.download_as_bytes(if_generation_match=generation, timeout=4, retry=None)
         assert restored == raw
         cases.append({"name": "selected_native_generation_restore_and_read_performance", "status": "PASS",
                       "selected_generation": checkpoint_generation, "restored_generation": generation,
-                      "read_bytes": len(winners[0]) + len(selected) + len(restored),
+                      "read_bytes": len(winning_raw) + len(selected) + len(restored),
                       "elapsed_ms": round((time.monotonic() - started) * 1000),
                       "measurement_scope": "owned GCS objects; production dashboard browser is separate"})
         return cases
