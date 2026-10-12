@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -421,14 +423,23 @@ def _persist_postgres(conn: Any, rows: list[dict[str, Any]]) -> int:
     return inserted
 
 
-def _persist_firestore(client: Any, rows: list[dict[str, Any]]) -> int:
+def _snapshot_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(deadline) or remaining <= 0:
+        raise TimeoutError("forecast snapshot deadline exceeded")
+    return min(4.0, remaining)
+
+
+def _persist_firestore(client: Any, rows: list[dict[str, Any]], *, deadline: float | None = None) -> int:
     collection = client.collection("forecast_hourly_snapshots")
     pending: list[tuple[Any, dict[str, Any]]] = []
     for row in rows:
         document = collection.document(str(row["snapshot_id"]))
         try:
-            existing = document.get()
+            existing = document.get() if deadline is None else document.get(timeout=_snapshot_timeout(deadline), retry=None)
         except (AttributeError, TypeError):
+            if deadline is not None:
+                raise
             existing = None
         if existing is not None and bool(getattr(existing, "exists", False)):
             continue
@@ -445,7 +456,25 @@ def _persist_firestore(client: Any, rows: list[dict[str, Any]]) -> int:
             create(document, payload)
         else:
             batch.set(document, payload, merge=False)
-    batch.commit()
+    if deadline is None:
+        batch.commit()
+    else:
+        try:
+            batch.commit(timeout=_snapshot_timeout(deadline), retry=None)
+        except Exception as error:
+            # A missing acknowledgement can follow a successful immutable commit.
+            # Preserve first provenance; only exact source rows qualify on retry.
+            try:
+                for document, payload in pending:
+                    saved = document.get(timeout=_snapshot_timeout(deadline), retry=None)
+                    stored = saved.to_dict() if saved.exists else None
+                    if not isinstance(stored, dict) or any(
+                        stored.get(key) != value for key, value in payload.items() if key != "ingested_at"
+                    ):
+                        raise ValueError("immutable forecast snapshot readback mismatch")
+            except Exception as read_error:
+                error.add_note(f"immutable snapshot commit unconfirmed: {type(read_error).__name__}")
+                raise error from read_error
     return len(pending)
 
 
@@ -456,6 +485,7 @@ def persist_forecast_snapshots(
     night_plan_path: Path,
     timezone: str,
     ingested_at: str,
+    deadline: float | None = None,
 ) -> int:
     """Persist one forecast vintage without modifying the latest forecast store."""
     if not night_plan_path.exists():
@@ -476,7 +506,7 @@ def persist_forecast_snapshots(
     if normalized == "postgres":
         return _persist_postgres(storage, rows)
     if normalized == "firestore":
-        return _persist_firestore(storage, rows)
+        return _persist_firestore(storage, rows, deadline=deadline)
     raise ValueError(f"unsupported forecast snapshot backend: {backend}")
 
 

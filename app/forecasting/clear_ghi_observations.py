@@ -103,12 +103,18 @@ def observed_day_records(
     saved = {str(r["date"]): r for r in previous}
     excluded: dict[str, list[str]] = {}
     retained_observation_gaps: list[str] = []
+    checked_actual_sha256_by_date: dict[str, str] = {}
     for day, values in sorted(samples.items()):
         if any(values.get((hour, minute)) is None for hour in range(5, 18) for minute in (0, 30)):
             excluded.setdefault("actual_halfhour_missing", []).append(day.isoformat())
             # A correction to missing data invalidates a formerly certified day.
             saved.pop(day.isoformat(), None)
             continue
+        checked_actual_source = {"date": day.isoformat(), "samples": [
+            {"hour": hour, "actual_halfhour_kwh": [values[(hour, 0)], values[(hour, 30)]]}
+            for hour in range(5, 18)
+        ]}
+        checked_actual_sha256_by_date[day.isoformat()] = hashlib.sha256(canonical_bytes(checked_actual_source)).hexdigest()
         hours: list[dict[str, Any]] = []
         certification_source: list[dict[str, Any]] = []
         core: list[bool] = []
@@ -157,7 +163,8 @@ def observed_day_records(
     result = [saved[key] for key in sorted(saved) if date.fromisoformat(key) < target_date]
     print(json.dumps({"event": "pv_calibration_observations", "target_date": target_date.isoformat(),
                       "actual_days_checked": len(samples), "saved_clear_days": len(result),
-                      "excluded_dates": excluded, "retained_observation_gaps": retained_observation_gaps}), flush=True)
+                      "excluded_dates": excluded, "retained_observation_gaps": retained_observation_gaps,
+                      "checked_actual_sha256_by_date": checked_actual_sha256_by_date}), flush=True)
     return result
 
 

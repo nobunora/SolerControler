@@ -232,3 +232,65 @@ def test_projection_failure_does_not_republish_or_report_control_failure(tmp_pat
     assert planner.main() == 0
     assert len(calls) == 1
     assert '"event": "plan_projection_failed"' in capsys.readouterr().out
+
+
+def test_bounded_transaction_retries_only_commit_abort_and_preserves_result(sdk_client):
+    import time
+    from google.api_core.exceptions import Aborted
+    from app.operations.forecast_persistence import _run_bounded_projection_transaction
+    client, transport = sdk_client
+    original_commit = transport.commit
+    options = []
+    attempts = []
+    def commit(request, **kwargs):
+        options.append(kwargs)
+        attempts.append(copy.deepcopy(request))
+        if len(attempts) == 1:
+            raise Aborted("server conflict")
+        return original_commit(request, **kwargs)
+    transport.commit = commit
+    def callback(transaction):
+        transaction.set(client.collection("forecast_plans").document("bounded"), {"count": 1})
+        return "callback-result"
+    assert _run_bounded_projection_transaction(client, callback, deadline=time.monotonic() + 10) == "callback-result"
+    assert [len(request["writes"]) for request in attempts] == [1, 1]
+    assert all(option["retry"] is None and 0 < option["timeout"] <= 4 for option in options)
+    assert transport.documents["projects/publication-local/databases/(default)/documents/forecast_plans/bounded"] == {"count": 1}
+
+
+def test_bounded_transaction_expired_before_begin_and_abort_exhaustion(sdk_client):
+    import time
+    from google.api_core.exceptions import Aborted
+    from app.operations.forecast_persistence import _run_bounded_projection_transaction
+    client, transport = sdk_client
+    with pytest.raises(TimeoutError):
+        _run_bounded_projection_transaction(client, lambda _: None, deadline=time.monotonic() - 1)
+    assert transport.requests == []
+    def abort(request, **kwargs):
+        transport.requests.append(("aborted", request))
+        raise Aborted("server conflict")
+    transport.commit = abort
+    with pytest.raises(ValueError) as failure:
+        _run_bounded_projection_transaction(client, lambda _: None, deadline=time.monotonic() + 10, max_attempts=1)
+    assert isinstance(failure.value.__cause__, Aborted)
+    assert [kind for kind, _ in transport.requests] == ["begin", "aborted", "rollback"]
+
+
+def test_normal_planner_passes_one_shared_projection_deadline(tmp_path, monkeypatch, capsys):
+    path = private_file(tmp_path, original())
+    calls = []
+    monkeypatch.setattr(planner.forecast_job, "generate_forecast_plan", lambda: path)
+    monkeypatch.setattr(planner.forecast_job, "_target_date", lambda: "2026-10-11")
+    monkeypatch.setattr(planner, "open_firestore", lambda: object())
+    monkeypatch.setattr(planner.storage, "Client", lambda: object())
+    monkeypatch.setattr(planner, "estimate_forced_charge_rate_percent_per_hour", lambda *_: {"percent_per_hour": 20})
+    monkeypatch.setattr(planner, "archive_plan_original", lambda raw, **kw: ({"status": "verified"}, {}))
+    monkeypatch.setattr(planner, "FirestorePlanStore", lambda: SimpleNamespace(publish=lambda _: calls.append(("adopt", None))))
+    monkeypatch.setattr(planner, "dashboard_snapshot_prefix", lambda: "")
+    for name in ("project_forecast_plan", "project_plan_read_models", "project_model_parameters"):
+        monkeypatch.setattr(planner, name, lambda *args, _name=name, **kwargs: calls.append((_name, kwargs["deadline"])))
+    assert planner.main() == 0
+    assert calls[0] == ("adopt", None)
+    assert len({deadline for _, deadline in calls[1:]}) == 1
+    assert calls[1][1] is not None
+    assert '"event": "plan_publication_succeeded"' in capsys.readouterr().out

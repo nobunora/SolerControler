@@ -67,3 +67,32 @@ def test_unknown_provider_compares_retrieval_without_claiming_provider_freshness
     )
     FirestorePlanStore(session=session).publish(new)
     assert "provider_freshness_unknown" in capsys.readouterr().out
+
+
+def test_control_publication_deadline_prevents_later_cas_attempt(monkeypatch):
+    import time
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", "local-test")
+    calls = []
+    clock = [time.monotonic()]
+    monkeypatch.setattr("app.separated_runtime.plan_store.time.monotonic", lambda: clock[0])
+    def get(*args, **kwargs):
+        calls.append(("read", kwargs))
+        return SimpleNamespace(status_code=404)
+    def post(*args, **kwargs):
+        calls.append(("commit", kwargs))
+        clock[0] += 61
+        return SimpleNamespace(status_code=409, json=lambda: {})
+    with pytest.raises(TimeoutError):
+        FirestorePlanStore(session=SimpleNamespace(get=get, post=post)).publish(published())
+    assert [kind for kind, _ in calls] == ["read", "commit"]
+    assert all(kwargs["max_allowed_time"] <= 60 for _, kwargs in calls)
+
+
+def test_control_commit_lost_ack_is_distinct_from_server_rejection(monkeypatch):
+    monkeypatch.setenv("FIRESTORE_PROJECT_ID", "local-test")
+    def lost(*args, **kwargs):
+        raise TimeoutError("response lost")
+    session = SimpleNamespace(get=lambda *args, **kwargs: SimpleNamespace(status_code=404), post=lost)
+    with pytest.raises(TimeoutError) as error:
+        FirestorePlanStore(session=session).publish(published())
+    assert any("acknowledgement is unknown" in note for note in error.value.__notes__)

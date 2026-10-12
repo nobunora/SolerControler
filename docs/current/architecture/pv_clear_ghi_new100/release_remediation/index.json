@@ -2,10 +2,10 @@
   "schema_version": 1,
   "source_revision": "1dd8786",
   "date_jst": "2026-10-12",
-  "scope": "SPECIFICATION_AND_REVIEW_ONLY",
-  "implementation_status": "NOT_STARTED",
-  "server_proof_status": "NOT_EXECUTED",
-  "deployment_status": "NOT_EXECUTED",
+  "scope": "IMPLEMENTATION_AND_REAL_SERVER_ACCEPTANCE",
+  "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
+  "server_proof_status": "PENDING_REAL_SERVER",
+  "deployment_status": "PENDING",
   "entry": "README.md",
   "report": "report.md",
   "review": "review.md",
@@ -24,9 +24,12 @@
       ],
       "planned_new_sources": [],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
+        "tests/test_pre_release_integration_contract.py"
+      ],
+      "associated_test_sources": [
         "tests/test_pre_release_integration_contract.py"
       ]
     },
@@ -49,10 +52,15 @@
         "scripts/validate_forecast_display_evidence.py"
       ],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
         "tests/test_forecast_display_evidence.py"
+      ],
+      "associated_test_sources": [
+        "tests/test_forecast_display_evidence.py",
+        "tests/test_dashboard_backend_parity.py",
+        "tests/test_dashboard_backend_parity_validator.py"
       ]
     },
     {
@@ -78,10 +86,14 @@
         "scripts/run_monitoring_source_repair_from_env.ps1"
       ],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
         "tests/test_monitoring_repair_command.py"
+      ],
+      "associated_test_sources": [
+        "tests/test_monitoring_repair_command.py",
+        "tests/test_monitoring_source_repair.py"
       ]
     },
     {
@@ -101,16 +113,24 @@
         "app/energy_plan/clear_ghi_update.py",
         "app/forecasting/clear_ghi_observations.py",
         "app/dashboard/snapshots.py",
-        "app/backup/drive.py"
+        "app/backup/drive.py",
+        "app/forecasting/clear_ghi_observations.py"
       ],
       "planned_new_sources": [
         "app/operations/monitoring_repair.py"
       ],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
         "tests/test_monitoring_repair_derived.py"
+      ],
+      "associated_test_sources": [
+        "tests/test_monitoring_repair_derived.py",
+        "tests/test_dashboard_publication_generation.py",
+        "tests/test_clear_ghi_runtime.py",
+        "tests/test_dashboard_snapshots.py",
+        "tests/test_dashboard_new100_diagnostics.py"
       ]
     },
     {
@@ -135,11 +155,21 @@
         "app/backup/plan_snapshot.py",
         "app/operations/forecast_snapshot.py"
       ],
-      "planned_new_sources": [],
+      "planned_new_sources": [
+        "scripts/run_server_adapter_proof_from_env.ps1"
+      ],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
+        "tests/g07/adapter_proof.py",
+        "tests/g07/firestore_server_cases.py",
+        "tests/g07/gcs_server_cases.py"
+      ],
+      "associated_test_sources": [
+        "tests/test_forecast_projection_generation.py",
+        "tests/test_control_publication_provenance.py",
+        "tests/test_plan_snapshot_recovery.py",
         "tests/g07/adapter_proof.py",
         "tests/g07/firestore_server_cases.py",
         "tests/g07/gcs_server_cases.py"
@@ -164,14 +194,37 @@
       ],
       "planned_new_sources": [],
       "new_classes": "none in production; R04 test fixtures only",
-      "tests_status": "PLANNED",
-      "implementation_status": "NOT_STARTED",
+      "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
+      "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
+        "tests/test_separated_release_repair_order.py"
+      ],
+      "associated_test_sources": [
         "tests/test_separated_release_repair_order.py"
       ]
     }
   ],
   "production_dependency_meaning": "R04 preparation precedes candidate build; same planner digest native proof must pass within R05 build before planner updates. R05 owns orchestration, not completion of all its stages before R02/R03 execution.",
   "symbol_review": "collision-review.md",
-  "change_review_rule": "Every specification change includes its own class/symbol/variable/caller/write-target/resume conflict review, updates stages and indexes together, and favors one owner and existing primitives before flags or new state."
+  "change_review_rule": "Every specification change includes its own class/symbol/variable/caller/write-target/resume conflict review, updates stages and indexes together, and favors one owner and existing primitives before flags or new state.",
+  "implementation_record": "implementation-status.md",
+  "design_checkpoint": "7b9983c",
+  "acceptance_extensions": [
+    {
+      "id": "R06",
+      "file": "steps/R06-post-deploy-soc-probe.md",
+      "production_requires": [
+        "R05.complete"
+      ],
+      "new_classes": "none",
+      "sources": [
+        "app/kpnet/soc_setting_probe.py",
+        "scripts/run_kpnet_soc_setting_probe_from_env.ps1"
+      ],
+      "tests": [
+        "tests/test_kpnet_soc_setting_probe.py"
+      ],
+      "runtime_status": "PENDING_POST_DEPLOYMENT"
+    }
+  ]
 }

@@ -230,6 +230,13 @@ def test_reused_plan_does_not_claim_current_model_revision(monkeypatch, tmp_path
 
 def test_planner_publishes_exact_same_original_to_control_and_existing_dashboard(monkeypatch, tmp_path):
     from app.separated_runtime import planner
+    import time
+    from google.cloud.firestore_v1 import transactional
+    def bounded_fixture(client, callback, *, deadline, max_attempts):
+        assert deadline > time.monotonic()
+        assert max_attempts == 1
+        return transactional(callback)(client.transaction(max_attempts=max_attempts))
+    monkeypatch.setattr('app.backup.plan_snapshot._run_bounded_projection_transaction', bounded_fixture)
     path = plan_file(tmp_path)
     body = json.loads(path.read_bytes())
     body['result'].update(required_night_charge_kwh=7.2, effective_capacity_kwh=10)

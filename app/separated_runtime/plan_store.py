@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import math
+import time
 from typing import Any, cast
 from datetime import datetime
 from urllib.parse import quote
@@ -88,7 +90,14 @@ class FirestorePlanStore:
         document = json.loads(response.json()["fields"]["payload"]["stringValue"])
         return PublishedPlan.from_document(document, target_date=target_date)
 
-    def publish(self, plan: PublishedPlan) -> None:
+    def publish(self, plan: PublishedPlan, *, deadline: float | None = None) -> None:
+        deadline = time.monotonic() + 60.0 if deadline is None else deadline
+        def remaining() -> float:
+            budget = deadline - time.monotonic()
+            if not math.isfinite(deadline) or budget <= 0:
+                raise TimeoutError("control publication deadline exceeded")
+            return budget
+
         _validate_incoming_provenance(plan)
         payload = json.dumps(plan.to_document(), sort_keys=True, separators=(",", ":"), allow_nan=False)
         if len(payload.encode("utf-8")) > 900_000:
@@ -99,7 +108,10 @@ class FirestorePlanStore:
         pointer = "/control_plan_current/" + plan.target_date
         incoming_time = datetime.fromisoformat(json.loads(plan.raw_json)["generated_at"].replace("Z", "+00:00"))
         for _ in range(3):
-            current = self.session.get(self.base + pointer, timeout=(10, 60), max_allowed_time=60)
+            budget = remaining()
+            current = self.session.get(self.base + pointer, timeout=(min(10, budget), min(60, budget)),
+                                       max_allowed_time=budget)
+            remaining()
             if current.status_code == 404:
                 precondition = {"exists": False}
             elif current.status_code == 200:
@@ -114,8 +126,13 @@ class FirestorePlanStore:
                 raise RuntimeError("control plan publication could not read the adopted plan")
             writes = [{"update": {"name": self.root + "/control_plan_versions/" + plan.version_id, "fields": fields}},
                       {"update": {"name": self.root + pointer, "fields": fields}, "currentDocument": precondition}]
-            response = self.session.post(self.base + ":commit", json={"writes": writes},
-                                         timeout=(10, 60), max_allowed_time=60)
+            budget = remaining()
+            try:
+                response = self.session.post(self.base + ":commit", json={"writes": writes},
+                                             timeout=(min(10, budget), min(60, budget)), max_allowed_time=budget)
+            except Exception as error:
+                error.add_note("control commit acknowledgement is unknown; read back the fixed version")
+                raise
             if response.status_code == 200:
                 return
             conflict = response.status_code in {409, 412} or (

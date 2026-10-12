@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
 import os
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from google.cloud.firestore import transactional
 
-from app.operations.forecast_persistence import projection_identity, projection_may_advance
+from app.operations.forecast_persistence import (
+    _projection_timeout, _run_bounded_projection_transaction, projection_identity, projection_may_advance,
+)
 from app.separated_runtime.plan import PublishedPlan
 
 from google.cloud import firestore
@@ -438,6 +442,63 @@ def recalc_cost_daily(
     return
 
 
+def _monitoring_recalc_rpc(deadline: float | None) -> dict[str, Any]:
+    if deadline is None:
+        return {}
+    if not math.isfinite(deadline):
+        raise ValueError("monitoring recalculation requires a finite deadline")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("monitoring recalculation deadline exceeded")
+    return {"timeout": min(4.0, remaining), "retry": None}
+
+
+def _commit_monitoring_recalc(
+    batch: Any, *, stage: str, unit_index: int, documents: list[dict[str, Any]],
+    source_count: int, deadline: float | None,
+    on_progress: Callable[[dict[str, Any]], None] | None, started: float,
+) -> None:
+    if on_progress is None:
+        batch.commit(**_monitoring_recalc_rpc(deadline))
+        return
+    counts: dict[str, int] = {"monitoring_samples_read": source_count}
+    for document in documents:
+        collection = document["collection"]
+        counts[collection] = counts.get(collection, 0) + 1
+    dates = sorted(str(document["payload"]["date"]) for document in documents)
+    event: dict[str, Any] = {
+        "stage": stage, "unit_index": unit_index, "event": "unit_prepared",
+        "collection_counts": counts, "document_ids": [document["id"] for document in documents],
+        "date_start": dates[0], "date_end": dates[-1], "document_count": len(documents),
+        "unit_payload_sha256": hashlib.sha256(json.dumps(documents, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest(),
+        "acked_update_times": [], "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "reason_code": None, "documents": documents,
+    }
+    if on_progress is not None:
+        on_progress(dict(event))  # A failed prepared journal must prevent this commit.
+    try:
+        results = batch.commit(**_monitoring_recalc_rpc(deadline))
+    except Exception:
+        event.update(event="commit_unknown", reason_code="commit_response_unknown")
+        if on_progress is not None:
+            try:
+                on_progress(dict(event))
+            except Exception:
+                pass
+        raise
+    event.update(event="commit_ack", acked_update_times=[str(result.update_time) for result in (results or [])])
+    if on_progress is not None:
+        try:
+            on_progress(dict(event))
+        except Exception as exc:
+            event.update(event="progress_unknown", reason_code="ack_journal_failed")
+            try:
+                on_progress(dict(event))
+            except Exception:
+                pass
+            raise RuntimeError("monitoring commit acknowledged but progress is unknown") from exc
+
+
 def recalc_cost_daily_from(
     client: Any,
     *,
@@ -454,7 +515,10 @@ def recalc_cost_daily_from(
     night8_day_rate_tier2_yen: float = 39.10,
     night8_day_rate_tier3_yen: float = 43.62,
     night8_night_rate_yen: float = 28.85,
+    deadline: float | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> int:
+    started = time.monotonic()
     start_ts = f"{start_date}T00:00:00"
     rows: list[dict[str, Any]] = []
     query = (
@@ -463,10 +527,17 @@ def recalc_cost_daily_from(
         .where("ts", "<", end_ts)
         .order_by("ts")
     )
-    for doc in query.stream():
+    source_limit = int((datetime.fromisoformat(end_ts) - datetime.fromisoformat(start_ts)).total_seconds() // 1800) if deadline is not None else 0
+    if deadline is not None:
+        query = query.limit(source_limit + 1)
+    for doc in query.stream(**_monitoring_recalc_rpc(deadline)):
+        _monitoring_recalc_rpc(deadline)
         row = doc.to_dict() or {}
         row["ts"] = str(row.get("ts", doc.id))
         rows.append(row)
+    _monitoring_recalc_rpc(deadline)
+    if deadline is not None and len(rows) > source_limit:
+        raise ValueError("monitoring recalculation source exceeds half-hour budget")
     if not rows:
         return 0
 
@@ -478,7 +549,8 @@ def recalc_cost_daily_from(
         .order_by("date", direction=firestore.Query.DESCENDING)
         .limit(1)
     )
-    prior_rows = list(prior_query.stream())
+    prior_rows = list(prior_query.stream(**_monitoring_recalc_rpc(deadline)))
+    _monitoring_recalc_rpc(deadline)
     if prior_rows:
         prior = prior_rows[0].to_dict() or {}
         base_kwh = float(prior.get("cumulative_kwh") or 0.0)
@@ -507,29 +579,34 @@ def recalc_cost_daily_from(
         ),
     )
     results = apply_cumulative_baseline(results, base_kwh=base_kwh, base_yen=base_yen)
+    _monitoring_recalc_rpc(deadline)
 
     batch = client.batch()
     count = 0
+    unit_index = 0
+    documents: list[dict[str, Any]] = []
     for result in results:
-        batch.set(
-            client.collection("cost_daily").document(result.date),
-            {
+        payload = {
                 "date": result.date,
                 "self_consumption_kwh": result.self_consumption_kwh,
                 "savings_yen": result.savings_yen,
                 "cumulative_kwh": result.cumulative_kwh,
                 "cumulative_yen": result.cumulative_yen,
                 "updated_at": updated_at,
-            },
-            merge=True,
-        )
+            }
+        batch.set(client.collection("cost_daily").document(result.date), payload, merge=True)
+        documents.append({"collection": "cost_daily", "id": result.date, "payload": payload})
         count += 1
         if count >= 450:
-            batch.commit()
+            _commit_monitoring_recalc(batch, stage="cost", unit_index=unit_index, documents=documents,
+                                     source_count=len(rows), deadline=deadline, on_progress=on_progress, started=started)
             batch = client.batch()
             count = 0
+            documents = []
+            unit_index += 1
     if count:
-        batch.commit()
+        _commit_monitoring_recalc(batch, stage="cost", unit_index=unit_index, documents=documents,
+                                 source_count=len(rows), deadline=deadline, on_progress=on_progress, started=started)
     return len(results)
 
 
@@ -741,7 +818,10 @@ def recalc_monitoring_daily_metrics(
     calendar_dates: set[str],
     dashboard_affected_dates: set[str],
     updated_at: str,
+    deadline: float | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, int]:
+    started = time.monotonic()
     if not calendar_dates and not dashboard_affected_dates:
         return {"dashboard": 0, "pv_charge_end": 0}
 
@@ -764,10 +844,17 @@ def recalc_monitoring_daily_metrics(
         .where("ts", ">=", start_ts)
         .where("ts", "<", end_ts)
     )
-    for doc in query.stream():
+    source_limit = int((datetime.fromisoformat(end_ts) - datetime.fromisoformat(start_ts)).total_seconds() // 1800) if deadline is not None else 0
+    if deadline is not None:
+        query = query.limit(source_limit + 1)
+    for doc in query.stream(**_monitoring_recalc_rpc(deadline)):
+        _monitoring_recalc_rpc(deadline)
         row = doc.to_dict() or {}
         row["ts"] = str(row.get("ts", doc.id))
         rows.append(row)
+    _monitoring_recalc_rpc(deadline)
+    if deadline is not None and len(rows) > source_limit:
+        raise ValueError("monitoring recalculation source exceeds half-hour budget")
 
     by_day: dict[str, dict[str, float | str | None]] = {}
     review_night_charge_by_day: dict[str, float | None] = defaultdict(float)
@@ -839,6 +926,9 @@ def recalc_monitoring_daily_metrics(
 
     batch = client.batch()
     count = 0
+    unit_index = 0
+    documents: list[dict[str, Any]] = []
+    _monitoring_recalc_rpc(deadline)
     dashboard_updated = 0
     pv_updated = 0
     for day_key in sorted(dashboard_affected_dates):
@@ -849,22 +939,23 @@ def recalc_monitoring_daily_metrics(
         metrics.setdefault("night_buy_kwh", None)
         metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key)
         _log_monitoring_daily_source_quality(day_key, metrics)
-        batch.set(
-            client.collection("dashboard_daily_metrics").document(day_key),
-            {"date": day_key, **metrics, "updated_at": updated_at},
-            merge=True,
-        )
+        payload = {"date": day_key, **metrics, "updated_at": updated_at}
+        batch.set(client.collection("dashboard_daily_metrics").document(day_key), payload, merge=True)
+        documents.append({"collection": "dashboard_daily_metrics", "id": day_key, "payload": payload})
         count += 1
         dashboard_updated += 1
         if count >= 450:
-            batch.commit()
+            _commit_monitoring_recalc(batch, stage="daily", unit_index=unit_index, documents=documents,
+                                     source_count=len(rows), deadline=deadline, on_progress=on_progress, started=started)
             batch = client.batch()
             count = 0
+            documents = []
+            unit_index += 1
     for day_key in sorted(calendar_dates):
         latest = latest_pv_charge_by_day.get(day_key)
         ref = client.collection("battery_daily_metrics").document(day_key)
         if latest is None:
-            snap = ref.get()
+            snap = ref.get(**_monitoring_recalc_rpc(deadline))
             previous_doc: dict[str, Any] = (snap.to_dict() or {}) if snap.exists else {}
             if (
                 previous_doc.get("pv_charge_end_soc_percent") is None
@@ -886,14 +977,19 @@ def recalc_monitoring_daily_metrics(
                 "updated_at": updated_at,
             }
         batch.set(ref, pv_payload, merge=True)
+        documents.append({"collection": "battery_daily_metrics", "id": day_key, "payload": pv_payload})
         count += 1
         pv_updated += 1
         if count >= 450:
-            batch.commit()
+            _commit_monitoring_recalc(batch, stage="daily", unit_index=unit_index, documents=documents,
+                                     source_count=len(rows), deadline=deadline, on_progress=on_progress, started=started)
             batch = client.batch()
             count = 0
+            documents = []
+            unit_index += 1
     if count:
-        batch.commit()
+        _commit_monitoring_recalc(batch, stage="daily", unit_index=unit_index, documents=documents,
+                                 source_count=len(rows), deadline=deadline, on_progress=on_progress, started=started)
     return {"dashboard": dashboard_updated, "pv_charge_end": pv_updated}
 
 
@@ -945,16 +1041,20 @@ def upsert_model_parameters_from_plan(client: Any, *, night_plan_path: Path, upd
         )
 
 
-def project_model_parameters(client: Any, *, raw: bytes, plan: PublishedPlan, updated_at: str) -> None:
+def project_model_parameters(
+    client: Any, *, raw: bytes, plan: PublishedPlan, updated_at: str, deadline: float | None = None,
+) -> None:
     """Project legacy coefficients once per adopted generation, atomically."""
     identity = projection_identity(raw, plan)
     coeff = json.loads(raw).get("coefficients", {})
     if not isinstance(coeff, dict):
         return
-    _project_model_parameter_values(client, coeff=coeff, identity=identity, updated_at=updated_at)
+    _project_model_parameter_values(client, coeff=coeff, identity=identity, updated_at=updated_at, deadline=deadline)
 
 
-def _project_model_parameter_values(client: Any, *, coeff: dict[str, Any], identity: dict[str, str], updated_at: str) -> None:
+def _project_model_parameter_values(
+    client: Any, *, coeff: dict[str, Any], identity: dict[str, str], updated_at: str, deadline: float | None = None,
+) -> None:
     parameters: list[tuple[Any, str, float]] = []
     for name, value in coeff.items():
         try:
@@ -965,9 +1065,10 @@ def _project_model_parameter_values(client: Any, *, coeff: dict[str, Any], ident
     if not parameters:
         return
 
-    @transactional
     def update(transaction: Any) -> None:
-        previous = [ref.get(transaction=transaction, timeout=3, retry=None).to_dict() or {} for ref, _, _ in parameters]
+        previous = [ref.get(transaction=transaction,
+                            timeout=3 if deadline is None else _projection_timeout(deadline, cap=3),
+                            retry=None).to_dict() or {} for ref, _, _ in parameters]
         for (ref, name, mean), old in zip(parameters, previous):
             if old.get("raw_plan_sha256") == identity["raw_plan_sha256"]:
                 if not old.get("control_version_id") and identity["control_version_id"]:
@@ -979,7 +1080,10 @@ def _project_model_parameter_values(client: Any, *, coeff: dict[str, Any], ident
                                   "sample_count": int(old.get("sample_count") or 0) + 1,
                                   "hit_rate": None, "updated_at": updated_at, **identity}, merge=True)
 
-    update(client.transaction(max_attempts=3))
+    if deadline is None:
+        transactional(update)(client.transaction(max_attempts=3))
+    else:
+        _run_bounded_projection_transaction(client, update, deadline=deadline, max_attempts=3)
 
 
 def recalc_model_hit_rates(client: Any, *, updated_at: str) -> float | None:

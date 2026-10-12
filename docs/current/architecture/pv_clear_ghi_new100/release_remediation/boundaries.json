@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_revision": "1dd8786",
-  "status": "SPECIFICATION_ONLY",
+  "status": "IMPLEMENTATION_BOUNDARIES",
   "allowed": [
     {
       "stage": "R00",
@@ -11,7 +11,8 @@
       ],
       "change": "existing quality gate before protected pytest; existing checks and failures preserved",
       "existing": true,
-      "source_sha256": "92036c42091bb3b841ac98d130389e0566398280d66712000dc0784c77601ed5"
+      "source_sha256": "92036c42091bb3b841ac98d130389e0566398280d66712000dc0784c77601ed5",
+      "implemented_source_sha256": "5fa41861a8891a99cd3e179a5525e7184ca7d123e82890fbee0f0bb1dff116c2"
     },
     {
       "stage": "R01",
@@ -22,7 +23,8 @@
       ],
       "change": "AND evidence and strict common comparisons; compare_rows semantics preserved",
       "existing": true,
-      "source_sha256": "b538209c6e73722987cfaa0aa4b291c34fa3b709826b24d2ea4804e5f36e6347"
+      "source_sha256": "b538209c6e73722987cfaa0aa4b291c34fa3b709826b24d2ea4804e5f36e6347",
+      "implemented_source_sha256": "37c62ab86a500316fa763cacdabfcadf62ddb63c6fde95d206448c073ab3f3aa"
     },
     {
       "stage": "R01",
@@ -30,11 +32,13 @@
       "symbols": [
         "NEW validate_forecast_day_evidence",
         "NEW load_forecast_evidence_for_window",
-        "NEW validate_forecast_window_evidence"
+        "NEW validate_forecast_window_evidence",
+        "bundle.published_plan_document"
       ],
       "change": "collector and pure functions only; parity main is the sole CLI",
       "existing": false,
-      "source_sha256": null
+      "source_sha256": null,
+      "implemented_source_sha256": "ff54a29e7911e8d2b78fdf2cb4110cfcc17c24d5cfe6051638462d3201662b06"
     },
     {
       "stage": "R02",
@@ -45,7 +49,8 @@
       ],
       "change": "optional TargetMonths, default and finally cleanup preserved",
       "existing": true,
-      "source_sha256": "2db924368b3c6622755dde7cc344a950702e435636ba05ae81dd21bff763dd8c"
+      "source_sha256": "2db924368b3c6622755dde7cc344a950702e435636ba05ae81dd21bff763dd8c",
+      "implemented_source_sha256": "51443fe3f5778b756b5e9cb61e8e029199a600ae91a58d845b6dfe0104159e60"
     },
     {
       "stage": "R02",
@@ -55,7 +60,8 @@
       ],
       "change": "canonical explicit repair stage state and scope",
       "existing": false,
-      "source_sha256": null
+      "source_sha256": null,
+      "implemented_source_sha256": "10bcfae744e4b371b89a29b1232d9c001bf76c74ff74454e78c79b82deb07f80"
     },
     {
       "stage": "R02",
@@ -65,7 +71,8 @@
       ],
       "change": "direct stage dispatch; no framework",
       "existing": false,
-      "source_sha256": null
+      "source_sha256": null,
+      "implemented_source_sha256": "be66726a9500508c034990b5fa1e964e23a84b8c2107695c14215bb13aa0152a"
     },
     {
       "stage": "R02",
@@ -73,11 +80,14 @@
       "symbols": [
         "NEW prepare_source_repair",
         "NEW apply_source_repair",
-        "NEW verify_source_repair"
+        "NEW verify_source_repair",
+        "prepared monthly source native revisions",
+        "calibration current native preimage"
       ],
       "change": "reviewed raw13 create and readback; no old35 update",
       "existing": false,
-      "source_sha256": null
+      "source_sha256": null,
+      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
     },
     {
       "stage": "R03",
@@ -87,7 +97,8 @@
       ],
       "change": "existing daily/cost functions plus before-after source and output verification",
       "existing": false,
-      "source_sha256": null
+      "source_sha256": null,
+      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
     },
     {
       "stage": "R03",
@@ -98,7 +109,8 @@
       ],
       "change": "optional repair-only deadline/progress; daily dict and cost int return/formulas/defaults unchanged",
       "existing": true,
-      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d"
+      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
     },
     {
       "stage": "R03",
@@ -109,7 +121,8 @@
       ],
       "change": "bounded raw revision paging and history-only full rebuild; bootstrap writer unchanged",
       "existing": true,
-      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f"
+      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
+      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
     },
     {
       "stage": "R04",
@@ -120,7 +133,8 @@
       ],
       "change": "deadline and native result classification only; projections/numbers unchanged",
       "existing": true,
-      "source_sha256": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5"
+      "source_sha256": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
+      "implemented_source_sha256": "6710087836d33b93dc81308cebd558ed343c513e710aa2b7dc7d8b1c43a864c5"
     },
     {
       "stage": "R04",
@@ -131,7 +145,8 @@
       ],
       "change": "use bounded lifecycle helper only; sample monotonicity unchanged",
       "existing": true,
-      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d"
+      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
     },
     {
       "stage": "R04",
@@ -141,17 +156,22 @@
       ],
       "change": "shared absolute deadline, fixed receipt readback, original CAS unchanged",
       "existing": true,
-      "source_sha256": "2110720ff4bdd3ec2a747f0fe22b43c6537a8ac0abd80f02d0aadcfa6ef2702c"
+      "source_sha256": "2110720ff4bdd3ec2a747f0fe22b43c6537a8ac0abd80f02d0aadcfa6ef2702c",
+      "implemented_source_sha256": "98fe2d7a1cdcbc37bf57471a2d2d0d6fc0ff052d6f4cd3bd7224daf1cf224c68"
     },
     {
       "stage": "R04",
       "path": "app/separated_runtime/planner.py",
       "symbols": [
-        "main"
+        "main",
+        "write_forecast_intent",
+        "capture_adopted_forecast_receipt",
+        "recover_adopted_forecast_projection"
       ],
       "change": "structured adoption identity log and one post-CAS shared projection deadline propagation; unknown commit distinct from rejection; projection-only recovery",
       "existing": true,
-      "source_sha256": "05bd925c79199a273fa3adb074a5748c1ec6d056346f1c9e5820b6cd2ab50518"
+      "source_sha256": "05bd925c79199a273fa3adb074a5748c1ec6d056346f1c9e5820b6cd2ab50518",
+      "implemented_source_sha256": "980e58f49e33c1bb943c9aea2e7c64fbebbf5a164eb17fd540408eaa932afa36"
     },
     {
       "stage": "R04",
@@ -163,7 +183,8 @@
       ],
       "change": "cold finite timeout and late source drift observation/republication only; CAS/cache preserved",
       "existing": true,
-      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f"
+      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
+      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
     },
     {
       "stage": "R05",
@@ -174,7 +195,8 @@
       ],
       "change": "one-off prepared repair identity CLI transfer",
       "existing": true,
-      "source_sha256": "f4b8f669c0ce21f1fefce2a057964e598311d84ce68c7a746e4622632171336c"
+      "source_sha256": "f4b8f669c0ce21f1fefce2a057964e598311d84ce68c7a746e4622632171336c",
+      "implemented_source_sha256": "a87a459713b1256246af88da3b1b1a9d9f2b730339d0a79bd171f973c4a7b6cb"
     },
     {
       "stage": "R05",
@@ -189,7 +211,8 @@
       ],
       "change": "same-digest build proof, one repair journal, adopted-plan resume, canonical repair orchestration",
       "existing": true,
-      "source_sha256": "8431ad0a44a7ef0bdc60e0c7d13caca7dee7d11b5c53111d8efc03e1dd15a733"
+      "source_sha256": "8431ad0a44a7ef0bdc60e0c7d13caca7dee7d11b5c53111d8efc03e1dd15a733",
+      "implemented_source_sha256": "cb3801444c52fef49033028cafd3459109bace5ce1a660eb2f1abec480b44e39"
     },
     {
       "stage": "R04",
@@ -200,7 +223,8 @@
       ],
       "change": "optional shared projection deadline; immutable identity/defaults preserved",
       "existing": true,
-      "source_sha256": "f0e0160033f75ab647de663e30e27f45a4a422ae298af652e609746025bd3e59"
+      "source_sha256": "f0e0160033f75ab647de663e30e27f45a4a422ae298af652e609746025bd3e59",
+      "implemented_source_sha256": "eef3b0ad1369ba37317ef07567eda0346abeddb371f378371e07cc72e3898fd3"
     },
     {
       "stage": "R04",
@@ -211,7 +235,8 @@
       ],
       "change": "optional deadline using the single forecast_persistence helper; max_attempts=1 and read-before-write unchanged",
       "existing": true,
-      "source_sha256": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2"
+      "source_sha256": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2",
+      "implemented_source_sha256": "e58f1e6cbcccd674c44931f659e1d64cd09f4a4d752fd1100c0c28ebd41caacd"
     },
     {
       "stage": "R05",
@@ -222,7 +247,57 @@
       ],
       "change": "private exact-execution capture instead of latest execution; other slots and physical control unchanged",
       "existing": true,
-      "source_sha256": "78c253b00e5844ddd566da7add313a43dc5d290c9bec6540003c7e88bb08073f"
+      "source_sha256": "78c253b00e5844ddd566da7add313a43dc5d290c9bec6540003c7e88bb08073f",
+      "implemented_source_sha256": "954a48f0a423d632f1a729f2c1313436d845390eda95fea25fe10193706c1a90"
+    },
+    {
+      "stage": "R03",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbols": [
+        "observed_day_records.event.checked_actual_sha256_by_date"
+      ],
+      "change": "complete 26-sample SHA observation only; no certification or correction changes",
+      "existing": true,
+      "source_sha256": null,
+      "implemented_source_sha256": "0ddab562b671570a0776268a100e4363a01981ddec9b78564d5b5ca400013da9"
+    },
+    {
+      "stage": "R04",
+      "path": "scripts/run_server_adapter_proof_from_env.ps1",
+      "symbols": [
+        "actual-server wrapper",
+        "fixed bundle",
+        "exact execution",
+        "finally restore"
+      ],
+      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "7355b26e93ed7527d45fa2e8447037f38a1f0655d9d15048104b4fb7f324a369"
+    },
+    {
+      "stage": "R06",
+      "path": "app/kpnet/soc_setting_probe.py",
+      "symbols": [
+        "run_soc_setting_probe"
+      ],
+      "change": "explicit SOC-only 30/50 setting, 60-second hold, native readback and restoration",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "2f7d6af222e83b4f4fe2f81065564da33e1fac27840b800fb844afcea3f776b7"
+    },
+    {
+      "stage": "R06",
+      "path": "scripts/run_kpnet_soc_setting_probe_from_env.ps1",
+      "symbols": [
+        "deployment guard",
+        "exact execution",
+        "finally Job restore"
+      ],
+      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "a14e24cc19d46ab928351a97fc6aa15e9bcb1887b1004ea439bffb0ab6b42bff"
     }
   ],
   "protected": [

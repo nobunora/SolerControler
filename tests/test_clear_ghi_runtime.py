@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from app.energy_plan.clear_ghi_adapter import _prepare_night_charge_from_hourly,
 from app.energy_plan.result_builder import _clear_ghi_trace
 from app.energy_plan.workflow import _radiation_provenance
 from app.forecasting.clear_ghi_observations import (
-    fetch_satellite_original, observed_day_records, training_records,
+    canonical_bytes, fetch_satellite_original, observed_day_records, training_records,
 )
 from app.forecasting.pv_clear_ghi import (
     BASIS_VERSION, MODEL_ID, calibration_from_bytes, canonical_pack_bytes, forecast_clear_ghi,
@@ -80,6 +81,32 @@ def test_cloudy_day_is_not_certified_and_all_previous_clear_days_are_preserved()
     satellite["hourly"]["sunshine_duration"] = [0.0] * 13
     assert records(actual, satellite, old) == []
     assert records([], satellite, old) == old
+
+
+@pytest.mark.parametrize("cloudy", [False, True])
+def test_checked_actual_input_sha_is_reported_for_clear_and_excluded_days(capsys, cloudy):
+    actual, satellite = inputs()
+    actual[-1]["pv"] = 0.0
+    if cloudy:
+        satellite["hourly"]["sunshine_duration"] = [0.0] * 13
+    result = records(actual, satellite)
+    event = json.loads(capsys.readouterr().out.strip())
+    original = {"date": DAY.isoformat(), "samples": [
+        {"hour": hour, "actual_halfhour_kwh": [actual[(hour-5)*2]["pv"], actual[(hour-5)*2+1]["pv"]]} for hour in range(5, 18)]}
+    expected = hashlib.sha256(canonical_bytes(original)).hexdigest()
+    assert event["checked_actual_sha256_by_date"] == {DAY.isoformat(): expected}
+    if cloudy:
+        assert result == [] and event["excluded_dates"]["not_certified_clear"] == [DAY.isoformat()]
+    else:
+        assert result[0]["actual_sha256"] == expected
+    assert "samples" not in event and "actual_source" not in event
+
+
+def test_checked_actual_sha_is_omitted_for_incomplete_26_samples(capsys):
+    actual, satellite = inputs()
+    assert records(actual[:-1], satellite) == []
+    event = json.loads(capsys.readouterr().out.strip())
+    assert event["checked_actual_sha256_by_date"] == {}
 
 
 @pytest.mark.parametrize("invalid", [True, -1.0, float("nan"), float("inf")])

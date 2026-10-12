@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 import math
 import hashlib
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+from google.api_core.exceptions import Aborted
 from google.cloud.firestore import transactional
 
 from app.backup.night_plan_archive import read_plan_file
@@ -20,6 +22,72 @@ from app.operations.domain import (
 from app.operations.forecast_snapshot import build_forecast_snapshot_rows, persist_forecast_snapshots
 from app.parsing.numbers import to_float, to_int
 from app.separated_runtime.plan import PublishedPlan
+
+_TransactionResult = TypeVar("_TransactionResult")
+
+
+def _projection_timeout(deadline: float, *, cap: float = 4.0) -> float:
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(deadline) or remaining <= 0:
+        raise TimeoutError("projection deadline exceeded")
+    return min(cap, remaining)
+
+
+def _run_bounded_projection_transaction(
+    client: Any, callback: Callable[[Any], _TransactionResult], *,
+    deadline: float, max_attempts: int = 3,
+) -> _TransactionResult:
+    """Keep the SDK transaction lifecycle while bounding every transport call."""
+    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
+        raise ValueError("transaction attempts must be a positive integer")
+    _projection_timeout(deadline)
+    transaction = client.transaction(max_attempts=max_attempts)
+    api = client._firestore_api
+    first_id = None
+    last_error: Aborted | None = None
+    try:
+        for _ in range(max_attempts):
+            transaction._clean_up()
+            response = api.begin_transaction(
+                request={"database": client._database_string, "options": transaction._options_protobuf(first_id)},
+                metadata=client._rpc_metadata, timeout=_projection_timeout(deadline), retry=None,
+            )
+            transaction._id = response.transaction
+            if first_id is None:
+                first_id = transaction._id
+            result = callback(transaction)
+            _projection_timeout(deadline)
+            try:
+                response = api.commit(
+                    request={"database": client._database_string, "writes": transaction._write_pbs,
+                             "transaction": transaction._id},
+                    metadata=client._rpc_metadata, timeout=_projection_timeout(deadline), retry=None,
+                )
+            except Aborted as error:
+                if transaction._read_only:
+                    raise
+                last_error = error
+                continue
+            except Exception as error:
+                error.add_note("projection commit acknowledgement is unknown; read back the fixed generation")
+                raise
+            transaction._clean_up()
+            transaction.write_results = list(response.write_results)
+            transaction.commit_time = response.commit_time
+            return result
+        raise ValueError(f"Failed to commit transaction in {max_attempts} attempts.") from last_error
+    except BaseException as error:
+        try:
+            if transaction.in_progress:
+                api.rollback(
+                    request={"database": client._database_string, "transaction": transaction._id},
+                    metadata=client._rpc_metadata, timeout=4.0, retry=None,
+                )
+        except Exception as cleanup_error:
+            error.add_note(f"transaction rollback unconfirmed: {type(cleanup_error).__name__}")
+        finally:
+            transaction._clean_up()
+        raise
 
 
 def _complete_hourly_rows(rows: list[dict[str, Any]], *, target_date: str) -> bool:
@@ -224,7 +292,7 @@ def projection_may_advance(previous: dict[str, Any], incoming: dict[str, str]) -
 
 def project_forecast_plan(
     client: Any, *, raw: bytes, plan: PublishedPlan, private_plan_path: Path,
-    timezone_name: str, recorded_at: str | None = None,
+    timezone_name: str, recorded_at: str | None = None, deadline: float | None = None,
 ) -> int:
     identity = projection_identity(raw, plan)
     if not private_plan_path.parent.name.startswith("forecast-plan-"):
@@ -235,15 +303,17 @@ def project_forecast_plan(
     writes = _forecast_projection_values(json.loads(raw), target_date=plan.target_date, timezone_name=timezone_name, now=now)
     snapshot_count = persist_forecast_snapshots(
         client, backend="firestore", night_plan_path=private_plan_path, timezone=timezone_name, ingested_at=now,
+        deadline=deadline,
     )
     if private_plan_path.read_bytes() != raw:
         raise ValueError("projection private original changed during snapshot persistence")
     current_ref = client.collection("forecast_plans").document(plan.target_date)
     forecast_value = next(payload for collection, _, payload in writes if collection == "forecast_plans")
 
-    @transactional
     def update(transaction: Any) -> None:
-        previous = current_ref.get(transaction=transaction, timeout=3, retry=None).to_dict() or {}
+        previous = current_ref.get(transaction=transaction,
+                                   timeout=3 if deadline is None else _projection_timeout(deadline, cap=3),
+                                   retry=None).to_dict() or {}
         if not projection_may_advance(previous, identity):
             return
         if (not previous.get("control_version_id") and previous.get("forecast_issued_at")
@@ -253,5 +323,8 @@ def project_forecast_plan(
         for collection, key, payload in writes:
             transaction.set(client.collection(collection).document(key), {**payload, **identity}, merge=True)
 
-    update(client.transaction(max_attempts=3))
+    if deadline is None:
+        transactional(update)(client.transaction(max_attempts=3))
+    else:
+        _run_bounded_projection_transaction(client, update, deadline=deadline, max_attempts=3)
     return snapshot_count

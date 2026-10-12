@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import math
 import json
 import os
 import time
@@ -375,13 +376,22 @@ def _upload_artifact(
         try:
             blob.upload_from_string(artifact.gzip_bytes, content_type="application/gzip",
                                     if_generation_match=expected_generation, timeout=min(4.0, remaining), retry=None)
+            if source_client is not None and _read_dashboard_source_epoch(
+                source_client, history_scope=history_scope, deadline=deadline,
+                history_compare_before=compare_before,
+            ) != source_epoch:
+                # The PUT cannot be undone safely. Never report this generation
+                # as verified; the caller must rematerialize from its fixed plan.
+                raise ValueError("dashboard source revisions changed after upload")
+            if time.monotonic() >= deadline:
+                raise RuntimeError("dashboard publication deadline exceeded after upload")
             return uri
         except PreconditionFailed:
             continue
     raise RuntimeError("concurrent dashboard publication did not converge")
 
 
-def write_dashboard_snapshots(
+def _write_dashboard_snapshots_once(
     db_path: Path,
     *,
     storage_client: Any | None = None,
@@ -530,6 +540,96 @@ def write_dashboard_snapshots(
     return results
 
 
+def write_dashboard_snapshots(
+    db_path: Path, *, storage_client: Any | None = None,
+    update_history: bool = False, full_history_rebuild: bool = False,
+    published_plan: PublishedPlan | None = None, source_epoch: dict[str, str] | None = None,
+    source_client: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Publish, with one rematerialization on detected post-upload source drift."""
+    for attempt in range(2):
+        try:
+            return _write_dashboard_snapshots_once(
+                db_path, storage_client=storage_client, update_history=update_history,
+                full_history_rebuild=full_history_rebuild, published_plan=published_plan,
+                source_epoch=source_epoch, source_client=source_client,
+            )
+        except ValueError as exc:
+            if str(exc) != "dashboard source revisions changed after upload" or attempt:
+                raise
+            # A supplied epoch is a binding, not permission to replace it.
+            if source_epoch is not None:
+                raise
+            print(json.dumps({"event": "dashboard_publication_rematerializing", "reason_code": "post_upload_source_drift"}), flush=True)
+    raise RuntimeError("dashboard publication did not converge")
+
+
+def write_dashboard_history_snapshot(
+    db_path: Path, *, published_plan: PublishedPlan, storage_client: Any | None = None,
+    source_client: Any | None = None, deadline: float | None = None,
+) -> dict[str, Any]:
+    """Rebuild only history, validating the adopted bootstrap in memory."""
+    deadline = deadline if deadline is not None else time.monotonic() + 60.0
+    if not math.isfinite(deadline):
+        raise ValueError("dashboard history requires a finite deadline")
+    if os.getenv("DATA_BACKEND", "sqlite").lower() != "firestore":
+        raise ValueError("dashboard publication source revisions require Firestore")
+    if source_client is None:
+        from app.dashboard.firestore_repository import _open_dashboard_firestore_client
+        source_client = _open_dashboard_firestore_client()
+    if not dashboard_snapshot_prefix():
+        raise ValueError("dashboard history publication requires configured GCS storage")
+    if storage_client is None:
+        from google.cloud.storage import Client
+        storage_client = Client()
+    original = json.loads(published_plan.raw_json)
+    identity = {"target_date": published_plan.target_date, "generated_at": original["generated_at"],
+                "control_version_id": published_plan.version_id, "raw_plan_sha256": published_plan.sha256}
+    for attempt in range(2):
+        clear_dashboard_cache()
+        epoch = _read_dashboard_source_epoch(source_client, history_scope=True, deadline=deadline)
+        payloads = build_dashboard_snapshot_payloads(db_path, existing_history=None)
+        _validate_publication_payload(payloads[BOOTSTRAP_KIND], published_plan)
+        if _read_dashboard_source_epoch(source_client, history_scope=True, deadline=deadline) != epoch:
+            raise ValueError("dashboard source revisions changed during materialization")
+        payloads[HISTORY_KIND]["meta"]["snapshot_full_history_rebuild_date"] = _today_jst_iso()
+        artifact = artifact_from_payload(HISTORY_KIND, payloads[HISTORY_KIND])
+        try:
+            location = _upload_artifact(artifact, storage_client=storage_client,
+                                        publication_identity=identity, source_epoch=epoch,
+                                        source_client=source_client, history_scope=True)
+        except ValueError as exc:
+            if str(exc) == "dashboard source revisions changed after upload" and not attempt:
+                continue
+            raise
+        bucket, name = _parse_gs_uri(location)
+        blob = storage_client.bucket(bucket).blob(name)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard history readback deadline exceeded")
+        blob.reload(timeout=min(4.0, remaining), retry=None)
+        generation = int(blob.generation)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard history readback deadline exceeded")
+        payload = blob.download_as_bytes(if_generation_match=generation,
+                                         timeout=min(4.0, remaining), retry=None)
+        if time.monotonic() >= deadline:
+            raise RuntimeError("dashboard history readback deadline exceeded")
+        metadata = blob.metadata or {}
+        if payload != artifact.gzip_bytes or any(metadata.get(key) != value for key, value in identity.items()):
+            raise ValueError("dashboard history publication readback mismatch")
+        encoded = base64.b64encode(gzip.compress(json.dumps(epoch, sort_keys=True, separators=(",", ":")).encode(), mtime=0)).decode("ascii")
+        if metadata.get("source_epoch") != encoded or metadata.get("sha256") != hashlib.sha256(artifact.raw).hexdigest():
+            raise ValueError("dashboard history publication epoch readback mismatch")
+        clear_snapshot_cache()
+        return {"status": "verified", "location": location, "generation": str(generation),
+                "etag": artifact.etag, "sha256": hashlib.sha256(artifact.raw).hexdigest(),
+                "source_epoch": epoch, "publication_identity": identity, "rebuild_mode": "full",
+                "raw_bytes": len(artifact.raw), "gzip_bytes": artifact.content_length}
+    raise RuntimeError("dashboard history publication did not converge")
+
+
 def _check_source_epoch_order(previous: dict[str, str], incoming: dict[str, str]) -> None:
     for key, old in previous.items():
         if key.startswith(("scope/", "retained/", "compare_retained/", "history_")):
@@ -559,6 +659,8 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                         "monitoring_samples", "cost_daily", "analog_plans"}
     read_count = 0
     deadline = deadline if deadline is not None else time.monotonic() + 60.0
+    if not math.isfinite(deadline):
+        raise ValueError("dashboard source revision requires a finite deadline")
 
     def timeout() -> float:
         remaining = deadline - time.monotonic()
@@ -635,9 +737,32 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             if analog_dates:
                 refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
                 record("analog_plans", list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None)))
-    record("monitoring_samples", list(client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
-                                      .where("ts", "<", (end + timedelta(days=1)).isoformat()).select(["ts"])
-                                      .limit(3661).stream(timeout=timeout(), retry=None)), stamp_field="ts")
+    monitoring_max_documents = 48 * 1096
+    monitoring_count = 0
+    monitoring_query = (client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
+                        .where("ts", "<", (end + timedelta(days=1)).isoformat())
+                        .order_by("ts").order_by("__name__").select(["ts"]))
+    monitoring_cursor: tuple[str, str] | None = None
+    monitoring_ids: set[str] = set()
+    while True:
+        page = list(monitoring_query.limit(3661).stream(timeout=timeout(), retry=None))
+        timeout()
+        # Sentinels are read again by the following query and counted as reads.
+        read_count += max(0, len(page) - 3660)
+        accepted = page[:3660]
+        monitoring_count += len(accepted)
+        if monitoring_count > monitoring_max_documents:
+            raise ValueError("dashboard monitoring source exceeds 52608 documents")
+        for snapshot in accepted:
+            cursor = (str((snapshot.to_dict() or {}).get("ts", "")), str(snapshot.id))
+            if not cursor[0] or (monitoring_cursor is not None and cursor <= monitoring_cursor) or snapshot.id in monitoring_ids:
+                raise ValueError("dashboard monitoring source cursor did not advance")
+            monitoring_cursor = cursor
+            monitoring_ids.add(snapshot.id)
+        record("monitoring_samples", accepted, stamp_field="ts")
+        if len(page) <= 3660:
+            break
+        monitoring_query = monitoring_query.start_after(accepted[-1])
     epoch["scope/monitoring_samples"] = monitoring_start.isoformat()
     # Monthly summaries use all existing cost_daily history. This revalidation
     # is explicitly bounded and runs only in the producer, never in a GET.
@@ -652,6 +777,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         unique = sorted(set(rows))
         digest = hashlib.sha256(json.dumps(unique, separators=(",", ":")).encode()).hexdigest()
         epoch[key] = f"{max(stamp for _, stamp in unique)}|{len(unique)}|{digest}"
+    timeout()
     print(json.dumps({"event": "dashboard_source_revisions_read", "stage": "snapshot_producer",
                       "document_reads": read_count, "components": len(epoch), "history_scope": history_scope}), flush=True)
     return epoch
@@ -734,7 +860,7 @@ def load_precomputed_snapshot(
         bucket_name, blob_name = _parse_gs_uri(snapshot_gcs_uri(kind))
         blob = storage_client.bucket(bucket_name).blob(blob_name)
         try:
-            payload = blob.download_as_bytes()
+            payload = blob.download_as_bytes(timeout=4, retry=None)
         except Exception as exc:
             if exc.__class__.__name__ == "NotFound":
                 return None

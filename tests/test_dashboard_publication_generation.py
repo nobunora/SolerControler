@@ -38,20 +38,25 @@ class RevisionDocument:
 
 
 class RevisionQuery:
-    def __init__(self, rows, filters=(), field=None, cap=None, tail=False):
+    def __init__(self, rows, filters=(), field=None, cap=None, tail=False, after=None):
         self.rows, self.filters, self.field, self.cap, self.tail = rows, filters, field, cap, tail
+        self.after = after
 
     def select(self, fields):
         return self
 
     def where(self, field, operator, value):
-        return RevisionQuery(self.rows, self.filters + ((field, operator, value),), self.field, self.cap, self.tail)
+        return RevisionQuery(self.rows, self.filters + ((field, operator, value),), self.field, self.cap, self.tail, self.after)
 
     def order_by(self, field):
-        return RevisionQuery(self.rows, self.filters, field, self.cap, self.tail)
+        return RevisionQuery(self.rows, self.filters, self.field if field == "__name__" else field, self.cap, self.tail, self.after)
 
     def limit(self, count):
-        return RevisionQuery(self.rows, self.filters, self.field, count, False)
+        return RevisionQuery(self.rows, self.filters, self.field, count, False, self.after)
+
+    def start_after(self, snapshot):
+        return RevisionQuery(self.rows, self.filters, self.field, self.cap, self.tail,
+                             (str(snapshot.value[self.field]), snapshot.id))
 
     def limit_to_last(self, count):
         return RevisionQuery(self.rows, self.filters, self.field, count, True)
@@ -76,7 +81,9 @@ class RevisionQuery:
                    for field, operator, value in self.filters):
                 selected.append(row)
         if self.field:
-            selected.sort(key=lambda row: str(row.value.get(self.field, "")))
+            selected.sort(key=lambda row: (str(row.value.get(self.field, "")), row.id))
+        if self.after is not None:
+            selected = [row for row in selected if (str(row.value[self.field]), row.id) > self.after]
         if self.cap is not None:
             selected = selected[-self.cap:] if self.tail else selected[:self.cap]
         return selected
@@ -127,6 +134,69 @@ def storage_for(blob):
 def identity():
     return {"target_date": "2026-10-11", "generated_at": "2026-10-11T02:00:00Z",
             "control_version_id": "version-1", "raw_plan_sha256": "sha-1"}
+
+
+@pytest.mark.parametrize("count", [8506, 8526])
+def test_paged_monitoring_revision_includes_all_raw_and_boundary_corrections(count, capsys):
+    client = RevisionClient()
+    stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)
+    start = datetime(2026, 4, 17)
+    client.rows["monitoring_samples"] = [RevisionDocument(str(index), {"ts": (start + timedelta(minutes=30*index)).isoformat()}, stamp)
+                                          for index in range(count)]
+    before = snapshots._read_dashboard_source_epoch(client, history_scope=True)
+    assert int(before["monitoring_samples"].split("|")[1]) == count
+    event = json.loads(capsys.readouterr().out.strip())
+    # All payload revisions, duplicated bounds, and two page sentinels count.
+    assert event["document_reads"] >= count + 2
+    client.rows["monitoring_samples"][3659].update_time += timedelta(seconds=1)
+    after = snapshots._read_dashboard_source_epoch(client, history_scope=True)
+    assert after["monitoring_samples"] != before["monitoring_samples"]
+    snapshots._check_source_epoch_order(before, after)
+
+
+def test_paged_budget_rejects_raw_above_maximum_without_publication():
+    client = RevisionClient()
+    stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)
+    start = datetime(2023, 10, 11)
+    client.rows["monitoring_samples"] = [RevisionDocument(str(index), {"ts": (start + timedelta(minutes=30*index)).isoformat()}, stamp)
+                                          for index in range(52609)]
+    with pytest.raises(ValueError, match="52608"):
+        snapshots._read_dashboard_source_epoch(client, history_scope=True)
+
+
+def test_paged_budget_rejects_nonadvancing_cursor(monkeypatch):
+    client = RevisionClient()
+    stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)
+    start = datetime(2026, 4, 17)
+    client.rows["monitoring_samples"] = [RevisionDocument(str(index), {"ts": (start + timedelta(minutes=30*index)).isoformat()}, stamp)
+                                          for index in range(3661)]
+    monkeypatch.setattr(RevisionQuery, "start_after", lambda self, snapshot: self)
+    with pytest.raises(ValueError, match="cursor did not advance"):
+        snapshots._read_dashboard_source_epoch(client, history_scope=True)
+
+
+def test_upload_detects_post_upload_source_drift_without_verified_receipt(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_GCS_PREFIX", "gs://test/snapshots")
+    blob = PublicationBlob()
+    epoch = {"cost_daily": "2026-10-11T00:00:00+00:00|1|before"}
+    epochs = iter([epoch, {"cost_daily": "2026-10-11T00:00:01+00:00|1|after"}])
+    monkeypatch.setattr(snapshots, "_read_dashboard_source_epoch", lambda *args, **kwargs: next(epochs))
+    with pytest.raises(ValueError, match="changed after upload"):
+        snapshots._upload_artifact(snapshots.artifact_from_payload(snapshots.BOOTSTRAP_KIND, {"test": 1}),
+            storage_client=storage_for(blob), publication_identity=identity(), source_epoch=epoch, source_client=object())
+    assert len(blob.uploads) == 1
+
+
+def test_cold_precomputed_download_has_finite_sdk_timeout_and_no_retry(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_SNAPSHOT_GCS_PREFIX", "gs://test/snapshots")
+    artifact = snapshots.artifact_from_payload(snapshots.BOOTSTRAP_KIND, {"data": 1})
+    calls = []
+    def download(**kwargs):
+        calls.append(kwargs)
+        return artifact.gzip_bytes
+    blob = SimpleNamespace(download_as_bytes=download)
+    loaded = snapshots.load_precomputed_snapshot(snapshots.BOOTSTRAP_KIND, storage_client=storage_for(blob), use_cache=False)
+    assert loaded.raw == artifact.raw and calls == [{"timeout": 4, "retry": None}]
 
 
 def test_old_cost_correction_participates_in_source_epoch_and_cannot_regress():
@@ -327,6 +397,34 @@ def history_producer(monkeypatch):
         return {"bootstrap": copy.deepcopy(payload), "history": value}
     monkeypatch.setattr(snapshots, "build_dashboard_snapshot_payloads", build)
     return client, blob, previous, history, plan, payload, calls, build
+
+
+def test_repair_history_writer_updates_history_only_and_pins_native_readback(tmp_path, monkeypatch):
+    client, blob, previous, history, plan, payload, calls, build = history_producer(monkeypatch)
+    downloads = []
+    def download(**kwargs):
+        downloads.append(kwargs)
+        assert kwargs["if_generation_match"] == int(blob.previous[0])
+        assert kwargs["retry"] is None and 0 < kwargs["timeout"] <= 4
+        return blob.uploads[-1][0]
+    blob.download_as_bytes = download
+    result = snapshots.write_dashboard_history_snapshot(tmp_path / "unused.db", published_plan=plan,
+        source_client=client, storage_client=storage_for(blob))
+    assert result["status"] == "verified" and result["generation"] == "1"
+    assert result["publication_identity"]["raw_plan_sha256"] == plan.sha256
+    assert len(blob.uploads) == 1 and calls == [None] and len(downloads) == 1
+    published = json.loads(gzip.decompress(blob.uploads[0][0]))
+    assert published["meta"]["snapshot_kind"] == "history"
+    assert not (tmp_path / "bootstrap.json.gz").exists()
+
+
+def test_repair_history_mixed_generation_prevents_every_upload(tmp_path, monkeypatch):
+    client, blob, previous, history, plan, payload, calls, build = history_producer(monkeypatch)
+    payload["forecast_hourly"][7]["forecast_run_id"] = "different-run"
+    with pytest.raises(ValueError, match="generation mismatch"):
+        snapshots.write_dashboard_history_snapshot(tmp_path / "unused.db", published_plan=plan,
+            source_client=client, storage_client=storage_for(blob))
+    assert blob.uploads == []
 
 
 @pytest.mark.parametrize("explicit_plan", [False, True])

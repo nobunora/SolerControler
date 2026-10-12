@@ -21,7 +21,10 @@ param(
     [ValidateSet('auto', 'full', 'runner', 'forecast', 'dashboard', 'control-readonly')]
     [string]$DeploymentScope = 'auto',
     [string]$StatePath = "",
-    [switch]$Resume
+    [switch]$Resume,
+    [string]$MonitoringRepairStatePath = '',
+    [string]$ReviewedRepairStateSha256 = '',
+    [string]$AdapterProofFixturePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -118,7 +121,8 @@ if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -e
     }
     if (-not $StatePath) { throw 'Separated runtime release requires an explicit StatePath.' }
     & (Join-Path $PSScriptRoot 'deploy_separated_runtime.ps1') -StatePath $StatePath -Resume:$Resume `
-        -ApprovedCalculationPatchSha256 $ApprovedCalculationPatchSha256 -AllowOutOfWindowLiveProbe:$AllowOutOfWindowLiveProbe
+        -ApprovedCalculationPatchSha256 $ApprovedCalculationPatchSha256 -AllowOutOfWindowLiveProbe:$AllowOutOfWindowLiveProbe `
+        -MonitoringRepairStatePath $MonitoringRepairStatePath -ReviewedRepairStateSha256 $ReviewedRepairStateSha256 -AdapterProofFixturePath $AdapterProofFixturePath
     return
 }
 if ($ApprovedCalculationPatchSha256 -or $AllowOutOfWindowLiveProbe) {
