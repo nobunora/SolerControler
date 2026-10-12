@@ -106,6 +106,8 @@ fake/SDK/emulatorとactual serverを別記録する。owned native storage primi
 
 fixture/target/承認scope不明、owned allowlist違反、target原本SHA違い/API-state保持回帰失敗、native runtime SDK/digest不一致、専用Job/SA未準備、auth refresh/elapsed期限未実証、deadline/UNKNOWN、source後退/削除/limit/metadata、Job復元/cleanup未確定、mandatory品質未完は停止。production identityを理由に拒否しない。SDK token/class dumpは禁止。failureは安全なcategory/step/private frame情報を保存、response timeout/Cloud Job exit0だけでnative PASSとしない。
 
+FAILの最小診断としてadapter_proof.mainの既存安全builderを再利用し、receipt/structured stdout/failure.private.jsonへfailure_chainとfailure_chain_truncatedを記録する。__cause__/__context__をroot/cause/context・parent indexで結び、unique exception最大8nodes、各traceback最後32framesで打ち切り、同じ例外objectの循環を除外する。各nodeはexception_type/category/relation/parent/frames、frameはbasename/file・function・lineだけで、message・絶対path・locals・auth/resource値を含めない。これによりfinally cleanupがprimaryを置き換えた際も両frameを照合できる。classes/flags追加0、servercase・実SDK操作・timeout・retry・cleanup・FAIL exit非zeroは不変。cases0をwrite0へ解釈せず、全runの期限保証や本番timeout修復へ昇格しない。
+
 ## 出口・引継ぎ
 
 R05へbuild adapter receipt/SDK版/digest/fixture SHA/owned native revisions/generations/cleanupを渡す。raw/state/pack/全originals/Drive/nativepaging/browserの後段receiptはR03/R05が取得する。G07 CLOSEDは両stageの必要証拠が全てPASSの時だけ、G04もfull workflowの同vintage/実績source/writer/性能が揃うまでOPEN。source/local回帰は実serverの代用にしない。

@@ -120,10 +120,37 @@ def main() -> int:
         )
         notes = [note for note in getattr(error, "__notes__", ()) if note.startswith("native proof step=")]
         receipt["failure_step"] = notes[-1] if notes else args.stage
+        pending = [("root", None, error)]
+        seen = set()
+        chain = []
+        while pending and len(chain) < 8:
+            relation, parent, current = pending.pop(0)
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            exception_type = type(current).__name__
+            safe_category = (
+                "AUTHORIZATION" if exception_type in {"Forbidden", "PermissionDenied", "Unauthenticated", "Unauthorized"}
+                else "PRECONDITION" if exception_type in {"FailedPrecondition", "PreconditionFailed", "AlreadyExists", "Conflict"}
+                else "TRANSPORT" if exception_type in {"TimeoutError", "DeadlineExceeded", "ServiceUnavailable", "TransportError"}
+                else "VALIDATION" if isinstance(current, (ValueError, AssertionError)) else "RUNTIME"
+            )
+            node_index = len(chain)
+            chain.append({"exception_type": exception_type, "category": safe_category,
+                          "relation": relation, "parent": parent,
+                          "frames": [{"file": Path(frame.filename.replace("\\", "/")).name,
+                                      "function": frame.name, "line": frame.lineno}
+                                     for frame in traceback.extract_tb(current.__traceback__, limit=-32)]})
+            for link in ("cause", "context"):
+                linked = getattr(current, "__" + link + "__", None)
+                if linked is not None and id(linked) not in seen:
+                    pending.append((link, node_index, linked))
+        receipt["failure_chain"] = chain
+        receipt["failure_chain_truncated"] = any(id(item[2]) not in seen for item in pending)
         if args.receipt:
             detail = {"exception_type": category, "category": receipt["exception_category"], "step": receipt["failure_step"],
-                      "frames": [{"file": Path(frame.filename).name, "function": frame.name, "line": frame.lineno}
-                                 for frame in traceback.extract_tb(error.__traceback__)]}
+                      "frames": chain[0]["frames"], "failure_chain": chain,
+                      "failure_chain_truncated": receipt["failure_chain_truncated"]}
             code_value = getattr(error, "code", None)
             if isinstance(code_value, int):
                 detail["status_code"] = int(code_value)
@@ -139,7 +166,10 @@ def main() -> int:
         temporary = args.receipt.with_suffix(args.receipt.suffix + ".part")
         temporary.write_text(json.dumps(receipt, sort_keys=True, separators=(",", ":")), encoding="utf-8")
         os.replace(temporary, args.receipt)
-    print(json.dumps({"status": receipt["status"], "reason_code": receipt.get("reason_code"), "cases": len(receipt["cases"])}))
+    summary = {"status": receipt["status"], "reason_code": receipt.get("reason_code"), "cases": len(receipt["cases"])}
+    if receipt["status"] == "FAIL":
+        summary.update(failure_chain=receipt["failure_chain"], failure_chain_truncated=receipt["failure_chain_truncated"])
+    print(json.dumps(summary))
     return code
 
 
