@@ -2,7 +2,10 @@ param(
     [Parameter(Mandatory = $true)][string]$StatePath,
     [switch]$Resume,
     [string]$ApprovedCalculationPatchSha256 = '',
-    [switch]$AllowOutOfWindowLiveProbe
+    [switch]$AllowOutOfWindowLiveProbe,
+    [string]$MonitoringRepairStatePath = '',
+    [string]$ReviewedRepairStateSha256 = '',
+    [string]$AdapterProofFixturePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -20,6 +23,14 @@ $webRepo = Get-RequiredProductionEnv 'GCP_DASHBOARD_REPOSITORY'
 $webName = Get-RequiredProductionEnv 'GCP_DASHBOARD_IMAGE_NAME'
 $webService = Get-RequiredProductionEnv 'GCP_DASHBOARD_SERVICE'
 $commit = (git rev-parse HEAD).Trim()
+if ([bool]$MonitoringRepairStatePath -ne [bool]$ReviewedRepairStateSha256) { throw 'Repair path and reviewed SHA must be supplied together.' }
+if ($ReviewedRepairStateSha256 -and $ReviewedRepairStateSha256 -notmatch '^[a-f0-9]{64}$') { throw 'Reviewed repair identity must be a SHA-256.' }
+if (-not $AdapterProofFixturePath) { throw 'Explicit adapter proof fixture is required before a separated release.' }
+$AdapterProofFixturePath = [IO.Path]::GetFullPath($AdapterProofFixturePath, $repoRoot)
+if (-not (Test-Path -LiteralPath $AdapterProofFixturePath)) { throw 'Adapter proof fixture is missing.' }
+$fixtureSha = (& python -c 'import json,hashlib,sys;v=json.load(open(sys.argv[1],encoding="utf-8-sig"));h=hashlib.sha256(json.dumps({k:x for k,x in v.items() if k!="fixture_sha256"},sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest();assert h==v["fixture_sha256"];print(h)' $AdapterProofFixturePath).Trim()
+if ($LASTEXITCODE -ne 0 -or $fixtureSha -notmatch '^[a-f0-9]{64}$') { throw 'Adapter fixture identity is invalid.' }
+if ($MonitoringRepairStatePath) { $MonitoringRepairStatePath = [IO.Path]::GetFullPath($MonitoringRepairStatePath, $repoRoot) }
 if ($ApprovedCalculationPatchSha256 -and $ApprovedCalculationPatchSha256 -notmatch '^[0-9a-f]{64}$') {
     throw 'Approved calculation patch must be a SHA-256.'
 }
@@ -46,6 +57,11 @@ if ($Resume) {
         [bool]$state['allow_out_of_window_live_probe'] -ne [bool]$AllowOutOfWindowLiveProbe) {
         throw 'Resume requires the same explicit calculation approval and probe-window option.'
     }
+    if ([string]$state['adapter_fixture_sha256'] -ne $fixtureSha -or
+        [string]$state['reviewed_repair_sha256'] -ne $ReviewedRepairStateSha256 -or
+        [string]$state['monitoring_repair_state_path'] -ne $MonitoringRepairStatePath) {
+        throw 'Resume requires the same adapter fixture and prepared repair identity.'
+    }
     # Ambiguous device writes must be inspected before resuming. Never repeat a
     # live round-trip because the outer shell lost its response.
     if ($state.stages.control.status -eq 'running') {
@@ -56,7 +72,9 @@ if ($Resume) {
     $state = [ordered]@{ kind = 'separated_runtime_deployment'; schema_version = 1; repository_commit = $commit
         status = 'running'; stages = [ordered]@{}; image_digests = [ordered]@{}
         approved_calculation_patch_sha256 = $ApprovedCalculationPatchSha256
-        allow_out_of_window_live_probe = [bool]$AllowOutOfWindowLiveProbe }
+        allow_out_of_window_live_probe = [bool]$AllowOutOfWindowLiveProbe
+        adapter_fixture_sha256 = $fixtureSha; reviewed_repair_sha256 = $ReviewedRepairStateSha256
+        monitoring_repair_state_path = $MonitoringRepairStatePath }
     foreach ($name in $stageNames) { $state.stages[$name] = [ordered]@{ status = 'not_started' } }
 }
 
@@ -69,7 +87,21 @@ function Save-State {
 }
 
 function Invoke-Stage([string]$Name, [scriptblock]$Action) {
-    if ($state.stages[$Name].status -eq 'success') { Write-Host "Verified previous stage: $Name"; return }
+    if ($state.stages[$Name].status -eq 'success') {
+        if ($Name -eq 'build') {
+            if (-not $state.stages.build.Contains('proof_path') -or -not (Test-Path -LiteralPath $state.stages.build.proof_path)) { throw 'Build success lacks its native proof receipt.' }
+            $proof = Get-Content -Raw -LiteralPath $state.stages.build.proof_path | ConvertFrom-Json -AsHashtable
+            if ($proof.status -ne 'PASS' -or $proof.fixture_sha256 -ne $fixtureSha -or $proof.image_digest -ne $state.image_digests.planner -or
+                (Get-FileHash -LiteralPath $state.stages.build.proof_path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $state.stages.build.proof_sha256) { throw 'Build native proof changed.' }
+        }
+        if ($Name -eq 'calculation' -and $MonitoringRepairStatePath) {
+            $adoptedPath = "$MonitoringRepairStatePath.d/adopted-forecast.json"
+            if (-not (Test-Path -LiteralPath $adoptedPath) -or -not $state.stages.calculation.Contains('adopted_sha256') -or
+                (Get-FileHash -LiteralPath $adoptedPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $state.stages.calculation.adopted_sha256) { throw 'Calculation success lacks its adopted receipt.' }
+            Invoke-PreparedMonitoringRepair -VerifyOnly
+        }
+        Write-Host "Verified previous stage: $Name"; return
+    }
     $state.stages[$Name].status = 'running'
     $state.stages[$Name].started_at = [DateTime]::UtcNow.ToString('o')
     Save-State
@@ -107,6 +139,46 @@ function Assert-Idle([string]$Job) {
     }
 }
 
+function Invoke-PreparedMonitoringRepair([switch]$VerifyOnly) {
+    $receiptDirectory = "$MonitoringRepairStatePath.d"
+    $intentPath = Join-Path $receiptDirectory 'forecast-intent.json'
+    $executionPath = Join-Path $receiptDirectory 'forecast-execution.json'
+    $adoptedPath = Join-Path $receiptDirectory 'adopted-forecast.json'
+    $repairWrapper = Join-Path $PSScriptRoot 'run_monitoring_source_repair_from_env.ps1'
+    if (-not (Test-Path -LiteralPath $repairWrapper)) { throw 'Prepared repair wrapper is unavailable.' }
+    if (-not $VerifyOnly) {
+        & python -c 'from pathlib import Path;import sys;from app.separated_runtime.planner import write_forecast_intent;write_forecast_intent(Path(sys.argv[1]),prepared_sha256=sys.argv[2],source_commit=sys.argv[3],planner_digest=sys.argv[4])' $intentPath $ReviewedRepairStateSha256 $commit $state.image_digests.planner
+        if ($LASTEXITCODE -ne 0) { throw 'Forecast intent could not be fixed.' }
+        foreach ($unit in @('source', 'daily', 'cost')) {
+            & $repairWrapper -StatePath $MonitoringRepairStatePath -Stage $unit -Write -Resume -ReviewedStateSha256 $ReviewedRepairStateSha256
+            if ($LASTEXITCODE -ne 0) { throw 'Source repair is incomplete.' }
+        }
+        $forecastSpec = Invoke-Cloud @('run', 'jobs', 'describe', 'solar-forecast-daily', '--region', $region, '--project', $project, '--format', 'json') | ConvertFrom-Json -AsHashtable
+        $container = $forecastSpec.spec.template.spec.template.spec.containers[0]
+        if ($container.image -ne (Get-Image 'planner') -or @($container.command).Count -ne 1 -or $container.command[0] -ne 'python' -or
+            @($container.args).Count -ne 1 -or $container.args[0] -ne 'planner_job_main.py') { throw 'Forecast job differs from the canonical planner entrypoint.' }
+        if (-not (Test-Path -LiteralPath $executionPath)) {
+            & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot forecast -ExecutionReceiptPath $executionPath
+            # Even a non-zero job can have adopted the plan. Only exact native
+            # identity readback below can resolve it; never launch a second job.
+        }
+        & python -c 'from pathlib import Path;import sys;from app.separated_runtime.planner import capture_adopted_forecast_receipt;capture_adopted_forecast_receipt(*(Path(x) for x in sys.argv[1:]))' $executionPath $intentPath $adoptedPath
+        if ($LASTEXITCODE -ne 0) { throw 'Forecast adoption is unknown; planner rerun is prohibited.' }
+        & python -c 'from pathlib import Path;import sys;from app.separated_runtime.planner import recover_adopted_forecast_projection;recover_adopted_forecast_projection(Path(sys.argv[1]))' $adoptedPath
+        if ($LASTEXITCODE -ne 0) { throw 'Adopted forecast projections remain incomplete.' }
+        & $repairWrapper -StatePath $MonitoringRepairStatePath -Stage history -Write -Resume -ReviewedStateSha256 $ReviewedRepairStateSha256
+        if ($LASTEXITCODE -ne 0) { throw 'Historical asset remains incomplete.' }
+    }
+    $adopted = Get-Content -Raw -LiteralPath $adoptedPath | ConvertFrom-Json -AsHashtable
+    & python (Join-Path $PSScriptRoot 'sync_validation_state.py') --direction firestore-to-sqlite
+    if ($LASTEXITCODE -ne 0) { throw 'Post-adoption validation sync failed.' }
+    & python (Join-Path $PSScriptRoot 'validate_dashboard_backend_parity.py') --end-date $adopted.target_date --window-days 31
+    if ($LASTEXITCODE -ne 0) { throw 'Post-adoption dashboard parity failed.' }
+    & $repairWrapper -StatePath $MonitoringRepairStatePath -Stage verify -Resume -ReviewedStateSha256 $ReviewedRepairStateSha256
+    if ($LASTEXITCODE -ne 0) { throw 'Final source and adopted forecast verification failed.' }
+    $state.stages.calculation.adopted_sha256 = (Get-FileHash -LiteralPath $adoptedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 Invoke-Stage 'preflight' {
     $valid = $false
     foreach ($file in Get-ChildItem -LiteralPath $stateRoot -Filter 'preflight-*.json' | Sort-Object LastWriteTimeUtc -Descending) {
@@ -140,6 +212,17 @@ Invoke-Stage 'build' {
         if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Built image digest is invalid.' }
         $state.image_digests[$role] = $digest
     }
+    Save-State
+    $proofDirectory = "$StatePath.d"
+    New-Item -ItemType Directory -Force -Path $proofDirectory | Out-Null
+    $proofPath = Join-Path $proofDirectory 'adapter-proof.json'
+    & (Join-Path $PSScriptRoot 'run_server_adapter_proof_from_env.ps1') -ImmutablePlannerImage (Get-Image 'planner') `
+        -FixturePath $AdapterProofFixturePath -ReceiptPath $proofPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $proofPath)) { throw 'Native adapter proof is incomplete; production jobs remain unchanged.' }
+    $proof = Get-Content -Raw -LiteralPath $proofPath | ConvertFrom-Json -AsHashtable
+    if ($proof.status -ne 'PASS' -or $proof.fixture_sha256 -ne $fixtureSha -or $proof.image_digest -ne $state.image_digests.planner) { throw 'Native adapter proof identity mismatch.' }
+    $state.stages.build.proof_path = $proofPath
+    $state.stages.build.proof_sha256 = (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 Invoke-Stage 'planner' {
     foreach ($job in @('solar-forecast-daily', 'solar-drive-backup')) { Assert-Idle $job }
@@ -151,7 +234,8 @@ Invoke-Stage 'planner' {
         '--image', (Get-Image 'planner')) | Out-Null
 }
 Invoke-Stage 'calculation' {
-    & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot forecast
+    if ($MonitoringRepairStatePath) { Invoke-PreparedMonitoringRepair }
+    else { & (Join-Path $PSScriptRoot 'run_cloud_job_from_env.ps1') -Slot forecast }
 }
 Invoke-Stage 'soc_api_credentials' {
     & (Join-Path $PSScriptRoot 'configure_soc_api_from_env.ps1')

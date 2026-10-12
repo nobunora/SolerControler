@@ -118,6 +118,66 @@
       el.style.color = color;
     }
 
+    function displayFinite(value) {
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    }
+
+    function ensureVisibleChartRanges(chart) {
+      for (const dataset of chart.data.datasets) {
+        dataset.spanGaps = false;
+        dataset.tension = 0;
+      }
+      for (const [axisName, axis] of Object.entries(chart.options.scales || {})) {
+        if (!axisName.startsWith("y")) continue;
+        if (axisName === "y2" && (chart === charts.hourlyForecast || chart === charts.battery)) {
+          axis.min = 0;
+          axis.max = 100;
+          continue;
+        }
+        const values = [];
+        const stacks = new Map();
+        for (const dataset of chart.data.datasets) {
+          if ((dataset.yAxisID || "y") !== axisName) continue;
+          const stack = dataset.stack || "default";
+          const totals = stacks.get(stack) || [];
+          dataset.data.forEach((point, index) => {
+            const value = displayFinite(point && typeof point === "object" ? point.y : point);
+            if (value === null) return;
+            values.push(value);
+            if (axis.stacked) {
+              const total = totals[index] || { positive: 0, negative: 0 };
+              if (value >= 0) total.positive += value;
+              else total.negative += value;
+              totals[index] = total;
+            }
+          });
+          stacks.set(stack, totals);
+        }
+        if (axis.stacked) {
+          for (const totals of stacks.values()) {
+            for (const total of totals) {
+              if (total) values.push(total.positive, total.negative);
+            }
+          }
+        }
+        if (!values.length) continue;
+        const minimum = Math.min(...values);
+        const maximum = Math.max(...values);
+        if (Number.isFinite(axis.min) && Number.isFinite(axis.max) && axis.min <= minimum && axis.max >= maximum) continue;
+        const intervals = Number.isInteger(axis.ticks?.count) && axis.ticks.count >= 3 ? axis.ticks.count - 1 : 5;
+        const bounds = minMaxBounds([...values, ...(Number.isFinite(axis.min) ? [axis.min] : []),
+          ...(Number.isFinite(axis.max) ? [axis.max] : [])], { intervals });
+        axis.min = bounds.min;
+        axis.max = bounds.max;
+        axis.ticks = { ...axis.ticks, count: intervals + 1, stepSize: bounds.stepSize };
+        if (!Number.isFinite(axis.min) || !Number.isFinite(axis.max) || !Number.isFinite(axis.ticks.stepSize)) {
+          axis.min = minimum;
+          axis.max = maximum;
+          axis.ticks.stepSize = maximum / intervals - minimum / intervals;
+        }
+      }
+    }
+
     function isoDateAdd(dateStr, deltaDays) {
       return dashboardDates.isoDateAdd(dateStr, deltaDays);
     }
@@ -467,12 +527,13 @@
         findings.innerHTML = "";
         return;
       }
-      const kwh = (value) => value == null ? "-" : `${n(value).toFixed(2)} kWh`;
-      const pct = (value) => value == null ? "-" : `${n(value).toFixed(0)}%`;
-      const yen = (value) => value == null ? "-" : `${Math.round(n(value)).toLocaleString("ja-JP")} 円`;
+      const kwh = (value) => displayFinite(value) === null ? "-" : `${value.toFixed(2)} kWh`;
+      const pct = (value) => displayFinite(value) === null ? "-" : `${value.toFixed(0)}%`;
+      const yen = (value) => displayFinite(value) === null ? "-" : `${Math.round(value).toLocaleString("ja-JP")} 円`;
       const signedKwh = (value) => `${n(value) >= 0 ? "+" : ""}${n(value).toFixed(2)} kWh`;
-      const pvGap = review.forecast_pv_kwh == null || review.actual_pv_kwh == null ? null : n(review.actual_pv_kwh) - n(review.forecast_pv_kwh);
-      const chargeGap = review.forecast_night_charge_kwh == null || review.actual_night_charge_kwh == null ? null : n(review.actual_night_charge_kwh) - n(review.forecast_night_charge_kwh);
+      const pvGap = displayFinite(review.forecast_pv_kwh) === null || displayFinite(review.actual_pv_kwh) === null
+        || review.forecast_available_hour_count !== 24 || review.complete_day !== true ? null : review.actual_pv_kwh - review.forecast_pv_kwh;
+      const chargeGap = displayFinite(review.forecast_night_charge_kwh) === null || displayFinite(review.actual_night_charge_kwh) === null ? null : review.actual_night_charge_kwh - review.forecast_night_charge_kwh;
       const arrival = (item) => {
         if (!item || !item.date) return "期間内到達なし";
         return `${item.date}${item.status === "forecast" ? "（予想）" : "（到達）"}`;
@@ -502,8 +563,17 @@
         { label: "最も近い類似日", value: review.analog_date || "-", sub: analogSub, wide: true },
       ];
       grid.innerHTML = items.map((item) => `<div class="diag-kpi${item.wide ? " diag-kpi-wide" : ""}"><span class="diag-label">${escapeHtml(item.label)}</span><span class="diag-value">${escapeHtml(item.value)}</span>${item.sub ? `<small class="diag-subvalue">${escapeHtml(item.sub)}</small>` : ""}</div>`).join("");
-      findings.innerHTML = "";
-      note.textContent = `${review.date} の予測 / 実績。00:00〜23:30の48件が揃った保存済みKP-NETデータです。料金予想は基本料金・燃料費調整額・再エネ賦課金を除く電力量料金です。`;
+      const coverage = Number.isInteger(review.forecast_available_hour_count) && review.forecast_available_hour_count >= 0
+        && review.forecast_available_hour_count <= 24 ? review.forecast_available_hour_count : null;
+      const coverageText = coverage === null ? "予測区間数 未確認（旧資料）"
+        : coverage === 24 ? "予測24/24区間" : `予測は部分値 ${coverage}/24区間`;
+      const bindingText = review.plan_forecast_binding === "matched" ? "計画と予測の原本一致"
+        : review.plan_forecast_binding === "mismatched" ? "計画と予測の原本不一致（該当する計画予想値は未確認）"
+          : "計画と予測の由来未確認（旧資料）";
+      findings.textContent = `${bindingText}。${coverageText}。PV/loadは全日24区間、日中買電・売電予想は07〜22時の計画です。`;
+      const actualText = review.complete_day === true ? "00:00〜23:30の48件が揃った保存済みKP-NETデータです。"
+        : "実績は保存済み取得分です。48件の完全日は未確認です。";
+      note.textContent = `${review.date} の予測 / 実績。${actualText}${coverageText}。料金予想は基本料金・燃料費調整額・再エネ賦課金を除く電力量料金です。`;
     }
 
     function moveDailyReview(deltaDays) {
@@ -722,21 +792,87 @@
       tbody.appendChild(tr);
     }
 
-    function fillLearningParamsTable(diag = {}) {
+    function isForecastRow(row) {
+      return (typeof row.forecast_run_id === "string" && !!row.forecast_run_id.trim())
+        || [row.forecast_pv_kwh, row.forecast_load_kwh, row.forecast_charge_kwh, row.forecast_soc_percent]
+          .some((value) => displayFinite(value) !== null);
+    }
+
+    function bindPvModelToForecast(summary, rows, date) {
+      if (!summary || !["valid", "legacy", "invalid", "unsupported"].includes(summary.status)) {
+        return { status: "unverified", reason: "モデル要約未連携" };
+      }
+      if (summary.plan_date !== date) return { status: "unverified", reason: "対象計画日が一致しません" };
+      if (summary.status !== "valid") return { status: summary.status, reason: summary.reason_code || "" };
+      if (summary.model_id !== "physical_clear_ghi_annual1" || !Array.isArray(summary.theta4)
+          || summary.theta4.length !== 4 || summary.theta4.some((value) => displayFinite(value) === null)
+          || !Array.isArray(summary.terms) || summary.terms.length !== 4
+          || summary.terms.some((term, index) => term !== ["1", "x", "cos_phi", "sin_phi"][index])
+          || !Number.isInteger(summary.training_day_count) || summary.training_day_count < 1
+          || summary.training_sample_count !== 13 * summary.training_day_count
+          || summary.rank !== 4 || displayFinite(summary.condition_number) === null
+          || !Array.isArray(summary.repaired_hours) || summary.repaired_hours.length > 24
+          || summary.repaired_hours.some((hour, index) => !Number.isInteger(hour) || hour < 0 || hour > 23
+            || (index > 0 && hour <= summary.repaired_hours[index - 1]))) {
+        return { status: "invalid", reason: "モデル要約の値が不正です" };
+      }
+      const forecastRows = rows.filter(isForecastRow);
+      if (forecastRows.length !== 24 || forecastRows.some((row) => row.date !== date || !Number.isInteger(row.hour)
+          || row.hour < 0 || row.hour > 23) || new Set(forecastRows.map((row) => row.hour)).size !== 24) {
+        return { status: "unverified", reason: "対象日の24区間が揃っていません" };
+      }
+      if (typeof summary.forecast_run_id !== "string" || !summary.forecast_run_id.trim()
+          || forecastRows.some((row) => typeof row.forecast_run_id !== "string"
+            || !row.forecast_run_id.trim() || row.forecast_run_id !== summary.forecast_run_id)) {
+        return { status: "unverified", reason: "予測の生成元が未確認または混在しています" };
+      }
+      return { status: "valid", reason: "" };
+    }
+
+    function renderPvModelSummary(summary, binding) {
+      const setText = (id, text) => {
+        const element = document.getElementById(id);
+        if (element) element.textContent = text;
+      };
+      const valid = binding.status === "valid";
+      const legacy = binding.status === "legacy";
+      setText("pvModelName", valid ? "PVモデル: NEW100（晴天・年周期モデル）"
+        : legacy ? "PVモデル: 旧方式（保存モデル）" : `PVモデル: 未確認（${binding.reason || binding.status}）`);
+      setText("pvModelProvenance", summary ? `対象計画日: ${summary.plan_date || "不明"} / 計画生成: ${summary.generated_at || "不明"}${valid ? ` / モデル版: ${summary.basis_version} / 係数版: ${summary.calibration_sha256}` : ""}` : "モデル要約が未連携です。");
+      setText("pvModelLearningPeriod", valid ? `認定晴天 ${summary.training_day_count}日 / 訓練 ${summary.training_sample_count}時間区間 / 学習期間 ${summary.training_start_date}〜${summary.training_end_date}` : "NEW100の学習原本は未確認です。旧パラメータの保存回数とは異なります。");
+      setText("pvModelTiming", valid ? `学習cutoff: ${summary.training_as_of} / 係数版生成: ${summary.created_at} / 利用開始: ${summary.usable_from} / 予報取得完了: ${summary.retrieved_at} / run cutoff: ${summary.as_of} / 提供者発行: ${summary.provider_issued_at || "不明"}（原本時刻・末尾offset表記。画面の再描画時刻とは別）` : "学習・予報取得時刻は未確認です。");
+      setText("pvModelRepair", valid ? `修復区間: ${summary.repaired_hours.length ? summary.repaired_hours.map((hour) => `${String(hour).padStart(2, "0")}:00〜`).join("、") : "なし"}` : "修復区間は未確認です。");
+      setText("pvModelExplanation", valid
+        ? "PV(h)=max(0,C(d,h))*min(F(h),Q(d,h))。C=theta0+theta1*x+theta2*cos(phi)+theta3*sin(phi)、x=(h+0.5-12)/6、phi=2π*(年内通算日-1)/(365または366)。Qは晴天水平日射、Fは直前1時間の予報日射。旧GTI/PR/PV温度補正は掛けません。"
+        : legacy ? "旧方式のPV予測: Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)。保存モデルの説明であり、NEW100の式ではありません。"
+          : "保存モデルと対象計画の対応が未確認のため、PV式を断定しません。発電・負荷・実績の正常な保存値は表示します。");
+    }
+
+    function fillLearningParamsTable(diag = {}, summary = null, binding = { status: "unverified" }) {
       const tbody = document.querySelector("#learningParamsTable tbody");
       if (!tbody) return;
       tbody.innerHTML = "";
+      const newModel = binding.status === "valid";
+      const legacy = binding.status === "legacy";
+      const shownNumber = (value) => displayFinite(value) === null ? "-" : String(value);
+      if (newModel) {
+        addLearningParameterRow(tbody, "NEW100", "認定晴天日数", summary.training_day_count, `${summary.training_day_count} 日`, "校正原本の日数。計画保存回数・誤差学習件数とは別");
+        addLearningParameterRow(tbody, "NEW100", "訓練区間数", summary.training_sample_count, `${summary.training_sample_count} 時間区間`, "完全な13時間区間 × 認定日数");
+        summary.theta4.forEach((value, index) => addLearningParameterRow(tbody, "NEW100係数", `theta${index} (${summary.terms[index]})`, shownNumber(value), `${summary.training_sample_count} 時間区間`, "同計画の係数原本。符号を保持"));
+        addLearningParameterRow(tbody, "NEW100", "rank / condition", `${summary.rank} / ${summary.condition_number}`, `${summary.training_day_count} 日`, "保存された回帰診断。画面で再計算しない");
+      }
       for (const p of store.params) {
         const name = String(p.name || "");
         if (staticParameterNames.has(name)) continue;
         const meta = paramAlias[name] || { label: "計画ごとに更新される補助係数" };
         addLearningParameterRow(
           tbody,
-          "モデル係数",
+          name.startsWith("pv_forecast_error_ratio_") && newModel ? "不確実性の保存設定参照／実績学習とは別"
+            : name.startsWith("pv_") || name.startsWith("physical_pv_") ? "旧方式履歴" : "蓄電池・補助係数",
           meta.label,
-          n(p.mean_value).toFixed(4),
-          n(p.sample_count, 0),
-          name,
+          shownNumber(p.mean_value),
+          displayFinite(p.sample_count) === null ? "-" : `${p.sample_count} 計画保存回`,
+          `${name}${name === "pv_forecast_error_ratio_sample_count" ? "（誤差sample 0は晴天学習0・完全精度を意味しない）" : ""}`,
         );
       }
       const physical = diag.physical || {};
@@ -744,20 +880,28 @@
       const quality = physical.data_quality || {};
       const correction = diag.forecast_correction || {};
       const overnight = diag.overnight_load_forecast || {};
-      addLearningParameterRow(tbody, "物理PV", "短波放射変換係数", scales.radiation_scale == null ? "-" : n(scales.radiation_scale).toFixed(4), scales.radiation_scale_fit?.sample_count, "短波放射からPVへの変換");
-      addLearningParameterRow(tbody, "物理PV", "全体バイアス補正", scales.global_bias_scale == null ? "-" : n(scales.global_bias_scale).toFixed(4), quality.global_days, "物理PVの実績比による全体補正");
-      for (const [period, item] of Object.entries(scales.daypart || {})) {
-        addLearningParameterRow(tbody, "物理PV", `時間帯補正 (${period})`, item?.scale == null ? "-" : n(item.scale).toFixed(4), item?.count, "朝・昼・夕の実績比補正");
+      if (legacy) {
+        addLearningParameterRow(tbody, "旧物理PV", "短波放射変換係数", shownNumber(scales.radiation_scale), `${scales.radiation_scale_fit?.sample_count ?? "-"} 有効区間`, "短波放射からPVへの変換");
+        addLearningParameterRow(tbody, "旧物理PV", "全体バイアス補正", shownNumber(scales.global_bias_scale), `${quality.global_days ?? "-"} 有効日`, "旧物理PVの実績比による全体補正");
+        for (const [period, item] of Object.entries(scales.daypart || {})) {
+          addLearningParameterRow(tbody, "旧物理PV", `時間帯補正 (${period})`, shownNumber(item?.scale), `${item?.count ?? "-"} 有効日`, "旧朝・昼・夕の実績比補正");
+        }
+        addLearningParameterRow(tbody, "旧PV補正", "PV比率EWMA", shownNumber(correction.pv_ratio_ewma_raw), `${correction.pv_sample_count ?? "-"} 有効日`, "旧PV候補の実績比。NEW100へ適用しない");
       }
-      addLearningParameterRow(tbody, "PV補正", "PV比率EWMA", correction.pv_ratio_ewma_raw == null ? "-" : n(correction.pv_ratio_ewma_raw).toFixed(4), correction.pv_sample_count, "従来PV候補の実績比。物理PV採用時は二重適用しない");
-      addLearningParameterRow(tbody, "負荷補正", "負荷比率EWMA", correction.load_ratio_ewma_applied == null ? "-" : n(correction.load_ratio_ewma_applied).toFixed(4), correction.load_sample_count, "日別の消費予測に掛ける実績比補正");
+      addLearningParameterRow(tbody, "負荷補正", "負荷比率EWMA", shownNumber(correction.load_ratio_ewma_applied), `${correction.load_sample_count ?? "-"} 有効日`, "日別の消費予測に掛ける実績比補正");
       const evening = correction.evening_load_temperature || {};
-      addLearningParameterRow(tbody, "負荷補正", "夜間気温補正倍率", evening.multiplier == null ? "-" : n(evening.multiplier).toFixed(4), evening.sample_count, "気温と夜間負荷残差から求める補正");
-      addLearningParameterRow(tbody, "夜間負荷", "翌朝までの予測消費", overnight.expected_kwh == null ? "-" : `${n(overnight.expected_kwh).toFixed(2)} kWh`, overnight.sample_count, "23:00-07:00の実績から推定");
+      addLearningParameterRow(tbody, "負荷補正", "夜間気温補正倍率", shownNumber(evening.multiplier), `${evening.sample_count ?? "-"} 有効日`, "気温と夜間負荷残差から求める補正");
+      addLearningParameterRow(tbody, "夜間負荷", "翌朝までの予測消費", displayFinite(overnight.expected_kwh) === null ? "-" : `${overnight.expected_kwh.toFixed(2)} kWh`, `${overnight.sample_count ?? "-"} 有効日`, "23:00-07:00の実績から推定");
     }
 
     function fillLearningParams() {
-      fillLearningParamsTable(store.pvForecastDiagnostics || {});
+      const diag = store.pvForecastDiagnostics || {};
+      const date = hourlyForecastDate();
+      const rows = date ? store.hourly.get(date) || [] : [];
+      const summary = diag.pv_model || null;
+      const binding = bindPvModelToForecast(summary, rows, date);
+      renderPvModelSummary(summary, binding);
+      fillLearningParamsTable(diag, summary, binding);
     }
 
     function commonOptions() {
@@ -773,8 +917,10 @@
             callbacks: {
               label: (ctx) => {
                 const label = ctx.dataset && ctx.dataset.label ? ctx.dataset.label : "";
-                const value = formatChartValue(ctx.parsed && ctx.parsed.y);
-                return label ? `${label}: ${value}` : `${value}`;
+                const number = displayFinite(ctx.parsed && ctx.parsed.y);
+                const value = number === null ? "未確認" : formatChartValue(number);
+                const coverage = ctx.chart?.forecastCoverage?.[ctx.dataIndex];
+                return `${label ? `${label}: ` : ""}${value}${coverage ? ` / ${coverage}` : ""}`;
               },
             },
           },
@@ -992,6 +1138,7 @@
         stepSize,
         callback: (v) => `${v}${unit}`,
       };
+      ensureVisibleChartRanges(chart);
       chart.update("none");
     }
 
@@ -1003,6 +1150,48 @@
         if (!newest || date > newest) newest = date;
       }
       return newest;
+    }
+
+    function hourlyDisplayState(rows, date, schedule) {
+      const energy = (value) => displayFinite(value) !== null && value >= 0 ? value : null;
+      const summarize = (key, forecastOnly) => {
+        const byHour = new Map();
+        for (const row of rows) {
+          if (row.date !== date || !Number.isInteger(row.hour) || row.hour < 0 || row.hour > 23
+              || (forecastOnly && !isForecastRow(row))) continue;
+          const value = energy(row[key]);
+          if (value !== null) byHour.set(row.hour, value);
+        }
+        return { count: byHour.size, total: byHour.size ? [...byHour.values()].reduce((a, b) => a + b, 0) : null };
+      };
+      const pv = summarize("forecast_pv_kwh", true);
+      const load = summarize("forecast_load_kwh", true);
+      const charge = summarize("forecast_charge_kwh", true);
+      const actualPv = summarize("actual_pv_kwh", false);
+      const actualLoad = summarize("actual_load_kwh", false);
+      const knownRuns = new Set(rows.filter(isForecastRow).map((row) => row.forecast_run_id)
+        .filter((run) => typeof run === "string" && run.trim()));
+      const mixedRuns = knownRuns.size > 1;
+      const saved = rows.map((row) => row.date === date && Number.isInteger(row.hour) && row.hour >= 7 && row.hour <= 23
+        && displayFinite(row.forecast_soc_percent) !== null && row.forecast_soc_percent >= 0
+        && row.forecast_soc_percent <= 100 ? row.forecast_soc_percent : null);
+      const hasSaved = saved.some((point) => point !== null);
+      const invalidSaved = rows.some((row) => row.forecast_soc_percent != null
+        && (displayFinite(row.forecast_soc_percent) === null || row.forecast_soc_percent < 0 || row.forecast_soc_percent > 100));
+      const points = mixedRuns ? rows.map(() => null) : saved;
+      const pointSources = rows.map((row, index) => points[index] !== null ? "saved_plan"
+        : displayFinite(row.actual_soc_percent) !== null && row.actual_soc_percent >= 0
+          && row.actual_soc_percent <= 100 ? "observed" : "unavailable");
+      return {
+        points, pointSources, hasSaved, invalidSaved, mixedRuns,
+        savedCount: new Set(rows.filter((_row, index) => points[index] !== null).map((row) => row.hour)).size,
+        forecastComplete: pv.count === 24 && load.count === 24,
+        forecastCount: Math.min(pv.count, load.count), pvCount: pv.count, loadCount: load.count,
+        actualCount: actualLoad.count, actualPvCount: actualPv.count,
+        forecastPvTotal: pv.total, forecastLoadTotal: load.total, forecastChargeTotal: charge.total, chargeCount: charge.count,
+        actualPvSubtotal: actualPv.total, actualLoadSubtotal: actualLoad.total,
+        boundSchedule: schedule && schedule.plan_date === date ? schedule : null,
+      };
     }
 
     function renderHourlyForecast() {
@@ -1019,20 +1208,62 @@
         chart.data.datasets[3].data = [];
         chart.data.datasets[4].data = [];
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
+        ensureVisibleChartRanges(chart);
         chart.update("none");
         return;
       }
+      const state = hourlyDisplayState(rows, date, store.latestSchedule);
       const labels = rows.map((row) => `${String(Number(row.hour)).padStart(2, "0")}:00`);
-      const pv = rows.map((row) => row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh));
-      const charge = rows.map((row) => row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh));
+      const energy = (value) => displayFinite(value) !== null && value >= 0 ? value : null;
+      const pv = rows.map((row) => energy(row.forecast_pv_kwh));
+      const charge = rows.map((row) => energy(row.forecast_charge_kwh));
       const load = rows.map((row) => {
-        if (row.actual_load_kwh != null) return n(row.actual_load_kwh);
-        if (row.forecast_load_kwh != null) return n(row.forecast_load_kwh);
-        return null;
+        const actual = energy(row.actual_load_kwh);
+        return actual !== null ? actual : energy(row.forecast_load_kwh);
       });
-      const nightGridCharge = estimateHourlyNightGridCharge(rows, date);
-      const soc = estimateHourlyForecastSoc(rows, date);
-      const actualHours = rows.filter((row) => row.actual_load_kwh != null).map((row) => Number(row.hour));
+      const batteryRow = store.battery.get(date);
+      const scheduleNight = energy(state.boundSchedule?.planned_night_charge_kwh);
+      const nightAmount = scheduleNight !== null ? scheduleNight : energy(batteryRow?.night_charge_kwh);
+      const nightGridCharge = state.boundSchedule && nightAmount !== null
+        ? estimateHourlyNightGridCharge(rows, date) : rows.map(() => null);
+      let soc = state.points;
+      let socKind = state.hasSaved && !state.mixedRuns ? "計画SOC" : "SOC未連携";
+      let estimated = null;
+      let actualAnchoredEstimate = false;
+      if (!state.hasSaved && !state.invalidSaved && !state.mixedRuns) {
+        if (state.boundSchedule) {
+          estimated = estimateHourlyForecastSoc(rows, date);
+          socKind = "参考SOC（保存計画未連携）";
+        } else {
+          const capacities = new Set(rows.map((row) => row.date === date ? displayFinite(row.forecast_capacity_kwh) : null)
+            .filter((value) => value !== null && value > 0));
+          if (capacities.size === 1 && state.pointSources.includes("observed")) {
+            const efficiency = Math.sqrt(Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9))));
+            estimated = forecastSocFromLatestActual(rows, [...capacities][0], efficiency, efficiency);
+            actualAnchoredEstimate = true;
+            socKind = "最新実測起点の参考SOC（保存計画未連携）";
+          }
+        }
+      }
+      if (estimated !== null) {
+        let dependencyMissing = false;
+        soc = estimated.map((point, index) => {
+          const row = rows[index];
+          const observed = state.pointSources[index] === "observed";
+          if (actualAnchoredEstimate && observed) {
+            dependencyMissing = false;
+            return null;
+          }
+          const value = !observed && !dependencyMissing && displayFinite(point) !== null && point >= 0 && point <= 100
+            && isForecastRow(row) ? point : null;
+          const completeInterval = (energy(row.forecast_charge_kwh) !== null && row.forecast_charge_kwh > 0)
+            || (energy(row.forecast_pv_kwh) !== null && energy(row.forecast_load_kwh) !== null);
+          if ((actualAnchoredEstimate || row.hour >= 7) && !completeInterval) {
+            dependencyMissing = true;
+          }
+          return value;
+        });
+      }
       const latestActual = rows
         .map((row) => row.latest_sample_at || "")
         .filter(Boolean)
@@ -1044,6 +1275,8 @@
       chart.data.datasets[2].data = load;
       chart.data.datasets[3].data = nightGridCharge;
       chart.data.datasets[4].data = soc;
+      chart.data.datasets[4].label = socKind === "SOC未連携" ? "計画SOC（未連携）" : `${socKind}(%)`;
+      chart.data.datasets[4].spanGaps = false;
       chart.options.scales.y = {
         min: 0,
         max: 5,
@@ -1061,26 +1294,20 @@
         border: { color: "#9a7a00" },
       };
       if (note) {
-        const totalPv = pv.reduce((acc, v) => acc + n(v), 0);
-        const totalCharge = charge.reduce((acc, v) => acc + n(v), 0);
-        const totalLoad = load.reduce((acc, v) => acc + n(v), 0);
-        const batteryRow = date ? store.battery.get(date) : null;
-        const sch = store.latestSchedule || {};
-        const planned = plannedBatteryValues(batteryRow, sch);
-        const nightCharge = planned.nightChargeKwh;
+        const sch = state.boundSchedule || {};
         const socPeak = maxForecastSocPoint(labels, soc);
-        const actualText = actualHours.length
-          ? `消費実績 ${String(Math.min(...actualHours)).padStart(2, "0")}:00-${String(Math.max(...actualHours)).padStart(2, "0")}:59`
-          : "消費実績なし";
+        const actualText = `実績取得済み分 PV ${state.actualPvSubtotal === null ? "-" : state.actualPvSubtotal.toFixed(2)}kWh（${state.actualPvCount}/24） / 消費 ${state.actualLoadSubtotal === null ? "-" : state.actualLoadSubtotal.toFixed(2)}kWh（${state.actualCount}/24）`;
         const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
         const planUpdated = sch.plan_updated_at ? new Date(sch.plan_updated_at) : null;
         const planUpdatedText = planUpdated && !Number.isNaN(planUpdated.getTime())
           ? ` / 計画更新 ${planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })}`
           : "";
-        const socText = socPeak ? ` / 予想SOCピーク ${socPeak.label}ごろ ${socPeak.value.toFixed(0)}%` : "";
-        const nightText = nightCharge != null && nightCharge > 0 ? ` / 夜間系統充電 ${nightCharge.toFixed(2)}kWh` : "";
-        note.textContent = `${date} の時間別表示。発電予測 ${totalPv.toFixed(2)}kWh / PV余剰充電 ${totalCharge.toFixed(2)}kWh${nightText} / 家の消費 ${totalLoad.toFixed(2)}kWh${socText}（${actualText}${latestText}${planUpdatedText}、以降は予測。夜間系統充電は家の消費とは別の請求対象買電です）`;
+        const socText = socPeak ? ` / ${socKind === "計画SOC" ? state.savedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${state.savedCount}/17` : "参考SOC最大"} ${socPeak.label} ${socPeak.value.toFixed(0)}%` : ` / ${socKind}`;
+        const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)}kWh` : `未完 ${count}/24`;
+        const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh` : " / 夜間系統充電 時間帯未連携";
+        note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、計画SOCは07開始〜23終了の17点（23時は22区間終了）。夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
       }
+      ensureVisibleChartRanges(chart);
       chart.update("none");
     }
 
@@ -1267,14 +1494,25 @@
       setLifeText("lifeEightyPercentYear", year80 === "-" ? "-" : `${year80}年`, "ごろ");
       setLifeText("lifeMonthlyCycles", monthlyEqCycles.toFixed(1), "回/月");
 
+      const chargeDays = dates.filter((day) => displayFinite(store.batteryFlow.get(day)?.charge_kwh) !== null).length;
+      const dischargeDays = dates.filter((day) => displayFinite(store.batteryFlow.get(day)?.discharge_kwh) !== null).length;
+      setLifeText("lifeTotalCharge", chargeDays ? totalCharge.toFixed(1) : "-", `kWh（取得済み${chargeDays}/${dates.length}日）`);
+      setLifeText("lifeTotalDischarge", dischargeDays ? totalDischarge.toFixed(1) : "-", `kWh（取得済み${dischargeDays}/${dates.length}日）`);
+      if (!dischargeDays) {
+        for (const id of ["lifeEquivalentCycles", "lifeEstimatedCapacity", "lifeEightyPercentYear", "lifeMonthlyCycles"]) setLifeText(id, "未確認");
+      }
+      const monthObserved = monthKeys.map((month) => dates.some((day) => day.startsWith(month)
+        && displayFinite(store.batteryFlow.get(day)?.discharge_kwh) !== null));
+
       chart.data.labels = labels;
-      chart.data.datasets[0].data = capacities;
-      chart.data.datasets[1].data = cycleLosses;
-      chart.data.datasets[2].data = calendarLosses;
-      chart.data.datasets[3].data = tempLosses;
+      chart.data.datasets[0].data = capacities.map((value, index) => monthObserved[index] ? value : null);
+      chart.data.datasets[1].data = cycleLosses.map((value, index) => monthObserved[index] ? value : null);
+      chart.data.datasets[2].data = calendarLosses.map((value, index) => monthObserved[index] ? value : null);
+      chart.data.datasets[3].data = tempLosses.map((value, index) => monthObserved[index] ? value : null);
       chart.options.scales.y.min = 0;
       chart.options.scales.y.max = Math.ceil(baseCapacity * 10) / 10;
       chart.options.scales.y.ticks = { color: "#147efb", callback: (v) => `${Number(v).toFixed(1)}` };
+      ensureVisibleChartRanges(chart);
       chart.update("none");
     }
 
@@ -1292,6 +1530,14 @@
       const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
       const dynamicWeeklyAxis = isWeekly ? { paddingRatio: 0.15 } : { axisMax: 30 };
+      const coverageNotes = buckets.map((bucket) => {
+        const counts = bucket.dates.map((day) => store.energy.get(day)?.forecast_available_hour_count);
+        const partial = counts.filter((count) => Number.isInteger(count) && count >= 0 && count < 24);
+        const unknown = counts.filter((count) => !Number.isInteger(count) || count < 0 || count > 24).length;
+        return `${partial.length ? `予測部分値 ${partial.join(",")}/24区間` : ""}${unknown ? `${partial.length ? " / " : ""}予測区間数不明 ${unknown}日` : ""}`;
+      });
+      charts.pv.forecastCoverage = coverageNotes;
+      charts.load.forecastCoverage = coverageNotes;
       updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh", dynamicWeeklyAxis);
 
       const loadForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_load_kwh"));
@@ -1307,8 +1553,8 @@
         isWeekly ? { paddingRatio: 0.15 } : { axisMax: 100 },
       );
 
-      const dailySelf = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "self_consumption_kwh")));
-      const dailyYen = buckets.map((bucket) => n(sumBucket(bucket, store.cost, "savings_yen")));
+      const dailySelf = buckets.map((bucket) => sumBucket(bucket, store.cost, "self_consumption_kwh"));
+      const dailyYen = buckets.map((bucket) => sumBucket(bucket, store.cost, "savings_yen"));
       const selfByDay = new Map();
       const yenByDay = new Map();
       for (const [d, row] of store.cost.entries()) {
@@ -1326,7 +1572,8 @@
       charts.dailyKwh.data.labels = labels;
       charts.dailyKwh.data.datasets[0].label = `${bucketLabel} 自家消費(kWh)`;
       charts.dailyKwh.data.datasets[0].data = dailySelf;
-      charts.dailyKwh.data.datasets[1].data = cumKwh;
+      charts.dailyKwh.data.datasets[1].data = cumKwh.map((value, index) => dailySelf[index] === null ? null : value);
+      charts.dailyKwh.data.datasets[1].label = "取得済み累計 自家消費(kWh)";
       const dailyKwhDual = dualScales(dailySelf, cumKwh, {
         leftUnit: "kWh",
         rightUnit: "kWh",
@@ -1347,6 +1594,7 @@
         border: { color: "#14b86f" },
         title: { display: true, text: "累計 kWh", color: "#14b86f" },
       };
+      ensureVisibleChartRanges(charts.dailyKwh);
       charts.dailyKwh.update("none");
 
       const dailyYenTitle = document.getElementById("dailyYenTitle");
@@ -1357,7 +1605,8 @@
       charts.dailyYen.data.labels = labels;
       charts.dailyYen.data.datasets[0].label = `${bucketLabel} 節約額(円)`;
       charts.dailyYen.data.datasets[0].data = dailyYen;
-      charts.dailyYen.data.datasets[1].data = cumYen;
+      charts.dailyYen.data.datasets[1].data = cumYen.map((value, index) => dailyYen[index] === null ? null : value);
+      charts.dailyYen.data.datasets[1].label = "取得済み累計 節約額(円)";
       const dailyYenDual = dualScales(dailyYen, cumYen, {
         leftUnit: "円",
         rightUnit: "円",
@@ -1378,6 +1627,7 @@
         border: { color: "#e6504f" },
         title: { display: true, text: "累計 円", color: "#e6504f" },
       };
+      ensureVisibleChartRanges(charts.dailyYen);
       charts.dailyYen.update("none");
 
       const batteryTarget = buckets.map((bucket) => averageBucket(bucket, store.battery, "setting_soc_target_percent"));
@@ -1424,11 +1674,13 @@
         border: { color: "#147efb" },
         title: { display: true, text: "SOC(%)", color: "#147efb" },
       };
+      ensureVisibleChartRanges(charts.battery);
       charts.battery.update("none");
 
       renderBatteryLifeProjection(buckets);
 
-      setStatus(`表示期間: ${buckets[0].start} 〜 ${buckets[buckets.length - 1].end}${isWeekly ? "（週単位）" : ""}`);
+      const coverageWarning = coverageNotes.some(Boolean) ? " / 予測区間に未完・旧資料の未確認があります（tooltip参照）" : "";
+      setStatus(`表示期間: ${buckets[0].start} 〜 ${buckets[buckets.length - 1].end}${isWeekly ? "（週単位）" : ""}${coverageWarning}`);
     }
 
     function renderMonthly() {
@@ -1442,8 +1694,8 @@
           })
         : store.monthly;
       const monthLabels = rows.map((x) => x.month);
-      const monthKwh = rows.map((x) => n(x.self_consumption_kwh));
-      const monthYen = rows.map((x) => n(x.savings_yen));
+      const monthKwh = rows.map((x) => displayFinite(x.self_consumption_kwh));
+      const monthYen = rows.map((x) => displayFinite(x.savings_yen));
       charts.monthly.data.labels = monthLabels;
       charts.monthly.data.datasets[0].data = monthKwh;
       charts.monthly.data.datasets[1].data = monthYen;
@@ -1467,6 +1719,7 @@
         border: { color: "#ef8e1d" },
         title: { display: true, text: "円", color: "#ef8e1d" },
       };
+      ensureVisibleChartRanges(charts.monthly);
       charts.monthly.update("none");
     }
 
@@ -1483,6 +1736,7 @@
       renderHourlyForecast();
       renderWindow();
       renderMonthly();
+      fillLearningParams();
     }
 
     function bindPeriodControls() {

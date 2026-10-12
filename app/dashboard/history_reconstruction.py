@@ -270,6 +270,12 @@ def firestore_forecast_hourly_with_reconstruction(
         start_date=start_date,
         end_date_iso=end_date_iso,
     )
+    actual_only_rows = [row for row in original_rows if not any(
+        row.get(field) is not None for field in ("forecast_pv_kwh", "forecast_load_kwh")
+    )]
+    original_rows = [row for row in original_rows if any(
+        row.get(field) is not None for field in ("forecast_pv_kwh", "forecast_load_kwh")
+    )]
     original_rows = _with_forecast_plan_metadata(original_rows, metadata_by_date)
     original_dates = {str(row.get("date")) for row in original_rows if row.get("date")}
     reconstructed_rows = _selected_reconstructed_rows_between(
@@ -279,7 +285,8 @@ def firestore_forecast_hourly_with_reconstruction(
         original_dates=original_dates,
     )
     if not reconstructed_rows:
-        return original_rows
+        return sorted([*original_rows, *actual_only_rows],
+                      key=lambda row: (str(row.get("date") or ""), int(row.get("hour") or 0)))
 
     reconstructed_dates = {
         str(row.get("date")) for row in reconstructed_rows if row.get("date")
@@ -292,7 +299,8 @@ def firestore_forecast_hourly_with_reconstruction(
         reconstructed_rows,
         monitoring_rows,
     )
-    merged = [*original_rows, *reconstructed_with_actuals]
+    merged = [*original_rows, *reconstructed_with_actuals,
+              *(row for row in actual_only_rows if str(row.get("date")) not in reconstructed_dates)]
     merged.sort(key=lambda row: (str(row.get("date") or ""), int(row.get("hour") or 0)))
     return merged
 

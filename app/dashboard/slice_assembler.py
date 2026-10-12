@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from app.dashboard.aggregation import _aggregation_close_day, _build_cost_monthly, _build_energy_daily, _today_jst_iso
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
@@ -18,7 +20,170 @@ from app.dashboard.warnings import build_dashboard_warnings
 from app.parsing.numbers import to_float
 
 
-def extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
+def _build_pv_model_summary(
+    data: dict[str, Any], *, producer_identity: dict[str, str] | None = None,
+    forecast_run_id: str | None = None,
+) -> dict[str, Any]:
+    """Expose adopted display metadata without importing a forecasting model."""
+    new_model = "physical_clear_ghi_annual1"
+    new_basis = "noaa_geometric_1min_midpoint_annual1_v1"
+    legacy_sources = {"physical_pv_forecast", "corrected_pv_forecast"}
+    legacy_methods = {"existing", "physical_unscaled", "physical_global", "physical_daypart", "physical_altitude_shortwave"}
+
+    def mapping(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def text(value: Any, maximum: int, *, pattern: str | None = None) -> str | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            if len(value.encode("utf-8")) > maximum:
+                return None
+        except UnicodeEncodeError:
+            return None
+        if pattern and re.fullmatch(pattern, value) is None:
+            return None
+        return value
+
+    def day(value: Any) -> str | None:
+        value = text(value, 10)
+        try:
+            return value if value and date.fromisoformat(value).isoformat() == value else None
+        except (ValueError, OverflowError):
+            return None
+
+    def instant(value: Any) -> datetime | None:
+        value = text(value, 64)
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00")) if value else None
+            return parsed.astimezone(timezone.utc) if parsed is not None and parsed.utcoffset() is not None else None
+        except (ValueError, OverflowError):
+            return None
+
+    def number(value: Any) -> TypeGuard[int | float]:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+
+    identifier = r"[A-Za-z0-9_.:-]+"
+    sha = r"[a-f0-9]{64}"
+    rationale = mapping(data.get("decision_rationale"))
+    diagnostics_source = rationale if isinstance(data.get("decision_rationale"), dict) else mapping(data.get("daytime_soc_optimization"))
+    physical = mapping(diagnostics_source.get("pv_physical_forecast"))
+    trace = mapping(rationale.get("pv_clear_ghi"))
+    forecast = mapping(data.get("forecast"))
+    source = mapping(data.get("result")).get("final_pv_forecast_source")
+    selected = physical.get("selected_method")
+    trace_model = trace.get("model_id")
+    model = source if source is not None and source != "" else selected if selected is not None and selected != "" else trace_model
+    identity = mapping(producer_identity)
+    generated = identity.get("generated_at", data.get("generated_at"))
+    summary: dict[str, Any] = {
+        "schema_version": 1, "status": "unsupported", "reason_code": "unsupported_model",
+        "model_id": text(model, 128, pattern=identifier),
+        "plan_date": day(identity.get("target_date", forecast.get("date"))),
+        "generated_at": generated if instant(generated) is not None else None,
+        "forecast_run_id": text(forecast_run_id, 256, pattern=identifier),
+        "raw_plan_sha256": text(identity.get("raw_plan_sha256"), 64, pattern=sha),
+        "control_version_id": text(identity.get("control_version_id"), 256, pattern=identifier),
+    }
+    common = dict(summary)
+
+    def finish(status: str, reason: str | None) -> dict[str, Any]:
+        result = {**(summary if status == "valid" else common), "status": status, "reason_code": reason}
+        if len(json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")) > 4096:
+            result = {**common, "status": "invalid", "reason_code": "display_summary_too_large"}
+            if len(json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")) > 4096:
+                result = {key: (None if key not in {"schema_version", "status", "reason_code"} else value) for key, value in result.items()}
+                if len(json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")) > 4096:
+                    raise ValueError("bounded display summary serialization failed")
+        return result
+
+    # Source selection is an allowlist, never a catch-all legacy fallback.
+    if source is not None and source != "" and (not isinstance(source, str) or source not in legacy_sources | {new_model}):
+        return finish("unsupported", "unsupported_model")
+    new_indicated = new_model in (source, selected, trace_model)
+    if new_indicated and any(value is not None and value != "" and value != new_model for value in (source, selected, trace_model)):
+        return finish("invalid", "display_metadata_invalid")
+    if not new_indicated:
+        if ((isinstance(source, str) and source in legacy_sources)
+                or (not source and ((isinstance(selected, str) and selected in legacy_methods) or physical.get("scales") or physical.get("data_quality")))):
+            return finish("legacy", None)
+        return finish("unsupported", "unsupported_model")
+    if producer_identity is None or not all(identity.get(key) for key in ("target_date", "generated_at", "raw_plan_sha256", "control_version_id")):
+        return finish("unsupported", "producer_identity_unavailable")
+    if summary["forecast_run_id"] is None:
+        return finish("unsupported", "forecast_run_unavailable")
+    if (summary["plan_date"] is None or summary["generated_at"] is None or summary["raw_plan_sha256"] is None
+            or summary["control_version_id"] is None or summary["plan_date"] != day(forecast.get("date"))
+            or instant(generated) != instant(data.get("generated_at"))):
+        return finish("invalid", "plan_identity_mismatch")
+    if not trace:
+        return finish("invalid", "clear_ghi_trace_missing")
+
+    pack = mapping(trace.get("calibration_pack"))
+    training_dates = pack.get("training_dates")
+    theta = pack.get("theta4")
+    totals = mapping(trace.get("totals"))
+    total_keys = ("full_day_pv_kwh", "decision_day_pv_kwh", "morning_pv_kwh", "midday_pv_kwh", "evening_pv_kwh")
+    stamps = {key: instant(pack.get(key)) for key in ("training_as_of", "created_at", "usable_from")}
+    stamps.update({key: instant(trace.get(key)) for key in ("as_of", "retrieved_at")})
+    provider = trace.get("provider_issued_at")
+    provider_stamp = instant(provider)
+    repaired = trace.get("repaired_hours")
+    samples, rank, condition = pack.get("training_samples"), pack.get("rank"), pack.get("condition_number")
+    if not isinstance(training_dates, list) or not training_dates or not isinstance(theta, list) or not isinstance(repaired, list):
+        return finish("invalid", "display_metadata_invalid")
+    metadata_valid = (
+        type(trace.get("schema_version")) is int and trace["schema_version"] == 1
+        and type(pack.get("schema_version")) is int and pack["schema_version"] == 1
+        and trace_model == new_model and pack.get("model_id") == new_model
+        and trace.get("basis_version") == new_basis and pack.get("basis_version") == new_basis
+        and day(trace.get("target_date")) == summary["plan_date"]
+        and text(trace.get("calibration_sha256"), 64, pattern=sha) is not None
+        and text(trace.get("forecast_sha256"), 64, pattern=sha) is not None
+        and isinstance(training_dates, list) and bool(training_dates)
+        and all(day(value) is not None and value < summary["plan_date"] for value in training_dates)
+        and training_dates == sorted(set(training_dates))
+        and type(samples) is int and samples == 13 * len(training_dates)
+        and pack.get("terms") == ["1", "x", "cos_phi", "sin_phi"]
+        and isinstance(theta, list) and len(theta) == 4 and all(number(value) for value in theta)
+        and type(rank) is int and rank == 4 and number(condition) and condition >= 1
+        and isinstance(repaired, list) and len(repaired) <= 24
+        and all(type(hour) is int and 0 <= hour <= 23 for hour in repaired)
+        and repaired == sorted(set(repaired))
+        and all(number(totals.get(key)) and totals[key] >= 0 for key in total_keys)
+        and all(value is not None for value in stamps.values())
+        and (provider is None or provider_stamp is not None)
+    )
+    if not metadata_valid:
+        return finish("invalid", "display_metadata_invalid")
+    # Compare aware instants only; forecast retrieval and pack creation have
+    # independent clocks and no order relative to one another.
+    valid_stamps = {key: value for key, value in stamps.items() if value is not None}
+    training_at, created, usable, as_of, retrieved = (valid_stamps[key] for key in ("training_as_of", "created_at", "usable_from", "as_of", "retrieved_at"))
+    if (not (training_at <= created <= usable <= as_of) or retrieved > as_of
+            or (provider_stamp is not None and provider_stamp > retrieved)):
+        return finish("invalid", "display_metadata_invalid")
+    summary.update({
+        "basis_version": new_basis, "forecast_sha256": trace["forecast_sha256"], "calibration_sha256": trace["calibration_sha256"],
+        "retrieved_at": trace["retrieved_at"], "as_of": trace["as_of"], "provider_issued_at": provider,
+        "training_day_count": len(training_dates), "training_sample_count": samples,
+        "training_start_date": training_dates[0], "training_end_date": training_dates[-1],
+        "training_as_of": pack["training_as_of"], "created_at": pack["created_at"], "usable_from": pack["usable_from"],
+        "terms": list(pack["terms"]), "theta4": list(theta), "rank": rank, "condition_number": condition,
+        "repaired_hours": list(repaired), "totals": {key: totals[key] for key in total_keys},
+    })
+    return finish("valid", None)
+
+
+def extract_pv_forecast_diagnostics(
+    data: dict[str, Any], *, producer_identity: dict[str, str] | None = None,
+    forecast_run_id: str | None = None,
+) -> dict[str, Any]:
     rationale = data.get("decision_rationale")
     optimization = data.get("daytime_soc_optimization")
     source = rationale if isinstance(rationale, dict) else optimization if isinstance(optimization, dict) else {}
@@ -26,7 +191,7 @@ def extract_pv_forecast_diagnostics(data: dict[str, Any]) -> dict[str, Any]:
     def mapping(key: str) -> dict[str, Any]:
         value = source.get(key) if isinstance(source, dict) else None
         return value if isinstance(value, dict) else {}
-    return {"plan_date": forecast.get("date") if isinstance(forecast, dict) else None, "physical": mapping("pv_physical_forecast"), "forecast_correction": mapping("forecast_correction"), "hourly_weather_pv_shape": mapping("hourly_weather_pv_shape"), "overnight_load_forecast": mapping("overnight_discharge_guard")}
+    return {"plan_date": forecast.get("date") if isinstance(forecast, dict) else None, "physical": mapping("pv_physical_forecast"), "forecast_correction": mapping("forecast_correction"), "hourly_weather_pv_shape": mapping("hourly_weather_pv_shape"), "overnight_load_forecast": mapping("overnight_discharge_guard"), "pv_model": _build_pv_model_summary(data, producer_identity=producer_identity, forecast_run_id=forecast_run_id)}
 
 
 def read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
@@ -35,7 +200,13 @@ def read_latest_pv_forecast_diagnostics() -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, UnicodeError) as error:
+        print(json.dumps({"event": "dashboard_plan_diagnostics_unavailable", "stage": "local_plan",
+                          "reason_code": "invalid_json" if isinstance(error, ValueError) else "read_failed"}), flush=True)
+        return {}
+    if not isinstance(data, dict):
+        print(json.dumps({"event": "dashboard_plan_diagnostics_unavailable", "stage": "local_plan",
+                          "reason_code": "non_object"}), flush=True)
         return {}
     return extract_pv_forecast_diagnostics(data) if isinstance(data, dict) else {}
 

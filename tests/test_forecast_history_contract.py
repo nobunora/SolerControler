@@ -163,6 +163,42 @@ def test_forecast_identity_survives_sync_and_sqlite_dashboard(monkeypatch, tmp_p
     assert local_energy == remote_energy
 
 
+@pytest.mark.parametrize("with_forecast", [False, True])
+def test_sync_keeps_actual_only_hours_in_monitoring_storage(monkeypatch, tmp_path, with_forecast):
+    from app.operations import sqlite as sqlite_ops, sync
+
+    client = Client(plan())
+    client.data["monitoring_samples"] = {
+        f"{DAY}T07:{minute:02d}:00": {
+            "ts": f"{DAY}T07:{minute:02d}:00", "pv_kwh": 0.0, "load_kwh": 0.2,
+            "soc_percent": 40.0, "source_csv": "test.csv", "ingested_at": "2026-10-06T08:00:00Z",
+        } for minute in (0, 30)
+    }
+    if with_forecast:
+        client.data["forecast_hourly"] = {
+            f"{DAY}-{hour:02d}": {
+                "date": DAY, "hour": hour, "forecast_pv_kwh": 0.0, "forecast_load_kwh": 0.1,
+                "forecast_run_id": "saved-run", "forecast_issued_at": "2026-10-05T14:00:00Z",
+                "updated_at": "2026-10-05T14:00:00Z", "source": "forecast-only-hourly",
+            } for hour in range(24)
+        }
+    monkeypatch.setattr(sync, "_open_firestore_client", lambda **kwargs: client)
+    path = tmp_path / "copy.db"
+    counts = sync.sync_firestore_to_sqlite(sqlite_path=path)
+    assert counts["monitoring_samples"] == 2
+    assert counts["forecast_hourly"] == (24 if with_forecast else 0)
+    conn = sqlite_ops.open_db(path)
+    try:
+        assert conn.execute("SELECT SUM(pv_kwh) FROM monitoring_samples").fetchone()[0] == 0.0
+        if with_forecast:
+            row = conn.execute("SELECT * FROM forecast_hourly WHERE hour=7").fetchone()
+            assert row["forecast_run_id"] == "saved-run"
+            assert row["forecast_issued_at"] == "2026-10-05T14:00:00Z"
+            assert row["updated_at"] == "2026-10-05T14:00:00Z"
+    finally:
+        conn.close()
+
+
 def test_forecast_identity_schema_migration_and_upsert(tmp_path):
     from app.operations import sqlite as sqlite_ops, sync
 
@@ -271,10 +307,11 @@ def test_explicit_vintage_mismatch_cannot_attach_same_timestamp_metadata():
     )
 
 
-def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch):
+def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch, tmp_path):
     from app.runtime import forecast_job
     client = Client(plan())
     events = []
+    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setattr(forecast_job, "_target_date", lambda: "2026-10-07")
     monkeypatch.setattr(forecast_job, "open_firestore", lambda: client)
     def recovery(_client, **kwargs):
@@ -283,6 +320,8 @@ def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch):
     def run(command, env, **kwargs):
         assert len(client.data["forecast_hourly_snapshots"]) == 24
         events.append(command[1])
+        if command[1] == "energy_model_main.py":
+            Path(env["KP_NIGHT_PLAN_PATH"]).write_text(json.dumps(plan()), encoding="utf-8")
     def persist(_client, **kwargs):
         events.append("current_saved")
         return 24

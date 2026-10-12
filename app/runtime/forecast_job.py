@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,10 +19,12 @@ def _target_date() -> str:
     return datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat()
 
 
-def main(*, publish_read_models: bool = True) -> int:
+def generate_forecast_plan() -> Path:
+    """Generate into a private run directory; do not publish forecast projections."""
     target_date = _target_date()
     artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
-    plan_path = Path(os.getenv("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    plan_path = Path(tempfile.mkdtemp(prefix="forecast-plan-", dir=artifacts_dir)) / "night_charge_plan.json"
     # HISTORICAL_FAILURE_LOCK: recover prior saved forecasts before refreshing
     # actuals/bootstrap; a successful new day must not leave yesterday missing.
     client = open_firestore()
@@ -36,14 +39,25 @@ def main(*, publish_read_models: bool = True) -> int:
         {
             "DATA_PIPELINE_INCLUDE_SETTINGS": "false",
             "DATA_PIPELINE_INCLUDE_NIGHT_PLAN": "false",
+            "DASHBOARD_SNAPSHOT_GCS_PREFIX": "",
+            "NIGHT_PLAN_ARCHIVE_GCS_PREFIX": "",
         },
         timeout_seconds=240,
     )
     _run(
         [sys.executable, "energy_model_main.py"],
-        {"FORECAST_DATE_OVERRIDE": target_date},
+        {"FORECAST_DATE_OVERRIDE": target_date, "KP_NIGHT_PLAN_PATH": str(plan_path)},
         timeout_seconds=240,
     )
+    if not plan_path.is_file():
+        raise ValueError("forecast generation did not produce its private plan")
+    return plan_path
+
+
+def main(*, publish_read_models: bool = True) -> int:
+    plan_path = generate_forecast_plan()
+    target_date = _target_date()
+    client = open_firestore()
     snapshot_count = persist_forecast_only_plan(
         client,
         plan_path=plan_path,
@@ -54,6 +68,15 @@ def main(*, publish_read_models: bool = True) -> int:
         f"[forecast_job] persisted target_date={target_date} immutable_snapshot_rows={snapshot_count}",
         flush=True,
     )
+    # Legacy callers still receive the configured path. Publication uses the
+    # private original; this compatibility copy is never reread by the planner.
+    artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
+    destination = Path(os.getenv("KP_NIGHT_PLAN_PATH", str(artifacts_dir / "night_charge_plan.json")))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix="plan-", suffix=".part", delete=False) as temporary:
+        temporary.write(plan_path.read_bytes())
+        temporary_path = Path(temporary.name)
+    temporary_path.replace(destination)
     if publish_read_models and dashboard_snapshot_prefix():
         snapshot_result = write_dashboard_snapshots(
             Path(os.getenv("DATA_DB_PATH", "artifacts/solar_monitor.db"))

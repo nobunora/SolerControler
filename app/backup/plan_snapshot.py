@@ -15,6 +15,7 @@ from google.cloud.firestore_v1 import transactional
 from app.backup.night_plan_archive import (
     _parse_gs_uri, build_night_plan_firestore_document, night_plan_archive_prefix,
 )
+from app.operations.forecast_persistence import _projection_timeout, _run_bounded_projection_transaction
 
 
 def archive_plan_snapshot(
@@ -23,6 +24,16 @@ def archive_plan_snapshot(
 ) -> dict[str, Any]:
     """Keep exact original bytes; never label a generated plan as device-applied."""
     raw = path.read_bytes()
+    receipt, doc = archive_plan_original(raw, storage=storage, firestore=firestore, source=source, prefix=prefix)
+    project_plan_read_models(doc, raw, firestore=firestore)
+    return receipt
+
+
+def archive_plan_original(
+    raw: bytes, *, storage: Any, firestore: Any, source: str,
+    prefix: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Archive generated evidence without advancing mutable read models."""
     plan = json.loads(raw)
     day = date.fromisoformat(plan["forecast"]["date"]).isoformat()
     sha = hashlib.sha256(raw).hexdigest()
@@ -66,9 +77,21 @@ def archive_plan_snapshot(
             raise ValueError("immutable decision index checksum mismatch")
         # Reusing the same original must not replace its first recorded origin.
         doc = recorded
+    return {"decision_id": decision_id, "date": day, "detail_sha256": sha, "status": "verified"}, doc
+
+
+def project_plan_read_models(
+    archived_doc: dict[str, Any], raw: bytes, *, firestore: Any, deadline: float | None = None,
+) -> None:
+    """Advance the existing monotonic projections from verified original bytes."""
+    if hashlib.sha256(raw).hexdigest() != archived_doc.get("detail_sha256"):
+        raise ValueError("plan projection original checksum mismatch")
+    plan = json.loads(raw)
+    if plan["forecast"]["date"] != archived_doc.get("date") or plan.get("generated_at") != archived_doc.get("generated_at"):
+        raise ValueError("plan projection original generation mismatch")
+    _plan_order(archived_doc)
     # Compatibility read models point to the same verified immutable object.
-    _update_plan_read_models(firestore, doc, raw)
-    return {"decision_id": decision_id, "date": day, "detail_sha256": sha, "status": "verified"}
+    _update_plan_read_models(firestore, archived_doc, raw, deadline=deadline)
 
 
 def _plan_order(doc: dict[str, Any]) -> tuple[str, datetime]:
@@ -81,15 +104,18 @@ def _plan_order(doc: dict[str, Any]) -> tuple[str, datetime]:
     return day, issued
 
 
-def _update_plan_read_models(firestore: Any, doc: dict[str, Any], raw: bytes) -> None:
+def _update_plan_read_models(
+    firestore: Any, doc: dict[str, Any], raw: bytes, *, deadline: float | None = None,
+) -> None:
     collection = firestore.collection("night_charge_plans")
     refs = [collection.document(doc["date"]), collection.document("latest")]
 
-    @transactional
     def update(transaction: Any) -> None:
         # All reads precede writes. A concurrent newer plan invalidates the
         # transaction instead of allowing a stale retry to overwrite it.
-        existing = [ref.get(transaction=transaction, timeout=3, retry=None) for ref in refs]
+        existing = [ref.get(transaction=transaction,
+                            timeout=3 if deadline is None else _projection_timeout(deadline, cap=3),
+                            retry=None) for ref in refs]
         for ref, old in zip(refs, existing):
             previous = old.to_dict() or {}
             if previous and _plan_order(previous) >= _plan_order(doc):
@@ -97,7 +123,10 @@ def _update_plan_read_models(firestore: Any, doc: dict[str, Any], raw: bytes) ->
             value = {**doc, "plan_json": raw.decode("utf-8")} if ref.id == "latest" else doc
             transaction.set(ref, value, merge=True)
 
-    update(firestore.transaction(max_attempts=1))
+    if deadline is None:
+        transactional(update)(firestore.transaction(max_attempts=1))
+    else:
+        _run_bounded_projection_transaction(firestore, update, deadline=deadline, max_attempts=1)
 
 
 def restore_snapshot_payload(snapshot: dict[str, Any], destination: Path) -> list[Path]:

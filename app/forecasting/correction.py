@@ -24,6 +24,7 @@ from app.configuration.environment import env_bool, env_float, env_float_clamped
 from app.forecasting.correction_model import (
     add_thermal_states,
     calculate_forecast_correction,
+    calculate_load_forecast_correction,
     _correct_hourly_pv as _correct_hourly_pv,
     _evening_temperature_correction,
     _paired_forecast_error_scenarios as _paired_forecast_error_scenarios,
@@ -63,6 +64,7 @@ __all__ = [
     "ForecastCorrectionPolicy",
     "add_thermal_states",
     "build_forecast_correction",
+    "build_load_forecast_correction",
     "fetch_hourly_weather",
     "load_forecast_hourly_history_from_firestore",
 ]
@@ -148,6 +150,43 @@ def build_forecast_correction(
         history_loader=_load_forecast_hourly_history,
         temperature_corrector=_evening_temperature_correction,
         physical_corrector=_physical_vector_residual_correction,
+        comfort_predictor=predict_hourly_comfort_load,
+    )
+
+
+def build_load_forecast_correction(
+    *,
+    rows: list[dict[str, Any]],
+    hourly_load_forecast: dict[int, float],
+    target_date: str,
+    latitude: float,
+    longitude: float,
+    timezone: str,
+    forecast: dict[str, object],
+    policy: ForecastCorrectionPolicy,
+) -> dict[str, object]:
+    """Use the existing load ports and policy without reading PV policy fields."""
+    if not policy.enabled:
+        return {
+            "enabled": False,
+            "hourly_load_kwh": hourly_load_forecast,
+            "load_scenarios": [],
+            "rationale": {"enabled": False, "reason": "disabled"},
+        }
+    return calculate_load_forecast_correction(
+        rows=rows,
+        hourly_load_forecast=hourly_load_forecast,
+        target_date=target_date,
+        latitude=latitude,
+        longitude=longitude,
+        timezone=timezone,
+        forecast=forecast,
+        load_ewma_alpha=policy.load_ewma_alpha,
+        load_ratio_min=policy.load_ratio_min,
+        load_ratio_max=policy.load_ratio_max,
+        weather_fetch=fetch_hourly_weather,
+        history_loader=_load_forecast_hourly_history,
+        temperature_corrector=_evening_temperature_correction,
         comfort_predictor=predict_hourly_comfort_load,
     )
 

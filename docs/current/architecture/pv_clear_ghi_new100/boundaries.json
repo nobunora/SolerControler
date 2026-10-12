@@ -1,0 +1,1887 @@
+{
+  "schema_version": 1,
+  "source_commit": "d401b15de199ff8f1215935d01080a67a4c95266",
+  "scope": "allowlist is limited by step prose and protected anchors; unlisted production symbols forbidden",
+  "allowed": [
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.ClearGhiCalibration",
+      "kind": "existing",
+      "variables": [
+        "model_id",
+        "basis_version",
+        "site_fingerprint",
+        "theta",
+        "training_dates",
+        "training_samples",
+        "rank",
+        "condition_number",
+        "training_as_of",
+        "usable_from",
+        "raw_bytes",
+        "sha256"
+      ]
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.ClearGhiForecast",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "as_of",
+        "calibration",
+        "forecast_hash",
+        "retrieved_at",
+        "provider_issued_at",
+        "source_times",
+        "q_kwh_m2",
+        "f_kwh_m2",
+        "c_raw",
+        "pv_kwh",
+        "repaired_hours"
+      ]
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.clear_ghi_hour",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.normalize_radiation_intervals",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.forecast_clear_ghi",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.fit_clear_ghi_calibration",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_calibration_io.py",
+      "symbol": "app.forecasting.clear_ghi_calibration_io.load_clear_ghi_calibration",
+      "kind": "existing",
+      "variables": [
+        "raw_bytes",
+        "sha256"
+      ]
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_calibration_io.py",
+      "symbol": "app.forecasting.clear_ghi_calibration_io.write_clear_ghi_calibration",
+      "kind": "existing",
+      "variables": [
+        "raw_bytes",
+        "sha256"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model.calculate_forecast_correction",
+      "kind": "existing",
+      "variables": [
+        "load_summary",
+        "load_ratio_raw",
+        "load_ratio",
+        "weather_by_day",
+        "target_weather",
+        "target_temperatures",
+        "temperature_correction",
+        "temperature_multiplier",
+        "load_scenarios",
+        "corrected_load",
+        "comfort_model"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model.LoadCorrectionPreparation",
+      "kind": "existing",
+      "variables": [
+        "forecast_history",
+        "actual_history",
+        "history_source",
+        "load_summary",
+        "load_ratio_raw",
+        "load_ratio",
+        "weather_by_day",
+        "target_weather",
+        "target_temperatures",
+        "temperature_correction",
+        "temperature_multiplier",
+        "load_scenarios"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model._prepare_load_correction",
+      "kind": "existing",
+      "variables": [
+        "forecast_history",
+        "actual_history",
+        "history_source",
+        "load_summary",
+        "load_ratio_raw",
+        "load_ratio",
+        "weather_by_day",
+        "target_weather",
+        "target_temperatures",
+        "temperature_correction",
+        "temperature_multiplier",
+        "load_scenarios"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model._finalize_load_correction",
+      "kind": "existing",
+      "variables": [
+        "forecast_history",
+        "actual_history",
+        "history_source",
+        "load_summary",
+        "load_ratio_raw",
+        "load_ratio",
+        "weather_by_day",
+        "target_weather",
+        "target_temperatures",
+        "temperature_correction",
+        "temperature_multiplier",
+        "load_scenarios"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model.calculate_load_forecast_correction",
+      "kind": "existing",
+      "variables": [
+        "forecast_history",
+        "actual_history",
+        "history_source",
+        "load_summary",
+        "load_ratio_raw",
+        "load_ratio",
+        "weather_by_day",
+        "target_weather",
+        "target_temperatures",
+        "temperature_correction",
+        "temperature_multiplier",
+        "load_scenarios"
+      ]
+    },
+    {
+      "step": "S03",
+      "path": "app/forecasting/correction.py",
+      "symbol": "app.forecasting.correction.build_load_forecast_correction",
+      "kind": "existing",
+      "variables": [
+        "rows",
+        "hourly_load_forecast",
+        "target_date",
+        "latitude",
+        "longitude",
+        "timezone",
+        "forecast",
+        "policy"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/clear_ghi_adapter.py",
+      "symbol": "app.energy_plan.clear_ghi_adapter._build_clear_ghi_forecast_bundle",
+      "kind": "existing",
+      "variables": [
+        "hourly_load_kwh",
+        "hourly_pv_kwh",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/clear_ghi_adapter.py",
+      "symbol": "app.energy_plan.clear_ghi_adapter._prepare_night_charge_from_hourly",
+      "kind": "existing",
+      "variables": [
+        "hourly_load_kwh",
+        "hourly_pv_kwh",
+        "as_of"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow.PvForecastBundle",
+      "kind": "existing",
+      "variables": [
+        "clear_ghi_forecast"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow.build_energy_plan",
+      "kind": "existing",
+      "variables": [
+        "pv_bundle",
+        "night_charge"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._forecast_for_date",
+      "kind": "existing",
+      "variables": [
+        "pv_radiation_tail"
+      ]
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._fetch_open_meteo_previous_day1_forecast",
+      "kind": "existing",
+      "variables": [
+        "pv_radiation_tail"
+      ]
+    },
+    {
+      "step": "S05",
+      "path": "app/energy_plan/result_builder.py",
+      "symbol": "app.energy_plan.result_builder._build_energy_model_output",
+      "kind": "existing",
+      "variables": [
+        "pv_clear_ghi",
+        "final_pv_totals"
+      ]
+    },
+    {
+      "step": "S05",
+      "path": "app/energy_plan/result_builder.py",
+      "symbol": "app.energy_plan.result_builder._clear_ghi_trace",
+      "kind": "existing",
+      "variables": [
+        "forecast",
+        "timezone",
+        "hourly_load_kwh"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/runtime/forecast_job.py",
+      "symbol": "app.runtime.forecast_job.main",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "artifacts_dir",
+        "plan_path",
+        "client",
+        "recovery",
+        "publish_read_models"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/runtime/forecast_job.py",
+      "symbol": "app.runtime.forecast_job.generate_forecast_plan",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "artifacts_dir",
+        "plan_path",
+        "client",
+        "recovery"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.archive_plan_snapshot",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "raw",
+        "plan",
+        "day",
+        "sha",
+        "decision_id",
+        "doc"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.archive_plan_original",
+      "kind": "existing",
+      "variables": [
+        "raw",
+        "plan",
+        "day",
+        "sha",
+        "decision_id",
+        "doc",
+        "receipt"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.project_plan_read_models",
+      "kind": "existing",
+      "variables": [
+        "archived_doc",
+        "raw",
+        "firestore"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/planner.py",
+      "symbol": "app.separated_runtime.planner.main",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "plan",
+        "rate",
+        "client"
+      ]
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store.FirestorePlanStore.publish",
+      "kind": "existing",
+      "variables": [
+        "plan",
+        "old",
+        "pointer",
+        "incoming_time",
+        "old_time",
+        "precondition",
+        "writes"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence.persist_forecast_only_plan",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "plan_path",
+        "target_date",
+        "timezone_name",
+        "recorded_at",
+        "hourly_rows",
+        "planned_target_soc_percent",
+        "planned_capacity_kwh",
+        "planned_hourly_soc_percent"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence.project_forecast_plan",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "raw",
+        "plan",
+        "private_plan_path",
+        "timezone_name",
+        "recorded_at",
+        "data",
+        "hourly_rows",
+        "snapshot_rows",
+        "forecast_run_id",
+        "forecast_issued_at",
+        "planned_target_soc_percent",
+        "planned_capacity_kwh",
+        "planned_hourly_soc_percent"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/firestore.py",
+      "symbol": "app.operations.firestore.upsert_model_parameters_from_plan",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "night_plan_path",
+        "updated_at",
+        "coeff",
+        "name",
+        "mean",
+        "variance",
+        "sample_count"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/firestore.py",
+      "symbol": "app.operations.firestore.project_model_parameters",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "raw",
+        "plan",
+        "updated_at",
+        "coeff",
+        "ref",
+        "prev",
+        "sample_count"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/separated_runtime/planner.py",
+      "symbol": "app.separated_runtime.planner.main",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "plan",
+        "client"
+      ]
+    },
+    {
+      "step": "S08",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.project_plan_read_models",
+      "kind": "existing",
+      "variables": [
+        "archived_doc",
+        "raw",
+        "firestore"
+      ]
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots.write_dashboard_snapshots",
+      "kind": "existing",
+      "variables": [
+        "payloads",
+        "kind",
+        "payload",
+        "artifact",
+        "path",
+        "results",
+        "update_history",
+        "full_history_rebuild",
+        "history_requested"
+      ]
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._upload_artifact",
+      "kind": "existing",
+      "variables": [
+        "artifact",
+        "storage_client",
+        "uri",
+        "blob"
+      ]
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/slice_assembler.py",
+      "symbol": "app.dashboard.slice_assembler.read_latest_pv_forecast_diagnostics",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "data"
+      ]
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations.canonical_bytes",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations.site_fingerprint",
+      "kind": "existing",
+      "variables": [
+        "latitude",
+        "longitude",
+        "timezone_name",
+        "arrays"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations._number",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations.fetch_satellite_original",
+      "kind": "existing",
+      "variables": [
+        "start_date",
+        "end_date",
+        "latitude",
+        "longitude",
+        "timezone_name",
+        "timeout_seconds"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations.observed_day_records",
+      "kind": "existing",
+      "variables": [
+        "actual_rows",
+        "satellite",
+        "target_date",
+        "actual_available_at",
+        "certification_available_at",
+        "latitude",
+        "longitude",
+        "timezone_name",
+        "fingerprint",
+        "previous"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S00",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbol": "app.forecasting.clear_ghi_observations.training_records",
+      "kind": "existing",
+      "variables": [
+        "records"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._number",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name",
+        "nonnegative"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._integer",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name",
+        "minimum"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._day",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._aware",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._instant",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._hash",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._text",
+      "kind": "existing",
+      "variables": [
+        "value",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.canonical_pack_bytes",
+      "kind": "existing",
+      "variables": [
+        "pack"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._unique_object",
+      "kind": "existing",
+      "variables": [
+        "pairs"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._decode_pack",
+      "kind": "existing",
+      "variables": [
+        "raw_bytes",
+        "sha256"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.ClearGhiCalibration.__post_init__",
+      "kind": "existing",
+      "variables": [
+        "self"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.calibration_from_bytes",
+      "kind": "existing",
+      "variables": [
+        "raw_bytes",
+        "sha256"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.validate_calibration_for_run",
+      "kind": "existing",
+      "variables": [
+        "calibration",
+        "expected_site",
+        "expected_basis",
+        "target_date",
+        "as_of"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.ClearGhiForecast.__post_init__",
+      "kind": "existing",
+      "variables": [
+        "self"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._geometry_inputs",
+      "kind": "existing",
+      "variables": [
+        "day",
+        "latitude",
+        "longitude",
+        "timezone"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._solar_altitude",
+      "kind": "existing",
+      "variables": [
+        "day",
+        "local_hour",
+        "latitude",
+        "longitude",
+        "zone"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi.solar_altitude",
+      "kind": "existing",
+      "variables": [
+        "day",
+        "local_hour",
+        "latitude",
+        "longitude",
+        "timezone"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._repair_short_gaps",
+      "kind": "existing",
+      "variables": [
+        "q",
+        "energy"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S01",
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbol": "app.forecasting.pv_clear_ghi._annual_features",
+      "kind": "existing",
+      "variables": [
+        "day",
+        "hour"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_calibration_io.py",
+      "symbol": "app.forecasting.clear_ghi_calibration_io._current_calibration",
+      "kind": "existing",
+      "variables": [
+        "directory"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_calibration_io.py",
+      "symbol": "app.forecasting.clear_ghi_calibration_io._write_temp",
+      "kind": "existing",
+      "variables": [
+        "directory",
+        "raw_bytes"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store._sha",
+      "kind": "existing",
+      "variables": [
+        "raw"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store._instant",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore",
+      "kind": "existing",
+      "variables": [],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.__init__",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "directory",
+        "fingerprint",
+        "storage",
+        "cloud_prefix",
+        "deadline"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore._blob",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.remaining_timeout",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "cap"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.check_deadline",
+      "kind": "existing",
+      "variables": [
+        "self"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore._read_original",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "name"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore._validate_state",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "state"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.read_current",
+      "kind": "existing",
+      "variables": [
+        "self"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.read_recovery_generation",
+      "kind": "existing",
+      "variables": [
+        "self"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore._save_original",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "name",
+        "raw"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.publish",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "calibration",
+        "records",
+        "expected_generation"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore._replace_current",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "raw",
+        "expected_generation"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S02",
+      "path": "app/forecasting/clear_ghi_store.py",
+      "symbol": "app.forecasting.clear_ghi_store.ClearGhiStore.restore_current",
+      "kind": "existing",
+      "variables": [
+        "self",
+        "state_sha256",
+        "expected_generation",
+        "target_date",
+        "as_of"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/clear_ghi_adapter.py",
+      "symbol": "app.energy_plan.clear_ghi_adapter._valid_hourly",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/clear_ghi_update.py",
+      "symbol": "app.energy_plan.clear_ghi_update._bootstrap_actual_rows",
+      "kind": "existing",
+      "variables": [
+        "context",
+        "deadline"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/clear_ghi_update.py",
+      "symbol": "app.energy_plan.clear_ghi_update.load_calibration_for_context",
+      "kind": "existing",
+      "variables": [
+        "context"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._radiation_provenance",
+      "kind": "existing",
+      "variables": [
+        "hourly",
+        "target_date",
+        "timezone",
+        "suffix"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S04",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._forecast_from_env_or_api",
+      "kind": "existing",
+      "variables": [
+        "lat",
+        "lon",
+        "timezone"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store._provenance",
+      "kind": "existing",
+      "variables": [
+        "plan"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store._provenance_time",
+      "kind": "existing",
+      "variables": [
+        "value"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store._check_provenance",
+      "kind": "existing",
+      "variables": [
+        "incoming",
+        "adopted"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S07",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store._validate_incoming_provenance",
+      "kind": "existing",
+      "variables": [
+        "plan"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence._forecast_projection_values",
+      "kind": "existing",
+      "variables": [
+        "data",
+        "target_date",
+        "timezone_name",
+        "now"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence.projection_identity",
+      "kind": "existing",
+      "variables": [
+        "raw",
+        "plan"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence.projection_may_advance",
+      "kind": "existing",
+      "variables": [
+        "previous",
+        "incoming"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S08",
+      "path": "app/operations/firestore.py",
+      "symbol": "app.operations.firestore._project_model_parameter_values",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "coeff",
+        "identity",
+        "updated_at"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._check_source_epoch_order",
+      "kind": "existing",
+      "variables": [
+        "previous",
+        "incoming"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._read_dashboard_source_epoch",
+      "kind": "existing",
+      "variables": [
+        "client",
+        "history_scope",
+        "deadline",
+        "history_compare_before"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._validate_publication_payload",
+      "kind": "existing",
+      "variables": [
+        "payload",
+        "plan"
+      ],
+      "authority": "session-local implementation approval; existing protected anchors still apply"
+    },
+    {
+      "step": "S09",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._read_history_publication",
+      "kind": "existing",
+      "authority": "session-local implementation approval; protected anchors apply",
+      "variables": [
+        "storage_client"
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "CAL-P01",
+      "path": "app/forecasting/pv_physical.py",
+      "symbol": "app.forecasting.pv_physical.HOURS",
+      "kind": "existing",
+      "variables": [
+        "HOURS",
+        "OUTPUT_HOURS"
+      ],
+      "anchors": [
+        "HOURS = range(7, 23)",
+        "OUTPUT_HOURS = range(5, 23)"
+      ],
+      "applies_to": [
+        "S01"
+      ],
+      "source_sha256": "3690a1829c0a871689f5203822ee65f08513e060818f937a0bb90df0fdf9bb47"
+    },
+    {
+      "id": "CAL-P02",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model._physical_vector_residual_correction",
+      "kind": "existing",
+      "variables": [
+        "actual_pv",
+        "excluded_actual_samples"
+      ],
+      "anchors": [
+        "actual_pv = to_float(actual.get(\"pv\"))",
+        "if actual_pv is None or actual_pv < 0:"
+      ],
+      "applies_to": [
+        "S01",
+        "S03"
+      ],
+      "source_sha256": "47c0f5d5f2cdb2eabc2746275058ebf3965af332ce16ae588c983683bf03a9c7"
+    },
+    {
+      "id": "CAL-P03",
+      "path": "app/energy_plan/pv_selection.py",
+      "symbol": "app.energy_plan.pv_selection._build_selected_pv_forecast",
+      "kind": "existing",
+      "variables": [
+        "selected_days",
+        "physical_history"
+      ],
+      "anchors": [
+        "selected_days = {row[\"dt\"].date().isoformat() for row in context.rows}",
+        "physical_history = {day: values for day, values in physical_history.items() if day in selected_days}"
+      ],
+      "applies_to": [
+        "S02",
+        "S04"
+      ],
+      "source_sha256": "c016877e1c6f583d0dc10b0315588b2be5145a46cd4030322c7b937c41a34bb0"
+    },
+    {
+      "id": "CAL-P04",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model._correct_hourly_pv",
+      "kind": "existing",
+      "variables": [
+        "skip_pv_correction",
+        "physical_corrector"
+      ],
+      "anchors": [
+        "if skip_pv_correction:",
+        "corrected_pv, vector_residual = physical_corrector("
+      ],
+      "applies_to": [
+        "S01",
+        "S03"
+      ],
+      "source_sha256": "47c0f5d5f2cdb2eabc2746275058ebf3965af332ce16ae588c983683bf03a9c7"
+    },
+    {
+      "id": "CAL-P05",
+      "path": "app/forecasting/correction_model.py",
+      "symbol": "app.forecasting.correction_model.calculate_forecast_correction",
+      "kind": "existing",
+      "variables": [
+        "comfort_model",
+        "corrected_load",
+        "load_scenarios",
+        "residual_multipliers"
+      ],
+      "anchors": [
+        "if comfort_model.get(\"applied\") is True and len(comfort_hourly) == 24:",
+        "corrected_load = comfort_hourly",
+        "residual_multipliers = comfort_model.pop(\"_residual_multipliers\", [])"
+      ],
+      "applies_to": [
+        "S01",
+        "S03"
+      ],
+      "source_sha256": "47c0f5d5f2cdb2eabc2746275058ebf3965af332ce16ae588c983683bf03a9c7"
+    },
+    {
+      "id": "CAL-P06",
+      "path": "app/forecasting/correction.py",
+      "symbol": "app.forecasting.correction.ForecastCorrectionPolicy.from_env",
+      "kind": "existing",
+      "variables": [
+        "enabled",
+        "skip_pv_correction",
+        "load_ewma_alpha",
+        "load_ratio_min",
+        "load_ratio_max"
+      ],
+      "anchors": [
+        "enabled=env_bool(\"FORECAST_CORRECTION_ENABLED\", default=True)"
+      ],
+      "applies_to": [
+        "S03"
+      ],
+      "source_sha256": "9ae232f54659e3f43324203f57802e19ec1861220f21c9b8d49d3c7a9a991d52"
+    },
+    {
+      "id": "CAL-P07",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._prepare_night_charge",
+      "kind": "existing",
+      "variables": [
+        "expected_overnight_discharge_kwh",
+        "monthly_day_buy",
+        "expected_rest_of_month",
+        "battery_temp_c"
+      ],
+      "anchors": [
+        "expected_overnight_discharge_kwh = 0.0",
+        "context.billing_rows if context.billing_rows is not None else context.rows",
+        "battery_temp_c=config.battery_temp_c if config.battery_temp_c is not None else temp_c"
+      ],
+      "applies_to": [
+        "S02",
+        "S04"
+      ],
+      "source_sha256": "afd2bee1af856f18bd5de27dd1a9a374c30a6e453c94444deeca59795770232a"
+    },
+    {
+      "id": "CAL-P08",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._build_soc_constraints",
+      "kind": "existing",
+      "variables": [
+        "capacity",
+        "apply_caps"
+      ],
+      "anchors": [
+        "capacity = night_charge.result.effective_capacity_kwh",
+        "apply_caps = not _uses_physical_pv_forecast(pv_forecast.physical_diagnostics)"
+      ],
+      "applies_to": [
+        "S02",
+        "S04"
+      ],
+      "source_sha256": "afd2bee1af856f18bd5de27dd1a9a374c30a6e453c94444deeca59795770232a"
+    },
+    {
+      "id": "CAL-P09",
+      "path": "app/energy_plan/workflow.py",
+      "symbol": "app.energy_plan.workflow._run_legacy_soc_optimization",
+      "kind": "existing",
+      "variables": [
+        "hourly_load_kwh",
+        "hourly_pv_kwh"
+      ],
+      "anchors": [
+        "hourly_load_kwh=pv_forecast.hourly_load_kwh, hourly_pv_kwh=pv_forecast.hourly_pv_kwh"
+      ],
+      "applies_to": [
+        "S02",
+        "S04"
+      ],
+      "source_sha256": "afd2bee1af856f18bd5de27dd1a9a374c30a6e453c94444deeca59795770232a"
+    },
+    {
+      "id": "CAL-P10",
+      "path": "app/energy_plan/result_builder.py",
+      "symbol": "app.energy_plan.result_builder._build_energy_model_output",
+      "kind": "existing",
+      "variables": [
+        "coefficients",
+        "result_payload",
+        "optimization_payload"
+      ],
+      "anchors": [
+        "coefficients: dict[str, Any] = to_dict(context.coefficients)",
+        "result_payload[\"final_predicted_pv_kwh\"] = final_pv_totals[\"total_kwh\"]",
+        "inputs=to_dict(night_charge.inputs)",
+        "daytime_soc_optimization=optimization_payload",
+        "\"legacy_result_predicted_pv_kwh\": result_payload.get(\"predicted_pv_kwh\")"
+      ],
+      "applies_to": [
+        "S05"
+      ],
+      "source_sha256": "fa6a043d4450fe2f08eaf0cd9b744436dc5a7934734adfca47232139f10d3983"
+    },
+    {
+      "id": "B07-CAS",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbol": "app.separated_runtime.plan_store.FirestorePlanStore.publish",
+      "kind": "existing",
+      "variables": [
+        "pointer",
+        "incoming_time",
+        "old_time",
+        "precondition",
+        "writes"
+      ],
+      "anchors": [
+        "for _ in range(3):",
+        "old_time > incoming_time or (old_time == incoming_time and old.version_id != plan.version_id)",
+        "timeout=(10, 60), max_allowed_time=60",
+        "currentDocument"
+      ],
+      "applies_to": [
+        "S07"
+      ],
+      "source_sha256": "aa7ddd3f4a5d93cbde5cff8c14ce088bcc86a6aae0461dea442610a48dc5bfd2"
+    },
+    {
+      "id": "B07-OWNER",
+      "path": "app/separated_runtime/planner.py",
+      "symbol": "app.separated_runtime.planner.main",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "plan",
+        "client"
+      ],
+      "anchors": [
+        "# HISTORICAL_FAILURE_LOCK: the planner owns BOTH the exact immutable",
+        "forecast_job.generate_forecast_plan()",
+        "FirestorePlanStore().publish(plan)",
+        "project_forecast_plan(client, raw=raw, plan=plan"
+      ],
+      "applies_to": [
+        "S07",
+        "S08"
+      ],
+      "source_sha256": "84326fe8d4a6689b8d4a3c13c7e60b79854efc9a9b156e48032a4054ceaca92a"
+    },
+    {
+      "id": "B07-RECOVERY",
+      "path": "app/runtime/forecast_job.py",
+      "symbol": "app.runtime.forecast_job.generate_forecast_plan",
+      "kind": "existing",
+      "variables": [
+        "target_date",
+        "recovery",
+        "plan_path",
+        "publish_read_models"
+      ],
+      "anchors": [
+        "# HISTORICAL_FAILURE_LOCK: recover prior saved forecasts before refreshing",
+        "timeout_seconds=240",
+        "if publish_read_models and dashboard_snapshot_prefix():"
+      ],
+      "applies_to": [
+        "S07"
+      ],
+      "source_sha256": "99ef6f288e1595143a1d46bc6b818be92b28b4bf66479a3b5cdb9db7eec7efef"
+    },
+    {
+      "id": "B07-ARCHIVE",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.archive_plan_snapshot",
+      "kind": "existing",
+      "variables": [
+        "raw",
+        "sha",
+        "decision_id",
+        "doc",
+        "recorded"
+      ],
+      "anchors": [
+        "if_generation_match=0, timeout=4, retry=None",
+        "decision.create(doc, timeout=4, retry=None)",
+        "recorded.get(\"detail_sha256\") != sha",
+        "\"record_status\": \"generated\""
+      ],
+      "applies_to": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "source_sha256": "77b244ab059708f191b8f78c9996bd5242649d9957a0bdb574e6e293beb7b617"
+    },
+    {
+      "id": "B07-ORDER",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot._plan_order",
+      "kind": "existing",
+      "variables": [
+        "doc",
+        "day",
+        "stamp",
+        "issued"
+      ],
+      "anchors": [
+        "issued.utcoffset() is None",
+        "return day, issued"
+      ],
+      "applies_to": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "source_sha256": "77b244ab059708f191b8f78c9996bd5242649d9957a0bdb574e6e293beb7b617"
+    },
+    {
+      "id": "B07-MONOTONIC",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot._update_plan_read_models",
+      "kind": "existing",
+      "variables": [
+        "doc",
+        "raw",
+        "refs",
+        "existing",
+        "previous",
+        "value"
+      ],
+      "anchors": [
+        "_plan_order(previous) >= _plan_order(doc)",
+        "update(firestore.transaction(max_attempts=1))",
+        "existing = [ref.get(transaction=transaction, timeout=3, retry=None) for ref in refs]"
+      ],
+      "applies_to": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "source_sha256": "77b244ab059708f191b8f78c9996bd5242649d9957a0bdb574e6e293beb7b617"
+    },
+    {
+      "id": "B08-24",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence._complete_hourly_rows",
+      "kind": "existing",
+      "variables": [
+        "rows",
+        "target_date",
+        "value"
+      ],
+      "anchors": [
+        "# HISTORICAL_FAILURE_LOCK: validate values before replacing any saved vintage.",
+        "len(rows) == 24",
+        "set(range(24))"
+      ],
+      "applies_to": [
+        "S08"
+      ],
+      "source_sha256": "2abfca7252aff8128ab8a68884dec58a9942644a3ec30456110a1022724a7d17"
+    },
+    {
+      "id": "B08-NIGHT-ZERO",
+      "path": "app/operations/domain.py",
+      "symbol": "app.operations.domain.extract_hourly_forecast_from_plan",
+      "kind": "existing",
+      "variables": [
+        "pv_by_hour",
+        "load_by_hour",
+        "pv_start",
+        "pv_kwh",
+        "load_kwh"
+      ],
+      "anchors": [
+        "# HISTORICAL_FAILURE_LOCK: missing forecasts must not become valid zero rows.",
+        "pv_start = 5 if any(str(hour) in pv_by_hour or hour in pv_by_hour for hour in (5, 6)) else 7"
+      ],
+      "applies_to": [
+        "S08"
+      ],
+      "source_sha256": "836a44e30f9b490658775e5d05a6a9f19d735ebeb63013e8fc40e7e23d00fe78"
+    },
+    {
+      "id": "B08-CAPACITY",
+      "path": "app/operations/forecast_persistence.py",
+      "symbol": "app.operations.forecast_persistence.persist_forecast_only_plan",
+      "kind": "existing",
+      "variables": [
+        "planned_target_soc_percent",
+        "planned_capacity_kwh",
+        "planned_hourly_soc_percent",
+        "hourly_rows"
+      ],
+      "anchors": [
+        "planned_capacity_kwh = to_float(plan_result.get(\"effective_capacity_kwh\"))",
+        "simulate_daytime_soc_percent(",
+        "\"planned_hourly_soc_percent\": planned_hourly_soc_percent"
+      ],
+      "applies_to": [
+        "S08"
+      ],
+      "source_sha256": "2abfca7252aff8128ab8a68884dec58a9942644a3ec30456110a1022724a7d17"
+    },
+    {
+      "id": "B08-PARAMETERS",
+      "path": "app/operations/firestore.py",
+      "symbol": "app.operations.firestore.upsert_model_parameters_from_plan",
+      "kind": "existing",
+      "variables": [
+        "coeff",
+        "name",
+        "mean",
+        "variance",
+        "sample_count"
+      ],
+      "anchors": [
+        "variance = abs(mean) * 0.05",
+        "sample_count = int(prev.get(\"sample_count\") or 0) + 1",
+        "\"mean_value\": mean"
+      ],
+      "applies_to": [
+        "S08"
+      ],
+      "source_sha256": "8564b1fc8339537bb273d5243953e4f219974e908819987722fd23c9cf5e9eb7"
+    },
+    {
+      "id": "B08-PRIVATE-SNAPSHOT",
+      "path": "app/operations/forecast_snapshot.py",
+      "symbol": "app.operations.forecast_snapshot.persist_forecast_snapshots",
+      "kind": "existing",
+      "variables": [
+        "night_plan_path",
+        "raw",
+        "rows"
+      ],
+      "anchors": [
+        "raw = json.loads(night_plan_path.read_text(encoding=\"utf-8\"))",
+        "return _persist_firestore(storage, rows)"
+      ],
+      "applies_to": [
+        "S08"
+      ],
+      "source_sha256": "f0e0160033f75ab647de663e30e27f45a4a422ae298af652e609746025bd3e59"
+    },
+    {
+      "id": "B09-ASSET",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._upload_artifact",
+      "kind": "existing",
+      "variables": [
+        "uri",
+        "blob",
+        "artifact"
+      ],
+      "anchors": [
+        "blob.cache_control = \"private, max-age=0, must-revalidate\"",
+        "\"dashboard_snapshot_schema\": str(SNAPSHOT_SCHEMA_VERSION)",
+        "blob.upload_from_string(artifact.gzip_bytes, content_type=\"application/gzip\",",
+        "if_generation_match=expected_generation",
+        "deadline = time.monotonic() + 24.0"
+      ],
+      "applies_to": [
+        "S09"
+      ],
+      "source_sha256": "e00106008b23fb58b85f55a8185d1f91b832a017f8db8a716a60e5ebe8a46147"
+    },
+    {
+      "id": "B09-LAZY",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots.write_dashboard_snapshots",
+      "kind": "existing",
+      "variables": [
+        "update_history",
+        "full_history_rebuild",
+        "history_requested",
+        "payloads"
+      ],
+      "anchors": [
+        "history_requested = bool(update_history or full_history_rebuild)",
+        "window_days=31,",
+        "clear_snapshot_cache()"
+      ],
+      "applies_to": [
+        "S09"
+      ],
+      "source_sha256": "e00106008b23fb58b85f55a8185d1f91b832a017f8db8a716a60e5ebe8a46147"
+    },
+    {
+      "id": "B09-READER-CACHE",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "app.dashboard.snapshots._cache_ttl_seconds",
+      "kind": "existing",
+      "variables": [
+        "raw"
+      ],
+      "anchors": [
+        "os.getenv(\"DASHBOARD_SNAPSHOT_CACHE_SECONDS\", \"30\")",
+        "return 30.0"
+      ],
+      "applies_to": [
+        "S09"
+      ],
+      "source_sha256": "e00106008b23fb58b85f55a8185d1f91b832a017f8db8a716a60e5ebe8a46147"
+    },
+    {
+      "id": "B09-PRODUCER-CACHE",
+      "path": "app/dashboard/data.py",
+      "symbol": "app.dashboard.data.clear_dashboard_cache",
+      "kind": "existing",
+      "variables": [],
+      "anchors": [
+        "_FIRESTORE_SLICE_CACHE.clear()",
+        "clear_firestore_cache()"
+      ],
+      "applies_to": [
+        "S09"
+      ],
+      "source_sha256": "3501924f3f9c55d673d30c7c6bcc800277357727f904076e0d9b27f51c5ba96d"
+    },
+    {
+      "id": "B09-DIAGNOSTICS",
+      "path": "app/dashboard/slice_assembler.py",
+      "symbol": "app.dashboard.slice_assembler.read_latest_pv_forecast_diagnostics",
+      "kind": "existing",
+      "variables": [
+        "path",
+        "data"
+      ],
+      "anchors": [
+        "os.getenv(\"NIGHT_CHARGE_PLAN_PATH\", \"artifacts/night_charge_plan.json\")",
+        "return extract_pv_forecast_diagnostics(data) if isinstance(data, dict) else {}"
+      ],
+      "applies_to": [
+        "S09"
+      ],
+      "source_sha256": "2690df5005cf7600c84c92f3f0326a51e8d360d8cb9954520fa6030306dd2d97"
+    },
+    {
+      "id": "B10-BACKUP-COLLECTIONS",
+      "path": "app/backup/drive.py",
+      "symbol": "app.backup.drive.PLAN_BACKUP_COLLECTIONS",
+      "kind": "existing",
+      "variables": [
+        "PLAN_BACKUP_COLLECTIONS"
+      ],
+      "anchors": [
+        "PLAN_BACKUP_COLLECTIONS = (\"night_charge_plans\", \"night_plan_decisions\", \"forecast_plans\", \"forecast_hourly_snapshots\")"
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "f16cc78d72970c27a157762cd81a5e8f276e6930348349a3129a4a2a966bd5c5"
+    },
+    {
+      "id": "B10-BACKUP-SCHEMA",
+      "path": "app/backup/drive.py",
+      "symbol": "app.backup.drive.build_firestore_snapshot",
+      "kind": "existing",
+      "variables": [
+        "collections",
+        "counts",
+        "captured_at"
+      ],
+      "anchors": [
+        "\"schema_version\": 2,",
+        "allow_legacy_summary=name == \"night_charge_plans\""
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "f16cc78d72970c27a157762cd81a5e8f276e6930348349a3129a4a2a966bd5c5"
+    },
+    {
+      "id": "B10-EMBED",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.embed_plan_detail",
+      "kind": "existing",
+      "variables": [
+        "doc",
+        "text",
+        "raw",
+        "sha",
+        "allow_legacy_summary"
+      ],
+      "anchors": [
+        "raise ValueError(\"backup source checksum mismatch\")",
+        "\"detail_backup_status\": \"unavailable_legacy\"",
+        "if not isinstance(json.loads(raw), dict):"
+      ],
+      "applies_to": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "source_sha256": "77b244ab059708f191b8f78c9996bd5242649d9957a0bdb574e6e293beb7b617"
+    },
+    {
+      "id": "B10-RESTORE",
+      "path": "app/backup/plan_snapshot.py",
+      "symbol": "app.backup.plan_snapshot.restore_snapshot_payload",
+      "kind": "existing",
+      "variables": [
+        "snapshot",
+        "plans",
+        "targets",
+        "path",
+        "raw"
+      ],
+      "anchors": [
+        "raise ValueError(\"backup detail checksum mismatch\")",
+        "raise ValueError(\"restore destination conflicts with existing data\")",
+        "path.write_bytes(raw)"
+      ],
+      "applies_to": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "source_sha256": "77b244ab059708f191b8f78c9996bd5242649d9957a0bdb574e6e293beb7b617"
+    },
+    {
+      "id": "B10-03-ARCHIVE",
+      "path": "app/runtime/cloud_job.py",
+      "symbol": "app.runtime.cloud_job._archive_generated_plan",
+      "kind": "existing",
+      "variables": [
+        "remaining",
+        "plan_path",
+        "source"
+      ],
+      "anchors": [
+        "HISTORICAL_FAILURE_LOCK (badd209): no leases, old-plan fallback, Drive tail,",
+        "if remaining < 60:",
+        "timeout_seconds=20, deadline_monotonic=time.monotonic() + min(20, remaining)"
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "168847ea51378c96eef6dec93c573fbfc3dd468f978e080a01e3e8d067f69cc1"
+    },
+    {
+      "id": "B10-TIME-FORCED",
+      "path": "app/runtime/night_soc_time_contract.py",
+      "symbol": "app.runtime.night_soc_time_contract.FORCED_MONITOR_CUTOFF",
+      "kind": "existing",
+      "variables": [
+        "FORCED_MONITOR_CUTOFF"
+      ],
+      "anchors": [
+        "FORCED_MONITOR_CUTOFF = time(6, 45)"
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "a9c1d165de3a1d037c2b84d1285396833e6f2a82bbe0ac7950573a59d6bfe1c9"
+    },
+    {
+      "id": "B10-TIME-STANDBY",
+      "path": "app/runtime/night_soc_time_contract.py",
+      "symbol": "app.runtime.night_soc_time_contract.FINAL_STANDBY_START_CUTOFF",
+      "kind": "existing",
+      "variables": [
+        "FINAL_STANDBY_START_CUTOFF"
+      ],
+      "anchors": [
+        "FINAL_STANDBY_START_CUTOFF = time(6, 50)"
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "a9c1d165de3a1d037c2b84d1285396833e6f2a82bbe0ac7950573a59d6bfe1c9"
+    },
+    {
+      "id": "B10-TIME-HARD",
+      "path": "app/runtime/night_soc_time_contract.py",
+      "symbol": "app.runtime.night_soc_time_contract.CONTROL_HARD_CUTOFF",
+      "kind": "existing",
+      "variables": [
+        "CONTROL_HARD_CUTOFF"
+      ],
+      "anchors": [
+        "CONTROL_HARD_CUTOFF = time(6, 55)"
+      ],
+      "applies_to": [
+        "S10"
+      ],
+      "source_sha256": "a9c1d165de3a1d037c2b84d1285396833e6f2a82bbe0ac7950573a59d6bfe1c9"
+    }
+  ]
+}

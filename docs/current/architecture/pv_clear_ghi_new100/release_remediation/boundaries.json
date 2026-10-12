@@ -1,0 +1,801 @@
+{
+  "schema_version": 1,
+  "source_revision": "1dd8786",
+  "status": "IMPLEMENTATION_BOUNDARIES",
+  "allowed": [
+    {
+      "stage": "R00",
+      "path": "scripts/pre_release_integration.ps1",
+      "symbols": [
+        "script call order"
+      ],
+      "change": "existing quality gate before protected pytest; existing checks and failures preserved",
+      "existing": true,
+      "source_sha256": "92036c42091bb3b841ac98d130389e0566398280d66712000dc0784c77601ed5",
+      "implemented_source_sha256": "5fa41861a8891a99cd3e179a5525e7184ca7d123e82890fbee0f0bb1dff116c2"
+    },
+    {
+      "stage": "R01",
+      "path": "scripts/validate_dashboard_backend_parity.py",
+      "symbols": [
+        "main",
+        "NEW partition_forecast_metadata"
+      ],
+      "change": "AND evidence and strict common comparisons; compare_rows semantics preserved",
+      "existing": true,
+      "source_sha256": "b538209c6e73722987cfaa0aa4b291c34fa3b709826b24d2ea4804e5f36e6347",
+      "implemented_source_sha256": "37c62ab86a500316fa763cacdabfcadf62ddb63c6fde95d206448c073ab3f3aa"
+    },
+    {
+      "stage": "R01",
+      "path": "scripts/validate_forecast_display_evidence.py",
+      "symbols": [
+        "NEW validate_forecast_day_evidence",
+        "NEW load_forecast_evidence_for_window",
+        "NEW validate_forecast_window_evidence",
+        "bundle.published_plan_document"
+      ],
+      "change": "collector and pure functions only; parity main is the sole CLI",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "ff54a29e7911e8d2b78fdf2cb4110cfcc17c24d5cfe6051638462d3201662b06"
+    },
+    {
+      "stage": "R02",
+      "path": "scripts/run_kpnet_import_from_env.ps1",
+      "symbols": [
+        "parameters",
+        "Process-only KP_CSV_TARGET_MONTHS override"
+      ],
+      "change": "optional TargetMonths, default and finally cleanup preserved",
+      "existing": true,
+      "source_sha256": "2db924368b3c6622755dde7cc344a950702e435636ba05ae81dd21bff763dd8c",
+      "implemented_source_sha256": "51443fe3f5778b756b5e9cb61e8e029199a600ae91a58d845b6dfe0104159e60"
+    },
+    {
+      "stage": "R02",
+      "path": "scripts/run_monitoring_source_repair_from_env.ps1",
+      "symbols": [
+        "NEW wrapper"
+      ],
+      "change": "canonical explicit repair stage state and scope",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "10bcfae744e4b371b89a29b1232d9c001bf76c74ff74454e78c79b82deb07f80"
+    },
+    {
+      "stage": "R02",
+      "path": "scripts/repair_monitoring_source.py",
+      "symbols": [
+        "NEW main"
+      ],
+      "change": "direct stage dispatch; no framework",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "be66726a9500508c034990b5fa1e964e23a84b8c2107695c14215bb13aa0152a"
+    },
+    {
+      "stage": "R02",
+      "path": "app/operations/monitoring_repair.py",
+      "symbols": [
+        "NEW prepare_source_repair",
+        "NEW apply_source_repair",
+        "NEW verify_source_repair",
+        "prepared monthly source native revisions",
+        "calibration current native preimage"
+      ],
+      "change": "reviewed raw13 create and readback; no old35 update",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
+    },
+    {
+      "stage": "R03",
+      "path": "app/operations/monitoring_repair.py",
+      "symbols": [
+        "NEW regenerate_derived"
+      ],
+      "change": "existing daily/cost functions plus before-after source and output verification",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
+    },
+    {
+      "stage": "R03",
+      "path": "app/operations/firestore.py",
+      "symbols": [
+        "recalc_monitoring_daily_metrics",
+        "recalc_cost_daily_from"
+      ],
+      "change": "optional repair-only deadline/progress; daily dict and cost int return/formulas/defaults unchanged",
+      "existing": true,
+      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
+    },
+    {
+      "stage": "R03",
+      "path": "app/dashboard/snapshots.py",
+      "symbols": [
+        "_read_dashboard_source_epoch",
+        "NEW write_dashboard_history_snapshot"
+      ],
+      "change": "bounded raw revision paging and history-only full rebuild; bootstrap writer unchanged",
+      "existing": true,
+      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
+      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
+    },
+    {
+      "stage": "R04",
+      "path": "app/operations/forecast_persistence.py",
+      "symbols": [
+        "project_forecast_plan",
+        "NEW _run_bounded_projection_transaction"
+      ],
+      "change": "deadline and native result classification only; projections/numbers unchanged",
+      "existing": true,
+      "source_sha256": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
+      "implemented_source_sha256": "6710087836d33b93dc81308cebd558ed343c513e710aa2b7dc7d8b1c43a864c5"
+    },
+    {
+      "stage": "R04",
+      "path": "app/operations/firestore.py",
+      "symbols": [
+        "_project_model_parameter_values",
+        "project_model_parameters"
+      ],
+      "change": "use bounded lifecycle helper only; sample monotonicity unchanged",
+      "existing": true,
+      "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
+    },
+    {
+      "stage": "R04",
+      "path": "app/separated_runtime/plan_store.py",
+      "symbols": [
+        "FirestorePlanStore.publish"
+      ],
+      "change": "shared absolute deadline, fixed receipt readback, original CAS unchanged",
+      "existing": true,
+      "source_sha256": "2110720ff4bdd3ec2a747f0fe22b43c6537a8ac0abd80f02d0aadcfa6ef2702c",
+      "implemented_source_sha256": "98fe2d7a1cdcbc37bf57471a2d2d0d6fc0ff052d6f4cd3bd7224daf1cf224c68"
+    },
+    {
+      "stage": "R04",
+      "path": "app/separated_runtime/planner.py",
+      "symbols": [
+        "main",
+        "write_forecast_intent",
+        "capture_adopted_forecast_receipt",
+        "recover_adopted_forecast_projection"
+      ],
+      "change": "structured adoption identity log and one post-CAS shared projection deadline propagation; unknown commit distinct from rejection; projection-only recovery",
+      "existing": true,
+      "source_sha256": "05bd925c79199a273fa3adb074a5748c1ec6d056346f1c9e5820b6cd2ab50518",
+      "implemented_source_sha256": "980e58f49e33c1bb943c9aea2e7c64fbebbf5a164eb17fd540408eaa932afa36"
+    },
+    {
+      "stage": "R04",
+      "path": "app/dashboard/snapshots.py",
+      "symbols": [
+        "load_precomputed_snapshot",
+        "_upload_artifact",
+        "write_dashboard_snapshots"
+      ],
+      "change": "cold finite timeout and late source drift observation/republication only; CAS/cache preserved",
+      "existing": true,
+      "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
+      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
+    },
+    {
+      "stage": "R05",
+      "path": "scripts/deploy_production_from_env.ps1",
+      "symbols": [
+        "parameters",
+        "separated delegation"
+      ],
+      "change": "one-off prepared repair identity CLI transfer",
+      "existing": true,
+      "source_sha256": "f4b8f669c0ce21f1fefce2a057964e598311d84ce68c7a746e4622632171336c",
+      "implemented_source_sha256": "a87a459713b1256246af88da3b1b1a9d9f2b730339d0a79bd171f973c4a7b6cb"
+    },
+    {
+      "stage": "R05",
+      "path": "scripts/deploy_separated_runtime.ps1",
+      "symbols": [
+        "parameters",
+        "resume identity",
+        "calculation stage",
+        "NEW Invoke-PreparedMonitoringRepair",
+        "build stage",
+        "Invoke-Stage build/calculation receipt checks"
+      ],
+      "change": "same-digest build proof, one repair journal, adopted-plan resume, canonical repair orchestration",
+      "existing": true,
+      "source_sha256": "8431ad0a44a7ef0bdc60e0c7d13caca7dee7d11b5c53111d8efc03e1dd15a733",
+      "implemented_source_sha256": "cb3801444c52fef49033028cafd3459109bace5ce1a660eb2f1abec480b44e39"
+    },
+    {
+      "stage": "R04",
+      "path": "app/operations/forecast_snapshot.py",
+      "symbols": [
+        "persist_forecast_snapshots",
+        "_persist_firestore"
+      ],
+      "change": "optional shared projection deadline; immutable identity/defaults preserved",
+      "existing": true,
+      "source_sha256": "f0e0160033f75ab647de663e30e27f45a4a422ae298af652e609746025bd3e59",
+      "implemented_source_sha256": "eef3b0ad1369ba37317ef07567eda0346abeddb371f378371e07cc72e3898fd3"
+    },
+    {
+      "stage": "R04",
+      "path": "app/backup/plan_snapshot.py",
+      "symbols": [
+        "project_plan_read_models",
+        "_update_plan_read_models"
+      ],
+      "change": "optional deadline using the single forecast_persistence helper; max_attempts=1 and read-before-write unchanged",
+      "existing": true,
+      "source_sha256": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2",
+      "implemented_source_sha256": "e58f1e6cbcccd674c44931f659e1d64cd09f4a4d752fd1100c0c28ebd41caacd"
+    },
+    {
+      "stage": "R05",
+      "path": "scripts/run_cloud_job_from_env.ps1",
+      "symbols": [
+        "forecast execution receipt parameter",
+        "forecast exact execution verification"
+      ],
+      "change": "private exact-execution capture instead of latest execution; other slots and physical control unchanged",
+      "existing": true,
+      "source_sha256": "78c253b00e5844ddd566da7add313a43dc5d290c9bec6540003c7e88bb08073f",
+      "implemented_source_sha256": "954a48f0a423d632f1a729f2c1313436d845390eda95fea25fe10193706c1a90"
+    },
+    {
+      "stage": "R03",
+      "path": "app/forecasting/clear_ghi_observations.py",
+      "symbols": [
+        "observed_day_records.event.checked_actual_sha256_by_date"
+      ],
+      "change": "complete 26-sample SHA observation only; no certification or correction changes",
+      "existing": true,
+      "source_sha256": null,
+      "implemented_source_sha256": "0ddab562b671570a0776268a100e4363a01981ddec9b78564d5b5ca400013da9"
+    },
+    {
+      "stage": "R04",
+      "path": "scripts/run_server_adapter_proof_from_env.ps1",
+      "symbols": [
+        "actual-server wrapper",
+        "fixed bundle",
+        "exact execution",
+        "finally restore"
+      ],
+      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "7355b26e93ed7527d45fa2e8447037f38a1f0655d9d15048104b4fb7f324a369"
+    },
+    {
+      "stage": "R06",
+      "path": "app/kpnet/soc_setting_probe.py",
+      "symbols": [
+        "run_soc_setting_probe"
+      ],
+      "change": "explicit SOC-only 30/50 setting, 60-second hold, native readback and restoration",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "2f7d6af222e83b4f4fe2f81065564da33e1fac27840b800fb844afcea3f776b7"
+    },
+    {
+      "stage": "R06",
+      "path": "scripts/run_kpnet_soc_setting_probe_from_env.ps1",
+      "symbols": [
+        "deployment guard",
+        "exact execution",
+        "finally Job restore"
+      ],
+      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "a14e24cc19d46ab928351a97fc6aa15e9bcb1887b1004ea439bffb0ab6b42bff"
+    }
+  ],
+  "protected": [
+    {
+      "id": "P01",
+      "paths": [
+        "app/forecasting/pv_clear_ghi.py",
+        "app/forecasting/correction_model.py",
+        "app/forecasting/correction.py",
+        "app/energy_plan/clear_ghi_adapter.py"
+      ],
+      "symbols": [
+        "whole file"
+      ],
+      "variables": [
+        "annual1 basis",
+        "max(0,C)*min(F,Q)",
+        "load correction one application"
+      ],
+      "rule": "no PV/load model changes or repeated corrections",
+      "source_sha256": {
+        "app/forecasting/pv_clear_ghi.py": "3862e1bad6d6b29354949fc523d22a6d4a23d29d361b0bfc6443d4e5a9efe294",
+        "app/forecasting/correction_model.py": "97f5f4cff10081c52c0ee7ff95d070a325cbe232fb64afcbfd24cd112556d46a",
+        "app/forecasting/correction.py": "045c9b41d869597df812114aba726d1c2e08373ae184e8d7cdb144e6c20c0075",
+        "app/energy_plan/clear_ghi_adapter.py": "19cd0387f7f8394d11557973b7ce1ac674c629283f0d58196e69a15d2ca23866"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/forecasting/pv_clear_ghi.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/forecasting/correction_model.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/forecasting/correction.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/energy_plan/clear_ghi_adapter.py",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    },
+    {
+      "id": "P02",
+      "paths": [
+        "app/energy_plan/soc_cost.py",
+        "app/runtime/night_soc_time_contract.py"
+      ],
+      "symbols": [
+        "whole file"
+      ],
+      "variables": [
+        "capacity",
+        "cost",
+        "06:30/23/03/07 time ownership",
+        "SOC17 endpoints"
+      ],
+      "rule": "no optimizer/tariff/physical clock changes",
+      "source_sha256": {
+        "app/energy_plan/soc_cost.py": "1b8d4bdd84400426cc4e2177e1be9d21b7e97d842638772e0df85b2d06c164cf",
+        "app/runtime/night_soc_time_contract.py": "a9c1d165de3a1d037c2b84d1285396833e6f2a82bbe0ac7950573a59d6bfe1c9"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/energy_plan/soc_cost.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/runtime/night_soc_time_contract.py",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    },
+    {
+      "id": "P03",
+      "paths": [
+        "app/operations/sync.py",
+        "app/operations/sqlite.py",
+        "app/dashboard/sqlite_repository.py"
+      ],
+      "symbols": [
+        "TABLE_SPECS",
+        "ensure_schema",
+        "_insert_sqlite_row",
+        "_sqlite_upsert_row",
+        "load_sqlite_query_snapshot"
+      ],
+      "variables": [
+        "forecast_run_id",
+        "forecast_issued_at"
+      ],
+      "rule": "no SQLite schema/SOC synthetic value changes; provenance preserved",
+      "source_sha256": {
+        "app/operations/sync.py": "3733aeec39162d1300eae4f57bb5f52e22f3048e86f7df48168fe97ccfae2407",
+        "app/operations/sqlite.py": "9d610dd2609a57f6646436875d92b855213726e3f2cf13ef5800fdf2825e6a24",
+        "app/dashboard/sqlite_repository.py": "14493bef0bf4daa54a9adf72a66fc3bbdf80c8919cfd075ad7bee85af144dfe4"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/operations/sync.py",
+          "symbol": "TABLE_SPECS"
+        },
+        {
+          "path": "app/operations/sqlite.py",
+          "symbol": "ensure_schema"
+        },
+        {
+          "path": "app/operations/sync.py",
+          "symbol": "_insert_sqlite_row"
+        },
+        {
+          "path": "app/operations/sync.py",
+          "symbol": "_sqlite_upsert_row"
+        },
+        {
+          "path": "app/dashboard/sqlite_repository.py",
+          "symbol": "load_sqlite_query_snapshot"
+        }
+      ]
+    },
+    {
+      "id": "P04",
+      "paths": [
+        "app/dashboard/history_reconstruction.py"
+      ],
+      "symbols": [
+        "_metadata_matches_forecast_row",
+        "_with_forecast_plan_metadata"
+      ],
+      "variables": [
+        "run-first identity",
+        "legacy timestamp qualification"
+      ],
+      "rule": "read-only reference; do not weaken same-generation binding",
+      "source_sha256": {
+        "app/dashboard/history_reconstruction.py": "1818f48a753712c26eeff76fc6531ee97cb466dc4f0dd8c9d730160d103cd925"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/dashboard/history_reconstruction.py",
+          "symbol": "_metadata_matches_forecast_row"
+        },
+        {
+          "path": "app/dashboard/history_reconstruction.py",
+          "symbol": "_with_forecast_plan_metadata"
+        }
+      ]
+    },
+    {
+      "id": "P05",
+      "paths": [
+        "scripts/validate_dashboard_backend_parity.py"
+      ],
+      "symbols": [
+        "compare_rows",
+        "IGNORED_FIELDS"
+      ],
+      "variables": [
+        "logical identity",
+        "duplicate detection",
+        "PV/load/actual/run/issued comparisons"
+      ],
+      "rule": "no blanket ignore; partition only with independently verified evidence",
+      "source_sha256": {
+        "scripts/validate_dashboard_backend_parity.py": "b538209c6e73722987cfaa0aa4b291c34fa3b709826b24d2ea4804e5f36e6347"
+      },
+      "symbol_bindings": [
+        {
+          "path": "scripts/validate_dashboard_backend_parity.py",
+          "symbol": "compare_rows"
+        },
+        {
+          "path": "scripts/validate_dashboard_backend_parity.py",
+          "symbol": "IGNORED_FIELDS"
+        }
+      ]
+    },
+    {
+      "id": "P06",
+      "paths": [
+        "app/operations/firestore.py",
+        "app/operations/cost_daily.py"
+      ],
+      "symbols": [
+        "recalc_monitoring_daily_metrics",
+        "recalc_cost_daily_from",
+        "calculate_daily_costs",
+        "apply_cumulative_baseline"
+      ],
+      "variables": [
+        "day/night rates",
+        "tier boundaries",
+        "saved settings target",
+        "billing period"
+      ],
+      "rule": "cost/daily formulas and normal defaults unchanged; only R03 named repair RPC deadline/progress keywords permitted",
+      "source_sha256": {
+        "app/operations/firestore.py": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+        "app/operations/cost_daily.py": "bc8660361f34981421e15dd1aed0b2a6587ac1c4a8e3887a68570741b1b0dec8"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/operations/firestore.py",
+          "symbol": "recalc_monitoring_daily_metrics"
+        },
+        {
+          "path": "app/operations/firestore.py",
+          "symbol": "recalc_cost_daily_from"
+        },
+        {
+          "path": "app/operations/cost_daily.py",
+          "symbol": "calculate_daily_costs"
+        },
+        {
+          "path": "app/operations/cost_daily.py",
+          "symbol": "apply_cumulative_baseline"
+        }
+      ]
+    },
+    {
+      "id": "P07",
+      "paths": [
+        "app/dashboard/snapshots.py"
+      ],
+      "symbols": [
+        "_validate_publication_payload",
+        "_check_source_epoch_order"
+      ],
+      "variables": [
+        "source native max/count/digest",
+        "8192 metadata bytes",
+        "GCS generation CAS",
+        "31-day bootstrap",
+        "history lazy"
+      ],
+      "rule": "comparison and CAS constraints unchanged; R03/R04 only their specified collection/timeout windows",
+      "source_sha256": {
+        "app/dashboard/snapshots.py": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/dashboard/snapshots.py",
+          "symbol": "_validate_publication_payload"
+        },
+        {
+          "path": "app/dashboard/snapshots.py",
+          "symbol": "_check_source_epoch_order"
+        }
+      ]
+    },
+    {
+      "id": "P08",
+      "paths": [
+        "app/forecasting/clear_ghi_store.py",
+        "app/forecasting/clear_ghi_calibration_io.py"
+      ],
+      "symbols": [
+        "ClearGhiStore.publish",
+        "ClearGhiStore.restore_current",
+        "immutable originals/pack/state"
+      ],
+      "variables": [
+        "site fingerprint",
+        "basis",
+        "as_of",
+        "availability",
+        "current CAS"
+      ],
+      "rule": "no source fabrication/retired clear day retention/valid current automatic overwrite",
+      "source_sha256": {
+        "app/forecasting/clear_ghi_store.py": "f74cda633960c681b9ed41b3c97ec8aa657afa8022a4ff4c55083084fff21dbf",
+        "app/forecasting/clear_ghi_calibration_io.py": "8e733acdbd46d41d983231ea7bf599fe5f63107c4618674dd755ce8bab55130c"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/forecasting/clear_ghi_store.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/forecasting/clear_ghi_calibration_io.py",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    },
+    {
+      "id": "P09",
+      "paths": [
+        "app/operations/forecast_persistence.py",
+        "app/separated_runtime/plan.py",
+        "app/backup/plan_snapshot.py"
+      ],
+      "symbols": [
+        "_forecast_projection_values",
+        "PublishedPlan",
+        "archive_plan_original",
+        "restore_snapshot_payload"
+      ],
+      "variables": [
+        "raw_plan_sha256",
+        "control_version_id",
+        "forecast_run_id",
+        "forecast_issued_at",
+        "planned_capacity_kwh",
+        "planned_hourly_soc_percent"
+      ],
+      "rule": "same raw/projection and immutable original value and archive/restore contracts",
+      "source_sha256": {
+        "app/operations/forecast_persistence.py": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
+        "app/separated_runtime/plan.py": "8f01b04d293c0990bbdc94e53426e3113528a2f0570e0126686ed791068c49e3",
+        "app/backup/plan_snapshot.py": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/operations/forecast_persistence.py",
+          "symbol": "_forecast_projection_values"
+        },
+        {
+          "path": "app/separated_runtime/plan.py",
+          "symbol": "PublishedPlan"
+        },
+        {
+          "path": "app/backup/plan_snapshot.py",
+          "symbol": "archive_plan_original"
+        },
+        {
+          "path": "app/backup/plan_snapshot.py",
+          "symbol": "restore_snapshot_payload"
+        }
+      ]
+    },
+    {
+      "id": "P10",
+      "paths": [
+        "static/dashboard.js",
+        "templates/dashboard.html",
+        "app/dashboard/service.py",
+        "app/dashboard/slice_assembler.py"
+      ],
+      "symbols": [
+        "whole file"
+      ],
+      "variables": [
+        "8 charts",
+        "0..100 SOC axis",
+        "planned vs reference SOC",
+        "model summary",
+        "initial request/cache"
+      ],
+      "rule": "no UI/math/GET repair or new HTTP transfer; acceptance verification only",
+      "source_sha256": {
+        "static/dashboard.js": "40408450a174fc564abe0a0dee1ff9f32634f1551f5b37fed8a509218850c764",
+        "templates/dashboard.html": "f3747906929de709ed6d153676b1f8a747b735f02026ba091cb2a4ae8c02a11b",
+        "app/dashboard/service.py": "e3c4d84823bf5bfb2edaeb5b29d74aaf7b3f5b973f5ce55b73eb4593023199c0",
+        "app/dashboard/slice_assembler.py": "87eec25e9086f3f5e2f861195938dc524ae2ea6211b207cdd7a5ca69453a107e"
+      },
+      "symbol_bindings": [
+        {
+          "path": "static/dashboard.js",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "templates/dashboard.html",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/dashboard/service.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/dashboard/slice_assembler.py",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    },
+    {
+      "id": "P11",
+      "paths": [
+        "app/runtime/cloud_job.py",
+        "app/kpnet/soc_api.py"
+      ],
+      "symbols": [
+        "whole file"
+      ],
+      "variables": [
+        "API real-time SOC",
+        "mode-only changes",
+        "60-second hold",
+        "standby restore"
+      ],
+      "rule": "no physical control/API/time/dependency changes",
+      "source_sha256": {
+        "app/runtime/cloud_job.py": "168847ea51378c96eef6dec93c573fbfc3dd468f978e080a01e3e8d067f69cc1",
+        "app/kpnet/soc_api.py": "a64ef10cc2ea46f2b258f74ea949d7944dc54e78a005b5264bbe729c16166b1b"
+      },
+      "symbol_bindings": [
+        {
+          "path": "app/runtime/cloud_job.py",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "app/kpnet/soc_api.py",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    },
+    {
+      "id": "P12",
+      "paths": [
+        "scripts/production_deployment_gate.ps1",
+        "scripts/pre_release_local.ps1",
+        "scripts/production_env.ps1"
+      ],
+      "symbols": [
+        "whole file"
+      ],
+      "variables": [
+        "clean worktree",
+        "source/DB backup",
+        ".env ignore",
+        "mandatory quality",
+        "stage failure"
+      ],
+      "rule": "no quality downgrade, backup skip, secret expansion or failed-state success edit",
+      "source_sha256": {
+        "scripts/production_deployment_gate.ps1": "456aee8864c8caa7561536f63e71d52e95694eff52acd396845c1b2856767de8",
+        "scripts/pre_release_local.ps1": "88854e528f0eb6f616cd739d615de88db6098f6d76e9288fa9f7ec474fbecd01",
+        "scripts/production_env.ps1": "ae34f18769f0481da41a4948ca22c9693dc48695f413123e69ef4b34a4abf80b"
+      },
+      "symbol_bindings": [
+        {
+          "path": "scripts/production_deployment_gate.ps1",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "scripts/pre_release_local.ps1",
+          "symbol": "whole file protected except explicit allowed records"
+        },
+        {
+          "path": "scripts/production_env.ps1",
+          "symbol": "whole file protected except explicit allowed records"
+        }
+      ]
+    }
+  ],
+  "global_forbidden": [
+    "new production env key",
+    "new production DB schema/collection",
+    "runtime feature flags",
+    "new dependency",
+    "new shared lease",
+    "new HTTP endpoint",
+    "forecast historical rewrite",
+    "dashboard measured interpolation",
+    "production mutation during investigation"
+  ],
+  "test_edits": {
+    "R00": [
+      "tests/test_pre_release_integration_contract.py"
+    ],
+    "R01": [
+      "tests/test_forecast_display_evidence.py",
+      "tests/test_dashboard_backend_parity.py",
+      "tests/test_dashboard_backend_parity_validator.py"
+    ],
+    "R02": [
+      "tests/test_monitoring_repair_command.py"
+    ],
+    "R03": [
+      "tests/test_monitoring_repair_derived.py",
+      "tests/test_clear_ghi_runtime.py",
+      "tests/test_dashboard_publication_generation.py"
+    ],
+    "R04": [
+      "tests/g07/adapter_proof.py",
+      "tests/g07/firestore_server_cases.py",
+      "tests/g07/gcs_server_cases.py",
+      "tests/test_clear_ghi_store.py",
+      "tests/test_forecast_projection_generation.py",
+      "tests/test_dashboard_publication_generation.py",
+      "tests/test_control_publication_provenance.py",
+      "tests/test_pv_clear_ghi_backup_roundtrip.py"
+    ],
+    "R05": [
+      "tests/test_separated_release_repair_order.py"
+    ]
+  },
+  "test_rule": "append meaningful fixtures; preserve existing historical assertions and failure/skip behavior",
+  "symbol_review": "collision-review.md",
+  "single_owners": {
+    "validation_cli": "scripts.validate_dashboard_backend_parity.main",
+    "repair_manifest_journal": "app.operations.monitoring_repair",
+    "forecast_adoption_receipt": "R05 Invoke-PreparedMonitoringRepair",
+    "normal_forecast_calibration_current_bootstrap": "app.separated_runtime.planner.main",
+    "historical_asset": "app.dashboard.snapshots.write_dashboard_history_snapshot",
+    "bounded_transaction_lifecycle": "app.operations.forecast_persistence._run_bounded_projection_transaction",
+    "drive_execution": "R05 canonical backup stages"
+  }
+}

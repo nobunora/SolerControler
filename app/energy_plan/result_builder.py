@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
+from datetime import datetime, time, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
+
+from app.forecasting.pv_clear_ghi import ClearGhiForecast
 
 from app.energy_plan import EnergyPlanOutput as EnergyModelOutput, PlanDocumentV1, summarize_hourly_pv as _hourly_pv_totals
 from app.energy_plan.energy_model import to_dict
@@ -11,6 +18,33 @@ from app.energy_plan.soc_cost import to_plain_dict
 
 if TYPE_CHECKING:
     from app.energy_plan.workflow import ConsumptionForecastBundle, EnergyModelContext, NightChargePreparation, PvForecastBundle
+
+
+def _clear_ghi_trace(forecast: ClearGhiForecast, *, timezone: str, hourly_load_kwh: dict[int, float]) -> dict[str, Any]:
+    """Serialize the calculation that was used; do not recalculate or fetch inputs."""
+    start = datetime.combine(forecast.target_date, time(), tzinfo=ZoneInfo(timezone))
+    calibration = forecast.calibration
+    pv = forecast.pv_kwh
+    return {
+        "schema_version": 1, "model_id": calibration.model_id, "basis_version": calibration.basis_version,
+        "site_fingerprint": calibration.site_fingerprint, "target_date": forecast.target_date.isoformat(), "timezone": timezone,
+        "as_of": forecast.as_of.isoformat(), "retrieved_at": forecast.retrieved_at.isoformat(),
+        "provider_issued_at": forecast.provider_issued_at.isoformat() if forecast.provider_issued_at else None,
+        "forecast_sha256": forecast.forecast_hash, "calibration_sha256": calibration.sha256,
+        "calibration_pack": json.loads(calibration.raw_bytes),
+        "hourly": [{"hour": hour, "interval_start": (start + timedelta(hours=hour)).isoformat(),
+                    "interval_end": (start + timedelta(hours=hour + 1)).isoformat(),
+                    "source_time": stamp.isoformat() if stamp else None, "q_kwh_m2": forecast.q_kwh_m2[hour],
+                    "f_kwh_m2": forecast.f_kwh_m2[hour], "coefficient_raw": forecast.c_raw[hour], "pv_kwh": pv[hour]}
+                   for hour, stamp in enumerate(forecast.source_times)],
+        "repaired_hours": list(forecast.repaired_hours),
+        "totals": {"full_day_pv_kwh": sum(pv), "decision_day_pv_kwh": sum(pv[7:23]),
+                   "morning_pv_kwh": sum(pv[7:10]), "midday_pv_kwh": sum(pv[10:16]), "evening_pv_kwh": sum(pv[16:23]),
+                   "decision_day_load_kwh": sum(hourly_load_kwh[h] for h in range(7, 23)),
+                   "midday_load_kwh": sum(hourly_load_kwh[h] for h in range(10, 16))},
+        "value_precision": "internal_full_precision_persisted_hourly_4dp",
+        "source_radiation_semantics": "previous_hour_mean_w_m2_to_interval_kwh_m2",
+    }
 def _build_energy_model_output(
     context: EnergyModelContext,
     consumption: ConsumptionForecastBundle,
@@ -99,6 +133,9 @@ def _build_energy_model_output(
         result=result_payload,
         daytime_soc_optimization=optimization_payload,
         decision_rationale={
+            **({"pv_clear_ghi": _clear_ghi_trace(pv_forecast.clear_ghi_forecast, timezone=context.config.timezone,
+                                               hourly_load_kwh=pv_forecast.hourly_load_kwh)}
+               if pv_forecast.clear_ghi_forecast is not None else {}),
             "plan_quality": plan_quality,
             "objective": objective,
             "selected_reason": (
@@ -133,7 +170,8 @@ def _build_energy_model_output(
     )
     return EnergyModelOutput(
         document=document,
-        output_path=context.config.artifacts_dir / "night_charge_plan.json",
+        output_path=Path(os.getenv("KP_NIGHT_PLAN_PATH", "").strip()) if os.getenv("KP_NIGHT_PLAN_PATH", "").strip()
+            else context.config.artifacts_dir / "night_charge_plan.json",
     )
 
 

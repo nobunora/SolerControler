@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
 from app.operations.forecast_snapshot import persist_forecast_snapshots
-from app.operations.monitoring_sync import earliest_changed_month_start, window_from_ingested_at
+from app.operations.monitoring_sync import earliest_changed_month_start, prepare_monitoring_csvs, window_from_ingested_at
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
@@ -390,6 +390,22 @@ def _ingest_firestore(
     run_key = f"{cfg.site_id}:{cfg.slot}:{csv_run_id}:{settings_run_id}"
     if firestore_ops.pipeline_run_exists(client, run_key=run_key):
         print(f"[db_pipeline] already ingested: {run_key}")
+        if csv_run_dir is not None:
+            # The immutable raw import may be complete while its derived daily
+            # document is missing. Repair the saved read model without replaying
+            # raw writes, settings, forecasts, or cost calculations.
+            prepared = prepare_monitoring_csvs(
+                _collect_csv_paths(csv_run_dir),
+                window=None if _monitoring_full_backfill_requested() else window_from_ingested_at(now_iso),
+            )
+            source_dates = {str(row["ts"])[:10] for row in prepared.rows}
+            affected_dates = source_dates | {
+                (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat() for day in source_dates
+            }
+            daily_result = firestore_ops.recalc_monitoring_daily_metrics(
+                client, calendar_dates=source_dates, dashboard_affected_dates=affected_dates, updated_at=now_iso,
+            )
+            print(f"[db_pipeline] source daily repaired dashboard={daily_result['dashboard']}")
         if settings_run_dir is not None or include_night_plan:
             _refresh_dashboard_snapshots(cfg)
         return
@@ -425,11 +441,11 @@ def _ingest_firestore(
             )
         else:
             print(f"[db_pipeline] skip battery metrics: settings summary not successful path={summary_path}")
-    if monitoring_changes is not None and monitoring_changes.changed_count:
+    if monitoring_changes is not None and monitoring_changes.materialization_dates:
         daily_result = firestore_ops.recalc_monitoring_daily_metrics(
             client,
-            calendar_dates=set(monitoring_changes.calendar_dates),
-            dashboard_affected_dates=set(monitoring_changes.dashboard_affected_dates),
+            calendar_dates=set(monitoring_changes.materialization_dates),
+            dashboard_affected_dates=set(monitoring_changes.materialization_dashboard_dates),
             updated_at=now_iso,
         )
         print(

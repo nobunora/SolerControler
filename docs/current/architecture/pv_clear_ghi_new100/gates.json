@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "meaning": "OPENは実装・導入の未完事項。文書検査PASSだけではCLOSEDにならない。証拠と必要承認を記録して更新する。",
+  "gates": [
+    {
+      "id": "G01",
+      "owner_step": "S00",
+      "state": "CLOSED",
+      "topic": "晴天認定実績の継続供給・当時のavailability",
+      "next_action": "通常の回帰で維持。過去availability/実cloud/本番の未実証はG06/G07/G08へ分離。",
+      "pass_condition": "対象日前・available_at<=as_ofの全認定晴天日を一意選択出来る。認定不明/欠測は除外し、有効0を保持。予報を実測へ代用しない。",
+      "evidence_required": [
+        "認定入力schemaと供給経路",
+        "過去一日以上の由来付きfixture",
+        "対象日/未来/訂正/available_at境界試験"
+      ],
+      "stop_if": "衛星実測/日照分/当時availabilityを証明出来ない。",
+      "approval": "外部contract/env/IAM追加時のみ限定承認が必要。",
+      "evidence": [
+        {
+          "kind": "LOCAL_PROSPECTIVE_VERIFIED",
+          "details": "session限定API導入・ファイル変更承認。実GET satellite_radiation_seamless GHI W/m²/sunshine sと実績00/30ペア、13区間hash、実取得完了aware availabilityを保存。対象日/超過availability/0/欠測/訂正fixtureと17日221区間local live bootstrap PASS。歴史のoriginal availabilityは遡って偽造せずG06に残す。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/calibration-smoke.safe.json"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ],
+      "resolution_scope": "LOCAL_IMPLEMENTATION_AND_PROSPECTIVE_INPUTS; production evidence remains G07/G08"
+    },
+    {
+      "id": "G02",
+      "owner_step": "S02",
+      "state": "CLOSED",
+      "topic": "完成pack配置・有効参照・cold start・非制御updater",
+      "next_action": "通常の回帰で維持。過去availability/実cloud/本番の未実証はG06/G07/G08へ分離。",
+      "pass_condition": "hash/read-back/参照単調更新、初回原本なし失敗、旧有効保持、run内一回固定、計画復元とcurrent参照復旧の役割分離が成立。",
+      "evidence_required": [
+        "保存・配信・初期配置の限定仕様",
+        "cold startと中断/後着旧updater試験",
+        "current復旧の原本選択手順"
+      ],
+      "stop_if": "配置/参照の結線や更新budgetが不明、generated計画からcurrentへ自動昇格する。",
+      "approval": "新env/IAM/Job/外部contractが必要なら実行前に限定承認。",
+      "evidence": [
+        {
+          "kind": "IMPLEMENTED_STORAGE_CONTRACT",
+          "date": "2026-10-12",
+          "paths": [
+            "app/forecasting/clear_ghi_store.py",
+            "app/energy_plan/clear_ghi_update.py",
+            "tests/test_clear_ghi_store.py"
+          ],
+          "details": "local root/clear_ghi/site_fingerprint/current.jsonと既存night_plan_archive_prefix下の同階層を使用。schema1のmodel/basis/site・pack/hash・training_as_of・clear_daysを検証。実績/認定各日原本と係数原本をhash名で先に保存/read-backし、最後にcurrentを更新。新env/collection/IAM/Jobなし。"
+        },
+        {
+          "kind": "LOCAL_RUNTIME_AND_CLOUD_MOCK",
+          "date": "2026-10-12",
+          "command": "python -m pytest -q tests/test_load_correction_equivalence.py tests/test_clear_ghi_store.py",
+          "result": "PASS",
+          "store_cases": 32,
+          "combined_cases": 48,
+          "details": "local coldstart/restart/idempotent retry・後着旧updater/同時刻異hash拒否・stale token・原本作成/current replace中断・破損/原本hash/site/availability拒否を確認。cloud mockはobject generation CAS競合の伝播/無retry・原本read-back・NotFoundのみmissing・権限障害伝播・各SDK timeout4秒/retryNoneを確認。",
+          "limitation": "cloud SDK mockのみ。実GCS/CAS/race、production権限、live待時間はG07で別実証。共有deadlineは残秒SDK timeoutと処理境界確認であり、OS/DNS強制cancelを保証しない。"
+        },
+        {
+          "kind": "UPDATER_FAILURE_BOUNDARY_REVIEW",
+          "date": "2026-10-12",
+          "details": "current読取と既存packのsite/basis/target_date/as_of検証はrefresh try前。初回原本なしの失敗は再throw。更新/CAS失敗でのみ検証済み既存packをretain。generated/rejected計画からcurrentへの自動昇格経路なし。親canonical必須品質checkはPASS済み。"
+        },
+        {
+          "kind": "BOUNDED_ORIGINAL_IO_AND_EXPLICIT_RECOVERY",
+          "date": "2026-10-12",
+          "result": "PASS",
+          "details": "同date/source SHAの検証済previous原本は再upload/read0。新pack/manifest/currentだけなら9RPC(max36秒)、変更source M個で3M+9RPC、coldstart N日で6N+8RPC。updaterと共有monotonic絶対deadline60秒、SDK timeout=min(4,残秒)/retryNone、期限超過はcurrent未変更。states/stateSHA.jsonを原本先保存し、明示restore_current入口は選択manifest→pack→全原本→site/basis/target/as_of→currentCASを確認。local/cloud mockのmissing/corrupt復旧、参照不正拒否、valid current置換拒否、deadline中断を実行済み。晴天membership訂正で退役した旧原本はimmutable保存を保持。production復旧は別承認canonical wrapper必須。"
+        },
+        {
+          "kind": "LOCAL_UPDATER_INTEGRATION_VERIFIED",
+          "details": "親runtime20caseで共有deadline/初回失敗/検証済旧保持/corrupt current停止/completed pack→publish→run cutoff/stateSHAログを確認。store32/load16 fixture PASS。live observed＋local actual bootstrap/retry同hash確認、local選択stateSHA復旧とSDK mock CASは合格。実cloud競合/中断はG07へ分離。",
+          "path": "../../../../tests/test_clear_ghi_runtime.py"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ],
+      "resolution_scope": "LOCAL_IMPLEMENTATION_AND_PROSPECTIVE_INPUTS; production evidence remains G07/G08"
+    },
+    {
+      "id": "G03",
+      "owner_step": "S01",
+      "state": "CLOSED",
+      "topic": "最小二乗の条件数と採用/拒否規則",
+      "next_action": "通常の回帰で維持。過去availability/実cloud/本番の未実証はG06/G07/G08へ分離。",
+      "pass_condition": "rank4/有限性に加え採否が再現可能。候補値100を根拠なく既定値にしない。NumPy既存依存だけを使用。",
+      "evidence_required": [
+        "候補比較・摂動結果",
+        "規則の定数/型/境界",
+        "rank不足/不安定係数/更新保持試験"
+      ],
+      "stop_if": "拒否閾値が未決、精度や安定性を証拠なしに保証する。",
+      "approval": "依存/外部contract変更がなければローカル検証で確定可。",
+      "evidence": [
+        {
+          "kind": "FIXED_RULE_VERIFIED",
+          "details": "全13区間最小二乗に訂正、rank4/finite/条件数<=30、completed pack samples==13*dates。21prefix±1%摂動比較:30採用8/21、翌日最大.063071kWh/h、年間geometry外挿.402335。100は.542642、1e4は104.576501。年間実績精度は未証明。純42case/Ruff/mypy合格。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/g03-conditioning.safe.json"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ],
+      "resolution_scope": "LOCAL_IMPLEMENTATION_AND_PROSPECTIVE_INPUTS; production evidence remains G07/G08"
+    },
+    {
+      "id": "G04",
+      "owner_step": "S09",
+      "state": "OPEN",
+      "topic": "実績・予測・予定SOCを含む画面世代の単調性",
+      "next_action": "新モデルの学習日数/区間数/係数版を小さなmaterialized diagnosticsと表示へ接続する。その後producer-only native revision mapを実adapter並行訂正で検証し、query/read数・metadata bytes・late upload窓を観測する。",
+      "pass_condition": "同vintage PV/load/SOC/容量、実績更新を含むpayload後退0。GCS CASだけで内容の鮮度を保証したとしない。",
+      "evidence_required": [
+        "writer/caller経路と並行性の証拠",
+        "共通世代または単一writerの条件",
+        "旧候補/新実績/同版asset race試験"
+      ],
+      "stop_if": "source-map欠落、3660+1 sentinel超過、8KiB metadata超過、revision変化、旧世代・削除の保守拒否を無視する。",
+      "approval": "運用/外部contractが変わる場合は限定承認。",
+      "evidence": [
+        {
+          "kind": "APPROVED_INTERNAL_CONTRACT",
+          "date": "2026-10-12",
+          "details": "親が伝達した全step実装承認に加え、producer-only全cost revision再検証、source-scope max native update_time/count/full digest方式を限定承認。新collection/env/lease/公開HTTP schemaなし。"
+        },
+        {
+          "kind": "LOCAL_IMPLEMENTATION",
+          "path": "publication-contracts.md",
+          "details": "before/materialize/after同値、各GCS CAS retryでcandidate source-map再読、既存asset componentwise後退拒否。monthly全cost、31日外analog plan、history全chunk範囲を覆う。queryごと3660+1、metadata8KiB、revision60s/upload24s/3試行。後続importとuploadの非atomic窓、delete保守拒否は残る。"
+        },
+        {
+          "kind": "LOCAL_TEST",
+          "path": "../../../../tests/test_dashboard_publication_generation.py",
+          "details": "旧cost訂正/native nanosecond/削除/full-historyとanalog/3661 sentinel/8KiB/source driftとCAS retry/実GCS SDK ifGenerationMatch transportを確認。小fixture revision読取9docs/回、削除後6docs/回。実cloud/emulator concurrent mutation証明ではない。"
+        },
+        {
+          "kind": "LOCAL_INCREMENTAL_HISTORY_AND_PINNED_READ_VERIFIED",
+          "details": "通常incrementalはretained source digestの比較と必要日境界refreshで履歴を維持。過去訂正・legacy初回のみ既存bounded full rebuild。source drift/旧候補/CAS/期限/初回移行8条件を追加。実GCS SDKの同generation history GET ifGenerationMatch=7をlocal transportで確認。公開系focused224/環境順序120件PASS。実serverの並行性とDB→GCS非atomic窓はG07で未実証。",
+          "path": "../../../../tests/test_dashboard_publication_generation.py"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ]
+    },
+    {
+      "id": "G05",
+      "owner_step": "S07",
+      "state": "CLOSED",
+      "topic": "protected所有権・履歴境界の限定変更承認",
+      "next_action": "通常の回帰で維持。過去availability/実cloud/本番の未実証はG06/G07/G08へ分離。",
+      "pass_condition": "AGENTS/HISTORICAL_FAILURE_LOCKの条件、障害commit確認、回帰が揃い、対象変更への明示承認がある。",
+      "evidence_required": [
+        "承認対象symbol/lock一覧",
+        "障害commitと追加回帰",
+        "明示承認の記録"
+      ],
+      "stop_if": "計算核/文書作成の許可をprotected変更へ転用する。",
+      "approval": "明示承認が必須。文書作成・レビューには不要。",
+      "evidence": [
+        {
+          "kind": "APPROVAL_RECEIVED_LIMITED_LOCAL",
+          "date": "2026-10-12",
+          "details": "親が受領した全step実装開始・session変更承認のうちS07/S08限定ownership分離を適用。forecast generation→immutable raw archive→既存control CAS→同raw projectionへ移す。23/03/07日時/API/DB非依存/failed retries、lock commentは保持。本番deploy/merge承認は含まない。"
+        },
+        {
+          "kind": "HISTORICAL_EVIDENCE_READ",
+          "details": "PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md全文と引用93e8c3c/894e9f3/7899423/76f1e91/a69146b/badd209/d1d7792を対象範囲で確認。recovery先行31日、planner exact archive ownership、03最大20s失敗制御継続、23/07DB非依存を保持。"
+        },
+        {
+          "kind": "LOCAL_REGRESSION",
+          "details": "forecast history/job・separated runtime・snapshot recovery・dashboard既存回帰を含むfocused120件PASS。canonical全品質gateは親がPASS確認済み。最終全pytest/protected boundary package検証の統合結果は親が追記する。"
+        },
+        {
+          "kind": "LOCAL_APPROVED_OWNERSHIP_REGRESSION",
+          "details": "承認されたS07/S08生成・採用・投影所有だけ変更。引用歴史commit/lock保持、protected34境界の81literalをpackageで照合。separated/SOC/Drive/history/publication focused214case PASS。元control/SOC/time/7日/容量/料金式は変更しない。merge/deploy承認へ流用しない。"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ],
+      "resolution_scope": "LOCAL_IMPLEMENTATION_AND_PROSPECTIVE_INPUTS; production evidence remains G07/G08"
+    },
+    {
+      "id": "G06",
+      "owner_step": "S06",
+      "state": "OPEN",
+      "topic": "PV以外の負荷接続・昼余剰・scenario交絡を分離した経済評価",
+      "next_action": "全37日のraw consumption/scenario/原本availability/金融伝播証跡を確保するか、導入前prospective同入力記録で検証範囲を承認判断する。捏造不可。",
+      "pass_condition": "同料金/容量/負荷/初期SOC、過去だけ係数。損失・23時資産・目標SOC・局所悪化と最大日差を説明出来る。MAE改善だけで経済合格にしない。",
+      "evidence_required": [
+        "同入力hashのreplay",
+        "一因子/8条件結果",
+        "raw CSV金融値から原本への一致と方向性試験"
+      ],
+      "stop_if": "金融入力欠落/将来混入/条件間入力差/交絡未分離。",
+      "approval": "採用判断は具体的結果を示して行う。本番mutation承認はG08。",
+      "evidence": [
+        {
+          "kind": "DATE_ONLY_RETROSPECTIVE_COUNTERFACTUAL",
+          "details": "37日/直近10の一因子PV比較と同世代詳細3日8組を実optimizerで実行。研究新100 theta差0/PV13最大2.22e-16。37日cash改善37.036円/資産込13.916円、最大悪化76.593円。X5は3日cash20.357円改善・資産込5.098円悪化。過去取得時刻・37日旧scenario・raw金融同世代伝播は資料不足でOPEN。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/g06-report.safe.md"
+        }
+      ]
+    },
+    {
+      "id": "G07",
+      "owner_step": "S10",
+      "state": "OPEN",
+      "topic": "実adapterの公開・復旧・読取性能",
+      "next_action": "実装後adapter/emulatorでCAS/中断/同版retry/同時writerとraw復元・同世代assetを検証し、request/read/byte/cacheを測る。",
+      "pass_condition": "採用前mutable書込0、原本SHA一致、古版上書き0、同版sample二重加算0、artifactありDBread0、historybounded、有限deadline、protected制御非依存。",
+      "evidence_required": [
+        "adapter race/crash/retry試験",
+        "hash/由来付き復元結果",
+        "read-path前後request/read/bytes/cache測定"
+      ],
+      "stop_if": "fake局所試験を実adapter本番安全の代用にする、shared可変pathを再読する。",
+      "approval": "ローカル/emulator可。実production操作はcanonical手順と該当承認。",
+      "evidence": [
+        {
+          "kind": "REAL_SDK_LOCAL_TRANSPORT",
+          "path": "../../../../tests/test_forecast_projection_generation.py",
+          "details": "実Firestore SDK BeginTransaction/BatchGet/CommitのprotobufとtransactionID、26投影write、parameter同版retry sample増分0、legacy count5→6→6、同原本legacy→採用binding追加を確認。RPC応答はローカルstub。サーバーatomic競合証明には昇格しない。"
+        },
+        {
+          "kind": "REAL_SDK_LOCAL_TRANSPORT",
+          "path": "../../../../tests/test_dashboard_publication_generation.py",
+          "details": "実GCS SDK multipart requestのifGenerationMatch=0と固定gzip原本を確認。fake CAS/source drift/delete/oldretain/8KiB検証と区別。"
+        },
+        {
+          "kind": "RESTORE_AND_READ_PATH",
+          "path": "../../../../tests/test_pv_clear_ghi_backup_roundtrip.py",
+          "details": "既存Drive schema2/collectionでoffline raw SHA/fulltrace roundtrip、改竄/欠落拒否。既存dashboard testsでassetありDB0/ETag/history lazyを維持。production gzip bytes/cache-hit実測は未実施。"
+        },
+        {
+          "kind": "LIMITATION",
+          "details": "FIRESTORE_EMULATOR_HOST未設定・emulator未用意、cloud mutationなし。Firestore transactional max_attempts3/read timeout3/retryNoneだがSDK _begin/_commitは既定RPC設定を使用し独立全transaction deadline未実証。実adapter race/crash/performanceを残してOPEN。"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ]
+    },
+    {
+      "id": "G08",
+      "owner_step": "S10",
+      "state": "OPEN",
+      "topic": "本番導入承認とlive検証",
+      "next_action": "全関連gate/品質/具体的変更が揃った後、現行runbookとsolar-production-deploymentのcanonical gateを実施する。",
+      "pass_condition": "明示承認、必要scopeの品質/security/backup/stateful deploy、同原本表示/採用/必要実機read-backとstop条件を検証。",
+      "evidence_required": [
+        "明示承認とscope",
+        "canonical validation/deployment state",
+        "live同世代/ログ/read-back測定"
+      ],
+      "stop_if": "準備/文書作成をmerge/deploy承認とみなす、未検証をsuccess扱いにする。",
+      "approval": "merge/production mutationは現行会話の明示承認必須。",
+      "evidence": []
+    },
+    {
+      "id": "G09",
+      "owner_step": "S04",
+      "state": "CLOSED",
+      "topic": "previous-runs翌00時sourceと日射の区間完全性",
+      "next_action": "通常の回帰で維持。過去availability/実cloud/本番の未実証はG06/G07/G08へ分離。",
+      "pass_condition": "next00時→対象23時、温度parser不変、二重shift0、追加HTTP0。日中/明るい23区間の欠損を夜間0へ偽装しない。",
+      "evidence_required": [
+        "API範囲/同取得回のsource fixture",
+        "翌00時/日跨ぎ/offset境界試験",
+        "Q0夜間許容と日中端点欠損拒否試験"
+      ],
+      "stop_if": "現行responseにtailが必ずあると仮定する、hourだけからsource時刻を偽造する。",
+      "approval": "必要なrequest範囲変更を限定仕様へ明記。新API/contract/env追加時は承認。",
+      "evidence": [
+        {
+          "kind": "REAL_GET_AND_INTERVAL_FIXTURE",
+          "details": "forecast/previous-runs実GETで日射25行next00、weather24行。previous-runs end_date=翌日を同一requestに設定、HTTP増0・temperature shift0。非定数pulse/offset/next00/Q0/明るい端点欠損fixtureとF[h+1]研究差0を確認。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/provider-smoke.safe.json"
+        },
+        {
+          "kind": "FINAL_CANONICAL_LOCAL_CHECK",
+          "result": "PASS",
+          "details": "Ruff lint/importlinter3contracts/mypy213sources/Oxlint/Node/compileall/securityと全pytest1167passed1skipped。追加source変更なし。実クラウド証明・本番承認を代替しない。",
+          "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+        }
+      ],
+      "resolution_scope": "LOCAL_IMPLEMENTATION_AND_PROSPECTIVE_INPUTS; production evidence remains G07/G08"
+    }
+  ]
+}

@@ -108,9 +108,14 @@
 
       <article class="card full">
         <h2>10. 蓄電池方程式とパラメータ</h2>
+        <p id="pvModelName" class="desc">PVモデルを確認しています。</p>
+        <p id="pvModelProvenance" class="desc"></p>
+        <p id="pvModelLearningPeriod" class="desc"></p>
+        <p id="pvModelTiming" class="desc"></p>
+        <p id="pvModelRepair" class="desc"></p>
         <div class="equation">
-          変数: <b>GTI</b>=面別傾斜面日射量, <b>TP</b>=気温[℃], <b>LD</b>=日中負荷[kWh], <b>NL</b>=夜間負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
-          (1) PV予測: <b>PV(t) = Σ array(capacity × GTI(t)/1000 × PR × 補正係数 × 温度補正)</b><br>
+          <p id="pvModelExplanation">PVの説明は、保存されたモデルと対象計画の確認後に表示します。</p>
+          変数: <b>LD</b>=日中負荷[kWh], <b>NL</b>=夜間負荷[kWh], <b>RM</b>=朝負荷[kWh], <b>RS</b>=朝SOC[%], <b>RC</b>=目標SOC[%], <b>NC</b>=夜間充電[kWh], <b>PS</b>=日中余剰PV[kWh]<br>
           (2) 朝不足: <b>DF = max(0, RM - PV<sub>07-10</sub>)</b><br>
           (3) 日中余剰: <b>PS = max(0, PV<sub>10-16</sub> - 推定昼負荷)</b><br>
           (4) 7時目標SOC: <b>RC = clip(Rsv + (DF - PS) / Cp × 100, 0, 100)</b><br>
@@ -121,7 +126,7 @@
         </div>
         <table id="learningParamsTable">
           <thead>
-            <tr><th>分類</th><th>パラメータ</th><th>現在値</th><th>サンプル数</th><th>意味</th></tr>
+            <tr><th>分類</th><th>パラメータ</th><th>現在値</th><th>件数（単位）</th><th>意味</th></tr>
           </thead>
           <tbody></tbody>
         </table>

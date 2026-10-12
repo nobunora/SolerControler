@@ -491,26 +491,29 @@ def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tm
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     def stage(name, result):
-        def call(*args):
+        def call(*args, **kwargs):
             calls.append((name, args))
             return result
         return call
 
     monkeypatch.setattr("app.energy_plan.workflow._load_execution_context", stage("context", context))
     monkeypatch.setattr("app.energy_plan.workflow._build_consumption_forecasts", stage("consumption", consumption))
-    monkeypatch.setattr("app.energy_plan.workflow._prepare_night_charge", stage("night", night_charge))
-    monkeypatch.setattr("app.energy_plan.workflow._build_selected_pv_forecast", stage("pv", pv))
+    monkeypatch.setattr("app.energy_plan.workflow.load_calibration_for_context", stage("calibration", (object(), datetime.now().astimezone())))
+    monkeypatch.setattr("app.energy_plan.workflow._prepare_night_charge_from_hourly", stage("night", night_charge))
+    monkeypatch.setattr("app.energy_plan.workflow._build_clear_ghi_forecast_bundle", stage("pv", pv))
     monkeypatch.setattr("app.energy_plan.workflow._build_soc_constraints", stage("constraints", constraints))
     monkeypatch.setattr("app.energy_plan.workflow._run_legacy_soc_optimization", stage("legacy", legacy))
     monkeypatch.setattr("app.energy_plan.workflow._run_soc_optimization", stage("decision", decision))
     monkeypatch.setattr("app.energy_plan.workflow._build_energy_model_output", stage("output", output))
 
     assert build_energy_plan(config) is output
+    acquired_calibration = calls[3][1][2]
     assert calls == [
         ("context", (config,)),
         ("consumption", (context,)),
-        ("night", (context, consumption)),
-        ("pv", (context, consumption, night_charge)),
+        ("calibration", (context,)),
+        ("pv", (context, consumption, acquired_calibration)),
+        ("night", (context, consumption, pv)),
         ("constraints", (context, pv, night_charge)),
         ("legacy", (context, pv, constraints, night_charge)),
         ("decision", (context, night_charge, pv, constraints, legacy)),

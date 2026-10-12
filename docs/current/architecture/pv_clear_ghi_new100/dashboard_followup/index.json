@@ -1,0 +1,748 @@
+{
+  "schema_version": 1,
+  "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION",
+  "source_commit": "d401b15de199ff8f1215935d01080a67a4c95266",
+  "source_scope": "NEW100 dirty baseline plus completed dashboard/source repair; no production mutation",
+  "source_sha256": {
+    "app/backup/plan_snapshot.py": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2",
+    "app/dashboard/aggregation.py": "750f33fc9e253704dd3324768eede86c5bb57098fc2c8b84779f00195a2dc067",
+    "app/dashboard/firestore_repository.py": "fbf39fc5d1433e2443f91c1933f751e45debc62402490c8e6553982e7c9c4ea5",
+    "app/dashboard/history_reconstruction.py": "83708a2c927e6873c38d6bab61c870de16cfc6559fd84d7f74e45e0b2721f39a",
+    "app/dashboard/schedule.py": "a51f55ed632b856dccd7df91e101a9604d474be6e415f77831a019d0d7db857b",
+    "app/dashboard/server.py": "133e3c1c601afa568a11a326f7f32fdc1d956e568b1e444fdc777c143bd179e7",
+    "app/dashboard/service.py": "2ab745295aae9cb80c1d1fbf7a8633fd85c63b7ef6e719b9e8e487ff36ca35cd",
+    "app/dashboard/slice_assembler.py": "bc6bd8108eac153390e6848d907f9f90aa93b3472f74b2863ddc623591f277ce",
+    "app/dashboard/snapshots.py": "6f3e261fe6c2bdde727ff2bedecd53fa3d53fe3154c01e2412755a7cc79c6c2f",
+    "app/dashboard/warnings.py": "86b72bad40358e529ce108f73bd1a2498922fb0dcdd239b57c6faaec2606ea0f",
+    "app/energy_plan/clear_ghi_adapter.py": "19cd0387f7f8394d11557973b7ce1ac674c629283f0d58196e69a15d2ca23866",
+    "app/energy_plan/clear_ghi_update.py": "cf9e1f741a14cb2bee1122f6df1fb5c8f0b2dbaefb70e3fec7367a8b56c75178",
+    "app/forecasting/pv_clear_ghi.py": "3862e1bad6d6b29354949fc523d22a6d4a23d29d361b0bfc6443d4e5a9efe294",
+    "app/operations/firestore.py": "ecd554c78a2f3ddaf71c19554d528b81c7402c56ce7be168bb1281d230c17ef6",
+    "app/operations/forecast_persistence.py": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
+    "app/operations/postgres.py": "adab890fbb321a1453e80aab81a238250975696e6968128f78c63a570afe2aca",
+    "app/operations/sqlite.py": "9d610dd2609a57f6646436875d92b855213726e3f2cf13ef5800fdf2825e6a24",
+    "static/dashboard.js": "c0441bca7a38b06621b5ac31480c77968dad03d36cd82ac367fb138b6b6fc17e",
+    "static/dashboard_calculations.js": "185bc01889fdd2a1fa0475b61ffb17942be439e2c887c95d18ccf8b110b11dcb",
+    "templates/dashboard.html": "f4a40371c68a94e16eb6c4e70440bc16e09463c59e7b17f6ff46e69571ed94f3"
+  },
+  "inventory_count": 81,
+  "risk_count": 18,
+  "steps": [
+    {
+      "id": "D01",
+      "file": "steps/D01-model-summary.md",
+      "depends_on": [],
+      "contract_ids": [
+        "C01",
+        "C02",
+        "C03"
+      ],
+      "risk_ids": [
+        "R02",
+        "R03",
+        "R18"
+      ],
+      "display_ids": [
+        "U55",
+        "U56",
+        "U57",
+        "U58",
+        "U59",
+        "U60",
+        "U61",
+        "U62",
+        "U63",
+        "U64",
+        "U65",
+        "U66",
+        "U67",
+        "U68",
+        "U69",
+        "U70",
+        "U71",
+        "U72",
+        "U73",
+        "U74",
+        "U75",
+        "U76",
+        "U77",
+        "U78",
+        "U79"
+      ],
+      "backend_gaps": [
+        "DF01",
+        "DF02"
+      ],
+      "source_paths": [
+        "app/dashboard/slice_assembler.py",
+        "app/dashboard/snapshots.py"
+      ],
+      "test_paths": [
+        "tests/test_dashboard_new100_diagnostics.py",
+        "tests/test_dashboard_publication_generation.py"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D01-model-summary.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    },
+    {
+      "id": "D02",
+      "file": "steps/D02-learning-and-description.md",
+      "depends_on": [
+        "D01"
+      ],
+      "contract_ids": [
+        "C02",
+        "C03",
+        "C05"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03",
+        "R09",
+        "R15",
+        "R18"
+      ],
+      "display_ids": [
+        "U02",
+        "U19",
+        "U25",
+        "U27",
+        "U29",
+        "U48",
+        "U49",
+        "U50",
+        "U51",
+        "U52",
+        "U53",
+        "U55",
+        "U56",
+        "U57",
+        "U58",
+        "U59",
+        "U60",
+        "U61",
+        "U62",
+        "U63",
+        "U64",
+        "U65",
+        "U66",
+        "U67",
+        "U68",
+        "U69",
+        "U70",
+        "U71",
+        "U72",
+        "U73",
+        "U74",
+        "U75",
+        "U76",
+        "U77",
+        "U78",
+        "U79",
+        "U80"
+      ],
+      "backend_gaps": [
+        "DF01",
+        "DF02",
+        "DF03",
+        "DF04"
+      ],
+      "source_paths": [
+        "static/dashboard.js",
+        "templates/dashboard.html"
+      ],
+      "test_paths": [
+        "tests/test_dashboard_model_display.js",
+        "tests/test_dashboard_bootstrap.js"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D02-learning-and-description.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    },
+    {
+      "id": "D03",
+      "file": "steps/D03-hourly-display.md",
+      "depends_on": [
+        "D01",
+        "D02"
+      ],
+      "contract_ids": [
+        "C04",
+        "C05",
+        "C08",
+        "C09"
+      ],
+      "risk_ids": [
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R09",
+        "R17",
+        "R07",
+        "R08"
+      ],
+      "display_ids": [
+        "U02",
+        "U19",
+        "U20",
+        "U21",
+        "U22",
+        "U23",
+        "U24",
+        "U25",
+        "U26",
+        "U27",
+        "U29",
+        "U30",
+        "U31",
+        "U32",
+        "U33",
+        "U34",
+        "U35",
+        "U36",
+        "U37",
+        "U38",
+        "U39",
+        "U40",
+        "U41",
+        "U43",
+        "U44",
+        "U45",
+        "U46",
+        "U47",
+        "U48",
+        "U50",
+        "U51",
+        "U52",
+        "U53",
+        "U55",
+        "U72",
+        "U73",
+        "U74",
+        "U75",
+        "U76",
+        "U77",
+        "U78",
+        "U79"
+      ],
+      "backend_gaps": [
+        "DF06"
+      ],
+      "source_paths": [
+        "static/dashboard.js"
+      ],
+      "test_paths": [
+        "tests/test_dashboard_hourly_display.js",
+        "tests/test_dashboard_calculations.js",
+        "tests/test_dashboard_forecast_soc_contract.py",
+        "tests/test_dashboard_axis_ranges.js"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D03-hourly-display.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    },
+    {
+      "id": "D04",
+      "file": "steps/D04-review-binding.md",
+      "depends_on": [
+        "D01"
+      ],
+      "contract_ids": [
+        "C04",
+        "C06",
+        "C09"
+      ],
+      "risk_ids": [
+        "R11",
+        "R07"
+      ],
+      "display_ids": [
+        "U04",
+        "U05",
+        "U06",
+        "U07",
+        "U08",
+        "U09",
+        "U10",
+        "U11",
+        "U12",
+        "U13",
+        "U14",
+        "U15",
+        "U16",
+        "U17",
+        "U18",
+        "U30"
+      ],
+      "backend_gaps": [
+        "DF05",
+        "DF07"
+      ],
+      "source_paths": [
+        "app/dashboard/aggregation.py",
+        "app/dashboard/firestore_repository.py",
+        "app/dashboard/service.py",
+        "static/dashboard.js",
+        "app/dashboard/history_reconstruction.py",
+        "app/dashboard/sqlite_repository.py",
+        "app/dashboard/postgres_repository.py"
+      ],
+      "test_paths": [
+        "tests/test_dashboard_review_provenance.py",
+        "tests/test_firestore_dashboard_metrics.py",
+        "tests/test_dashboard_actual_display.py"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D04-review-binding.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    },
+    {
+      "id": "D05",
+      "file": "steps/D05-coverage-and-gates.md",
+      "depends_on": [
+        "D02",
+        "D03",
+        "D04",
+        "D06"
+      ],
+      "contract_ids": [
+        "C01",
+        "C07"
+      ],
+      "risk_ids": [
+        "R04",
+        "R07",
+        "R08",
+        "R10",
+        "R11",
+        "R12",
+        "R13",
+        "R14",
+        "R15",
+        "R16"
+      ],
+      "display_ids": [
+        "U01",
+        "U02",
+        "U03",
+        "U04",
+        "U05",
+        "U06",
+        "U07",
+        "U08",
+        "U09",
+        "U10",
+        "U11",
+        "U12",
+        "U13",
+        "U14",
+        "U15",
+        "U16",
+        "U17",
+        "U18",
+        "U20",
+        "U21",
+        "U22",
+        "U23",
+        "U24",
+        "U25",
+        "U26",
+        "U27",
+        "U28",
+        "U29",
+        "U30",
+        "U31",
+        "U32",
+        "U33",
+        "U34",
+        "U35",
+        "U36",
+        "U37",
+        "U38",
+        "U39",
+        "U40",
+        "U41",
+        "U42",
+        "U43",
+        "U44",
+        "U45",
+        "U46",
+        "U47",
+        "U54",
+        "U55",
+        "U56",
+        "U57",
+        "U58",
+        "U59",
+        "U60",
+        "U61",
+        "U62",
+        "U63",
+        "U64",
+        "U65",
+        "U66",
+        "U67",
+        "U68",
+        "U69",
+        "U70",
+        "U71",
+        "U80",
+        "U81"
+      ],
+      "backend_gaps": [
+        "DF06"
+      ],
+      "source_paths": [],
+      "test_paths": [
+        "tests/test_dashboard_server.py",
+        "tests/test_dashboard_snapshots.py",
+        "tests/test_dashboard_history_contract.py",
+        "tests/test_dashboard_modules.js"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D05-coverage-and-gates.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    },
+    {
+      "id": "D06",
+      "file": "steps/D06-source-repair.md",
+      "depends_on": [],
+      "contract_ids": [
+        "C09"
+      ],
+      "risk_ids": [
+        "R07"
+      ],
+      "display_ids": [
+        "U30",
+        "U31"
+      ],
+      "backend_gaps": [],
+      "source_paths": [
+        "app/operations/firestore.py",
+        "app/operations/monitoring_sync.py",
+        "app/operations/workflow.py"
+      ],
+      "test_paths": [
+        "tests/test_monitoring_source_repair.py",
+        "tests/test_incremental_monitoring_backends.py"
+      ],
+      "tests_status": "VERIFIED_LOCAL",
+      "read_set": [
+        "contracts.md",
+        "boundaries.json",
+        "steps/D06-source-repair.md"
+      ],
+      "status": "LOCAL_IMPLEMENTATION_PASS_PENDING_PRODUCTION"
+    }
+  ],
+  "risk_resolution": [
+    {
+      "risk": "R01",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "NEW100_MODEL_EXPLANATION",
+      "test_id": "UI-001"
+    },
+    {
+      "risk": "R02",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_STATIC_AND_PRODUCER",
+      "origin": "NEW100_MODEL_CALIBRATION",
+      "test_id": "UI-002"
+    },
+    {
+      "risk": "R03",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [
+        "D03"
+      ],
+      "certainty": "CONFIRMED_STATIC_AND_PRODUCER",
+      "origin": "NEW100_MODEL_PROVENANCE",
+      "test_id": "UI-003"
+    },
+    {
+      "risk": "R04",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME",
+      "origin": "PRE_EXISTING_AMPLIFIED_BY_NEW100",
+      "test_id": "UI-004"
+    },
+    {
+      "risk": "R05",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME",
+      "origin": "PRE_EXISTING_DATE_BINDING",
+      "test_id": "UI-005"
+    },
+    {
+      "risk": "R06",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME_AND_PRODUCER",
+      "origin": "PRE_EXISTING_PRESENTATION_WITH_NEW17_SAVED_POINTS",
+      "test_id": "UI-006"
+    },
+    {
+      "risk": "R07",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03",
+        "D06"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "PRE_EXISTING_DRAWING",
+      "test_id": "UI-007"
+    },
+    {
+      "risk": "R08",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "certainty": "CONDITIONAL_INPUT_BOUND",
+      "origin": "PRE_EXISTING_INPUT_BOUND_CONDITIONAL",
+      "test_id": "UI-008"
+    },
+    {
+      "risk": "R09",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D02",
+        "D03"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "PRE_EXISTING_TIMESTAMP_MEANING_NEW100_METADATA",
+      "test_id": "UI-009"
+    },
+    {
+      "risk": "R10",
+      "action": "NOT_FIXED_RETAIN_OR_EXPLICIT_RESIDUAL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_HISTORY",
+      "origin": "PRE_EXISTING_CONDITIONAL_HISTORY_MERGE",
+      "test_id": "UI-010"
+    },
+    {
+      "risk": "R11",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D04"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_PRODUCER",
+      "origin": "PRE_EXISTING_REVIEW_AND_NEW100_DAY_WINDOW",
+      "test_id": "UI-011"
+    },
+    {
+      "risk": "R12",
+      "action": "NOT_FIXED_RETAIN_OR_EXPLICIT_RESIDUAL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "PRE_EXISTING_COPY",
+      "test_id": "UI-012"
+    },
+    {
+      "risk": "R13",
+      "action": "NOT_FIXED_RETAIN_OR_EXPLICIT_RESIDUAL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "PRE_EXISTING_VISUAL_LIFE_MODEL",
+      "test_id": "UI-013"
+    },
+    {
+      "risk": "R14",
+      "action": "NOT_FIXED_RETAIN_OR_EXPLICIT_RESIDUAL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_PRODUCER",
+      "origin": "PRE_EXISTING_CONDITIONAL_STATUS_WARNING",
+      "test_id": "UI-014"
+    },
+    {
+      "risk": "R15",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_STATIC",
+      "origin": "PRE_EXISTING_LEGACY_PARAMETERS",
+      "test_id": "UI-015"
+    },
+    {
+      "risk": "R16",
+      "action": "NOT_FIXED_RETAIN_OR_EXPLICIT_RESIDUAL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "certainty": "CONFIRMED_SCOPE_ABSENCE",
+      "origin": "ABSENT_UI_SCOPE",
+      "test_id": "UI-016"
+    },
+    {
+      "risk": "R17",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_GAPS",
+      "origin": "PRE_EXISTING_LOAD_ACTUAL_COVERAGE",
+      "test_id": "UI-017"
+    },
+    {
+      "risk": "R18",
+      "action": "PLANNED_DISPLAY_FIX",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [],
+      "certainty": "CONFIRMED_PRODUCER_AND_STATIC",
+      "origin": "NEW100_CALIBRATION_VS_UNCERTAINTY",
+      "test_id": "UI-018"
+    }
+  ],
+  "backend_gap_resolution": {
+    "DF01": "D01/D02",
+    "DF02": "D01/D02",
+    "DF03": "D02",
+    "DF04": "D02 latest model only; historical model unknown is explicit, no new per-day mapping",
+    "DF05": "D04",
+    "DF06": "D03 unsupported persisted SOC/SQL; no schema addition; D05",
+    "DF07": "D04 interval-count annotations only; preserve numbers/aggregation"
+  },
+  "documents": [
+    "README.md",
+    "contracts.md",
+    "ui-display-inventory.md",
+    "data-path-audit.md",
+    "review.md",
+    "boundaries.json",
+    "report.md",
+    "implementation-report.md"
+  ],
+  "runtime_evidence": {
+    "kind": "SYNTHETIC_NODE_VM_NO_NETWORK",
+    "details": "See inventory runtime observations; not real browser/live proof"
+  },
+  "prior_quality_evidence": "artifacts/analysis/pv-new100-implementation-20261011/coefficient-quality-gate.log: 1168passed1skipped; no followup source edits",
+  "review_evidence": {
+    "result": "PASS",
+    "scope": "DOCUMENT_REVIEW_ONLY",
+    "path": "review.md",
+    "remaining_design_findings": 0,
+    "runtime_tests": "PLANNED_NOT_EXECUTED"
+  },
+  "implementation_authorization": {
+    "date": "2026-10-12",
+    "scope": "D01-D05+C08+C09",
+    "production_mutation": false,
+    "source_repair_correction": "Persisted source repair only; no new dashboard supplementation",
+    "scope_note": "D06 is the source repair substep of C09; no merge/deployment authorization"
+  },
+  "local_verification": {
+    "result": "PASS",
+    "report": "implementation-report.md",
+    "python_passed": 1297,
+    "python_skipped": 1,
+    "extra_node_suites": 3,
+    "browser_scope": "Local Chrome synthetic fixture only",
+    "production_mutation": false
+  },
+  "verified_source_sha256": {
+    "app/backup/plan_snapshot.py": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2",
+    "app/dashboard/aggregation.py": "7c7570bd567cef236ad3cf51981a9e973f0ab9583cf9f1669a3770b823a847f9",
+    "app/dashboard/firestore_repository.py": "3f7b47d1b842e9a50dc85849d70f0ec543e6de488894536062ae10a7eb142a2c",
+    "app/dashboard/history_reconstruction.py": "1818f48a753712c26eeff76fc6531ee97cb466dc4f0dd8c9d730160d103cd925",
+    "app/dashboard/postgres_repository.py": "6914b918c83abe26afdec82f04069dcc74d6a6c21dda5b1b43bf5ea962177466",
+    "app/dashboard/schedule.py": "a51f55ed632b856dccd7df91e101a9604d474be6e415f77831a019d0d7db857b",
+    "app/dashboard/server.py": "133e3c1c601afa568a11a326f7f32fdc1d956e568b1e444fdc777c143bd179e7",
+    "app/dashboard/service.py": "e3c4d84823bf5bfb2edaeb5b29d74aaf7b3f5b973f5ce55b73eb4593023199c0",
+    "app/dashboard/slice_assembler.py": "87eec25e9086f3f5e2f861195938dc524ae2ea6211b207cdd7a5ca69453a107e",
+    "app/dashboard/snapshots.py": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
+    "app/dashboard/sqlite_repository.py": "14493bef0bf4daa54a9adf72a66fc3bbdf80c8919cfd075ad7bee85af144dfe4",
+    "app/dashboard/warnings.py": "86b72bad40358e529ce108f73bd1a2498922fb0dcdd239b57c6faaec2606ea0f",
+    "app/energy_plan/clear_ghi_adapter.py": "19cd0387f7f8394d11557973b7ce1ac674c629283f0d58196e69a15d2ca23866",
+    "app/energy_plan/clear_ghi_update.py": "cf9e1f741a14cb2bee1122f6df1fb5c8f0b2dbaefb70e3fec7367a8b56c75178",
+    "app/forecasting/pv_clear_ghi.py": "3862e1bad6d6b29354949fc523d22a6d4a23d29d361b0bfc6443d4e5a9efe294",
+    "app/operations/firestore.py": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
+    "app/operations/forecast_persistence.py": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
+    "app/operations/monitoring_sync.py": "6e331ac0038380b20864d1e2ece15025a88570125eac55bd610340271eede183",
+    "app/operations/postgres.py": "adab890fbb321a1453e80aab81a238250975696e6968128f78c63a570afe2aca",
+    "app/operations/sqlite.py": "9d610dd2609a57f6646436875d92b855213726e3f2cf13ef5800fdf2825e6a24",
+    "app/operations/workflow.py": "12ca7dd094ad3b944612d70ab3a741ed707676c00d9260b4f61054e6d8f9139b",
+    "static/dashboard.js": "40408450a174fc564abe0a0dee1ff9f32634f1551f5b37fed8a509218850c764",
+    "static/dashboard_calculations.js": "185bc01889fdd2a1fa0475b61ffb17942be439e2c887c95d18ccf8b110b11dcb",
+    "templates/dashboard.html": "f3747906929de709ed6d153676b1f8a747b735f02026ba091cb2a4ae8c02a11b"
+  }
+}

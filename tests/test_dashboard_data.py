@@ -923,7 +923,7 @@ def test_merge_forecast_hourly_actuals_covers_multiple_days_and_ignores_bad_samp
     assert merged[0]["latest_sample_at"] == "2026-07-13T23:30:00"
     assert merged[1]["actual_load_kwh"] == pytest.approx(0.9)
     assert merged[1]["actual_soc_percent"] == pytest.approx(43)
-    assert merged[2]["actual_load_kwh"] == pytest.approx(0.0)
+    assert merged[2]["actual_load_kwh"] is None
     assert merged[2]["actual_soc_percent"] == pytest.approx(51)
 
 

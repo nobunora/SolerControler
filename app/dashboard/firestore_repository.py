@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -294,6 +295,11 @@ def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_is
                 "forecast_load_kwh": row.get("forecast_load_kwh"), "forecast_charge_kwh": row.get("forecast_charge_kwh"),
                 "source": "forecast_hourly_snapshot", "forecast_run_id": run_id,
                 "forecast_issued_at": issued_at.isoformat(),
+                **{target: row[source] for source, target in
+                   (("raw_plan_sha256", "_raw_plan_sha256"),
+                    ("control_version_id", "_control_version_id"),
+                    ("generated_at", "_plan_generated_at"))
+                   if isinstance(row.get(source), str) and row.get(source)},
             } for row in rows)
     return selected
 
@@ -552,6 +558,32 @@ def _build_firestore_daily_reviews(
         plan = plans.get(review_date, {})
         result = _nested_dict(plan, "result")
         plan_forecast = _nested_dict(plan, "forecast")
+        selected_run = actual.get("forecast_run_id")
+        binding_rows = [row for row in hourly if not selected_run or row.get("forecast_run_id") == selected_run]
+        known_runs = {row.get("forecast_run_id") for row in binding_rows
+                      if isinstance(row.get("forecast_run_id"), str) and row.get("forecast_run_id")}
+        raw_hashes = {row.get("_raw_plan_sha256") for row in binding_rows
+                      if isinstance(row.get("_raw_plan_sha256"), str)
+                      and re.fullmatch(r"[0-9a-f]{64}", row["_raw_plan_sha256"])}
+        plan_hash = plan.get("detail_sha256")
+        if not isinstance(plan_hash, str) or re.fullmatch(r"[0-9a-f]{64}", plan_hash) is None:
+            plan_hash = None
+        all_hashes_known = bool(binding_rows) and all(
+            isinstance(row.get("_raw_plan_sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", row["_raw_plan_sha256"])
+            for row in binding_rows
+        )
+        if len(raw_hashes) > 1 or (not selected_run and len(known_runs) > 1):
+            binding, binding_reason = "mismatched", "plan_forecast_mismatch"
+        elif not selected_run and known_runs and any(not row.get("forecast_run_id") for row in binding_rows):
+            binding, binding_reason = "legacy_unknown", "identity_missing"
+        elif all_hashes_known and raw_hashes and isinstance(plan_hash, str) and plan_hash and plan_hash not in raw_hashes:
+            binding, binding_reason = "mismatched", "plan_forecast_mismatch"
+        elif all_hashes_known and isinstance(plan_hash, str) and plan_hash and raw_hashes == {plan_hash}:
+            binding, binding_reason = "matched", None
+        else:
+            binding, binding_reason = "legacy_unknown", "identity_missing"
+        plan_result = result if binding != "mismatched" else {}
         analog_day = _plan_analog_summary(plan, None).get("analog_date")
         # HISTORICAL_FAILURE_LOCK: 2026-10-06 review/chart forecast divergence.
         # Energy daily owns the selected PV/load pair. Control-plan results are
@@ -563,14 +595,19 @@ def _build_firestore_daily_reviews(
             "plan_date": plan_forecast.get("date") or (review_date if plan else None),
             "data_last_at": metrics.get("latest_sample_at"),
             "complete_day": True,
-            "target_soc_percent": battery.get("setting_soc_target_percent") if battery.get("setting_soc_target_percent") is not None else result.get("target_soc_7_percent"),
+            "target_soc_percent": battery.get("setting_soc_target_percent") if battery.get("setting_soc_target_percent") is not None else plan_result.get("target_soc_7_percent"),
             "actual_morning_soc_percent": metrics.get("morning_soc_percent"),
-            "forecast_night_charge_kwh": battery.get("night_charge_kwh") if battery.get("night_charge_kwh") is not None else result.get("required_night_charge_kwh"),
+            "forecast_night_charge_kwh": battery.get("night_charge_kwh") if battery.get("night_charge_kwh") is not None else plan_result.get("required_night_charge_kwh"),
             "forecast_pv_kwh": actual.get("forecast_pv_kwh"),
             "forecast_load_kwh": actual.get("forecast_load_kwh"),
             "forecast_load_source": actual.get("forecast_load_source"),
-            "forecast_day_buy_kwh": result.get("soc_expected_day_buy_kwh"),
-            "forecast_sell_kwh": result.get("soc_expected_sell_kwh"),
+            "forecast_day_buy_kwh": plan_result.get("soc_expected_day_buy_kwh"),
+            "forecast_sell_kwh": plan_result.get("soc_expected_sell_kwh"),
+            "plan_forecast_binding": binding,
+            "plan_forecast_binding_reason": binding_reason,
+            "forecast_available_hour_count": actual.get("forecast_available_hour_count"),
+            **{field: actual.get(field) for field in ("forecast_run_id", "forecast_issued_at",
+               "forecast_pv_source", "forecast_provenance_kind")},
             "actual_pv_kwh": actual.get("actual_pv_kwh"),
             "actual_load_kwh": actual.get("actual_load_kwh"),
             "actual_night_charge_kwh": metrics.get("review_night_charge_kwh"),
@@ -606,10 +643,19 @@ def _firestore_forecast_hourly_between(
             "updated_at",
             "forecast_run_id",
             "forecast_issued_at",
+            "raw_plan_sha256",
+            "control_version_id",
+            "generated_at",
         ],
     )
     mutable_dates: set[str] = set()
     for row in rows:
+        for source, target in (("raw_plan_sha256", "_raw_plan_sha256"),
+                               ("control_version_id", "_control_version_id"),
+                               ("generated_at", "_plan_generated_at")):
+            value = row.pop(source, None)
+            if isinstance(value, str) and value:
+                row[target] = value
         # Preserve legacy payloads while exposing identity for new saved vintages.
         for field in ("forecast_run_id", "forecast_issued_at"):
             if row.get(field) is None:
@@ -648,6 +694,7 @@ def _firestore_forecast_hourly_between(
         monitoring_rows.append(
             {
                 "ts": row.get("ts", doc.id),
+                "pv_kwh": row.get("pv_kwh"),
                 "load_kwh": row.get("load_kwh"),
                 "soc_percent": row.get("soc_percent"),
             }

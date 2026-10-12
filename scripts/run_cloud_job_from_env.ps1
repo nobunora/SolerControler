@@ -10,12 +10,14 @@ param(
     [switch]$SocCycleProbe,
     [switch]$SocCycleTemporaryWindow,
     [string]$PreflightStatePath = '',
-    [string]$SocCycleEvidenceDirectory = 'artifacts/deployment_state/soc-cycle'
+    [string]$SocCycleEvidenceDirectory = 'artifacts/deployment_state/soc-cycle',
+    [string]$ExecutionReceiptPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $repoRoot
+if ($ExecutionReceiptPath -and $Slot -ne 'forecast') { throw 'ExecutionReceiptPath is forecast-only.' }
 . (Join-Path $PSScriptRoot 'production_env.ps1')
 Import-ProductionEnv
 
@@ -174,8 +176,59 @@ if ($PlanRefreshOnly) {
 if ($Slot -eq 'settings-roundtrip') {
     $arguments += @('--update-env-vars', "SETTINGS_ROUNDTRIP_TARGET_SOC=$SettingsRoundTripTargetSoc,DRY_RUN=false")
 }
-& $gcloud @arguments
-if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job failed: $jobName" }
-if ($DryRun -or $Slot -eq 'forecast') {
+if ($Slot -eq 'forecast') {
+    $forecastReceipt = [ordered]@{ schema_version = 1; slot = 'forecast'; status = 'running'
+        requested_at = [DateTime]::UtcNow.ToString('o'); execution_name = $null; execution = $null; logs = @() }
+    if ($ExecutionReceiptPath) {
+        $ExecutionReceiptPath = [IO.Path]::GetFullPath($ExecutionReceiptPath, $repoRoot)
+        if (Test-Path -LiteralPath $ExecutionReceiptPath) { throw 'Forecast intent already has an execution receipt; inspect it before any retry.' }
+    }
+    function Save-ForecastExecutionReceipt {
+        if (-not $ExecutionReceiptPath) { return }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ExecutionReceiptPath) | Out-Null
+        $temporaryReceipt = "$ExecutionReceiptPath.part"
+        $forecastReceipt | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $temporaryReceipt -Encoding utf8
+        Move-Item -LiteralPath $temporaryReceipt -Destination $ExecutionReceiptPath -Force
+    }
+    Save-ForecastExecutionReceipt
+    $executionText = (& $gcloud @arguments '--format=json') -join "`n"
+    $executeExit = $LASTEXITCODE
+    try {
+        $execution = $executionText | ConvertFrom-Json -AsHashtable
+        if (-not $execution.metadata.name) { throw 'Execution identity is absent.' }
+        $forecastReceipt.execution_name = [string]$execution.metadata.name
+        $forecastReceipt.execution = $execution
+        Save-ForecastExecutionReceipt
+        $exactName = ([string]$execution.metadata.name -split '/')[-1]
+        $exactText = (& $gcloud run jobs executions describe $exactName --project $projectId --region $region --format json) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'Exact forecast execution readback failed.' }
+        $exact = $exactText | ConvertFrom-Json -AsHashtable
+        if (([string]$exact.metadata.name -split '/')[-1] -ne $exactName) { throw 'Forecast execution identity changed.' }
+        $forecastReceipt.execution = $exact
+        $filter = "resource.type=cloud_run_job AND resource.labels.job_name=$jobName"
+        $logsText = (& $gcloud logging read $filter --project $projectId --freshness 1d --limit 200 --format json) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'Forecast execution logs readback failed.' }
+        $forecastReceipt.logs = @($logsText | ConvertFrom-Json -AsHashtable | Where-Object {
+            $_.labels['run.googleapis.com/execution_name'] -eq $exactName
+        })
+        foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
+            $condition = @($exact.status.conditions | Where-Object { $_.type -eq $type })
+            if ($condition.Count -ne 1 -or [string]$condition[0].status -ne 'True') { throw 'Exact forecast execution is not complete and ready.' }
+        }
+        if (-not $exact.status.ContainsKey('failedCount') -or [int]$exact.status.failedCount -ne 0 -or $executeExit -ne 0) {
+            throw 'Exact forecast execution has failed or unknown task outcome.'
+        }
+        $forecastReceipt.status = 'success'
+        Save-ForecastExecutionReceipt
+    } catch {
+        $forecastReceipt.status = 'unknown_commit'
+        Save-ForecastExecutionReceipt
+        throw 'Forecast outcome is unresolved; inspect the private exact-execution receipt before retrying.'
+    }
+} else {
+    & $gcloud @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Cloud Run Job failed: $jobName" }
+}
+if ($DryRun -and $Slot -ne 'forecast') {
     Assert-LatestDryRunExecution -JobName $jobName -ProjectId $projectId -Region $region
 }
