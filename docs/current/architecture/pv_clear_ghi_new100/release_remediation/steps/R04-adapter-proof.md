@@ -108,6 +108,8 @@ fixture/target/承認scope不明、owned allowlist違反、target原本SHA違い
 
 FAILの最小診断としてadapter_proof.mainの既存安全builderを再利用し、receipt/structured stdout/failure.private.jsonへfailure_chainとfailure_chain_truncatedを記録する。__cause__/__context__をroot/cause/context・parent indexで結び、unique exception最大8nodes、各traceback最後32framesで打ち切り、同じ例外objectの循環を除外する。各nodeはexception_type/category/relation/parent/frames、frameはbasename/file・function・lineだけで、message・絶対path・locals・auth/resource値を含めない。これによりfinally cleanupがprimaryを置き換えた際も両frameを照合できる。classes/flags追加0、servercase・実SDK操作・timeout・retry・cleanup・FAIL exit非zeroは不変。cases0をwrite0へ解釈せず、全runの期限保証や本番timeout修復へ昇格しない。
 
+実safe chainから確認したharness修正はRpcRecorder.__getattr__のbatch_get_documents戻り値だけをiter(list(response))とし、SDK DocumentReference.getのnext(iterator,None)契約を保持する。eagerなstream消費・計測・RPC timeout/retry・commit後ACK欠落注入は保持する。runの既存recorder復元をfinallyの先頭へ移し、cleanup RPCではoriginal transportを使う。Firestore document.deleteはcommit RPCを使うため、未消費のdrop_commit_ackをcleanupへ持ち込まない。flagを強制解除せずbindingの対象範囲を分ける。ローカルactualSDK2.31のfake GAPIC/no-network回帰と、target2.34 wheel/source419のiterator契約・native frameを別証拠にする。app/SDK version/全期限/retry/protected source変更0、全workflow proofは次native receiptを待つ。
+
 ## 出口・引継ぎ
 
 R05へbuild adapter receipt/SDK版/digest/fixture SHA/owned native revisions/generations/cleanupを渡す。raw/state/pack/全originals/Drive/nativepaging/browserの後段receiptはR03/R05が取得する。G07 CLOSEDは両stageの必要証拠が全てPASSの時だけ、G04もfull workflowの同vintage/実績source/writer/性能が揃うまでOPEN。source/local回帰は実serverの代用にしない。
