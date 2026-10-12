@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "source_revision": "1dd8786",
+  "date_jst": "2026-10-12",
+  "scope": "SPECIFICATION_AND_REVIEW_ONLY",
+  "implementation_status": "NOT_STARTED",
+  "server_proof_status": "NOT_EXECUTED",
+  "deployment_status": "NOT_EXECUTED",
+  "entry": "README.md",
+  "report": "report.md",
+  "review": "review.md",
+  "boundaries": "boundaries.json",
+  "stages": [
+    {
+      "id": "R00",
+      "title": "検査順序・証拠固定",
+      "file": "steps/R00-evidence-and-gates.md",
+      "implementation_depends_on": [],
+      "production_requires": [],
+      "read_set": [
+        "scripts/pre_release_integration.ps1",
+        "scripts/pre_release_local.ps1",
+        "scripts/production_deployment_gate.ps1"
+      ],
+      "planned_new_sources": [],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/test_pre_release_integration_contract.py"
+      ]
+    },
+    {
+      "id": "R01",
+      "title": "共有parity＋独立原本照合",
+      "file": "steps/R01-validation-contract.md",
+      "implementation_depends_on": [
+        "R00"
+      ],
+      "production_requires": [],
+      "read_set": [
+        "scripts/validate_dashboard_backend_parity.py",
+        "app/dashboard/history_reconstruction.py",
+        "app/operations/forecast_persistence.py",
+        "app/operations/dashboard_validation_projection.py",
+        "app/operations/domain.py"
+      ],
+      "planned_new_sources": [
+        "scripts/validate_forecast_display_evidence.py"
+      ],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/test_forecast_display_evidence.py"
+      ]
+    },
+    {
+      "id": "R02",
+      "title": "原本13区間の限定修復",
+      "file": "steps/R02-source-repair.md",
+      "implementation_depends_on": [
+        "R01"
+      ],
+      "production_requires": [
+        "R04",
+        "R05"
+      ],
+      "read_set": [
+        "scripts/run_kpnet_import_from_env.ps1",
+        "app/operations/monitoring_sync.py",
+        "app/operations/firestore.py",
+        "app/operations/workflow.py"
+      ],
+      "planned_new_sources": [
+        "app/operations/monitoring_repair.py",
+        "scripts/repair_monitoring_source.py",
+        "scripts/run_monitoring_source_repair_from_env.ps1"
+      ],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/test_monitoring_repair_command.py"
+      ]
+    },
+    {
+      "id": "R03",
+      "title": "派生費用・校正・全履歴",
+      "file": "steps/R03-derived-history.md",
+      "implementation_depends_on": [
+        "R02"
+      ],
+      "production_requires": [
+        "R04",
+        "R05"
+      ],
+      "read_set": [
+        "app/operations/firestore.py",
+        "app/operations/cost_daily.py",
+        "app/energy_plan/clear_ghi_update.py",
+        "app/forecasting/clear_ghi_observations.py",
+        "app/dashboard/snapshots.py",
+        "app/backup/drive.py"
+      ],
+      "planned_new_sources": [
+        "app/operations/monitoring_repair.py"
+      ],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/test_monitoring_repair_derived.py"
+      ]
+    },
+    {
+      "id": "R04",
+      "title": "実server・有限期限・復旧",
+      "file": "steps/R04-adapter-proof.md",
+      "implementation_depends_on": [
+        "R00",
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "production_requires": [],
+      "read_set": [
+        "app/forecasting/clear_ghi_store.py",
+        "app/forecasting/clear_ghi_calibration_io.py",
+        "app/operations/forecast_persistence.py",
+        "app/operations/firestore.py",
+        "app/separated_runtime/plan_store.py",
+        "app/separated_runtime/planner.py",
+        "app/dashboard/snapshots.py",
+        "app/backup/plan_snapshot.py",
+        "app/operations/forecast_snapshot.py"
+      ],
+      "planned_new_sources": [],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/g07/adapter_proof.py",
+        "tests/g07/firestore_server_cases.py",
+        "tests/g07/gcs_server_cases.py"
+      ]
+    },
+    {
+      "id": "R05",
+      "title": "正規deploymentと本番受入",
+      "file": "steps/R05-release-acceptance.md",
+      "implementation_depends_on": [
+        "R04"
+      ],
+      "production_requires": [],
+      "read_set": [
+        "scripts/deploy_production_from_env.ps1",
+        "scripts/deploy_separated_runtime.ps1",
+        "scripts/deploy_control_jobs_image_only.ps1",
+        "scripts/run_control_postdeploy_live_probe.ps1",
+        "scripts/assert_control_probe_evidence.ps1",
+        "scripts/run_cloud_job_from_env.ps1",
+        "scripts/run_drive_backup_cloud_from_env.ps1"
+      ],
+      "planned_new_sources": [],
+      "new_classes": "none in production; R04 test fixtures only",
+      "tests_status": "PLANNED",
+      "implementation_status": "NOT_STARTED",
+      "planned_test_sources": [
+        "tests/test_separated_release_repair_order.py"
+      ]
+    }
+  ],
+  "production_dependency_meaning": "R04 preparation precedes candidate build; same planner digest native proof must pass within R05 build before planner updates. R05 owns orchestration, not completion of all its stages before R02/R03 execution.",
+  "symbol_review": "collision-review.md",
+  "change_review_rule": "Every specification change includes its own class/symbol/variable/caller/write-target/resume conflict review, updates stages and indexes together, and favors one owner and existing primitives before flags or new state."
+}

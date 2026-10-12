@@ -59,3 +59,8 @@ NEW symbolは実装済みsourceと照合し、graph反映前は既存定義と�
 
 Q01: legacy07運転profileの保護文書とsource表記の相違は別調査。PV変更で修正しない。
 本番mutation/mergeは現在の会話での明示承認と既存runbook/Skillが必要。
+
+## 2026-10-12 導入前の追加解消仕様
+
+正規ゲートのSQL/Firestore48行不一致、過去実測修復の派生料金・校正・全履歴、実server期限/競合/復旧は [release_remediation](release_remediation/README.md) に分離した。
+R00〜R05、必要source-symbol/禁止範囲、NEW class/variable、予定tests/PASS条件、独立レビューは同packageを正本とする。今回の追加は文書のみで、G04/G06/G07/G08をCLOSEDにしていない。

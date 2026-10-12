@@ -7,6 +7,8 @@ merge・本番操作はG08の別境界。ローカルの証拠を本番競合実
 skipはopt-in外部Open-Meteo試験。観測・予報APIは別のlive GET smokeで確認した。
 G04/G06/G07/G08は実証範囲・不足原本・導入承認の残件としてOPENを維持する。
 
+2026-10-12追加調査：正規事前gateは日別parity成功・時間別48行の容量/SOC存在差でFAIL。後続全体品質は未到達。この不一致と本番元データ修復・実backend実証の追加詳細は [release_remediation](release_remediation/README.md) を参照する。R00〜R05はPLANNEDで、実装/本番は未実施。下記の過去検査件数・途中時点の記述は履歴証拠として読む。
+
 ## 実装経路
 
 1. 既存context/7日消費履歴/料金期間を維持し、消費予測を生成。
