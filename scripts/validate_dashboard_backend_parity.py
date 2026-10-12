@@ -200,7 +200,8 @@ def main() -> int:
     parser.add_argument("--original-dir", type=Path)
     args = parser.parse_args()
     result = _empty_window_result()
-    result.update(status="FAIL", common_parity_errors=dict.fromkeys(DATASETS, 0), common_parity_status="FAIL")
+    result.update(status="FAIL", required_evidence_status="FAIL",
+                  common_parity_errors=dict.fromkeys(DATASETS, 0), common_parity_status="FAIL")
     previous_backend = os.environ.get("DATA_BACKEND")
     try:
         end = date.fromisoformat(args.end_date)
@@ -215,7 +216,8 @@ def main() -> int:
         total_reads, total_bytes = 0, 0
         for attempt in range(2):
             if time.monotonic() >= deadline:
-                result.update(status="INCONCLUSIVE", failure_reasons=["coordinator:deadline"])
+                result.update(status="INCONCLUSIVE", required_evidence_status="INCONCLUSIVE",
+                              failure_reasons=["coordinator:deadline"])
                 break
             os.environ["DATA_BACKEND"] = "sqlite"
             clear_dashboard_cache()
@@ -258,8 +260,11 @@ def main() -> int:
             result["common_parity_status"] = "FAIL" if failures else "PASS"
             if failures:
                 result["status"] = "FAIL"
-            if time.monotonic() >= deadline and result["status"] == "PASS":
-                result.update(status="INCONCLUSIVE", failure_reasons=["coordinator:deadline"])
+            if time.monotonic() >= deadline and result["required_evidence_status"] == "PASS":
+                result["required_evidence_status"] = "INCONCLUSIVE"
+                if result["status"] != "FAIL":
+                    result["status"] = "INCONCLUSIVE"
+                result["failure_reasons"].append("coordinator:deadline")
             break
         result.setdefault("common_parity_errors", dict.fromkeys(DATASETS, 0))
         result.setdefault("common_parity_status", "FAIL")
@@ -267,12 +272,13 @@ def main() -> int:
             print("Dashboard backend parity failed:", file=sys.stderr)
             for failure in failures:
                 print(f"- {failure}", file=sys.stderr)
-        if result["status"] == "PASS":
+        if result["common_parity_status"] == "PASS" and result["required_evidence_status"] == "PASS":
             print(f"Dashboard backend parity passed through {args.end_date}.")
     except Exception:
         # SDK/credential and native payload errors can include secret identifiers.
         # Keep the public failure constant; exceptions never become a PASS.
-        result.update(status="FAIL", failure_reasons=["coordinator:invalid_or_unavailable_evidence"])
+        result.update(status="FAIL", required_evidence_status="FAIL",
+                      failure_reasons=["coordinator:invalid_or_unavailable_evidence"])
     finally:
         if previous_backend is None:
             os.environ.pop("DATA_BACKEND", None)
@@ -280,7 +286,9 @@ def main() -> int:
             os.environ["DATA_BACKEND"] = previous_backend
         clear_dashboard_cache()
     print("[forecast-evidence] " + json.dumps(result, sort_keys=True, separators=(",", ":"), allow_nan=False))
-    return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[result["status"]]
+    if result["common_parity_status"] != "PASS" or result["required_evidence_status"] == "FAIL":
+        return 1
+    return {"PASS": 0, "INCONCLUSIVE": 2}[result["required_evidence_status"]]
 
 
 if __name__ == "__main__":

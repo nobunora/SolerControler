@@ -190,6 +190,25 @@ if ($Slot -eq 'forecast') {
         $forecastReceipt | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $temporaryReceipt -Encoding utf8
         Move-Item -LiteralPath $temporaryReceipt -Destination $ExecutionReceiptPath -Force
     }
+    function Assert-ForecastReceiptTerminal([hashtable]$Execution) {
+        if (-not $Execution.status -or -not $Execution.status.completionTime) { throw 'Exact forecast execution is not terminal.' }
+        foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
+            $condition = @($Execution.status.conditions | Where-Object { $_.type -eq $type })
+            if ($condition.Count -ne 1 -or [string]$condition[0].status -ne 'True') { throw 'Exact forecast execution is not complete and ready.' }
+        }
+        $tasks = $Execution.spec.taskCount
+        $succeeded = $Execution.status.succeededCount
+        if (($tasks -isnot [int] -and $tasks -isnot [long]) -or $tasks -lt 1 -or
+            ($succeeded -isnot [int] -and $succeeded -isnot [long]) -or $succeeded -ne $tasks) {
+            throw 'Exact forecast total-task success evidence is incomplete.'
+        }
+        foreach ($key in @('failedCount', 'cancelledCount', 'pendingCount', 'runningCount')) {
+            if ($Execution.status.ContainsKey($key)) {
+                $count = $Execution.status[$key]
+                if (($count -isnot [int] -and $count -isnot [long]) -or $count -ne 0) { throw 'Exact forecast task outcome is invalid or unfinished.' }
+            }
+        }
+    }
     Save-ForecastExecutionReceipt
     $executionText = (& $gcloud @arguments '--format=json') -join "`n"
     $executeExit = $LASTEXITCODE
@@ -211,13 +230,8 @@ if ($Slot -eq 'forecast') {
         $forecastReceipt.logs = @($logsText | ConvertFrom-Json -AsHashtable | Where-Object {
             $_.labels['run.googleapis.com/execution_name'] -eq $exactName
         })
-        foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
-            $condition = @($exact.status.conditions | Where-Object { $_.type -eq $type })
-            if ($condition.Count -ne 1 -or [string]$condition[0].status -ne 'True') { throw 'Exact forecast execution is not complete and ready.' }
-        }
-        if (-not $exact.status.ContainsKey('failedCount') -or [int]$exact.status.failedCount -ne 0 -or $executeExit -ne 0) {
-            throw 'Exact forecast execution has failed or unknown task outcome.'
-        }
+        Assert-ForecastReceiptTerminal $exact
+        if ($executeExit -ne 0) { throw 'Exact forecast execution command did not complete successfully.' }
         $forecastReceipt.status = 'success'
         Save-ForecastExecutionReceipt
     } catch {

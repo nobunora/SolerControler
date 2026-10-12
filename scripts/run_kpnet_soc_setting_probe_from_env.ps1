@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ReceiptPath,
     [ValidateSet(30, 50)][int]$TargetSoc = 30,
     [switch]$TestExecution,
+    [switch]$AllowOutOfWindowLiveProbe,
     [string]$ProbeJobName = 'solar-battery-settings-roundtrip'
 )
 
@@ -12,6 +13,7 @@ Set-Location $repoRoot
 . (Join-Path $PSScriptRoot 'production_env.ps1')
 Import-ProductionEnv
 if (-not $TestExecution) { throw 'Explicit SOC mutation requires -TestExecution.' }
+if (Test-Path -LiteralPath $ReceiptPath) { throw 'SOC receipt already exists; inspect the previous operation instead of repeating it.' }
 $state = Get-Content -Raw -LiteralPath $DeploymentStatePath | ConvertFrom-Json -AsHashtable
 $commit = ([string](git rev-parse HEAD)).Trim()
 if ($LASTEXITCODE -ne 0 -or $state.kind -ne 'separated_runtime_deployment' -or $state.status -ne 'complete' -or
@@ -20,10 +22,20 @@ if ($LASTEXITCODE -ne 0 -or $state.kind -ne 'separated_runtime_deployment' -or $
 }
 $digest = [string]$state.image_digests.control
 if ($digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'Deployed control digest is missing.' }
+if ($AllowOutOfWindowLiveProbe -and $state.allow_out_of_window_live_probe -ne $true) {
+    throw 'The one-shot window override must match the completed deployment approval.'
+}
+function Assert-SocProbeWindow([DateTime]$NowJst, [bool]$AllowOutside) {
+    $minutes = $NowJst.Hour * 60 + $NowJst.Minute
+    if (($minutes -ge 165 -and $minutes -lt 195) -or ($minutes -ge 405 -and $minutes -lt 435) -or
+        ($minutes -ge 1350 -and $minutes -lt 1395)) { throw 'SOC probe is forbidden during a scheduled owner transition.' }
+    if (($minutes -lt 435 -or $minutes -ge 1350) -and -not $AllowOutside) {
+        throw 'SOC mutation outside 07:15–22:29 JST requires the explicit one-shot override.'
+    }
+}
 $tokyo = [TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
 $now = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
-$minutes = $now.Hour * 60 + $now.Minute
-if ($minutes -lt 435 -or $minutes -ge 1350) { throw 'SOC mutation is allowed only during 07:15–22:29 JST.' }
+Assert-SocProbeWindow $now ([bool]$AllowOutOfWindowLiveProbe)
 $project = Get-RequiredProductionEnv 'GCP_PROJECT_ID'
 $region = Get-RequiredProductionEnv 'GCP_REGION'
 $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
@@ -43,8 +55,41 @@ function Assert-SocIdle([string]$Job) {
     foreach ($row in $rows) {
         if (-not $row.status -or -not $row.status.completionTime) { throw 'A control execution is active or unknown.' }
     }
+    return $rows
 }
-foreach ($job in @($ProbeJobName, 'solar-battery-23', 'solar-battery-03', 'solar-battery-07')) { Assert-SocIdle $job }
+function Assert-SocNightTerminal([hashtable]$Execution) {
+    if (-not $Execution.status -or -not $Execution.status.completionTime) { throw 'The latest 03 owner is not terminal.' }
+    foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
+        $conditions = @($Execution.status.conditions | Where-Object { $_.type -eq $type })
+        if ($conditions.Count -ne 1 -or $conditions[0].status -ne 'True') { throw 'The latest 03 owner lacks terminal success evidence.' }
+    }
+    $tasks = $Execution.spec.taskCount
+    $succeeded = $Execution.status.succeededCount
+    if (($tasks -isnot [int] -and $tasks -isnot [long]) -or $tasks -lt 1 -or
+        ($succeeded -isnot [int] -and $succeeded -isnot [long]) -or $succeeded -ne $tasks) {
+        throw 'The latest 03 owner lacks integer total-task success evidence.'
+    }
+    foreach ($key in @('failedCount', 'cancelledCount', 'pendingCount', 'runningCount')) {
+        if ($Execution.status.ContainsKey($key)) {
+            $count = $Execution.status[$key]
+            if (($count -isnot [int] -and $count -isnot [long]) -or $count -ne 0) {
+                throw 'The latest 03 owner has invalid or unfinished task evidence.'
+            }
+        }
+    }
+}
+foreach ($job in @($ProbeJobName, 'solar-battery-23', 'solar-battery-07')) { Assert-SocIdle $job | Out-Null }
+$nightRows = @(Assert-SocIdle 'solar-battery-03')
+if ($nightRows.Count -eq 0 -or -not $nightRows[0].metadata.name) { throw 'The latest 03 execution identity is unavailable.' }
+$nightName = ([string]$nightRows[0].metadata.name -split '/')[-1]
+$nightExecution = Invoke-SocCloud @('run', 'jobs', 'executions', 'describe', $nightName, '--project', $project,
+    '--region', $region, '--format', 'json') | ConvertFrom-Json -AsHashtable
+Assert-SocNightTerminal $nightExecution
+$nightJob = Invoke-SocCloud @('run', 'jobs', 'describe', 'solar-battery-03', '--project', $project,
+    '--region', $region, '--format', 'json') | ConvertFrom-Json -AsHashtable
+if (([string]$nightJob.spec.template.spec.template.spec.containers[0].image -split '@')[-1] -ne $digest) {
+    throw 'The current 03 Job does not use the deployed control digest.'
+}
 $before = Invoke-SocCloud @('run', 'jobs', 'describe', $ProbeJobName, '--project', $project, '--region', $region, '--format', 'json') | ConvertFrom-Json -AsHashtable
 $containers = @($before.spec.template.spec.template.spec.containers)
 if ($containers.Count -ne 1) { throw 'Dedicated SOC probe requires exactly one container.' }
@@ -60,7 +105,7 @@ $flagsPath = Join-Path $privateDirectory 'probe-update.private.json'
 $updated = $false
 $restored = $false
 $failure = $null
-$receipt = @{ status = 'FAIL'; repository_commit = $commit; control_digest = $digest; requested_target_soc = $TargetSoc; device_restore_verified = $false; job_restore_verified = $false }
+$receipt = @{ status = 'FAIL'; repository_commit = $commit; control_digest = $digest; requested_target_soc = $TargetSoc; allow_out_of_window_live_probe = [bool]$AllowOutOfWindowLiveProbe; device_restore_verified = $false; job_restore_verified = $false }
 try {
     $updated = $true
     Invoke-SocCloud @('run', 'jobs', 'update', $ProbeJobName, '--project', $project, '--region', $region, '--flags-file', $flagsPath) | Out-Null
@@ -68,6 +113,8 @@ try {
     $actual = $configured.spec.template.spec.template.spec.containers[0]
     if ($actual.image -ne $previous.image -or ($actual.command -join ',') -ne 'python' -or
         ($actual.args | ConvertTo-Json -Compress) -ne ($argsForProbe | ConvertTo-Json -Compress)) { throw 'SOC probe entrypoint readback mismatch.' }
+    Assert-SocProbeWindow ([TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)) ([bool]$AllowOutOfWindowLiveProbe)
+    foreach ($job in @($ProbeJobName, 'solar-battery-23', 'solar-battery-03', 'solar-battery-07')) { Assert-SocIdle $job | Out-Null }
     $text = (& $gcloud run jobs execute $ProbeJobName --project $project --region $region --wait --format json) -join "`n"
     $executionExit = $LASTEXITCODE
     $text | Set-Content -LiteralPath (Join-Path $privateDirectory 'execution.private.json') -Encoding utf8
@@ -91,7 +138,7 @@ finally {
         @{ command = ($previous.command -join ','); args = @($previous.args) } | ConvertTo-Json -Depth 8 |
             Set-Content -LiteralPath $restorePath -Encoding utf8
         try {
-            Assert-SocIdle $ProbeJobName
+            Assert-SocIdle $ProbeJobName | Out-Null
             Invoke-SocCloud @('run', 'jobs', 'update', $ProbeJobName, '--project', $project, '--region', $region, '--flags-file', $restorePath) | Out-Null
             $after = Invoke-SocCloud @('run', 'jobs', 'describe', $ProbeJobName, '--project', $project, '--region', $region, '--format', 'json') | ConvertFrom-Json -AsHashtable
             $container = $after.spec.template.spec.template.spec.containers[0]

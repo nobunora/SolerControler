@@ -87,7 +87,8 @@ def test_compare_rows_does_not_hide_non_null_field_drift() -> None:
     ]
 
 
-def _mock_main(monkeypatch, statuses, *, sql_value=1.0, fs_value=1.0):
+def _mock_main(monkeypatch, statuses, *, sql_value=1.0, fs_value=1.0,
+               required_status=None, new_coverage=(0, 0)):
     calls = []
     rows = [{"date": "2026-10-11", "hour": 7, "forecast_pv_kwh": fs_value}]
     sql_rows = [{**rows[0], "forecast_pv_kwh": sql_value}]
@@ -109,8 +110,10 @@ def _mock_main(monkeypatch, statuses, *, sql_value=1.0, fs_value=1.0):
     def validate(**_kwargs):
         status, drift = next(outcomes)
         return {"schema_version": 1, "status": status, "start_date": "2026-10-11", "end_date": "2026-10-11",
+                "required_evidence_status": required_status or status,
                 "days": {"2026-10-11": {"status": status, "failure_reasons": ["snapshot_drift"] if drift else []}},
-                "coverage": {}, "read_count": 2, "read_bytes": 30, "failure_reasons": []}
+                "coverage": {"new_required_days": new_coverage[0], "new_verified_days": new_coverage[1]},
+                "read_count": 2, "read_bytes": 30, "failure_reasons": []}
 
     monkeypatch.setattr(validator, "load_dashboard_slice", load)
     monkeypatch.setattr(validator, "clear_dashboard_cache", lambda: None)
@@ -141,6 +144,34 @@ def test_common_failure_overrides_original_pass(monkeypatch, capsys):
     assert validator.main() == 1
     result = json.loads(capsys.readouterr().out.split("[forecast-evidence] ")[1])
     assert result["common_parity_errors"]["forecast_hourly"] > 0
+
+
+def test_cli_preserves_historical_inconclusive_but_passes_required_scope(monkeypatch, capsys):
+    _mock_main(monkeypatch, [("INCONCLUSIVE", False)], required_status="PASS")
+    assert validator.main() == 0
+    result = json.loads(capsys.readouterr().out.split("[forecast-evidence] ")[1])
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["required_evidence_status"] == result["common_parity_status"] == "PASS"
+    assert result["coverage"]["new_verified_days"] == 0
+
+
+def test_historical_scope_exclusion_never_hides_common_parity_failure(monkeypatch, capsys):
+    _mock_main(monkeypatch, [("INCONCLUSIVE", False)], required_status="PASS", sql_value=2.0)
+    assert validator.main() == 1
+    result = json.loads(capsys.readouterr().out.split("[forecast-evidence] ")[1])
+    assert result["common_parity_status"] == "FAIL"
+
+
+@pytest.mark.parametrize("coverage,required,expected", [((0, 0), "PASS", 0),
+                         ((1, 0), "INCONCLUSIVE", 2), ((1, 1), "PASS", 0)])
+def test_cli_retains_new_coverage_without_claiming_post_adoption_acceptance(
+        monkeypatch, capsys, coverage, required, expected):
+    _mock_main(monkeypatch, [(required, False)], new_coverage=coverage)
+    assert validator.main() == expected
+    result = json.loads(capsys.readouterr().out.split("[forecast-evidence] ")[1])
+    assert result["required_evidence_status"] == required
+    assert result["coverage"]["new_required_days"] == coverage[0]
+    assert result["coverage"]["new_verified_days"] == coverage[1]
 
 
 def test_sql_numeric_bool_is_not_equal_to_float(monkeypatch, capsys):

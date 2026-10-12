@@ -200,7 +200,8 @@
         "tests/test_separated_release_repair_order.py"
       ],
       "associated_test_sources": [
-        "tests/test_separated_release_repair_order.py"
+        "tests/test_separated_release_repair_order.py",
+        "tests/test_release_probe_safety.py"
       ]
     }
   ],
@@ -222,9 +223,29 @@
         "scripts/run_kpnet_soc_setting_probe_from_env.ps1"
       ],
       "tests": [
-        "tests/test_kpnet_soc_setting_probe.py"
+        "tests/test_kpnet_soc_setting_probe.py",
+        "tests/test_release_probe_safety.py"
       ],
       "runtime_status": "PENDING_POST_DEPLOYMENT"
+    },
+    {
+      "id": "R07",
+      "file": "steps/R07-mode-budget-rounding.md",
+      "production_requires": [
+        "R00.quality_gate"
+      ],
+      "new_classes": "none",
+      "sources": [
+        "app/kpnet/workflow.py"
+      ],
+      "tests": [
+        "tests/test_kpnet_mode_only_time_fence.py",
+        "tests/test_kpnet_workflow.py",
+        "tests/test_night_soc_protected_contract.py",
+        "tests/test_cloud_job_runner.py"
+      ],
+      "approval": "2026-10-13 explicit user approval for one absolute-deadline comparison and regression",
+      "runtime_status": "PENDING_DEPLOYMENT"
     }
   ]
 }

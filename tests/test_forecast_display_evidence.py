@@ -58,13 +58,153 @@ def fixture(*, new=False):
                     "forecast_issued_at": metadata["forecast_issued_at"], "raw_plan_sha256": metadata.get("raw_plan_sha256"),
                     "control_version_id": metadata.get("control_version_id")},
                 "evidence_kind": "NEW_ADOPTED" if new else "LEGACY_ORIGINAL", "revisions_before": {"native": "v1"},
-                "revisions_after": {"native": "v1"}, "read_count": 1, "read_bytes": len(raw), "failure_reasons": []}
+                "revisions_after": {"native": "v1"}, "native_reads_complete": True,
+                "read_count": 1, "read_bytes": len(raw), "failure_reasons": []}
     return plan, evidence, rows, daily
 
 
 def check(evidence, rows, daily):
     return validate_forecast_day_evidence(target_date=DAY, evidence=evidence,
                                          displayed_hourly=rows, displayed_battery_daily=daily)
+
+
+def old_shape_fixture():
+    plan, evidence, rows, daily = fixture()
+    for key in ("planned_capacity_kwh", "planned_hourly_soc_percent"):
+        evidence["metadata"].pop(key)
+    for row in rows + evidence["stored_hourly"]:
+        row.pop("forecast_capacity_kwh", None)
+        row.pop("forecast_soc_percent", None)
+    return plan, evidence, rows, daily
+
+
+def test_legacy_absent_capacity_soc_has_no_fabricated_coverage_and_checks_daily_nulls():
+    _, evidence, rows, daily = old_shape_fixture()
+    result = check(evidence, rows, daily)
+    assert result["status"] == "PASS"
+    assert result["original_verified"] and result["metadata_verified"]
+    assert result["capacity_verified"] is False
+    assert result["required_soc_points"] == result["soc_points_verified"] == 0
+    assert result["daily_metadata_fields_verified"] == 1
+    assert all(row.get("forecast_capacity_kwh") is None and row.get("forecast_soc_percent") is None
+               for row in rows)
+    daily["night_charge_kwh"] = 0.0003
+    assert "night_charge_kwh:daily_mismatch" in check(evidence, rows, daily)["failure_reasons"]
+
+
+@pytest.mark.parametrize("partial", ["capacity_null", "soc_null", "capacity_only", "soc_only",
+                                    "display_capacity", "display_soc", "stored_capacity", "stored_soc", "new"])
+def test_legacy_old_shape_exception_does_not_accept_new_or_partial_evidence(partial):
+    _, evidence, rows, daily = old_shape_fixture()
+    if partial == "new":
+        evidence["evidence_kind"] = "NEW_ADOPTED"
+    elif partial in {"capacity_null", "capacity_only"}:
+        evidence["metadata"]["planned_capacity_kwh"] = None if partial.endswith("null") else 10.0
+    elif partial in {"soc_null", "soc_only"}:
+        evidence["metadata"]["planned_hourly_soc_percent"] = None if partial.endswith("null") else {"7":50.0}
+    else:
+        destination = rows if partial.startswith("display") else evidence["stored_hourly"]
+        field = "forecast_capacity_kwh" if partial.endswith("capacity") else "forecast_soc_percent"
+        destination[7][field] = 10.0 if field.endswith("kwh") else 0.0
+    result = check(evidence, rows, daily)
+    assert result["status"] == "FAIL"
+    assert result["required_soc_points"] == 17
+
+
+@pytest.mark.parametrize("field", ["planned_target_soc_percent", "planned_night_charge_kwh"])
+def test_legacy_old_shape_original_metadata_mismatch_is_still_fail(field):
+    _, evidence, rows, daily = old_shape_fixture()
+    evidence["metadata"][field] += 0.000219208414091
+    assert f"{field}:original_mismatch" in check(evidence, rows, daily)["failure_reasons"]
+
+
+@pytest.mark.parametrize("invalid", [None, 0.0, True, "10", -1.0])
+def test_legacy_old_shape_still_requires_valid_original_capacity(invalid):
+    plan, evidence, rows, daily = old_shape_fixture()
+    plan["result"]["effective_capacity_kwh"] = invalid
+    evidence["original"] = json.dumps(plan).encode()
+    evidence["original_sha256"] = hashlib.sha256(evidence["original"]).hexdigest()
+    identity = build_forecast_snapshot_rows(plan, ingested_at=plan["generated_at"], timezone="UTC")[0]["forecast_run_id"]
+    evidence["metadata"]["forecast_run_id"] = identity
+    for row in rows + evidence["stored_hourly"]:
+        row["forecast_run_id"] = identity
+    result = check(evidence, rows, daily)
+    assert result["status"] == "FAIL"
+    assert "effective_capacity_kwh:invalid_numeric" in result["failure_reasons"]
+
+
+def unavailable_old_shape_fixture():
+    _, evidence, rows, daily = old_shape_fixture()
+    evidence.update(original=None, original_sha256=None, evidence_kind="LEGACY_UNAVAILABLE",
+                    failure_reasons=["original:unavailable_legacy"])
+    return evidence, rows, daily
+
+
+def window(evidence, rows, daily):
+    return validate_forecast_window_evidence(start_date=DAY, end_date=DAY,
+        evidence_by_date={DAY: evidence}, displayed_hourly=rows, displayed_battery_daily=[daily])
+
+
+def test_historical_original_gap_remains_inconclusive_outside_required_scope():
+    evidence, rows, daily = unavailable_old_shape_fixture()
+    result = window(evidence, rows, daily)
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["required_evidence_status"] == "PASS"
+    day = result["days"][DAY]
+    assert day["evidence_required"] is False and day["status"] == "INCONCLUSIVE"
+    assert day["original_verified"] is False
+    assert day["failure_reasons"] == ["original:unavailable_legacy"]
+    assert result["coverage"]["legacy_unavailable_days"] == 1
+    assert result["coverage"]["new_required_days"] == result["coverage"]["new_verified_days"] == 0
+
+
+@pytest.mark.parametrize("block", ["new", "capacity_key_null", "soc_key_null", "capacity_value",
+                                  "soc_value", "native_capacity", "native_soc", "metadata_type",
+                                  "identity", "incomplete_hourly", "read_unknown", "drift", "incomplete_reads"])
+def test_old_schema_scope_exclusion_requires_full_valid_native_evidence(block):
+    evidence, rows, daily = unavailable_old_shape_fixture()
+    if block == "new":
+        evidence["evidence_kind"] = "NEW_ADOPTED"
+    elif block in {"capacity_key_null", "soc_key_null"}:
+        field = "planned_capacity_kwh" if block.startswith("capacity") else "planned_hourly_soc_percent"
+        evidence["metadata"][field] = None
+    elif block in {"capacity_value", "soc_value", "native_capacity", "native_soc"}:
+        target = evidence["stored_hourly"] if block.startswith("native") else rows
+        field = "forecast_capacity_kwh" if "capacity" in block else "forecast_soc_percent"
+        target[7][field] = 10.0 if "capacity" in block else 0.0
+    elif block == "metadata_type":
+        evidence["metadata"]["planned_night_charge_kwh"] = "0"
+    elif block == "identity":
+        rows[0]["forecast_run_id"] = "another-run"
+    elif block == "incomplete_hourly":
+        evidence["stored_hourly"].pop()
+    elif block == "read_unknown":
+        evidence["failure_reasons"].append("collector:read_unknown")
+    elif block == "drift":
+        evidence["revisions_after"] = {"native": "v2"}
+    else:
+        evidence["native_reads_complete"] = False
+    result = window(evidence, rows, daily)
+    assert result["days"][DAY]["evidence_required"] is True
+    assert result["required_evidence_status"] != "PASS"
+
+
+def test_same_generation_legacy_numeric_mismatch_is_required_failure():
+    _, evidence, rows, daily = old_shape_fixture()
+    evidence["metadata"]["planned_night_charge_kwh"] = 0.0003
+    result = window(evidence, rows, daily)
+    assert result["status"] == result["required_evidence_status"] == "FAIL"
+    assert result["days"][DAY]["evidence_required"] is True
+
+
+def test_new_adopted_is_required_and_all_capacity_soc_points_are_verified():
+    _, evidence, rows, daily = fixture(new=True)
+    result = window(evidence, rows, daily)
+    assert result["status"] == result["required_evidence_status"] == "PASS"
+    assert result["days"][DAY]["evidence_required"] is True
+    assert result["coverage"]["new_required_days"] == result["coverage"]["new_verified_days"] == 1
+    assert result["coverage"]["capacity_points_verified"] == 24
+    assert result["coverage"]["soc_points_verified"] == 17
 
 
 @pytest.mark.parametrize("new", [False, True])
@@ -221,7 +361,7 @@ class Query:
             self.client.calls.append(("get", self.name, kwargs))
             assert 0 < kwargs["timeout"] <= 3 and kwargs["retry"] is None
             return Snapshot(key, self.client.values.get(self.name, {}).get(key))
-        return SimpleNamespace(get=get)
+        return SimpleNamespace(get=get, path=f"{self.name}/{key}")
 
     def stream(self, **kwargs):
         self.client.calls.append(("stream", self.name, kwargs))
@@ -254,6 +394,18 @@ class Client:
     def collection(self, name):
         return Query(self, name)
 
+    def get_all(self, references, **kwargs):
+        self.calls.append(("get_all", tuple(ref.path for ref in references), kwargs))
+        assert 0 < kwargs["timeout"] <= 3 and kwargs["retry"] is None
+        result = []
+        for ref in references:
+            collection, key = ref.path.split("/", 1)
+            snapshot = Snapshot(key, self.values.get(collection, {}).get(key))
+            snapshot.reference = ref
+            result.append(snapshot)
+        # BatchGet does not promise caller ordering.
+        return reversed(result)
+
 
 class Blob:
     def __init__(self, raw):
@@ -281,7 +433,9 @@ def test_collector_is_read_only_pins_original_and_full_native_rows(new):
     assert len([call for call in blob.calls if call[0] == "download"]) == 1
     assert collected[DAY]["revisions_before"] == collected[DAY]["revisions_after"]
     assert len([key for key in collected[DAY]["revisions_before"] if key.startswith("forecast_hourly_snapshots/")]) == 24
-    assert all(call[0] in {"get", "stream"} for call in client.calls)
+    assert all(call[0] in {"get_all", "stream"} for call in client.calls)
+    assert len([call for call in client.calls if call[0] == "get_all"]) == 4
+    assert not any(call[0] == "get" for call in client.calls)
 
 
 def test_collector_frozen_original_has_no_gcs_read(tmp_path):
@@ -290,6 +444,135 @@ def test_collector_frozen_original_has_no_gcs_read(tmp_path):
     collected = load_forecast_evidence_for_window(client=Client(evidence), storage=None,
         start_date=DAY, end_date=DAY, selected_hourly=rows, original_dir=tmp_path, deadline=time.monotonic() + 60)
     assert check(collected[DAY], rows, daily)["status"] == "PASS"
+
+
+def vintage_client(*, matching=1):
+    plan, evidence, rows, daily = fixture()
+    client = Client(evidence)
+    latest_plan = copy.deepcopy(plan)
+    latest_plan["generated_at"] = "2026-10-10T21:30:00+09:00"
+    latest_raw = json.dumps(latest_plan).encode()
+    client.values["night_charge_plans"][DAY].update(
+        generated_at=latest_plan["generated_at"], detail_sha256=hashlib.sha256(latest_raw).hexdigest(),
+        detail_uri="gs://fixture/latest.json.gz")
+    prior = {"date": DAY, "generated_at": plan["generated_at"],
+             "detail_sha256": evidence["original_sha256"], "detail_uri": "gs://fixture/prior.json.gz"}
+    client.values["night_plan_decisions"] = {f"prior-{n}": copy.deepcopy(prior) for n in range(matching)}
+    client.values["night_plan_decisions"]["latest"] = copy.deepcopy(client.values["night_charge_plans"][DAY])
+    blobs = {"prior.json.gz": Blob(evidence["original"]), "latest.json.gz": Blob(latest_raw)}
+    storage = SimpleNamespace(bucket=lambda _: SimpleNamespace(blob=lambda name: blobs[name]))
+    return evidence, rows, daily, client, blobs, storage
+
+
+def test_legacy_archive_selects_same_issued_immutable_original_instead_of_latest():
+    evidence, rows, daily, client, blobs, storage = vintage_client()
+    collected = load_forecast_evidence_for_window(client=client, storage=storage,
+        start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    assert check(collected[DAY], rows, daily)["status"] == "PASS"
+    assert collected[DAY]["original_sha256"] == evidence["original_sha256"]
+    assert not blobs["latest.json.gz"].calls
+    revisions = collected[DAY]["revisions_before"]
+    assert "night_plan_decisions/prior-0" in revisions and "night_plan_decisions/latest" in revisions
+    assert revisions == collected[DAY]["revisions_after"]
+
+
+def test_legacy_wrong_vintage_without_matching_archive_is_unavailable_not_value_failure():
+    _, rows, daily, client, blobs, storage = vintage_client(matching=0)
+    collected = load_forecast_evidence_for_window(client=client, storage=storage,
+        start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    result = check(collected[DAY], rows, daily)
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["evidence_kind"] == "LEGACY_UNAVAILABLE"
+    assert result["original_verified"] is False and result["original_sha256"] is None
+    assert result["failure_reasons"] == ["original:unavailable_legacy"]
+    assert not any(blob.calls for blob in blobs.values())
+
+
+@pytest.mark.parametrize("matching", [2, 33])
+def test_legacy_archive_ambiguity_or_sentinel_cannot_pass(matching):
+    _, rows, _, client, blobs, storage = vintage_client(matching=matching)
+    with pytest.raises(ValueError, match="legacy_archive_"):
+        load_forecast_evidence_for_window(client=client, storage=storage,
+            start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    assert not any(blob.calls for blob in blobs.values())
+
+
+def test_legacy_same_vintage_numeric_corruption_is_not_classified_as_unavailable():
+    _, rows, daily, client, _, storage = vintage_client()
+    client.values["forecast_plans"][DAY]["planned_night_charge_kwh"] += 0.0003
+    collected = load_forecast_evidence_for_window(client=client, storage=storage,
+        start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    result = check(collected[DAY], rows, daily)
+    assert result["status"] == "FAIL"
+    assert result["evidence_kind"] == "LEGACY_ORIGINAL"
+    assert "planned_night_charge_kwh:original_mismatch" in result["failure_reasons"]
+
+
+def test_legacy_archive_candidate_changes_are_part_of_native_drift(monkeypatch):
+    _, rows, daily, client, _, storage = vintage_client()
+    original_stream = Query.stream
+    seen = 0
+
+    def changing(query, **kwargs):
+        nonlocal seen
+        if query.name == "night_plan_decisions":
+            seen += 1
+            if seen == 2:
+                query.client.values[query.name]["prior-0"]["source"] = "changed"
+        return original_stream(query, **kwargs)
+
+    monkeypatch.setattr(Query, "stream", changing)
+    collected = load_forecast_evidence_for_window(client=client, storage=storage,
+        start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    assert check(collected[DAY], rows, daily)["failure_reasons"] == ["snapshot_drift"]
+
+
+def test_legacy_pointer_without_generated_stamp_still_rejects_wrong_decoded_run():
+    _, rows, daily, client, blobs, storage = vintage_client()
+    client.values["night_charge_plans"][DAY].pop("generated_at")
+    collected = load_forecast_evidence_for_window(client=client, storage=storage,
+        start_date=DAY, end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    assert blobs["latest.json.gz"].calls
+    assert check(collected[DAY], rows, daily)["status"] == "INCONCLUSIVE"
+    assert collected[DAY]["original"] is None
+
+
+@pytest.mark.parametrize("wrong_batch", ["missing", "duplicate", "foreign"])
+def test_exact_batch_reference_set_is_required(monkeypatch, wrong_batch):
+    _, evidence, rows, _ = fixture()
+    client = Client(evidence)
+    original = client.get_all
+
+    def broken(references, **kwargs):
+        snapshots = list(original(references, **kwargs))
+        if wrong_batch == "missing":
+            return []
+        if wrong_batch == "duplicate":
+            return snapshots + snapshots
+        snapshots[0].reference = SimpleNamespace(path="foreign/document")
+        return snapshots
+
+    monkeypatch.setattr(client, "get_all", broken)
+    with pytest.raises(ValueError, match="native_reference_"):
+        load_forecast_evidence_for_window(client=client, storage=None, start_date=DAY,
+            end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+
+
+def test_collector_timeout_records_safe_internal_stage_without_message(monkeypatch):
+    _, evidence, rows, daily = fixture()
+    client = Client(evidence)
+
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("private endpoint or account detail")
+
+    monkeypatch.setattr(client, "get_all", unavailable)
+    collected = load_forecast_evidence_for_window(client=client, storage=None, start_date=DAY,
+        end_date=DAY, selected_hourly=rows, deadline=time.monotonic() + 60)
+    assert collected[DAY]["collector_error"] == {"exception_type": "TimeoutError", "stage": "native_before"}
+    result = check(collected[DAY], rows, daily)
+    assert result["status"] == "INCONCLUSIVE"
+    assert "collector_error" not in result
+    assert "private endpoint" not in json.dumps(result)
 
 
 def test_collector_deadline_is_non_success_and_has_no_write():
