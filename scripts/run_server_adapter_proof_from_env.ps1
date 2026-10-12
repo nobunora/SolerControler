@@ -81,6 +81,25 @@ $flagsPath = Join-Path $privateDirectory 'proof-update.private.json'
 $attemptedUpdate = $false
 $restored = $false
 $proofError = $null
+function Assert-ProofTerminal([hashtable]$Execution) {
+    if (-not $Execution.status -or -not $Execution.status.completionTime) { throw 'Native proof execution is not terminal.' }
+    foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
+        $condition = @($Execution.status.conditions | Where-Object { $_.type -eq $type })
+        if ($condition.Count -ne 1 -or [string]$condition[0].status -ne 'True') { throw 'Native proof execution readiness is not verified.' }
+    }
+    $tasks = $Execution.spec.taskCount
+    $succeeded = $Execution.status.succeededCount
+    if (($tasks -isnot [int] -and $tasks -isnot [long]) -or $tasks -lt 1 -or
+        ($succeeded -isnot [int] -and $succeeded -isnot [long]) -or $succeeded -ne $tasks) {
+        throw 'Native proof total-task success evidence is incomplete.'
+    }
+    foreach ($key in @('failedCount', 'cancelledCount', 'pendingCount', 'runningCount')) {
+        if ($Execution.status.ContainsKey($key)) {
+            $count = $Execution.status[$key]
+            if (($count -isnot [int] -and $count -isnot [long]) -or $count -ne 0) { throw 'Native proof task outcome is invalid or unfinished.' }
+        }
+    }
+}
 try {
     $attemptedUpdate = $true
     Invoke-ProofCloud @('run', 'jobs', 'update', $ProbeJobName, '--project', $project, '--region', $region, '--flags-file', $flagsPath) | Out-Null
@@ -94,11 +113,12 @@ try {
     $execution = $executionText | ConvertFrom-Json -AsHashtable
     $executionName = ([string]$execution.metadata.name -split '/')[-1]
     if (-not $executionName) { throw 'Proof execution identity is unknown.' }
-    foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
-        $condition = @($execution.status.conditions | Where-Object { $_.type -eq $type })
-        if ($condition.Count -ne 1 -or [string]$condition[0].status -ne 'True') { throw 'Native proof execution readiness is not verified.' }
-    }
-    if (-not $execution.status.ContainsKey('failedCount') -or [int]$execution.status.failedCount -ne 0) { throw 'Native proof failed-task outcome is unknown or nonzero.' }
+    $exactText = Invoke-ProofCloud @('run', 'jobs', 'executions', 'describe', $executionName, '--project', $project,
+        '--region', $region, '--format', 'json')
+    $exactExecution = $exactText | ConvertFrom-Json -AsHashtable
+    $exactText | Set-Content -LiteralPath (Join-Path $privateDirectory 'execution-exact.private.json') -Encoding utf8
+    if (([string]$exactExecution.metadata.name -split '/')[-1] -ne $executionName) { throw 'Proof execution identity changed.' }
+    Assert-ProofTerminal $exactExecution
     $filter = "resource.type=cloud_run_job AND resource.labels.job_name=$ProbeJobName"
     $records = @(Invoke-ProofCloud @('logging', 'read', $filter, '--project', $project, '--freshness', '1d', '--limit', '200', '--format', 'json') | ConvertFrom-Json -AsHashtable)
     $proofs = @($records | Where-Object { $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and $_.jsonPayload.event -eq 'server_adapter_proof' })

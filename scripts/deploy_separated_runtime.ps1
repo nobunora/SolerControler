@@ -98,6 +98,14 @@ function Invoke-Stage([string]$Name, [scriptblock]$Action) {
             $adoptedPath = "$MonitoringRepairStatePath.d/adopted-forecast.json"
             if (-not (Test-Path -LiteralPath $adoptedPath) -or -not $state.stages.calculation.Contains('adopted_sha256') -or
                 (Get-FileHash -LiteralPath $adoptedPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $state.stages.calculation.adopted_sha256) { throw 'Calculation success lacks its adopted receipt.' }
+            if (-not $state.stages.calculation.Contains('forecast_evidence_path') -or
+                -not (Test-Path -LiteralPath $state.stages.calculation.forecast_evidence_path) -or
+                (Get-FileHash -LiteralPath $state.stages.calculation.forecast_evidence_path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $state.stages.calculation.forecast_evidence_sha256) {
+                throw 'Calculation success lacks its unchanged NEW evidence receipt.'
+            }
+            $previousEvidence = Get-Content -Raw -LiteralPath $state.stages.calculation.forecast_evidence_path | ConvertFrom-Json -AsHashtable
+            $previousAdopted = Get-Content -Raw -LiteralPath $adoptedPath | ConvertFrom-Json -AsHashtable
+            Assert-AdoptedForecastEvidence $previousEvidence $previousAdopted
             Invoke-PreparedMonitoringRepair -VerifyOnly
         }
         Write-Host "Verified previous stage: $Name"; return
@@ -135,7 +143,25 @@ function Assert-Idle([string]$Job) {
     $rows = @(Invoke-Cloud @('run', 'jobs', 'executions', 'list', '--job', $Job, '--region', $region, '--project', $project,
                               '--limit', '5', '--sort-by', '~createTime', '--format', 'json') | ConvertFrom-Json -AsHashtable)
     foreach ($row in $rows) {
-        if ($row.status -and -not $row.status.completionTime) { throw 'A target job has an active or inconclusive execution.' }
+        if (-not $row.status -or -not $row.status.completionTime) { throw 'A target job has an active or inconclusive execution.' }
+    }
+}
+
+function Assert-AdoptedForecastEvidence([hashtable]$Evidence, [hashtable]$Adopted) {
+    if ($Evidence.required_evidence_status -ne 'PASS' -or $Evidence.common_parity_status -ne 'PASS' -or
+        $Evidence.coverage.new_required_days -lt 1 -or $Evidence.coverage.new_verified_days -ne $Evidence.coverage.new_required_days) {
+        throw 'Post-adoption evidence requires at least one fully verified NEW plan and common parity.'
+    }
+    foreach ($day in $Evidence.days.Values) {
+        if ($day.evidence_kind -eq 'NEW_ADOPTED' -and ($day.status -ne 'PASS' -or $day.evidence_required -ne $true -or
+            $day.original_verified -ne $true -or $day.metadata_verified -ne $true -or $day.capacity_verified -ne $true -or
+            $day.required_soc_points -ne 17 -or $day.soc_points_verified -ne 17)) { throw 'NEW raw/capacity24/SOC17 evidence is incomplete.' }
+    }
+    $selected = $Evidence.days[$Adopted.target_date]
+    if (-not $selected -or $selected.evidence_kind -ne 'NEW_ADOPTED' -or $selected.status -ne 'PASS' -or
+        $selected.original_sha256 -ne $Adopted.raw_plan_sha256) { throw 'Adopted raw original is not verified.' }
+    foreach ($key in @('target_date', 'raw_plan_sha256', 'control_version_id', 'forecast_run_id')) {
+        if (-not $Adopted[$key] -or $selected.forecast_identity[$key] -ne $Adopted[$key]) { throw 'Verified NEW plan differs from the adopted receipt.' }
     }
 }
 
@@ -172,8 +198,18 @@ function Invoke-PreparedMonitoringRepair([switch]$VerifyOnly) {
     $adopted = Get-Content -Raw -LiteralPath $adoptedPath | ConvertFrom-Json -AsHashtable
     & python (Join-Path $PSScriptRoot 'sync_validation_state.py') --direction firestore-to-sqlite
     if ($LASTEXITCODE -ne 0) { throw 'Post-adoption validation sync failed.' }
-    & python (Join-Path $PSScriptRoot 'validate_dashboard_backend_parity.py') --end-date $adopted.target_date --window-days 31
+    $parityOutput = @(& python (Join-Path $PSScriptRoot 'validate_dashboard_backend_parity.py') --end-date $adopted.target_date --window-days 31)
     if ($LASTEXITCODE -ne 0) { throw 'Post-adoption dashboard parity failed.' }
+    $evidenceLines = @($parityOutput | Where-Object { ([string]$_).StartsWith('[forecast-evidence] ') })
+    if ($evidenceLines.Count -ne 1) { throw 'Post-adoption parity evidence is missing or ambiguous.' }
+    $forecastEvidence = ([string]$evidenceLines[0]).Substring('[forecast-evidence] '.Length) | ConvertFrom-Json -AsHashtable
+    Assert-AdoptedForecastEvidence $forecastEvidence $adopted
+    $evidencePath = Join-Path $receiptDirectory 'post-adoption-evidence.json'
+    $forecastEvidence | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath "$evidencePath.part" -Encoding utf8
+    Move-Item -LiteralPath "$evidencePath.part" -Destination $evidencePath -Force
+    $state.stages.calculation.forecast_evidence_path = $evidencePath
+    $state.stages.calculation.forecast_evidence_sha256 = (Get-FileHash -LiteralPath $evidencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $parityOutput | ForEach-Object { Write-Host $_ }
     & $repairWrapper -StatePath $MonitoringRepairStatePath -Stage verify -Resume -ReviewedStateSha256 $ReviewedRepairStateSha256
     if ($LASTEXITCODE -ne 0) { throw 'Final source and adopted forecast verification failed.' }
     $state.stages.calculation.adopted_sha256 = (Get-FileHash -LiteralPath $adoptedPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -241,6 +277,12 @@ Invoke-Stage 'soc_api_credentials' {
     & (Join-Path $PSScriptRoot 'configure_soc_api_from_env.ps1')
 }
 Invoke-Stage 'control' {
+    $tokyo = [TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
+    $ownerNow = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
+    $ownerMinutes = $ownerNow.Hour * 60 + $ownerNow.Minute
+    if (($ownerMinutes -ge 165 -and $ownerMinutes -lt 195) -or ($ownerMinutes -ge 405 -and $ownerMinutes -lt 435) -or
+        ($ownerMinutes -ge 1350 -and $ownerMinutes -lt 1395)) { throw 'Control stage is forbidden during a scheduled owner transition.' }
+    foreach ($job in @('solar-battery-23', 'solar-battery-03', 'solar-battery-07', 'solar-battery-settings-roundtrip')) { Assert-Idle $job }
     & (Join-Path $PSScriptRoot 'deploy_control_jobs_image_only.ps1') -ExpectedCommit $commit -SkipBuild -SeparatedRuntime `
         -AllowOutOfWindowLiveProbe:$AllowOutOfWindowLiveProbe
 }

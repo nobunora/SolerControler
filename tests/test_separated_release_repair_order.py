@@ -72,7 +72,13 @@ def test_server_proof_restores_dedicated_job_without_environment_or_control_writ
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
 $root=Split-Path $PSScriptRoot -Parent
 Add-Content -LiteralPath (Join-Path $root 'calls.txt') -Value ($Args[0..2] -join ' ')
-if (($Args[0..2] -join ' ') -eq 'run jobs executions') { '[]'; exit 0 }
+if (($Args[0..2] -join ' ') -eq 'run jobs executions') {
+ if($Args[3] -eq 'list'){'[]';exit 0}
+ if($Args[3] -eq 'describe'){
+  @{metadata=@{name='exact-proof'};spec=@{taskCount=1};status=@{completionTime='2026-10-13T03:20:00+09:00';succeededCount=1;conditions=@('Completed','ResourcesAvailable','Started','ContainerReady')|ForEach-Object {@{type=$_;status='True'}}}}|ConvertTo-Json -Depth 10;exit 0
+ }
+ throw 'unexpected execution read'
+}
 if (($Args[0..2] -join ' ') -eq 'run jobs describe') { Get-Content -Raw (Join-Path $root 'job.json'); exit 0 }
 if (($Args[0..2] -join ' ') -eq 'run jobs update') {
  $flags=Get-Content -Raw $Args[([array]::IndexOf($Args,'--flags-file')+1)]|ConvertFrom-Json -AsHashtable

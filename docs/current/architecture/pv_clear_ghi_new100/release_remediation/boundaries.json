@@ -12,7 +12,7 @@
       "change": "existing quality gate before protected pytest; existing checks and failures preserved",
       "existing": true,
       "source_sha256": "92036c42091bb3b841ac98d130389e0566398280d66712000dc0784c77601ed5",
-      "implemented_source_sha256": "5fa41861a8891a99cd3e179a5525e7184ca7d123e82890fbee0f0bb1dff116c2"
+      "implemented_source_sha256": "08c83c3e40fd0ba8f12bf96b0350eb5fb609e7361f83640f5262c90a408beee5"
     },
     {
       "stage": "R01",
@@ -24,7 +24,7 @@
       "change": "AND evidence and strict common comparisons; compare_rows semantics preserved",
       "existing": true,
       "source_sha256": "b538209c6e73722987cfaa0aa4b291c34fa3b709826b24d2ea4804e5f36e6347",
-      "implemented_source_sha256": "37c62ab86a500316fa763cacdabfcadf62ddb63c6fde95d206448c073ab3f3aa"
+      "implemented_source_sha256": "2811f2efa6adcf8c08a25ef1f365f0f24a3e12c0cb2b14b6af73a2ee6ae502ed"
     },
     {
       "stage": "R01",
@@ -33,12 +33,15 @@
         "NEW validate_forecast_day_evidence",
         "NEW load_forecast_evidence_for_window",
         "NEW validate_forecast_window_evidence",
-        "bundle.published_plan_document"
+        "bundle.published_plan_document",
+        "bundle.native_reads_complete",
+        "DayResult.evidence_required",
+        "WindowResult.required_evidence_status"
       ],
       "change": "collector and pure functions only; parity main is the sole CLI",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "ff54a29e7911e8d2b78fdf2cb4110cfcc17c24d5cfe6051638462d3201662b06"
+      "implemented_source_sha256": "008401e100586ef061235a4d6b411fc1f1af4ad1476bec65ef58704b35a5caf9"
     },
     {
       "stage": "R02",
@@ -50,7 +53,7 @@
       "change": "optional TargetMonths, default and finally cleanup preserved",
       "existing": true,
       "source_sha256": "2db924368b3c6622755dde7cc344a950702e435636ba05ae81dd21bff763dd8c",
-      "implemented_source_sha256": "51443fe3f5778b756b5e9cb61e8e029199a600ae91a58d845b6dfe0104159e60"
+      "implemented_source_sha256": "73857e770dc5950c030dd417861680d1c64d01863dc0a6baa90380dc550dc74b"
     },
     {
       "stage": "R02",
@@ -110,7 +113,7 @@
       "change": "optional repair-only deadline/progress; daily dict and cost int return/formulas/defaults unchanged",
       "existing": true,
       "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
-      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
+      "implemented_source_sha256": "ed59b875d9c63c72ee54a26b66d57fd364ba6cfa115963fa119986678b00521b"
     },
     {
       "stage": "R03",
@@ -122,7 +125,7 @@
       "change": "bounded raw revision paging and history-only full rebuild; bootstrap writer unchanged",
       "existing": true,
       "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
-      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
+      "implemented_source_sha256": "a6ff2bccbd5e5b6b47da4047754a1d286873ba4cb677b188ce9e8d00743830e6"
     },
     {
       "stage": "R04",
@@ -134,7 +137,7 @@
       "change": "deadline and native result classification only; projections/numbers unchanged",
       "existing": true,
       "source_sha256": "9bfb9a7e3db8ac4b70b0d2679064aacb30a753578d8ac9f929df256b535050e5",
-      "implemented_source_sha256": "6710087836d33b93dc81308cebd558ed343c513e710aa2b7dc7d8b1c43a864c5"
+      "implemented_source_sha256": "bb74794f37a57899932e44c8a11dd9c9b7b54e13a26148235bc33d3a95b87a6d"
     },
     {
       "stage": "R04",
@@ -146,7 +149,7 @@
       "change": "use bounded lifecycle helper only; sample monotonicity unchanged",
       "existing": true,
       "source_sha256": "0c4c234e10a18e1a41581b030201d0431023f4ace9aa6593e6dd8e711e29b03d",
-      "implemented_source_sha256": "ec8f36556c1eb7fcaac1f1a1e4e4d55ad18ec3693e97e26fa126a7fbdf3a9709"
+      "implemented_source_sha256": "ed59b875d9c63c72ee54a26b66d57fd364ba6cfa115963fa119986678b00521b"
     },
     {
       "stage": "R04",
@@ -157,7 +160,7 @@
       "change": "shared absolute deadline, fixed receipt readback, original CAS unchanged",
       "existing": true,
       "source_sha256": "2110720ff4bdd3ec2a747f0fe22b43c6537a8ac0abd80f02d0aadcfa6ef2702c",
-      "implemented_source_sha256": "98fe2d7a1cdcbc37bf57471a2d2d0d6fc0ff052d6f4cd3bd7224daf1cf224c68"
+      "implemented_source_sha256": "74c92e53d79abd7e7ab9c2238345778a6bae7cdfadc6980f7d69cd7addb6739f"
     },
     {
       "stage": "R04",
@@ -171,7 +174,7 @@
       "change": "structured adoption identity log and one post-CAS shared projection deadline propagation; unknown commit distinct from rejection; projection-only recovery",
       "existing": true,
       "source_sha256": "05bd925c79199a273fa3adb074a5748c1ec6d056346f1c9e5820b6cd2ab50518",
-      "implemented_source_sha256": "980e58f49e33c1bb943c9aea2e7c64fbebbf5a164eb17fd540408eaa932afa36"
+      "implemented_source_sha256": "bf916bb52f19a8cd1be01fdb505556bd8fc6d71859e1ba6c88b5833fb4948125"
     },
     {
       "stage": "R04",
@@ -184,7 +187,7 @@
       "change": "cold finite timeout and late source drift observation/republication only; CAS/cache preserved",
       "existing": true,
       "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
-      "implemented_source_sha256": "894a32a46dad701a799e22423df60b55c412564f2b1e3624ad7c723a3d2336aa"
+      "implemented_source_sha256": "a6ff2bccbd5e5b6b47da4047754a1d286873ba4cb677b188ce9e8d00743830e6"
     },
     {
       "stage": "R05",
@@ -196,7 +199,7 @@
       "change": "one-off prepared repair identity CLI transfer",
       "existing": true,
       "source_sha256": "f4b8f669c0ce21f1fefce2a057964e598311d84ce68c7a746e4622632171336c",
-      "implemented_source_sha256": "a87a459713b1256246af88da3b1b1a9d9f2b730339d0a79bd171f973c4a7b6cb"
+      "implemented_source_sha256": "baa9917fb5274910c8c46f1d935b7847881664a6cc80c1ecb1541683d668903d"
     },
     {
       "stage": "R05",
@@ -207,12 +210,17 @@
         "calculation stage",
         "NEW Invoke-PreparedMonitoringRepair",
         "build stage",
-        "Invoke-Stage build/calculation receipt checks"
+        "Invoke-Stage build/calculation receipt checks",
+        "Assert-AdoptedForecastEvidence",
+        "post-adoption-evidence.json",
+        "Assert-ControlProbeOwnerWindow",
+        "ownerNow",
+        "ownerMinutes"
       ],
       "change": "same-digest build proof, one repair journal, adopted-plan resume, canonical repair orchestration",
       "existing": true,
       "source_sha256": "8431ad0a44a7ef0bdc60e0c7d13caca7dee7d11b5c53111d8efc03e1dd15a733",
-      "implemented_source_sha256": "cb3801444c52fef49033028cafd3459109bace5ce1a660eb2f1abec480b44e39"
+      "implemented_source_sha256": "b5bf40af1c10be999089e68c3cb87ac3f82424a1c63f532f8598ffaadf01d5ac"
     },
     {
       "stage": "R04",
@@ -224,7 +232,7 @@
       "change": "optional shared projection deadline; immutable identity/defaults preserved",
       "existing": true,
       "source_sha256": "f0e0160033f75ab647de663e30e27f45a4a422ae298af652e609746025bd3e59",
-      "implemented_source_sha256": "eef3b0ad1369ba37317ef07567eda0346abeddb371f378371e07cc72e3898fd3"
+      "implemented_source_sha256": "09d780f92f015a1459c2794bde8c1743d034b125962faccbaa8195623f699cb5"
     },
     {
       "stage": "R04",
@@ -236,19 +244,20 @@
       "change": "optional deadline using the single forecast_persistence helper; max_attempts=1 and read-before-write unchanged",
       "existing": true,
       "source_sha256": "dc8db0b600f1134963026d6c1e09371c45e2635d6f19e90431048ef19eb6c9f2",
-      "implemented_source_sha256": "e58f1e6cbcccd674c44931f659e1d64cd09f4a4d752fd1100c0c28ebd41caacd"
+      "implemented_source_sha256": "25be94834fc7987a425ab37f63b8e6b7a3322268b2e6ccbc3ed6c883980d9182"
     },
     {
       "stage": "R05",
       "path": "scripts/run_cloud_job_from_env.ps1",
       "symbols": [
         "forecast execution receipt parameter",
-        "forecast exact execution verification"
+        "forecast exact execution verification",
+        "Assert-ForecastReceiptTerminal"
       ],
       "change": "private exact-execution capture instead of latest execution; other slots and physical control unchanged",
       "existing": true,
       "source_sha256": "78c253b00e5844ddd566da7add313a43dc5d290c9bec6540003c7e88bb08073f",
-      "implemented_source_sha256": "954a48f0a423d632f1a729f2c1313436d845390eda95fea25fe10193706c1a90"
+      "implemented_source_sha256": "875a3004b59688835cc3e4bcf12a76b65bd6c3d59e725f0d03359b4276386cf6"
     },
     {
       "stage": "R03",
@@ -268,12 +277,13 @@
         "actual-server wrapper",
         "fixed bundle",
         "exact execution",
-        "finally restore"
+        "finally restore",
+        "Assert-ProofTerminal"
       ],
       "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "7355b26e93ed7527d45fa2e8447037f38a1f0655d9d15048104b4fb7f324a369"
+      "implemented_source_sha256": "9c408c0e1f00c826ff07a9b36f48b5f845c158966c08c7c6fb75ca2eb6812104"
     },
     {
       "stage": "R06",
@@ -297,7 +307,18 @@
       "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "a14e24cc19d46ab928351a97fc6aa15e9bcb1887b1004ea439bffb0ab6b42bff"
+      "implemented_source_sha256": "bd6e34cc1ce0d1848a78e14c013d2d59554b78403533b341551b003373993274"
+    },
+    {
+      "stage": "R07",
+      "path": "app/kpnet/workflow.py",
+      "symbols": [
+        "run_kpnet_mode_only_profile explicit-deadline comparison only"
+      ],
+      "change": "explicit user-approved absolute deadline comparison; min/io deadline/240+60/time ownership/lock/field preservation unchanged",
+      "existing": true,
+      "source_sha256": null,
+      "implemented_source_sha256": "511e699f758029ac0d4213795afe58ead35af767dab297605cca38ba526fa07d"
     }
   ],
   "protected": [
@@ -743,6 +764,31 @@
           "symbol": "whole file protected except explicit allowed records"
         }
       ]
+    },
+    {
+      "id": "P13",
+      "paths": [
+        "app/kpnet/workflow.py",
+        "app/runtime/cloud_job.py",
+        "app/runtime/night_soc_time_contract.py"
+      ],
+      "symbols": [
+        "run_kpnet_mode_only_profile except R07 approved comparison",
+        "_RunnerMonitorDevicePort.apply_profile",
+        "MODE_OPERATION_MAX_SECONDS",
+        "MODE_OPERATION_RELEASE_RESERVE_SECONDS",
+        "MODE_OPERATION_START_BUDGET_SECONDS"
+      ],
+      "variables": [
+        "operation_start",
+        "requested_end",
+        "operation_end",
+        "io_deadline",
+        "06:45/06:50/06:55",
+        "all scheduled mode and SOC fields"
+      ],
+      "rule": "no control refactor or budget/time/setting changes; R07 comparison only explicitly approved",
+      "approval_reference": "steps/R07-mode-budget-rounding.md"
     }
   ],
   "global_forbidden": [
@@ -797,5 +843,6 @@
     "historical_asset": "app.dashboard.snapshots.write_dashboard_history_snapshot",
     "bounded_transaction_lifecycle": "app.operations.forecast_persistence._run_bounded_projection_transaction",
     "drive_execution": "R05 canonical backup stages"
-  }
+  },
+  "implemented_source_hash_semantics": "SHA-256 of UTF-8 source text with CRLF normalized to LF; baseline source_sha256 remains the reviewed checkpoint bytes"
 }

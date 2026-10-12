@@ -21,6 +21,7 @@ from app.operations.forecast_snapshot import build_forecast_snapshot_rows
 from app.separated_runtime.plan import PublishedPlan
 
 MAX_ORIGINAL_BYTES = 750_000
+MAX_LEGACY_ARCHIVE_CANDIDATES = 32
 _FORECAST_FIELDS = ("forecast_pv_kwh", "forecast_load_kwh", "forecast_charge_kwh")
 _SOC_FIELDS = {"actual_soc_percent", "opening_soc_percent", "soc_percent", "forecast_soc_percent", "setting_soc_target_percent"}
 _COVERAGE_COUNTS = ("selected_forecast_days", "new_required_days", "new_verified_days", "legacy_required_days",
@@ -31,7 +32,8 @@ _COVERAGE_COUNTS = ("selected_forecast_days", "new_required_days", "new_verified
 def _empty_window_result(*, start_date: str = "", end_date: str = "") -> dict[str, Any]:
     coverage: dict[str, Any] = dict.fromkeys(_COVERAGE_COUNTS, 0)
     coverage.update(sql_capacity_supported=False, sql_soc_supported=False)
-    return {"schema_version": 1, "status": "PASS", "start_date": start_date, "end_date": end_date,
+    return {"schema_version": 1, "status": "PASS", "required_evidence_status": "PASS",
+            "start_date": start_date, "end_date": end_date,
             "days": {}, "coverage": coverage, "read_count": 0, "read_bytes": 0, "failure_reasons": []}
 
 
@@ -179,6 +181,7 @@ def _original_hourly(plan: dict[str, Any], target_date: str) -> dict[int, dict[s
 
 def _day_result(target_date: str, evidence: dict[str, Any]) -> dict[str, Any]:
     return {"status": "PASS", "target_date": target_date,
+            "evidence_required": True,
             "evidence_kind": evidence.get("evidence_kind", "LEGACY_UNAVAILABLE"),
             "metadata_verified": False, "original_verified": False, "capacity_verified": False,
             "soc_points_verified": 0, "required_soc_points": 0,
@@ -208,11 +211,18 @@ def validate_forecast_day_evidence(
            or _new_marker(displayed_hourly + evidence.get("stored_hourly", [])))
     if new:
         result["evidence_kind"] = "NEW_ADOPTED"
-    if new or exists is True:
+    legacy_old_shape = (exists is True and not new
+                        and "planned_capacity_kwh" not in metadata
+                        and "planned_hourly_soc_percent" not in metadata
+                        and all(row.get("forecast_capacity_kwh") is None
+                                and row.get("forecast_soc_percent") is None
+                                for row in displayed_hourly + evidence.get("stored_hourly", [])))
+    if new or (exists is True and not legacy_old_shape):
         result["required_soc_points"] = 17
     uncertain = {"snapshot_drift", "metadata:read_unknown", "battery_daily:read_unknown",
                  "original:unavailable_legacy", "collector:read_unknown", "collector:deadline"}
-    if errors and all(error in uncertain for error in errors):
+    if (errors and all(error in uncertain for error in errors)
+            and set(errors) != {"original:unavailable_legacy"}):
         result.update(status="INCONCLUSIVE", failure_reasons=sorted(set(errors)))
         return result
     if exists is None:
@@ -224,7 +234,6 @@ def validate_forecast_day_evidence(
         else:
             result["evidence_kind"] = "LEGACY_NO_PLAN_METADATA"
     else:
-        result["required_soc_points"] = 17
         try:
             if metadata.get("date") != target_date:
                 raise ValueError("metadata:target_date")
@@ -252,15 +261,19 @@ def validate_forecast_day_evidence(
                     for key in ("raw_plan_sha256", "control_version_id"):
                         if row.get(key) is not None and row[key] != metadata.get(key):
                             raise ValueError("identity:adopted_version_mismatch")
-            for field in ("planned_target_soc_percent", "planned_night_charge_kwh", "planned_capacity_kwh"):
+            metadata_fields: tuple[str, ...] = ("planned_target_soc_percent", "planned_night_charge_kwh")
+            if not legacy_old_shape:
+                metadata_fields += ("planned_capacity_kwh",)
+            for field in metadata_fields:
                 if not _number(metadata.get(field), maximum=100 if field == "planned_target_soc_percent" else None,
                                positive=field == "planned_capacity_kwh"):
                     raise ValueError(f"{field}:invalid_numeric")
             soc = metadata.get("planned_hourly_soc_percent")
-            if not isinstance(soc, dict) or set(soc) != {str(hour) for hour in range(7, 24)}:
-                raise ValueError("planned_hourly_soc_percent:incomplete_17")
-            if any(not _number(value, maximum=100) for value in soc.values()):
-                raise ValueError("planned_hourly_soc_percent:invalid_numeric")
+            if not legacy_old_shape:
+                if not isinstance(soc, dict) or set(soc) != {str(hour) for hour in range(7, 24)}:
+                    raise ValueError("planned_hourly_soc_percent:incomplete_17")
+                if any(not _number(value, maximum=100) for value in soc.values()):
+                    raise ValueError("planned_hourly_soc_percent:invalid_numeric")
             result["metadata_verified"] = True
             raw = evidence.get("original")
             if not isinstance(raw, bytes):
@@ -288,7 +301,8 @@ def validate_forecast_day_evidence(
             ):
                 if not _number(values.get(original_field), positive=positive, maximum=maximum):
                     raise ValueError(f"{original_field}:invalid_numeric")
-                if not _close(values[original_field], metadata[stored_field]):
+                if (stored_field != "planned_capacity_kwh" or not legacy_old_shape) and not _close(
+                        values[original_field], metadata[stored_field]):
                     raise ValueError(f"{stored_field}:original_mismatch")
             if new:
                 published_doc = evidence.get("published_plan_document")
@@ -302,7 +316,8 @@ def validate_forecast_day_evidence(
                     for row in (stored[hour], displayed[hour]):
                         if not _close(row.get(field), expected[hour][field]):
                             raise ValueError(f"{field}:original_mismatch")
-                if not _close(displayed[hour].get("forecast_capacity_kwh"), metadata["planned_capacity_kwh"]):
+                if not legacy_old_shape and not _close(
+                        displayed[hour].get("forecast_capacity_kwh"), metadata["planned_capacity_kwh"]):
                     raise ValueError("forecast_capacity_kwh:display_mismatch")
                 for display_field, metadata_field in (("forecast_target_soc_percent", "planned_target_soc_percent"),
                                                      ("forecast_night_charge_kwh", "planned_night_charge_kwh")):
@@ -310,16 +325,18 @@ def validate_forecast_day_evidence(
                         raise ValueError(f"{display_field}:display_mismatch")
                 if hour < 7 and displayed[hour].get("forecast_soc_percent") is not None:
                     raise ValueError("forecast_soc_percent:unexpected_early_point")
-            expected_soc = simulate_daytime_soc_percent(
-                target_soc_percent=values["target_soc_7_percent"], capacity_kwh=values["effective_capacity_kwh"],
-                hourly_load_kwh={hour: row["forecast_load_kwh"] for hour, row in expected.items()},
-                hourly_pv_kwh={hour: row["forecast_pv_kwh"] for hour, row in expected.items()},
-            )
-            for hour, expected_value in expected_soc.items():
-                if not _close(soc[str(hour)], expected_value, tolerance=1e-7):
-                    raise ValueError("planned_hourly_soc_percent:original_mismatch")
-                if not _close(displayed[hour].get("forecast_soc_percent"), expected_value, tolerance=1e-7):
-                    raise ValueError("forecast_soc_percent:display_mismatch")
+            if not legacy_old_shape:
+                assert isinstance(soc, dict)
+                expected_soc = simulate_daytime_soc_percent(
+                    target_soc_percent=values["target_soc_7_percent"], capacity_kwh=values["effective_capacity_kwh"],
+                    hourly_load_kwh={hour: row["forecast_load_kwh"] for hour, row in expected.items()},
+                    hourly_pv_kwh={hour: row["forecast_pv_kwh"] for hour, row in expected.items()},
+                )
+                for hour, expected_value in expected_soc.items():
+                    if not _close(soc[str(hour)], expected_value, tolerance=1e-7):
+                        raise ValueError("planned_hourly_soc_percent:original_mismatch")
+                    if not _close(displayed[hour].get("forecast_soc_percent"), expected_value, tolerance=1e-7):
+                        raise ValueError("forecast_soc_percent:display_mismatch")
             if evidence.get("stored_battery_daily_exists") is None:
                 raise ValueError("battery_daily:read_unknown")
             saved_daily = evidence.get("stored_battery_daily") or {}
@@ -333,7 +350,8 @@ def validate_forecast_day_evidence(
                 if not _close(displayed_battery_daily.get(display_field), expected_value):
                     raise ValueError(f"{display_field}:daily_mismatch")
                 result["daily_metadata_fields_verified"] += int(before is None)
-            result.update(original_verified=True, capacity_verified=True, soc_points_verified=17,
+            result.update(original_verified=True, capacity_verified=not legacy_old_shape,
+                          soc_points_verified=0 if legacy_old_shape else 17,
                           daily_metadata_verified=True)
         except (ValueError, TypeError, KeyError, IndexError, UnicodeError) as exc:
             reason = str(exc) if isinstance(exc, ValueError) and ":" in str(exc) else "original:invalid_evidence"
@@ -344,6 +362,11 @@ def validate_forecast_day_evidence(
     result["failure_reasons"] = sorted(set(errors))
     if errors:
         result["status"] = "INCONCLUSIVE" if all(error in uncertain for error in errors) else "FAIL"
+    if (legacy_old_shape and evidence.get("native_reads_complete") is True
+            and isinstance(evidence.get("revisions_before"), dict) and evidence["revisions_before"]
+            and evidence["revisions_before"] == evidence.get("revisions_after")
+            and (not errors or set(errors) == {"original:unavailable_legacy"})):
+        result["evidence_required"] = False
     return result
 
 
@@ -382,6 +405,7 @@ def validate_forecast_window_evidence(
         if _business_errors(grouped[day]):
             days[day]["failure_reasons"] = sorted(set(days[day]["failure_reasons"] + _business_errors(grouped[day])))
             days[day]["status"] = "FAIL"
+            days[day]["evidence_required"] = True
     summary = _empty_window_result(start_date=start_date, end_date=end_date)
     coverage = summary["coverage"]
     coverage["actual_only_rows"] = actual_only
@@ -404,7 +428,11 @@ def validate_forecast_window_evidence(
         coverage["daily_metadata_fields_verified"] += result["daily_metadata_fields_verified"] if result["status"] == "PASS" else 0
     status = "FAIL" if any(item["status"] == "FAIL" for item in days.values()) else (
         "INCONCLUSIVE" if any(item["status"] == "INCONCLUSIVE" for item in days.values()) else "PASS")
-    summary.update(status=status, days=days, read_count=sum(item["read_count"] for item in days.values()),
+    required = [item for item in days.values() if item["evidence_required"]]
+    required_status = "FAIL" if any(item["status"] == "FAIL" for item in required) else (
+        "INCONCLUSIVE" if any(item["status"] == "INCONCLUSIVE" for item in required) else "PASS")
+    summary.update(status=status, required_evidence_status=required_status,
+                   days=days, read_count=sum(item["read_count"] for item in days.values()),
                    read_bytes=sum(item["read_bytes"] for item in days.values()),
                    failure_reasons=[f"{day}:{reason}" for day, item in days.items() for reason in item["failure_reasons"]])
     return summary
@@ -438,6 +466,26 @@ def _native(snapshot: Any) -> tuple[dict[str, Any], str, int]:
     return value, f"{stamp}|{hashlib.sha256(raw).hexdigest()}", len(raw)
 
 
+def _read_documents(client: Any, keys: list[tuple[str, str]], *, deadline: float) -> dict[str, Any]:
+    """Batch exact references without changing the bounded evidence document set."""
+    references = {f"{collection}/{key}": client.collection(collection).document(key)
+                  for collection, key in keys}
+    if len(references) > 93:
+        raise ValueError("native_reference_limit")
+    if not references:
+        return {}
+    snapshots = client.get_all(list(references.values()), timeout=_timeout(deadline), retry=None)
+    result: dict[str, Any] = {}
+    for snapshot in snapshots:
+        path = snapshot.reference.path
+        if path not in references or path in result:
+            raise ValueError("native_reference_identity")
+        result[path] = snapshot
+    if set(result) != set(references):
+        raise ValueError("native_reference_missing")
+    return result
+
+
 def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[str, list[dict[str, Any]]],
                 deadline: float) -> dict[str, dict[str, Any]]:
     documents = list(client.collection("forecast_plans").where("date", ">=", start_date)
@@ -453,25 +501,24 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
             raise ValueError("metadata_document_identity")
         metadata_docs[snapshot.id] = snapshot
         grouped.setdefault(snapshot.id, [])
+    keys = [("battery_daily_metrics", day) for day in grouped]
+    keys.extend(("forecast_plans", day) for day in grouped if day not in metadata_docs)
+    fetched = _read_documents(client, keys, deadline=deadline)
     states: dict[str, dict[str, Any]] = {}
+
+    def record(state: dict[str, Any], collection: str, snapshot: Any) -> dict[str, Any]:
+        value, revision, count = _native(snapshot)
+        state["revisions_before"][f"{collection}/{snapshot.id}"] = revision
+        state["read_count"] += 1
+        state["read_bytes"] += count
+        return value
+
     for day, selected in grouped.items():
-        revisions: dict[str, str] = {}
-        reads, size = 0, 0
-
-        def record(collection: str, snapshot: Any) -> dict[str, Any]:
-            nonlocal reads, size
-            value, revision, count = _native(snapshot)
-            revisions[f"{collection}/{snapshot.id}"] = revision
-            reads += 1
-            size += count
-            return value
-
-        meta_snapshot = metadata_docs.get(day)
-        if meta_snapshot is None:
-            meta_snapshot = client.collection("forecast_plans").document(day).get(timeout=_timeout(deadline), retry=None)
-        metadata = record("forecast_plans", meta_snapshot)
-        daily_snapshot = client.collection("battery_daily_metrics").document(day).get(timeout=_timeout(deadline), retry=None)
-        daily = record("battery_daily_metrics", daily_snapshot)
+        state: dict[str, Any] = {"revisions_before": {}, "read_count": 0, "read_bytes": 0}
+        meta_snapshot = metadata_docs.get(day) or fetched[f"forecast_plans/{day}"]
+        metadata = record(state, "forecast_plans", meta_snapshot)
+        daily_snapshot = fetched[f"battery_daily_metrics/{day}"]
+        daily = record(state, "battery_daily_metrics", daily_snapshot)
         forecast_rows = [row for row in selected if has_forecast_evidence(row)]
         sources = {str(row.get("source") or "") for row in forecast_rows}
         collection = "forecast_hourly_snapshots" if "forecast_hourly_snapshot" in sources else (
@@ -489,35 +536,68 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
         raw_snapshots = list(query.limit(25).stream(timeout=_timeout(deadline), retry=None)) if forecast_rows else []
         if len(raw_snapshots) > 24:
             raise ValueError("hourly_limit")
-        stored = [record(collection, snapshot) for snapshot in raw_snapshots]
+        stored = [record(state, collection, snapshot) for snapshot in raw_snapshots]
         new = bool(metadata.get("control_version_id")) or _new_marker(forecast_rows + stored)
-        decision: dict[str, Any] = {}
-        published_doc = None
+        state.update(target_date=day, metadata_exists=bool(meta_snapshot.exists), metadata=metadata,
+                     stored_hourly=stored, stored_battery_daily_exists=bool(daily_snapshot.exists),
+                     stored_battery_daily=daily if daily_snapshot.exists else None,
+                     published_plan_document=None,
+                     forecast_identity={"target_date": day, "forecast_run_id": metadata.get("forecast_run_id"),
+                         "forecast_issued_at": metadata.get("forecast_issued_at"), "raw_plan_sha256": metadata.get("raw_plan_sha256"),
+                         "control_version_id": metadata.get("control_version_id")},
+                     evidence_kind="NEW_ADOPTED" if new else (
+                         "LEGACY_UNAVAILABLE" if meta_snapshot.exists else "LEGACY_NO_PLAN_METADATA"),
+                     _decision={})
+        states[day] = state
+    keys = []
+    for day, state in states.items():
+        metadata = state["metadata"]
+        if state["evidence_kind"] == "NEW_ADOPTED":
+            sha, version = metadata.get("raw_plan_sha256"), metadata.get("control_version_id")
+            if isinstance(sha, str) and len(sha) == 64:
+                keys.append(("night_plan_decisions", f"{day}--{sha}"))
+            if isinstance(version, str) and version:
+                keys.append(("control_plan_versions", version))
+        elif state["metadata_exists"]:
+            keys.append(("night_charge_plans", day))
+    decisions = _read_documents(client, keys, deadline=deadline)
+    for day, state in states.items():
+        metadata = state["metadata"]
+        new = state["evidence_kind"] == "NEW_ADOPTED"
         if new:
             sha = metadata.get("raw_plan_sha256")
             if isinstance(sha, str) and len(sha) == 64:
-                snapshot = client.collection("night_plan_decisions").document(f"{day}--{sha}").get(timeout=_timeout(deadline), retry=None)
-                decision = record("night_plan_decisions", snapshot)
+                snapshot = decisions[f"night_plan_decisions/{day}--{sha}"]
+                state["_decision"] = record(state, "night_plan_decisions", snapshot)
             version = metadata.get("control_version_id")
             if isinstance(version, str) and version:
-                snapshot = client.collection("control_plan_versions").document(version).get(timeout=_timeout(deadline), retry=None)
-                document = record("control_plan_versions", snapshot)
+                snapshot = decisions[f"control_plan_versions/{version}"]
+                document = record(state, "control_plan_versions", snapshot)
                 payload = document.get("payload")
-                published_doc = _json_object(payload.encode("utf-8"), maximum=900_000) if isinstance(payload, str) else payload
-        elif meta_snapshot.exists:
-            snapshot = client.collection("night_charge_plans").document(day).get(timeout=_timeout(deadline), retry=None)
-            decision = record("night_charge_plans", snapshot)
-        states[day] = {"target_date": day, "metadata_exists": bool(meta_snapshot.exists), "metadata": metadata,
-                       "stored_hourly": stored, "stored_battery_daily_exists": bool(daily_snapshot.exists),
-                       "stored_battery_daily": daily if daily_snapshot.exists else None,
-                       "published_plan_document": published_doc,
-                       "forecast_identity": {"target_date": day, "forecast_run_id": metadata.get("forecast_run_id"),
-                           "forecast_issued_at": metadata.get("forecast_issued_at"), "raw_plan_sha256": metadata.get("raw_plan_sha256"),
-                           "control_version_id": metadata.get("control_version_id")},
-                       "evidence_kind": "NEW_ADOPTED" if new else (
-                           "LEGACY_UNAVAILABLE" if meta_snapshot.exists else "LEGACY_NO_PLAN_METADATA"),
-                       "revisions_before": revisions, "read_count": reads, "read_bytes": size,
-                       "_decision": decision}
+                state["published_plan_document"] = (_json_object(payload.encode("utf-8"), maximum=900_000)
+                                                    if isinstance(payload, str) else payload)
+        elif state["metadata_exists"]:
+            decision = record(state, "night_charge_plans", decisions[f"night_charge_plans/{day}"])
+            issued = metadata.get("forecast_issued_at")
+            archived_at = decision.get("generated_at")
+            if issued and archived_at and _timestamp(issued) != _timestamp(archived_at):
+                candidates = list(client.collection("night_plan_decisions").where("date", "==", day)
+                                  .limit(MAX_LEGACY_ARCHIVE_CANDIDATES + 1)
+                                  .stream(timeout=_timeout(deadline), retry=None))
+                if len(candidates) > MAX_LEGACY_ARCHIVE_CANDIDATES:
+                    raise ValueError("legacy_archive_candidate_limit")
+                matching = []
+                for snapshot in candidates:
+                    candidate = record(state, "night_plan_decisions", snapshot)
+                    if candidate.get("date") != day:
+                        raise ValueError("legacy_archive_target_date")
+                    stamp = candidate.get("generated_at")
+                    if stamp and _timestamp(stamp) == _timestamp(issued):
+                        matching.append(candidate)
+                if len(matching) > 1:
+                    raise ValueError("legacy_archive_ambiguous")
+                decision = matching[0] if matching else {}
+            state["_decision"] = decision
     return states
 
 
@@ -568,10 +648,12 @@ def load_forecast_evidence_for_window(
     frozen = _frozen_originals(original_dir)
     states: dict[str, dict[str, Any]] = {}
     blobs: dict[str, Any] = {}
+    stage = "native_before"
     try:
         states = _read_state(client, start_date=start_date, end_date=end_date, grouped=grouped, deadline=deadline)
         for day, state in states.items():
-            state.update(original=None, original_sha256=None, original_generation=None, failure_reasons=[])
+            state.update(original=None, original_sha256=None, original_generation=None,
+                         native_reads_complete=False, failure_reasons=[])
             decision = state.pop("_decision")
             if state["evidence_kind"] == "LEGACY_NO_PLAN_METADATA":
                 continue
@@ -594,10 +676,12 @@ def load_forecast_evidence_for_window(
                 declared_generation = decision.get("detail_generation")
                 blob = (storage.bucket(bucket).blob(name, generation=int(declared_generation))
                         if declared_generation else storage.bucket(bucket).blob(name))
+                stage = "original_reload"
                 blob.reload(timeout=_timeout(deadline, 4), retry=None)
                 generation = int(blob.generation)
                 if decision.get("detail_generation") and generation != int(decision["detail_generation"]):
                     raise ValueError("original_generation_mismatch")
+                stage = "original_download"
                 compressed = blob.download_as_bytes(if_generation_match=generation, raw_download=True,
                     start=0, end=MAX_ORIGINAL_BYTES + 1023, timeout=_timeout(deadline, 4), retry=None)
                 raw = _decoded(compressed)
@@ -607,25 +691,47 @@ def load_forecast_evidence_for_window(
             if raw is not None:
                 if len(raw) > MAX_ORIGINAL_BYTES or hashlib.sha256(raw).hexdigest() != sha:
                     raise ValueError("original_checksum_or_size")
+                if state["evidence_kind"] != "NEW_ADOPTED":
+                    original = _json_object(raw)
+                    metadata = state["metadata"]
+                    issued = metadata.get("forecast_issued_at")
+                    generated = original.get("generated_at")
+                    if not isinstance(generated, str):
+                        raise ValueError("original_generated_at_invalid")
+                    identity_rows = build_forecast_snapshot_rows(
+                        original, ingested_at=generated, timezone="UTC")
+                    same_issued = not issued or _timestamp(original.get("generated_at")) == _timestamp(issued)
+                    run = metadata.get("forecast_run_id")
+                    same_run = not run or identity_rows[0]["forecast_run_id"] == run
+                    if not same_issued or not same_run:
+                        state["failure_reasons"].append("original:unavailable_legacy")
+                        state["read_count"] += 1
+                        state["read_bytes"] += len(raw)
+                        continue
                 state.update(original=raw, original_sha256=sha)
                 state["read_count"] += 1
                 state["read_bytes"] += len(raw)
                 if state["evidence_kind"] != "NEW_ADOPTED":
                     state["evidence_kind"] = "LEGACY_ORIGINAL"
+        stage = "native_after"
         after = _read_state(client, start_date=start_date, end_date=end_date, grouped=grouped, deadline=deadline)
         for day, state in states.items():
             state["revisions_after"] = after[day]["revisions_before"]
             state["read_count"] += after[day]["read_count"]
             state["read_bytes"] += after[day]["read_bytes"]
             if day in blobs:
+                stage = "generation_after"
                 blobs[day].reload(timeout=_timeout(deadline, 4), retry=None)
                 state["revisions_after"]["original_generation"] = str(blobs[day].generation)
-    except (GoogleAPICallError, TimeoutError, OSError):
+            state["native_reads_complete"] = True
+    except (GoogleAPICallError, TimeoutError, OSError) as exc:
         for day in grouped:
             state = states.setdefault(day, {"target_date": day, "metadata_exists": None, "metadata": {},
                 "evidence_kind": "NEW_ADOPTED" if _new_marker(grouped[day]) else "LEGACY_UNAVAILABLE",
                 "forecast_identity": {}, "read_count": 0, "read_bytes": 0})
             state.setdefault("failure_reasons", []).append("collector:read_unknown")
+            state["collector_error"] = {"exception_type": type(exc).__name__, "stage": stage}
+            state["native_reads_complete"] = False
             state.setdefault("revisions_before", {})
             state["revisions_after"] = state["revisions_before"]
     return states
