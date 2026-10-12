@@ -186,7 +186,10 @@
         "tests/test_firestore_native_harness.py::test_actual_sdk_document_get_accepts_recorded_stream_iterator_without_network",
         "tests/test_firestore_native_harness.py::test_actual_cleanup_restores_original_rpc_before_delete_commit_and_retains_primary",
         "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit",
-        "tests/test_gcs_native_harness.py::test_actual_storage_sdk_ack_generations_survive_cas_restore_and_exact_cleanup"
+        "tests/test_gcs_native_harness.py::test_actual_storage_sdk_ack_generations_survive_cas_restore_and_exact_cleanup",
+        "tests/test_firestore_native_harness.py::test_measurement_rpc_count_includes_payload_read_rpcs",
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[False]",
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]"
       ]
     },
     {

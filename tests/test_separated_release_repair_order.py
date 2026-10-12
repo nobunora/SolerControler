@@ -2,15 +2,60 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 from app.separated_runtime import planner
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='The canonical gcloud boundary uses Windows gcloud.cmd')
+@pytest.mark.parametrize('escaped', [False, True])
+def test_actual_cmd_boundary_preserves_exact_filter_quotes_once(tmp_path, escaped):
+    pwsh = shutil.which('pwsh')
+    if not pwsh:
+        pytest.skip('PowerShell is required for the canonical native-command boundary')
+    recorder = tmp_path / 'record_argv.py'
+    recorder.write_text('import json,sys\nprint(json.dumps(sys.argv[1:]))\n', encoding='utf-8')
+    command = tmp_path / 'record.cmd'
+    command.write_text(f'@echo off\r\n"{sys.executable}" "{recorder}" %*\r\n', encoding='utf-8')
+    driver = tmp_path / 'filter_boundary.ps1'
+    driver.write_text('''param([string]$Source,[string]$Command,[string]$Style)
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseFile($Source,[ref]$tokens,[ref]$errors)
+$assignments=@($ast.FindAll({param($node)
+ $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+ $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+ $node.Left.VariablePath.UserPath -eq 'filter'
+},$true))
+if($errors.Count -or $assignments.Count -ne 1){throw 'Expected one parsed filter assignment'}
+$ProbeJobName='owned-test-job';$executionName='owned-test-execution'
+. ([scriptblock]::Create($assignments[0].Extent.Text))
+if($Style -eq 'plain'){$filter=$filter.Replace(([string][char]92+[char]34),[string][char]34)}
+& $Command logging read $filter --limit 200
+exit $LASTEXITCODE
+''', encoding='utf-8')
+    result = subprocess.run([pwsh, '-NoProfile', '-File', str(driver),
+                             str(ROOT / 'scripts/run_server_adapter_proof_from_env.ps1'),
+                             str(command), 'escaped' if escaped else 'plain'],
+                            capture_output=True, text=True, encoding='utf-8', timeout=20)
+    assert result.returncode == 0, result.stderr
+    arguments = json.loads(result.stdout)
+    expected = ('resource.type=cloud_run_job AND resource.labels.job_name="owned-test-job" '
+                'AND labels."run.googleapis.com/execution_name"="owned-test-execution" '
+                'AND jsonPayload.event="server_adapter_proof"')
+    assert arguments[:2] == ['logging', 'read']
+    assert arguments[-2:] == ['--limit', '200']
+    assert (arguments[2] == expected) is escaped
+    if escaped:
+        assert '\\"' not in arguments[2]
 
 
 def test_unknown_exact_execution_cannot_select_current_or_relaunch(tmp_path, monkeypatch):
@@ -51,7 +96,8 @@ def test_production_fixture_rejects_global_parameter_and_hash_drift():
 
 
 @pytest.mark.parametrize("proof_status", ["PASS", "FAIL"])
-def test_server_proof_restores_dedicated_job_without_environment_or_control_writes(tmp_path, proof_status):
+@pytest.mark.parametrize("log_shape", ["normal", "mixed", "empty", "missing_exact", "duplicate_exact"])
+def test_server_proof_restores_dedicated_job_without_environment_or_control_writes(tmp_path, proof_status, log_shape):
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell integration requires the project interpreter")
@@ -92,10 +138,21 @@ if (($Args[0..2] -join ' ') -eq 'run jobs execute') {
  @{metadata=@{name='exact-proof'};status=@{failedCount=0;conditions=@('Completed','ResourcesAvailable','Started','ContainerReady')|ForEach-Object {@{type=$_;status='True'}}}}|ConvertTo-Json -Depth 10;exit 0
 }
 if (($Args[0..1] -join ' ') -eq 'logging read') {
- @(@{labels=@{'run.googleapis.com/execution_name'='exact-proof'};jsonPayload=@{event='server_adapter_proof';receipt=@{status='PROOF_STATUS';image_digest=('sha256:'+('a'*64));fixture_sha256=('b'*64)}}})|ConvertTo-Json -Depth 10;exit 0
+ $decodedFilter=$Args[2].Replace('\"','"')
+ if($decodedFilter -notmatch 'labels\."run.googleapis.com/execution_name"="exact-proof"' -or $decodedFilter -notmatch 'jsonPayload.event="server_adapter_proof"' -or $Args[([array]::IndexOf($Args,'--limit')+1)] -ne '200'){throw 'Proof log query must be bounded to the exact execution and event'}
+ $proof=@{labels=@{'run.googleapis.com/execution_name'='exact-proof'};jsonPayload=@{event='server_adapter_proof';receipt=@{status='PROOF_STATUS';image_digest=('sha256:'+('a'*64));fixture_sha256=('b'*64)}}}
+ $noise=@(@{textPayload='system'},@{labels=$null;jsonPayload=@{event='server_adapter_proof'}},@{labels=@{'run.googleapis.com/execution_name'='exact-proof'}},@{labels=@{'run.googleapis.com/execution_name'='exact-proof'};jsonPayload=@{message='different event'}},@{labels=@{'run.googleapis.com/execution_name'='other-proof'};jsonPayload=$proof.jsonPayload})
+ switch('LOG_SHAPE'){
+  'normal' { $rows=@($proof) }
+  'mixed' { $rows=@($noise)+@($proof) }
+  'empty' { $rows=@() }
+  'missing_exact' { $rows=@($noise) }
+  'duplicate_exact' { $rows=@($proof,$proof) }
+ }
+ ConvertTo-Json -InputObject $rows -Depth 10;exit 0
 }
 throw 'unexpected cloud call'
-'''.replace("PROOF_STATUS", proof_status), encoding="utf-8")
+'''.replace("PROOF_STATUS", proof_status).replace("LOG_SHAPE", log_shape), encoding="utf-8")
     driver = tmp_path / "driver.ps1"
     driver.write_text(r'''
 function global:python {
@@ -109,8 +166,13 @@ function global:python {
 }
 & (Join-Path $PSScriptRoot 'scripts/run_server_adapter_proof_from_env.ps1') -ImmutablePlannerImage ('repo@sha256:'+('a'*64)) -FixturePath (Join-Path $PSScriptRoot 'fixture.json') -ReceiptPath (Join-Path $PSScriptRoot 'receipt.json')
 ''', encoding="utf-8")
-    result = subprocess.run([pwsh, "-NoProfile", "-File", str(driver)], capture_output=True, text=True, timeout=30)
-    assert (result.returncode == 0) is (proof_status == "PASS"), result.stderr
+    result = subprocess.run([pwsh, "-NoProfile", "-File", str(driver)], capture_output=True, text=True, encoding='utf-8', timeout=30)
+    accepted = proof_status == 'PASS' and log_shape in {'normal', 'mixed'}
+    assert (result.returncode == 0) is accepted, result.stderr
+    assert (tmp_path / 'receipt.json').exists() is (log_shape in {'normal', 'mixed'})
+    saved_records = json.loads((tmp_path / 'receipt.json.d/proof-records.private.json').read_text(encoding='utf-8-sig'))
+    assert isinstance(saved_records, list)
+    assert len(saved_records) == {'normal': 1, 'mixed': 6, 'empty': 0, 'missing_exact': 5, 'duplicate_exact': 2}[log_shape]
     assert json.loads((tmp_path / "job.json").read_text()) == job
     calls = (tmp_path / "calls.txt").read_text().splitlines()
     assert calls.count("run jobs update") == 2

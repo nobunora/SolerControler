@@ -119,9 +119,17 @@ try {
     $exactText | Set-Content -LiteralPath (Join-Path $privateDirectory 'execution-exact.private.json') -Encoding utf8
     if (([string]$exactExecution.metadata.name -split '/')[-1] -ne $executionName) { throw 'Proof execution identity changed.' }
     Assert-ProofTerminal $exactExecution
-    $filter = "resource.type=cloud_run_job AND resource.labels.job_name=$ProbeJobName"
+    $filter = ('resource.type=cloud_run_job AND resource.labels.job_name="' + $ProbeJobName +
+        '" AND labels."run.googleapis.com/execution_name"="' + $executionName + '" AND jsonPayload.event="server_adapter_proof"').Replace('"', '\"')
     $records = @(Invoke-ProofCloud @('logging', 'read', $filter, '--project', $project, '--freshness', '1d', '--limit', '200', '--format', 'json') | ConvertFrom-Json -AsHashtable)
-    $proofs = @($records | Where-Object { $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and $_.jsonPayload.event -eq 'server_adapter_proof' })
+    ConvertTo-Json -InputObject $records -Depth 40 | Set-Content -LiteralPath (Join-Path $privateDirectory 'proof-records.private.json') -Encoding utf8
+    $proofs = @($records | Where-Object {
+        $_ -is [System.Collections.IDictionary] -and $_.Contains('labels') -and
+        $_.labels -is [System.Collections.IDictionary] -and $_.labels.Contains('run.googleapis.com/execution_name') -and
+        $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and
+        $_.Contains('jsonPayload') -and $_.jsonPayload -is [System.Collections.IDictionary] -and
+        $_.jsonPayload.Contains('event') -and $_.jsonPayload.event -eq 'server_adapter_proof'
+    })
     if ($proofs.Count -ne 1) { throw 'Exact execution proof is absent or ambiguous.' }
     $proof = $proofs[0].jsonPayload.receipt
     $proof | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $ReceiptPath -Encoding utf8
