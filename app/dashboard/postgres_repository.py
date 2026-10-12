@@ -122,7 +122,14 @@ def load_postgres_slice(
                 WITH hourly_actuals AS (
                     SELECT substring(ts,1,10) AS date,
                            EXTRACT(HOUR FROM CAST(ts AS timestamp))::integer AS hour,
-                           COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                           CASE WHEN COUNT(*) = 2 AND COUNT(DISTINCT substring(ts,15,2)) = 2
+                                AND COUNT(CASE WHEN load_kwh >= 0 AND load_kwh < 'Infinity'::double precision
+                                    AND substring(ts,15,2) IN ('00','30') AND substring(ts,18,2) = '00' THEN 1 END) = 2
+                                THEN SUM(load_kwh) END AS actual_load_kwh,
+                           CASE WHEN COUNT(*) = 2 AND COUNT(DISTINCT substring(ts,15,2)) = 2
+                                AND COUNT(CASE WHEN pv_kwh >= 0 AND pv_kwh < 'Infinity'::double precision
+                                    AND substring(ts,15,2) IN ('00','30') AND substring(ts,18,2) = '00' THEN 1 END) = 2
+                                THEN SUM(pv_kwh) END AS actual_pv_kwh,
                            MIN(ts) AS first_sample_at,
                            MAX(ts) AS latest_sample_at
                     FROM monitoring_samples
@@ -150,18 +157,23 @@ def load_postgres_slice(
                           AND soc_percent >= 0 AND soc_percent <= 100
                     ) ranked
                     GROUP BY date, hour
+                ), display_hours AS (
+                    SELECT date, hour FROM forecast_hourly WHERE date >= %s AND date <= %s
+                    UNION SELECT date, hour FROM hourly_actuals
                 )
-                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                       fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
+                SELECT dh.date, dh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                       fh.forecast_charge_kwh, ah.actual_load_kwh, ah.actual_pv_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
                        ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at
-                FROM forecast_hourly fh
-                LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
-                LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
-                WHERE fh.date >= %s AND fh.date <= %s
-                ORDER BY fh.date, fh.hour
+                FROM display_hours dh
+                LEFT JOIN forecast_hourly fh ON fh.date = dh.date AND fh.hour = dh.hour
+                LEFT JOIN hourly_actuals ah ON ah.date = dh.date AND ah.hour = dh.hour
+                LEFT JOIN hourly_soc hs ON hs.date = dh.date AND hs.hour = dh.hour
+                WHERE dh.date >= %s AND dh.date <= %s
+                ORDER BY dh.date, dh.hour
                 """,
-                (start_date, end_date_iso, start_date, end_date_iso, start_date, end_date_iso),
+                (start_date, end_date_iso, start_date, end_date_iso,
+                 start_date, end_date_iso, start_date, end_date_iso),
             )
             forecast_hourly = _rows_to_dicts(cur.fetchall())
 
@@ -169,8 +181,10 @@ def load_postgres_slice(
             cur.execute(
                 """
                 SELECT substring(ts,1,10) AS date,
-                       COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
-                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh
+                       CASE WHEN COUNT(CASE WHEN pv_kwh >= 0 AND pv_kwh < 'Infinity'::double precision THEN 1 END) = COUNT(*)
+                            THEN SUM(pv_kwh) END AS actual_pv_kwh,
+                       CASE WHEN COUNT(CASE WHEN load_kwh >= 0 AND load_kwh < 'Infinity'::double precision THEN 1 END) = COUNT(*)
+                            THEN SUM(load_kwh) END AS actual_load_kwh
                 FROM monitoring_samples
                 WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
                 GROUP BY substring(ts,1,10)
@@ -183,8 +197,10 @@ def load_postgres_slice(
             cur.execute(
                 """
                 SELECT substring(ts,1,10) AS date,
-                       COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
-                       COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
+                       CASE WHEN COUNT(CASE WHEN charge_kwh >= 0 AND charge_kwh < 'Infinity'::double precision THEN 1 END) = COUNT(*)
+                            THEN SUM(charge_kwh) END AS charge_kwh,
+                       CASE WHEN COUNT(CASE WHEN discharge_kwh >= 0 AND discharge_kwh < 'Infinity'::double precision THEN 1 END) = COUNT(*)
+                            THEN SUM(discharge_kwh) END AS discharge_kwh
                 FROM monitoring_samples
                 WHERE substring(ts,1,10) >= %s AND substring(ts,1,10) <= %s
                 GROUP BY substring(ts,1,10)

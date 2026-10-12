@@ -1,0 +1,914 @@
+{
+  "schema_version": 1,
+  "revision": 8,
+  "source_commit": "d401b15de199ff8f1215935d01080a67a4c95266",
+  "shared_documents": [
+    "contracts.md",
+    "data-contracts.md",
+    "publication-contracts.md",
+    "boundaries.json",
+    "gates.json",
+    "implementation-status.md"
+  ],
+  "planned_test_paths": [
+    "tests/test_clear_ghi_calibration_io.py",
+    "tests/test_control_publication_provenance.py",
+    "tests/test_dashboard_publication_generation.py",
+    "tests/test_forecast_projection_generation.py",
+    "tests/test_load_correction_equivalence.py",
+    "tests/test_pv_clear_ghi.py",
+    "tests/test_pv_clear_ghi_backup_roundtrip.py",
+    "tests/test_clear_ghi_runtime.py",
+    "tests/test_clear_ghi_store.py"
+  ],
+  "steps": [
+    {
+      "id": "S00",
+      "file": "steps/S00-input-gates.md",
+      "depends_on": [],
+      "gates": [
+        "G01",
+        "G02",
+        "G03",
+        "G09"
+      ],
+      "source_paths": [
+        "app/forecasting/clear_ghi_observations.py"
+      ],
+      "test_ids": [
+        "INPUT-001",
+        "INPUT-002",
+        "INPUT-003",
+        "INPUT-004",
+        "INPUT-005"
+      ],
+      "coverage_ids": [
+        "R03",
+        "R07",
+        "R08",
+        "R10",
+        "R13",
+        "R14",
+        "C01",
+        "C02",
+        "C09",
+        "C10",
+        "C12",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S00-input-gates.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S01",
+      "file": "steps/S01-pure-pv.md",
+      "depends_on": [
+        "S00"
+      ],
+      "gates": [
+        "G01",
+        "G03"
+      ],
+      "source_paths": [
+        "app/forecasting/pv_clear_ghi.py"
+      ],
+      "test_ids": [
+        "PV-001",
+        "PV-002",
+        "PV-003",
+        "PV-004",
+        "PV-005",
+        "PV-006"
+      ],
+      "coverage_ids": [
+        "R02",
+        "R03",
+        "R07",
+        "R10",
+        "R13",
+        "C01",
+        "C02",
+        "C04",
+        "C09",
+        "C10",
+        "C12",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S01-pure-pv.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S02",
+      "file": "steps/S02-calibration-io.md",
+      "depends_on": [
+        "S01"
+      ],
+      "gates": [
+        "G02"
+      ],
+      "source_paths": [
+        "app/forecasting/clear_ghi_calibration_io.py",
+        "app/forecasting/clear_ghi_store.py"
+      ],
+      "test_ids": [
+        "IO-001",
+        "IO-002",
+        "IO-003",
+        "IO-004",
+        "IO-005",
+        "IO-006",
+        "IO-007"
+      ],
+      "coverage_ids": [
+        "R07",
+        "R08",
+        "R10",
+        "R14",
+        "C06",
+        "C09",
+        "C10",
+        "C12",
+        "C14",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S02-calibration-io.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S03",
+      "file": "steps/S03-load-correction.md",
+      "depends_on": [
+        "S02"
+      ],
+      "gates": [],
+      "source_paths": [
+        "app/forecasting/correction_model.py",
+        "app/forecasting/correction.py"
+      ],
+      "test_ids": [
+        "LOAD-001",
+        "LOAD-002",
+        "LOAD-003",
+        "LOAD-004",
+        "LOAD-005"
+      ],
+      "coverage_ids": [
+        "R01",
+        "R02",
+        "R14",
+        "C03",
+        "C04",
+        "C10",
+        "C12",
+        "C15"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S03-load-correction.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S04",
+      "file": "steps/S04-plan-integration.md",
+      "depends_on": [
+        "S03"
+      ],
+      "gates": [
+        "G02",
+        "G06",
+        "G09"
+      ],
+      "source_paths": [
+        "app/energy_plan/clear_ghi_adapter.py",
+        "app/energy_plan/workflow.py",
+        "app/energy_plan/clear_ghi_update.py"
+      ],
+      "test_ids": [
+        "PLAN-001",
+        "PLAN-002",
+        "PLAN-003",
+        "PLAN-004",
+        "PLAN-005",
+        "PLAN-006"
+      ],
+      "coverage_ids": [
+        "R03",
+        "R04",
+        "R05",
+        "R06",
+        "R07",
+        "R12",
+        "R14",
+        "R15",
+        "C02",
+        "C03",
+        "C04",
+        "C09",
+        "C10",
+        "C12",
+        "C13",
+        "C14",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S04-plan-integration.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S05",
+      "file": "steps/S05-plan-output.md",
+      "depends_on": [
+        "S04"
+      ],
+      "gates": [],
+      "source_paths": [
+        "app/energy_plan/result_builder.py"
+      ],
+      "test_ids": [
+        "OUTPUT-001",
+        "OUTPUT-002",
+        "OUTPUT-003",
+        "OUTPUT-004",
+        "OUTPUT-005",
+        "OUTPUT-006"
+      ],
+      "coverage_ids": [
+        "R03",
+        "R04",
+        "R07",
+        "R11",
+        "R15",
+        "C02",
+        "C05",
+        "C06",
+        "C07",
+        "C10",
+        "C11",
+        "C12",
+        "C14",
+        "C15"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S05-plan-output.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S06",
+      "file": "steps/S06-economic-confounders.md",
+      "depends_on": [
+        "S05"
+      ],
+      "gates": [
+        "G06"
+      ],
+      "source_paths": [],
+      "test_ids": [
+        "ECON-001",
+        "ECON-002",
+        "ECON-003",
+        "ECON-004",
+        "ECON-005"
+      ],
+      "coverage_ids": [
+        "R01",
+        "R04",
+        "R05",
+        "R06",
+        "R12",
+        "C03",
+        "C04",
+        "C10",
+        "C13",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED_EXTERNAL_GATE_OPEN",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "steps/S06-economic-confounders.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S07",
+      "file": "steps/S07-control-publication.md",
+      "depends_on": [
+        "S06"
+      ],
+      "gates": [
+        "G05"
+      ],
+      "source_paths": [
+        "app/runtime/forecast_job.py",
+        "app/backup/plan_snapshot.py",
+        "app/separated_runtime/planner.py",
+        "app/separated_runtime/plan_store.py"
+      ],
+      "test_ids": [
+        "CONTROL-01",
+        "CONTROL-02",
+        "CONTROL-03",
+        "CONTROL-04"
+      ],
+      "coverage_ids": [
+        "R07",
+        "R09",
+        "R11",
+        "R15",
+        "C05",
+        "C08",
+        "C09",
+        "C12",
+        "C14",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "publication-contracts.md",
+        "steps/S07-control-publication.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S08",
+      "file": "steps/S08-forecast-projection.md",
+      "depends_on": [
+        "S07"
+      ],
+      "gates": [
+        "G05",
+        "G07"
+      ],
+      "source_paths": [
+        "app/operations/forecast_persistence.py",
+        "app/operations/firestore.py",
+        "app/separated_runtime/planner.py",
+        "app/backup/plan_snapshot.py",
+        "app/operations/domain.py",
+        "app/operations/forecast_snapshot.py"
+      ],
+      "test_ids": [
+        "PROJECTION-01",
+        "PROJECTION-02",
+        "PROJECTION-03",
+        "PROJECTION-04",
+        "PROJECTION-05"
+      ],
+      "coverage_ids": [
+        "R03",
+        "R07",
+        "R09",
+        "R10",
+        "R11",
+        "R15",
+        "C02",
+        "C05",
+        "C08",
+        "C09",
+        "C12",
+        "C14",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "publication-contracts.md",
+        "steps/S08-forecast-projection.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S09",
+      "file": "steps/S09-dashboard-publication.md",
+      "depends_on": [
+        "S08"
+      ],
+      "gates": [
+        "G04",
+        "G07"
+      ],
+      "source_paths": [
+        "app/dashboard/snapshots.py",
+        "app/dashboard/slice_assembler.py",
+        "app/dashboard/data.py",
+        "app/dashboard/firestore_repository.py"
+      ],
+      "test_ids": [
+        "DASH-01",
+        "DASH-02",
+        "DASH-03",
+        "DASH-04",
+        "DASH-05"
+      ],
+      "coverage_ids": [
+        "R07",
+        "R09",
+        "R10",
+        "R11",
+        "R14",
+        "R15",
+        "C05",
+        "C07",
+        "C09",
+        "C11",
+        "C12",
+        "C14",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED_EXTERNAL_GATE_OPEN",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "publication-contracts.md",
+        "steps/S09-dashboard-publication.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    },
+    {
+      "id": "S10",
+      "file": "steps/S10-backup-release.md",
+      "depends_on": [
+        "S09"
+      ],
+      "gates": [
+        "G07",
+        "G08"
+      ],
+      "source_paths": [
+        "app/backup/drive.py",
+        "app/backup/plan_snapshot.py",
+        "app/runtime/cloud_job.py",
+        "app/runtime/night_soc_time_contract.py"
+      ],
+      "test_ids": [
+        "RELEASE-01",
+        "RELEASE-02",
+        "RELEASE-03",
+        "RELEASE-04",
+        "RELEASE-05"
+      ],
+      "coverage_ids": [
+        "R03",
+        "R07",
+        "R08",
+        "R10",
+        "R11",
+        "R14",
+        "R15",
+        "C05",
+        "C06",
+        "C07",
+        "C08",
+        "C09",
+        "C11",
+        "C12",
+        "C14",
+        "C15",
+        "C16"
+      ],
+      "status": "LOCAL_IMPLEMENTED_VERIFIED_EXTERNAL_GATE_OPEN",
+      "read_set": [
+        "contracts.md",
+        "gates.json",
+        "data-contracts.md",
+        "publication-contracts.md",
+        "steps/S10-backup-release.md"
+      ],
+      "evidence_read_set": [
+        "implementation-status.md"
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "id": "R01",
+      "label": "消費/scenario等価性",
+      "owner_steps": [
+        "S03",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R02",
+      "label": "新PVへの旧補正なし",
+      "owner_steps": [
+        "S01",
+        "S03"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R03",
+      "label": "24値・欠損・有効0",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S04",
+        "S05",
+        "S08",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R04",
+      "label": "PV24/SOC17と時間窓",
+      "owner_steps": [
+        "S04",
+        "S05",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R05",
+      "label": "scenario経済評価",
+      "owner_steps": [
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R06",
+      "label": "最終PVで夜間一度",
+      "owner_steps": [
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R07",
+      "label": "run入力・原本固定",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S04",
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R08",
+      "label": "完成係数の原子的公開",
+      "owner_steps": [
+        "S00",
+        "S02",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R09",
+      "label": "古入力の遅延公開拒否",
+      "owner_steps": [
+        "S07",
+        "S08",
+        "S09"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R10",
+      "label": "学習冪等/訂正/as_of",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R11",
+      "label": "表示と計画の同世代/後退防止",
+      "owner_steps": [
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R12",
+      "label": "physical分類とcap",
+      "owner_steps": [
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R13",
+      "label": "修復制限と0保持",
+      "owner_steps": [
+        "S00",
+        "S01"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R14",
+      "label": "7日/料金/共有I/O",
+      "owner_steps": [
+        "S00",
+        "S02",
+        "S03",
+        "S04",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "R15",
+      "label": "reader/制御/SOC API",
+      "owner_steps": [
+        "S04",
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C01",
+      "label": "晴天認定/太陽幾何/年周期",
+      "owner_steps": [
+        "S00",
+        "S01"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C02",
+      "label": "時間対応/翌00時/窓",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S04",
+        "S05",
+        "S08"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C03",
+      "label": "消費・scenario等価性",
+      "owner_steps": [
+        "S03",
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C04",
+      "label": "補正の二度掛け防止",
+      "owner_steps": [
+        "S01",
+        "S03",
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C05",
+      "label": "単一trace/schema/原本保存",
+      "owner_steps": [
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C06",
+      "label": "backup復元と係数currentの分離",
+      "owner_steps": [
+        "S02",
+        "S05",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C07",
+      "label": "producer/reader cache",
+      "owner_steps": [
+        "S05",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C08",
+      "label": "保存→採用→projection順序",
+      "owner_steps": [
+        "S07",
+        "S08",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C09",
+      "label": "予報/係数/実績の鮮度と競合",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S04",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C10",
+      "label": "数値/型/as_of/変数の説明",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C11",
+      "label": "dashboard読取性能",
+      "owner_steps": [
+        "S05",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C12",
+      "label": "コード/変数の変更禁止",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C13",
+      "label": "経済/SOC交絡分離",
+      "owner_steps": [
+        "S04",
+        "S06"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C14",
+      "label": "異常検出・秘密を除いたログ",
+      "owner_steps": [
+        "S02",
+        "S04",
+        "S05",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C15",
+      "label": "production source不変/境界",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S03",
+        "S04",
+        "S05",
+        "S06",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    },
+    {
+      "id": "C16",
+      "label": "OPEN gateと承認/試験状態",
+      "owner_steps": [
+        "S00",
+        "S01",
+        "S02",
+        "S04",
+        "S06",
+        "S07",
+        "S08",
+        "S09",
+        "S10"
+      ],
+      "verification_scope": "DOCUMENTED; implementation evidence pending gates"
+    }
+  ],
+  "validation_evidence": {
+    "date": "2026-10-12",
+    "scope": "uncommitted working tree based on source_commit",
+    "command": "pwsh -NoProfile -File scripts/pre_release_local.ps1 -SkipInstall",
+    "result": "PASS",
+    "pytest_passed": 1167,
+    "pytest_skipped": 1,
+    "skip_reason": "RUN_EXTERNAL_SITE_TESTS opt-in public Open-Meteo test; separate live provider smoke passed",
+    "path": "../../../../artifacts/analysis/pv-new100-implementation-20261011/quality-gate-verified.log"
+  }
+}

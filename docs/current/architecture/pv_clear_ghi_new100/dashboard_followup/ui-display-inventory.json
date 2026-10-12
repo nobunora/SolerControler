@@ -1,0 +1,3254 @@
+{
+  "schema_version": 1,
+  "status": "DOCUMENTATION_COMPLETE_IMPLEMENTATION_NOT_AUTHORIZED",
+  "scope": "Frontend inventory only; no production/test source edits; no network/cloud calls; existing canonical quality result supplied by parent",
+  "source_sha256": {
+    "templates/dashboard.html": "f4a40371c68a94e16eb6c4e70440bc16e09463c59e7b17f6ff46e69571ed94f3",
+    "static/dashboard.js": "c0441bca7a38b06621b5ac31480c77968dad03d36cd82ac367fb138b6b6fc17e",
+    "static/dashboard_calculations.js": "185bc01889fdd2a1fa0475b61ffb17942be439e2c887c95d18ccf8b110b11dcb",
+    "static/dashboard_store.js": "f2320ec26988272f6728962addddf5e51e285fda9c31c11ca8cd7c4b17875098",
+    "static/dashboard_api.js": "17c523f0ecabeeb3e3ee73f7d9f9b7cf59dbf53342c3ae854937be018d4fa87a",
+    "static/dashboard_dates.js": "9628f7c934af6b34c85c7f9fd742172d8389af9d7592081a1b6966a602abb32c",
+    "tests/test_dashboard_bootstrap.js": "569b8ee1d961ad6ddd7631eccc47bdf220a4679e9180bca5b9b7b7dba7ebdf7b",
+    "tests/test_dashboard_modules.js": "e9cc001bdaf15cb3d26098af5b65bdc192f47bd2ad8192cee0a5fd0ae2083df1",
+    "tests/test_dashboard_calculations.js": "5c4344619cab5662e77e1f860f824ac3c4dfb7db9d27988762177de29a18a8ec"
+  },
+  "inventory_count": 81,
+  "risk_count": 18,
+  "inventory": [
+    {
+      "id": "U01",
+      "section": "shell",
+      "label": "タイトル・期間操作案内",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "hero",
+        "line": 12
+      },
+      "fields": [],
+      "risk_ids": [
+        "R16"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U02",
+      "section": "shell",
+      "label": "読込/失敗/表示期間status",
+      "html_ids": [
+        "statusMsg"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "setStatus",
+        "line": 114
+      },
+      "fields": [
+        "store.meta",
+        "periodState",
+        "selectedWindowBuckets"
+      ],
+      "risk_ids": [
+        "R09",
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 114
+    },
+    {
+      "id": "U03",
+      "section": "warnings",
+      "label": "最大6警告severity/title/message",
+      "html_ids": [
+        "dashboardWarnings"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDashboardWarnings",
+        "line": 426
+      },
+      "fields": [
+        "dashboard_warnings[].severity",
+        "dashboard_warnings[].title",
+        "dashboard_warnings[].code",
+        "dashboard_warnings[].message"
+      ],
+      "risk_ids": [
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 426
+    },
+    {
+      "id": "U04",
+      "section": "review",
+      "label": "見出し/前後ボタン/対象日/48件注記",
+      "html_ids": [
+        "dailyReviewPrevBtn",
+        "dailyReviewDate",
+        "dailyReviewNextBtn",
+        "dailyReviewNote"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.date",
+        "daily_reviews[].date"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "symbol": "moveDailyReview",
+          "line": 509
+        },
+        {
+          "path": "templates/dashboard.html",
+          "line": 21
+        }
+      ],
+      "field_source_line": 448
+    },
+    {
+      "id": "U05",
+      "section": "review",
+      "label": "設定SOC（予想）",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.target_soc_percent"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 485
+    },
+    {
+      "id": "U06",
+      "section": "review",
+      "label": "朝7時SOC（実績）",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.actual_morning_soc_percent"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 486
+    },
+    {
+      "id": "U07",
+      "section": "review",
+      "label": "夜間充電予測/実績/差",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.forecast_night_charge_kwh",
+        "daily_review.actual_night_charge_kwh"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 487
+    },
+    {
+      "id": "U08",
+      "section": "review",
+      "label": "PV24発電予測/実績/差",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.forecast_pv_kwh",
+        "daily_review.actual_pv_kwh"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 488
+    },
+    {
+      "id": "U09",
+      "section": "review",
+      "label": "家の消費予測/実績",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.forecast_load_kwh",
+        "daily_review.actual_load_kwh"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 489
+    },
+    {
+      "id": "U10",
+      "section": "review",
+      "label": "日中買電予測/実績",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.forecast_day_buy_kwh",
+        "daily_review.actual_day_buy_kwh"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 490
+    },
+    {
+      "id": "U11",
+      "section": "review",
+      "label": "売電予測/実績",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.forecast_sell_kwh",
+        "daily_review.actual_sell_kwh"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 491
+    },
+    {
+      "id": "U12",
+      "section": "review",
+      "label": "実績SOC最小/最大",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.actual_soc_min_percent",
+        "daily_review.actual_soc_max_percent"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 492
+    },
+    {
+      "id": "U13",
+      "section": "review",
+      "label": "夜間電力累計/請求期間",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.cumulative_night_buy_kwh",
+        "daily_review.billing_period_start",
+        "daily_review.billing_period_end"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 493
+    },
+    {
+      "id": "U14",
+      "section": "review",
+      "label": "昼間電力累計/請求期間",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.cumulative_day_buy_kwh",
+        "daily_review.billing_period_start",
+        "daily_review.billing_period_end"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 494
+    },
+    {
+      "id": "U15",
+      "section": "review",
+      "label": "電力量料金予想/昼夜内訳",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.projected_energy_cost_yen",
+        "daily_review.projected_day_cost_yen",
+        "daily_review.projected_night_cost_yen"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 495
+    },
+    {
+      "id": "U16",
+      "section": "review",
+      "label": "第2/第3段階到達日と予想/到達",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.tier2_arrival.date",
+        "daily_review.tier2_arrival.status",
+        "daily_review.tier3_arrival.date",
+        "daily_review.tier3_arrival.status"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 496
+    },
+    {
+      "id": "U17",
+      "section": "review",
+      "label": "最も近い類似日/類似度/天候/最高最低気温",
+      "html_ids": [
+        "dailyReviewGrid"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [
+        "daily_review.analog_date",
+        "daily_review.analog_similarity",
+        "daily_review.analog_weather",
+        "daily_review.analog_max_temp_c",
+        "daily_review.analog_min_temp_c"
+      ],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 497
+    },
+    {
+      "id": "U18",
+      "section": "review",
+      "label": "主な乖離findings領域は空",
+      "html_ids": [
+        "dailyReviewFindings"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderDailyReview",
+        "line": 448
+      },
+      "fields": [],
+      "risk_ids": [
+        "R11"
+      ],
+      "visibility": "empty_reserved_region",
+      "field_source_line": 504
+    },
+    {
+      "id": "U19",
+      "section": "hourly",
+      "label": "最新計画見出し/対象日/無データ案内",
+      "html_ids": [],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "hourlyForecastDate",
+        "line": 998
+      },
+      "fields": [
+        "latest_schedule.plan_date",
+        "store.hourly.keys"
+      ],
+      "risk_ids": [
+        "R05",
+        "R09"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 33
+        }
+      ],
+      "field_source_line": 997
+    },
+    {
+      "id": "U20",
+      "section": "hourly",
+      "label": "予想発電kWh/h",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderHourlyForecast",
+        "line": 1008
+      },
+      "fields": [
+        "forecast_pv_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08"
+      ],
+      "visibility": "visible_or_conditional",
+      "series_index": 0,
+      "also": [
+        {
+          "symbol": "buildCharts",
+          "line": 790
+        }
+      ],
+      "field_source_line": 1029
+    },
+    {
+      "id": "U21",
+      "section": "hourly",
+      "label": "PV余剰充電予測kWh/h",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderHourlyForecast",
+        "line": 1008
+      },
+      "fields": [
+        "forecast_charge_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08"
+      ],
+      "visibility": "visible_or_conditional",
+      "series_index": 1,
+      "also": [
+        {
+          "symbol": "buildCharts",
+          "line": 791
+        }
+      ],
+      "field_source_line": 1030
+    },
+    {
+      "id": "U22",
+      "section": "hourly",
+      "label": "家の消費 実績/予測kWh/h",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderHourlyForecast",
+        "line": 1008
+      },
+      "fields": [
+        "actual_load_kwh|forecast_load_kwh"
+      ],
+      "risk_ids": [
+        "R17",
+        "R08"
+      ],
+      "visibility": "visible_or_conditional",
+      "series_index": 2,
+      "also": [
+        {
+          "symbol": "buildCharts",
+          "line": 792
+        }
+      ],
+      "field_source_line": 1031
+    },
+    {
+      "id": "U23",
+      "section": "hourly",
+      "label": "夜間系統充電予測kWh/h",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "estimateHourlyNightGridCharge",
+        "line": 1087
+      },
+      "fields": [
+        "planned_night_charge_kwh|night_charge_kwh + charge_start_time/charge_end_time"
+      ],
+      "risk_ids": [
+        "R05",
+        "R04"
+      ],
+      "visibility": "visible_or_conditional",
+      "series_index": 3,
+      "also": [
+        {
+          "symbol": "buildCharts",
+          "line": 793
+        }
+      ],
+      "field_source_line": 1092
+    },
+    {
+      "id": "U24",
+      "section": "hourly",
+      "label": "予想SOC/実績/参考推定混在",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "estimateHourlyForecastSoc",
+        "line": 1095
+      },
+      "fields": [
+        "forecast_soc_percent|actual_soc_percent|forecast_capacity_kwh"
+      ],
+      "risk_ids": [
+        "R05",
+        "R06",
+        "R07"
+      ],
+      "visibility": "visible_or_conditional",
+      "series_index": 4,
+      "also": [
+        {
+          "symbol": "buildCharts",
+          "line": 794
+        }
+      ],
+      "field_source_line": 1100
+    },
+    {
+      "id": "U25",
+      "section": "hourly",
+      "label": "24時間PV/余剰充電/家消費と夜間買電/ピーク/実績範囲/更新時刻",
+      "html_ids": [
+        "hourlyForecastNote"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderHourlyForecast",
+        "line": 1008
+      },
+      "fields": [
+        "forecast_hourly[].forecast_pv_kwh",
+        "forecast_charge_kwh",
+        "actual_load_kwh",
+        "forecast_load_kwh",
+        "latest_sample_at",
+        "latest_schedule.plan_updated_at",
+        "planned_night_charge_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R05",
+        "R06",
+        "R09",
+        "R17"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1060
+    },
+    {
+      "id": "U26",
+      "section": "hourly",
+      "label": "hourly凡例/tooltip/左右軸",
+      "html_ids": [
+        "hourlyForecastChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "commonOptions/buildCharts/renderHourlyForecast",
+        "line": 763
+      },
+      "fields": [
+        "Chart.dataset.label",
+        "Chart.parsed.y",
+        "rows[].hour"
+      ],
+      "risk_ids": [
+        "R06",
+        "R07",
+        "R08"
+      ],
+      "visibility": "visible_or_conditional",
+      "axes": {
+        "energy": [
+          0,
+          5
+        ],
+        "soc": [
+          0,
+          100
+        ],
+        "ticks": 6
+      },
+      "field_source_line": 765
+    },
+    {
+      "id": "U27",
+      "section": "period",
+      "label": "表示期間説明/請求締日/期間label",
+      "html_ids": [
+        "periodLabel"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "updatePeriodControls",
+        "line": 602
+      },
+      "fields": [
+        "meta.aggregation_close_day",
+        "periodState.mode/month/year",
+        "meta.global_oldest_date",
+        "meta.global_newest_date"
+      ],
+      "risk_ids": [
+        "R09",
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 39
+        }
+      ],
+      "field_source_line": 603
+    },
+    {
+      "id": "U28",
+      "section": "period",
+      "label": "月/年/全て・前/後ボタンと無効境界",
+      "html_ids": [
+        "periodMonthBtn",
+        "periodYearBtn",
+        "periodAllBtn",
+        "periodPrevBtn",
+        "periodNextBtn"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "bindPeriodControls/updatePeriodControls",
+        "line": 1488
+      },
+      "fields": [
+        "periodState",
+        "meta.global_oldest_date",
+        "meta.global_newest_date"
+      ],
+      "risk_ids": [
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1488
+    },
+    {
+      "id": "U29",
+      "section": "period",
+      "label": "遅延history/slice fallback・bootstrap・同一取得再描画",
+      "html_ids": [],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "ensureDataForRange/main/absorbSlice",
+        "line": 661
+      },
+      "fields": [
+        "meta.oldest_loaded_date",
+        "meta.has_more_before",
+        "historyLoaded",
+        "loadingOlder",
+        "window.__DASHBOARD_DATA__"
+      ],
+      "risk_ids": [
+        "R09",
+        "R10"
+      ],
+      "visibility": "loading_status_or_control_behavior",
+      "also": [
+        {
+          "path": "static/dashboard_api.js",
+          "symbol": "fetchBootstrap/fetchHistory/fetchSlice",
+          "line": 21
+        },
+        {
+          "path": "static/dashboard_store.js",
+          "symbol": "createStore/createPeriodState",
+          "line": 6
+        },
+        {
+          "path": "static/dashboard_dates.js",
+          "symbol": "isoDateAdd/todayIsoJst",
+          "line": 6
+        }
+      ],
+      "field_source_line": 663
+    },
+    {
+      "id": "U30",
+      "section": "period_charts",
+      "label": "PV予測/実績/差分",
+      "html_ids": [
+        "pvChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderWindow",
+        "line": 1281
+      },
+      "fields": [
+        "energy_daily.forecast_pv_kwh",
+        "energy_daily.actual_pv_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08",
+        "R10",
+        "R11"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "予測(kWh)",
+        "実績(kWh)",
+        "実績-予測(kWh)"
+      ],
+      "aggregation": "sumBucket for kWh; averageBucket for SOC; daily/weekly selected buckets; cumulative includes preceding loaded dates",
+      "field_source_line": 1291
+    },
+    {
+      "id": "U31",
+      "section": "period_charts",
+      "label": "消費予測/実績/差分",
+      "html_ids": [
+        "loadChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderWindow",
+        "line": 1281
+      },
+      "fields": [
+        "energy_daily.forecast_load_kwh",
+        "energy_daily.actual_load_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08",
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "予測(kWh)",
+        "実績(kWh)",
+        "実績-予測(kWh)"
+      ],
+      "aggregation": "sumBucket for kWh; averageBucket for SOC; daily/weekly selected buckets; cumulative includes preceding loaded dates",
+      "field_source_line": 1297
+    },
+    {
+      "id": "U32",
+      "section": "period_charts",
+      "label": "自家消費日/週・累計・動的見出し/説明",
+      "html_ids": [
+        "dailyKwhTitle",
+        "dailyKwhDesc",
+        "dailyKwhChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderWindow",
+        "line": 1281
+      },
+      "fields": [
+        "cost_daily.self_consumption_kwh",
+        "store.dates",
+        "periodState.mode"
+      ],
+      "risk_ids": [
+        "R04",
+        "R10",
+        "R12"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "日次/週次 自家消費(kWh)",
+        "累計 自家消費(kWh)"
+      ],
+      "aggregation": "sumBucket for kWh; averageBucket for SOC; daily/weekly selected buckets; cumulative includes preceding loaded dates",
+      "field_source_line": 1311
+    },
+    {
+      "id": "U33",
+      "section": "period_charts",
+      "label": "節約額日/週・累計・動的見出し/説明",
+      "html_ids": [
+        "dailyYenTitle",
+        "dailyYenDesc",
+        "dailyYenChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderWindow",
+        "line": 1281
+      },
+      "fields": [
+        "cost_daily.savings_yen",
+        "store.dates",
+        "periodState.mode"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08",
+        "R10",
+        "R12"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "日次/週次 節約額(円)",
+        "累計 節約額(円)"
+      ],
+      "aggregation": "sumBucket for kWh; averageBucket for SOC; daily/weekly selected buckets; cumulative includes preceding loaded dates",
+      "field_source_line": 1312
+    },
+    {
+      "id": "U34",
+      "section": "period_charts",
+      "label": "月別自家消費/節約額・請求期間重なり",
+      "html_ids": [
+        "monthlyCostChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderMonthly",
+        "line": 1434
+      },
+      "fields": [
+        "cost_monthly.month",
+        "period_start",
+        "period_end",
+        "self_consumption_kwh",
+        "savings_yen"
+      ],
+      "risk_ids": [
+        "R04",
+        "R08",
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "月間 自家消費(kWh)",
+        "月間 節約額(円)"
+      ],
+      "aggregation": "cost_monthly rows overlapping selected range",
+      "field_source_line": 1434
+    },
+    {
+      "id": "U35",
+      "section": "period_charts",
+      "label": "蓄電池設定SOC/夜間計画/実PV充電終了SOC・週平均",
+      "html_ids": [
+        "batteryTitle",
+        "batteryDesc",
+        "batteryChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderWindow",
+        "line": 1281
+      },
+      "fields": [
+        "battery_daily.setting_soc_target_percent",
+        "night_charge_kwh",
+        "pv_charge_end_soc_percent",
+        "periodState.mode"
+      ],
+      "risk_ids": [
+        "R05",
+        "R08",
+        "R10"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "設定SOC(%)/週平均",
+        "夜間充電計画(kWh/日/週)",
+        "太陽光充電終了時SOC(%)/週平均"
+      ],
+      "aggregation": "sumBucket for kWh; averageBucket for SOC; daily/weekly selected buckets; cumulative includes preceding loaded dates",
+      "field_source_line": 1383
+    },
+    {
+      "id": "U36",
+      "section": "life",
+      "label": "期間内累計充電",
+      "html_ids": [
+        "lifeTotalCharge"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "battery_flow_daily.charge_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1263
+    },
+    {
+      "id": "U37",
+      "section": "life",
+      "label": "期間内累計放電",
+      "html_ids": [
+        "lifeTotalDischarge"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "battery_flow_daily.discharge_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1264
+    },
+    {
+      "id": "U38",
+      "section": "life",
+      "label": "期間内等価サイクル",
+      "html_ids": [
+        "lifeEquivalentCycles"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "battery_flow_daily.discharge_kwh",
+        "model_parameters.battery_usable_capacity_kwh"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1265
+    },
+    {
+      "id": "U39",
+      "section": "life",
+      "label": "推定容量/SOH",
+      "html_ids": [
+        "lifeEstimatedCapacity"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "model_parameters.battery_usable_capacity_kwh",
+        "battery_cycle_capacity_fade_per_cycle"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1266
+    },
+    {
+      "id": "U40",
+      "section": "life",
+      "label": "80%到達予測年",
+      "html_ids": [
+        "lifeEightyPercentYear"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "monthlyCycleLoss",
+        "calendarLoss",
+        "meta.global_newest_date"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1267
+    },
+    {
+      "id": "U41",
+      "section": "life",
+      "label": "月平均Eqサイクル",
+      "html_ids": [
+        "lifeMonthlyCycles"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "equivalentCycles",
+        "monthSpan(selected_range)"
+      ],
+      "risk_ids": [
+        "R04",
+        "R13"
+      ],
+      "visibility": "visible_or_conditional",
+      "field_source_line": 1268
+    },
+    {
+      "id": "U42",
+      "section": "life",
+      "label": "容量内訳stack（月）・非制御/実績copy",
+      "html_ids": [
+        "batteryLifeChart"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderBatteryLifeProjection",
+        "line": 1187
+      },
+      "fields": [
+        "battery_flow_daily.discharge_kwh",
+        "pv_daily.actual_temp_c",
+        "model_parameters.battery_usable_capacity_kwh",
+        "battery_cycle_capacity_fade_per_cycle",
+        "battery_temp_coeff_per_deg"
+      ],
+      "risk_ids": [
+        "R13",
+        "R08"
+      ],
+      "visibility": "visible_or_conditional",
+      "series": [
+        "現在推定容量(kWh)",
+        "サイクル劣化(kWh)",
+        "カレンダー劣化(kWh)",
+        "温度容量補正(kWh)"
+      ],
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 88
+        }
+      ],
+      "field_source_line": 1187
+    },
+    {
+      "id": "U43",
+      "section": "gantt",
+      "label": "JST00..24軸/実行計画 夜間充電と日中放電",
+      "html_ids": [
+        "constraintGantt"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderConstraintGantt",
+        "line": 328
+      },
+      "fields": [
+        "latest_schedule.charge_start_time",
+        "latest_schedule.charge_end_time",
+        "latest_schedule.day_discharge_window_start",
+        "latest_schedule.day_discharge_window_end"
+      ],
+      "risk_ids": [
+        "R05",
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 104
+        }
+      ],
+      "field_source_line": 339
+    },
+    {
+      "id": "U44",
+      "section": "gantt",
+      "label": "制約レイヤー 放電禁止/許可",
+      "html_ids": [
+        "constraintGantt"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderConstraintGantt",
+        "line": 328
+      },
+      "fields": [
+        "latest_schedule.night_window_start",
+        "latest_schedule.night_window_end",
+        "latest_schedule.day_discharge_window_start",
+        "latest_schedule.day_discharge_window_end"
+      ],
+      "risk_ids": [
+        "R05",
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 104
+        }
+      ],
+      "field_source_line": 360
+    },
+    {
+      "id": "U45",
+      "section": "gantt",
+      "label": "安心/経済/充電時間帯SOC設定モード",
+      "html_ids": [
+        "constraintGantt"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderConstraintGantt",
+        "line": 328
+      },
+      "fields": [
+        "latest_schedule.soc_safety_mode",
+        "latest_schedule.soc_economy_mode",
+        "latest_schedule.soc_charge_mode"
+      ],
+      "risk_ids": [
+        "R05",
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 104
+        }
+      ],
+      "field_source_line": 395
+    },
+    {
+      "id": "U46",
+      "section": "gantt",
+      "label": "設定正常完了/未確認、更新/完了確認/slot/profile",
+      "html_ids": [
+        "constraintGantt"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderConstraintGantt",
+        "line": 328
+      },
+      "fields": [
+        "latest_schedule.settings_completed",
+        "latest_schedule.settings_completed_status",
+        "latest_schedule.status",
+        "latest_schedule.settings_completed_at",
+        "latest_schedule.recorded_at",
+        "latest_schedule.settings_completed_profile",
+        "latest_schedule.profile",
+        "latest_schedule.mode",
+        "latest_schedule.slot"
+      ],
+      "risk_ids": [
+        "R05",
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 104
+        }
+      ],
+      "field_source_line": 396
+    },
+    {
+      "id": "U47",
+      "section": "gantt",
+      "label": "有効fixed制約先頭4と開始未記録note",
+      "html_ids": [
+        "constraintGantt"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "renderConstraintGantt",
+        "line": 328
+      },
+      "fields": [
+        "latest_schedule.constraints.fixed[].enabled/id/description",
+        "latest_schedule.charge_start_time"
+      ],
+      "risk_ids": [
+        "R05",
+        "R14"
+      ],
+      "visibility": "visible_or_conditional",
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 104
+        }
+      ],
+      "field_source_line": 390
+    },
+    {
+      "id": "U48",
+      "section": "equations",
+      "label": "変数GTI/TP/LD/NL/RM/RS/RC/NC/PS",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 112
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01",
+        "R06"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U49",
+      "section": "equations",
+      "label": "PV旧GTI/PR/温度式",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 113
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U50",
+      "section": "equations",
+      "label": "朝不足07-10式",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 114
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01",
+        "R06"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U51",
+      "section": "equations",
+      "label": "日中余剰10-16 推定昼負荷式",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 115
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01",
+        "R06"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U52",
+      "section": "equations",
+      "label": "07時目標SOC簡易式",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 116
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01",
+        "R06"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U53",
+      "section": "equations",
+      "label": "夜間充電式",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 117
+      },
+      "fields": [],
+      "risk_ids": [
+        "R01",
+        "R06"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U54",
+      "section": "equations",
+      "label": "23-07放電禁止/03job/07cutoff/00制約/条件管理",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "equation",
+        "line": 118
+      },
+      "fields": [],
+      "risk_ids": [
+        "R14"
+      ],
+      "visibility": "visible_or_conditional"
+    },
+    {
+      "id": "U55",
+      "section": "learning",
+      "label": "表見出し 分類/パラメータ/現在値/サンプル数/意味",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/addLearningParameterRow",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[]",
+        "pv_forecast_diagnostics"
+      ],
+      "risk_ids": [
+        "R02",
+        "R03",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "columns": [
+        "分類",
+        "パラメータ",
+        "現在値",
+        "サンプル数",
+        "意味"
+      ],
+      "also": [
+        {
+          "path": "templates/dashboard.html",
+          "line": 110
+        },
+        {
+          "path": "templates/dashboard.html",
+          "line": 124
+        }
+      ],
+      "field_source_line": 710
+    },
+    {
+      "id": "U56",
+      "section": "learning_model_parameters",
+      "label": "充電1kWhあたりSOC上昇率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=soc_per_kwh_charge",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "soc_per_kwh_charge",
+      "field_source_line": 204
+    },
+    {
+      "id": "U57",
+      "section": "learning_model_parameters",
+      "label": "放電1kWhあたりSOC低下率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=soc_per_kwh_discharge",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "soc_per_kwh_discharge",
+      "field_source_line": 205
+    },
+    {
+      "id": "U58",
+      "section": "learning_model_parameters",
+      "label": "30分SOC自然変動",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=soc_drift_per_slot",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "soc_drift_per_slot",
+      "field_source_line": 206
+    },
+    {
+      "id": "U59",
+      "section": "learning_model_parameters",
+      "label": "往復効率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=battery_round_trip_efficiency",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "battery_round_trip_efficiency",
+      "field_source_line": 207
+    },
+    {
+      "id": "U60",
+      "section": "learning_model_parameters",
+      "label": "実効蓄電容量",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=battery_usable_capacity_kwh",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "battery_usable_capacity_kwh",
+      "field_source_line": 208
+    },
+    {
+      "id": "U61",
+      "section": "learning_model_parameters",
+      "label": "朝PV直接利用率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_direct_use_ratio",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_direct_use_ratio",
+      "field_source_line": 209
+    },
+    {
+      "id": "U62",
+      "section": "learning_model_parameters",
+      "label": "余剰PV蓄電寄与率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_to_battery_ratio",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_to_battery_ratio",
+      "field_source_line": 210
+    },
+    {
+      "id": "U63",
+      "section": "learning_model_parameters",
+      "label": "PV自家消費率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_self_consumption_ratio",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_self_consumption_ratio",
+      "field_source_line": 211
+    },
+    {
+      "id": "U64",
+      "section": "learning_model_parameters",
+      "label": "面別PV実績補正係数",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_array_calibration_factor",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_array_calibration_factor",
+      "field_source_line": 212
+    },
+    {
+      "id": "U65",
+      "section": "learning_model_parameters",
+      "label": "PV予測倍率中心（確率でない）",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_forecast_error_ratio_mean",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_forecast_error_ratio_mean",
+      "field_source_line": 213
+    },
+    {
+      "id": "U66",
+      "section": "learning_model_parameters",
+      "label": "PV倍率ばらつき（確率でない）",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_forecast_error_ratio_std",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_forecast_error_ratio_std",
+      "field_source_line": 214
+    },
+    {
+      "id": "U67",
+      "section": "learning_model_parameters",
+      "label": "PV倍率分散",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_forecast_error_ratio_variance",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_forecast_error_ratio_variance",
+      "field_source_line": 215
+    },
+    {
+      "id": "U68",
+      "section": "learning_model_parameters",
+      "label": "PV誤差サンプル数という現在値と保存世代数列",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=pv_forecast_error_ratio_sample_count",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "pv_forecast_error_ratio_sample_count",
+      "field_source_line": 216
+    },
+    {
+      "id": "U69",
+      "section": "learning_model_parameters",
+      "label": "物理放射変換係数",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=physical_pv_radiation_scale",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "physical_pv_radiation_scale",
+      "field_source_line": 217
+    },
+    {
+      "id": "U70",
+      "section": "learning_model_parameters",
+      "label": "物理全体バイアス係数",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable/paramAlias",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name=physical_pv_global_bias_scale",
+        "model_parameters[].mean_value",
+        "model_parameters[].sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R15",
+        "R18"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "row exists in store.params; not staticParameterNames",
+      "parameter_name": "physical_pv_global_bias_scale",
+      "field_source_line": 218
+    },
+    {
+      "id": "U71",
+      "section": "learning_model_parameters",
+      "label": "未定義aliasの任意追加モデル係数",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "model_parameters[].name",
+        "mean_value",
+        "sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R15"
+      ],
+      "visibility": "visible_or_conditional",
+      "condition": "name not in paramAlias or staticParameterNames; label=計画ごとに更新される補助係数",
+      "cardinality": "unbounded names via explicit fallback rule",
+      "field_source_line": 732
+    },
+    {
+      "id": "U72",
+      "section": "learning_diagnostics",
+      "label": "物理PV短波放射変換係数",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.physical.scales.radiation_scale",
+        "pv_forecast_diagnostics.physical.scales.radiation_scale_fit.sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 747
+    },
+    {
+      "id": "U73",
+      "section": "learning_diagnostics",
+      "label": "物理PV全体バイアス補正",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.physical.scales.global_bias_scale",
+        "pv_forecast_diagnostics.physical.data_quality.global_days"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 748
+    },
+    {
+      "id": "U74",
+      "section": "learning_diagnostics",
+      "label": "時間帯補正（各daypart）",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.physical.scales.daypart[period].scale",
+        "pv_forecast_diagnostics.physical.scales.daypart[period].count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one per daypart key",
+      "field_source_line": 749
+    },
+    {
+      "id": "U75",
+      "section": "learning_diagnostics",
+      "label": "PV比率EWMA",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.forecast_correction.pv_ratio_ewma_raw",
+        "pv_forecast_diagnostics.forecast_correction.pv_sample_count"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 752
+    },
+    {
+      "id": "U76",
+      "section": "learning_diagnostics",
+      "label": "負荷比率EWMA",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.forecast_correction.load_ratio_ewma_applied",
+        "pv_forecast_diagnostics.forecast_correction.load_sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 753
+    },
+    {
+      "id": "U77",
+      "section": "learning_diagnostics",
+      "label": "夜間気温補正倍率",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.forecast_correction.evening_load_temperature.multiplier",
+        "pv_forecast_diagnostics.forecast_correction.evening_load_temperature.sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 755
+    },
+    {
+      "id": "U78",
+      "section": "learning_diagnostics",
+      "label": "翌朝まで予測消費",
+      "html_ids": [
+        "learningParamsTable"
+      ],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "fillLearningParamsTable",
+        "line": 725
+      },
+      "fields": [
+        "pv_forecast_diagnostics.overnight_load_forecast.expected_kwh",
+        "pv_forecast_diagnostics.overnight_load_forecast.sample_count"
+      ],
+      "risk_ids": [
+        "R02",
+        "R03"
+      ],
+      "visibility": "visible_or_conditional",
+      "cardinality": "one row even when unavailable",
+      "field_source_line": 756
+    },
+    {
+      "id": "U79",
+      "section": "learning_not_connected",
+      "label": "NEW100型/model label/a,b,c,e/晴天日数/区間数/rank/condition/訓練・usable時刻",
+      "html_ids": [],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "not implemented in inspected frontend",
+        "line": 726
+      },
+      "fields": [
+        "NEW pv_forecast_diagnostics.pv_model.model_id/status/basis_version/plan_date/generated_at/forecast_run_id",
+        "NEW pv_model.raw_plan_sha256/control_version_id/calibration_sha256/forecast_sha256",
+        "NEW pv_model.theta4/terms/training_day_count/training_sample_count/training_start_date/training_end_date/rank/condition_number",
+        "NEW pv_model.created_at/training_as_of/usable_from/retrieved_at/as_of/provider_issued_at",
+        "NEW pv_model.repaired_hours/totals"
+      ],
+      "risk_ids": [
+        "R01",
+        "R02",
+        "R03",
+        "R18"
+      ],
+      "visibility": "not_present",
+      "proposal": "contracts.md C02 canonical pv_model <=4096 UTF8 bytes; valid alone carries NEW metadata; legacy/invalid/unsupported commonfields only. Same date24rows single nonempty run matching summary required; SQL unknown remains unknown. No per-date map/fulltrace/F/Q/dates/coordinates.",
+      "field_source_line": 726
+    },
+    {
+      "id": "U80",
+      "section": "hidden_parameters",
+      "label": "表で除外されるstatic5fields（life計算の入力にも使用）",
+      "html_ids": [],
+      "renderer": {
+        "path": "static/dashboard.js",
+        "symbol": "staticParameterNames/modelParam",
+        "line": 704
+      },
+      "fields": [
+        "battery_cycle_capacity_fade_per_cycle",
+        "battery_temp_coeff_per_deg",
+        "pv_array_total_capacity_kw",
+        "pv_kwh_per_sunhour",
+        "pv_temp_coeff_per_deg"
+      ],
+      "risk_ids": [
+        "R13",
+        "R15"
+      ],
+      "visibility": "not_visible_in_learning_table",
+      "condition": "name in staticParameterNames",
+      "field_source_line": 704
+    },
+    {
+      "id": "U81",
+      "section": "scope_absent",
+      "label": "入力form/selectと独立integrations/外部連携設定",
+      "html_ids": [],
+      "renderer": {
+        "path": "templates/dashboard.html",
+        "symbol": "document",
+        "line": 1
+      },
+      "fields": [],
+      "risk_ids": [
+        "R16"
+      ],
+      "visibility": "not_present"
+    }
+  ],
+  "risks": [
+    {
+      "id": "R01",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "有効NEW100でも静的GTI/PR/PV温度式と旧物理PV係数を表示する",
+      "small_change": "selected_model別の説明コピーに限定。旧式/旧係数は旧モデル履歴へ明示分類",
+      "forbidden": "PV純計算・料金/容量・旧モデル学習処理へ変更を広げない",
+      "test_id": "UI-001",
+      "pass": "NEW100はmax(0,C)*min(F,Q)、旧モデルを選ぶ履歴は旧式を表示",
+      "severity": "HIGH",
+      "origin": "NEW100_MODEL_EXPLANATION",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R02",
+      "certainty": "CONFIRMED_STATIC_AND_PRODUCER",
+      "finding": "学習表は旧parameter保存世代数/物理global_days/誤差sampleを混在表示し、新係数原本の日数・区間数へ接続していない",
+      "small_change": "同選択計画の軽いmodel summaryへ認定日数/訓練区間数/係数/時刻を結線し、旧保存世代数を別列で命名",
+      "forbidden": "forecast uncertainty.sample_countや旧7日lockを新認定日数へ置換しない。fulltrace追加配信/追加HTTP禁止",
+      "test_id": "UI-002",
+      "pass": "synthetic原本17日/221区間を表示。旧保存世代7と誤差sample0を別意味で保持",
+      "severity": "HIGH",
+      "origin": "NEW100_MODEL_CALIBRATION",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R03",
+      "certainty": "CONFIRMED_STATIC_AND_PRODUCER",
+      "finding": "diagnosticsはplan_dateだけでrun/provider/訓練provenanceが欠け、学習表はmain時一回のglobal最新diagnosticsを読む",
+      "small_change": "選択date全24rowがsingle nonempty forecast_run_idを持ちpv_model.forecast_run_idと一致した場合だけsummary有効。混在/別日/SQL未知は未確認、正常PV/load/actual維持。per-date mapping追加なし",
+      "forbidden": "毎GET再学習、履歴原本の上書き、全trace重複bootstrapは禁止",
+      "test_id": "UI-003",
+      "pass": "同dateでもempty/mixed runは未確認、正常PV/load/実績維持。single24同run一致だけ有効モデル説明",
+      "severity": "HIGH",
+      "origin": "NEW100_MODEL_PROVENANCE",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [
+        "D03"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R04",
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME",
+      "finding": "null PVはchart gapだがhourly totalはn(null)=0。cost/self/月/lifeはmissing→0を含む",
+      "small_change": "D03対象hourly rendererの合計/null/部分取得labelだけ修正。generic n()/sumBucket()/period/billing/life集計は変更せず、期間cost/life欠測はD05保持確認/残件",
+      "forbidden": "予測原本の欠測を0で埋める、既存金融/計画値を変更することは禁止",
+      "test_id": "UI-004",
+      "pass": "有効0は0、1区間欠測の合計は完全値として表示しない。全欠測は-",
+      "severity": "HIGH",
+      "origin": "PRE_EXISTING_AMPLIFIED_BY_NEW100",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R05",
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME",
+      "finding": "hourly対象日がlatest schedule日と異なる場合も最新target/night量/時刻を利用する",
+      "small_change": "render側の薄い同date predicateでscheduleを制限し、同date batteryを優先fallbackにする",
+      "forbidden": "estimateHourlyForecastSoc/forecastSocFromLatestActual本体やlockを変更しない",
+      "test_id": "UI-005",
+      "pass": "別日schedule9kWhは旧日の2kWh計画へ流用しない。同日優先は維持",
+      "severity": "HIGH",
+      "origin": "PRE_EXISTING_DATE_BINDING",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R06",
+      "certainty": "CONFIRMED_SYNTHETIC_RUNTIME_AND_PRODUCER",
+      "finding": "保存SOC23の一律再計算疑いは再現で否定（23=99正常）。0..6実績/参考と07..23保存SOCの予想SOC線/ピークlabel混在は別に確定",
+      "small_change": "presentation helperで保存SOC17点、実績、参考推定を分け、23時は22区間終了をtooltip説明",
+      "forbidden": "HISTORICAL_FAILURE_LOCK、07起点/06:30保護、蓄電池効率/容量/SOC再計算本体禁止",
+      "test_id": "UI-006",
+      "pass": "07..23の17点は保存値優先、0..6を同原本モデル予測と称さず、23終端を24時へずらさない",
+      "severity": "HIGH",
+      "origin": "PRE_EXISTING_PRESENTATION_WITH_NEW17_SAVED_POINTS",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R07",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "SOC spanGaps:trueが欠けた境界を線で結び、tensionが時間エネルギーを滑らかな曲線に見せる",
+      "small_change": "元データ保存側で修復し、画面は保存実測の忠実表示・gap明示のみ（C09）",
+      "forbidden": "保存PV/SOCの値を曲線補間へ書換えない",
+      "test_id": "UI-007",
+      "pass": "欠測を存在した予測点として表示せず、定義された17境界を維持",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_DRAWING",
+      "implementation_steps": [
+        "D03",
+        "D06"
+      ],
+      "retention_steps": [],
+      "implementation_status": "USER_AUTHORIZED_IMPLEMENTATION_PENDING"
+    },
+    {
+      "id": "R08",
+      "certainty": "CONDITIONAL_INPUT_BOUND",
+      "finding": "hourly5kWh/h、daily PV30等の固定上限で有効なNEW100/負荷/費用ピークが見切れ得る",
+      "small_change": "有限表示値・stack累積を包含する軸拡張（C08）",
+      "forbidden": "PV出力/目標/金融値へのclip禁止",
+      "test_id": "UI-008",
+      "pass": "6kWh/h fixtureがtooltipだけでなくchart領域へ現れ、0..100SOC軸は維持",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_INPUT_BOUND_CONDITIONAL",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "implementation_status": "USER_AUTHORIZED_IMPLEMENTATION_PENDING"
+    },
+    {
+      "id": "R09",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "refreshDashboardは主にcached store再描画で、計画更新時刻/実績最新時刻/ブラウザ取得時刻は異なる",
+      "small_change": "既存payloadのgeneration/plan時刻と実績時刻を説明別label。未供給時刻をnowで補造しない",
+      "forbidden": "自動poll/追加HTTP、GETから学習、provider freshnessをHTTP成功だけで宣言は禁止",
+      "test_id": "UI-009",
+      "pass": "表示期間操作で計画更新時刻は進まない。JST表示とUTC原本時刻を区別",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_TIMESTAMP_MEANING_NEW100_METADATA",
+      "implementation_steps": [
+        "D02",
+        "D03"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R10",
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_HISTORY",
+      "finding": "historyはdaily mapを新bootstrapより優先しないがhourly mergeは無条件で同hourを置換する。static monthly/params/diagはhistoryで更新しない",
+      "small_change": "D05で保持・境界検証のみ。追加許可時の候補: 同date/runのhistory mergeを薄いselectorで制御し、選択期間に未供給のstaticを明示",
+      "forbidden": "lazy history/31日bootstrap/cache/ETag/gzip/GET DB0/既存bounded fallbackを破壊しない",
+      "test_id": "UI-010",
+      "pass": "stale overlapping historyはdaily/時間別とも最新原本を巻戻さず、初期history要求0",
+      "severity": "HIGH",
+      "origin": "PRE_EXISTING_CONDITIONAL_HISTORY_MERGE",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R11",
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_PRODUCER",
+      "finding": "review.dateだけで48件揃った説明を出し、findingsを毎回空にする。日合計PVとdecision窓が表示上区別されない",
+      "small_change": "producer完全性と集計窓を軽いmetadataで説明。findings未提供は隠す/未提供と表示",
+      "forbidden": "料金計算・実績合計・認定原本の書換え禁止",
+      "test_id": "UI-011",
+      "pass": "全24hPVと07..22部分を混同しない。未完了fixtureに48件完成を宣言しない",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_REVIEW_AND_NEW100_DAY_WINDOW",
+      "implementation_steps": [
+        "D04"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R12",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "renderWindowが自家消費見出し4→2、節約額5→3へ書換え、他見出し番号と重複する",
+      "small_change": "D05で保持・境界検証のみ。追加許可時の候補: 見出し番号だけをHTMLの4/5へ合わせる",
+      "forbidden": "系列・集計式・ルート変更を混ぜない",
+      "test_id": "UI-012",
+      "pass": "月/年/全てで一貫した1..10の番号と日/週単位を表示",
+      "severity": "LOW",
+      "origin": "PRE_EXISTING_COPY",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R13",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "lifeの累計は選択期間内、KPI容量はcycleのみでchartはcalendar/tempも含む。未来予測でないcopyと80%到達予測が併存する",
+      "small_change": "D05で保持・境界検証のみ。追加許可時の候補: 期間内累計・可視化推定・KPI/stackの対象差を明示。将来年表示の推定を説明",
+      "forbidden": "制御有効容量/温度上昇/劣化を変更せず、寿命試算を制御へ採用しない",
+      "test_id": "UI-013",
+      "pass": "選択期間の意味、推定と実測、将来年と観測内訳を区別し制御SOCは不変",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_VISUAL_LIFE_MODEL",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R14",
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_PRODUCER",
+      "finding": "警告は先頭6、fixed制約は先頭4だけ。settings_completed/statusから設定正常完了を出し同run/device readback検証はしない",
+      "small_change": "D05で保持・境界検証のみ。追加許可時の候補: 既存summaryで省略件数/設定記録と実機確認を区別し、producerの証明済状態だけにgreenを結線",
+      "forbidden": "実機制御/制約時間/0時跨ぎ防止/開始終了lockをUI判断で変更しない",
+      "test_id": "UI-014",
+      "pass": "警告7件/制約5件でも隠れた重要事項を説明。generated/adopted/appliedを同一視しない",
+      "severity": "HIGH",
+      "origin": "PRE_EXISTING_CONDITIONAL_STATUS_WARNING",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R15",
+      "certainty": "CONFIRMED_STATIC",
+      "finding": "任意model_parametersは未定義aliasでも表示、無効/空meanやsampleが0になり、単位/対象モデルが不明な補助係数も残る",
+      "small_change": "unknown/historicalモデルの表示分類とfinite validationをpresentationだけで行う",
+      "forbidden": "旧履歴field除去、backend原本のrename/誤差sampleの校正日流用禁止",
+      "test_id": "UI-015",
+      "pass": "不明値は-、正当0は0、unknown fieldは名前を保って過去/未分類と明示",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_LEGACY_PARAMETERS",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R16",
+      "certainty": "CONFIRMED_SCOPE_ABSENCE",
+      "finding": "対象HTMLにはform/select/input/連携設定や独立診断カードがなく、integration fieldを描画していない",
+      "small_change": "D05で保持・境界検証のみ。追加許可時の候補: 不在をscopeに明記し、未存在UIを今回の修正へ追加しない",
+      "forbidden": "新API/フォーム/外部連携操作を提案差分へ暗黙追加しない",
+      "test_id": "UI-016",
+      "pass": "HTML inventoryは37id/13見出し/8canvas/7buttonを全てcover、不在を実装済としない",
+      "severity": "INFO",
+      "origin": "ABSENT_UI_SCOPE",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R17",
+      "certainty": "CONFIRMED_STATIC_CONDITIONAL_GAPS",
+      "finding": "actual loadはforecastを上書きし、min..max時刻の連続範囲として注記するが中間欠測を検証しない",
+      "small_change": "実績/予測の由来と実績coverageを注記する薄いselector",
+      "forbidden": "負荷補正式/EWMA/comfort/safety-floorアルゴリズム変更禁止",
+      "test_id": "UI-017",
+      "pass": "actual有効0を保ち、飛び飛び実績を全時刻連続取得と称さない",
+      "severity": "MEDIUM",
+      "origin": "PRE_EXISTING_LOAD_ACTUAL_COVERAGE",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    },
+    {
+      "id": "R18",
+      "certainty": "CONFIRMED_PRODUCER_AND_STATIC",
+      "finding": "旧PV誤差sample0・neutral uncertainty・認定学習221区間は別概念。UIは旧mean/std/variance/sample rowsにNEWモデルの意味を付けない",
+      "small_change": "校正原本と誤差学習を別項目にし、neutralは誤差未推定と説明する",
+      "forbidden": "sample0を完全精度/不確実性0と扱わず、sample_countへ晴天日数をコピーしない",
+      "test_id": "UI-018",
+      "pass": "0誤差sampleと17晴天/221訓練を同時表示でき、完璧な予測とは説明しない",
+      "severity": "HIGH",
+      "origin": "NEW100_CALIBRATION_VS_UNCERTAINTY",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [],
+      "implementation_status": "DOCUMENTATION_ONLY_PLANNED"
+    }
+  ],
+  "tests": [
+    {
+      "id": "UI-001",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "有効NEW100でも静的GTI/PR/PV温度式と旧物理PV係数を表示する",
+      "pass": "NEW100はmax(0,C)*min(F,Q)、旧モデルを選ぶ履歴は旧式を表示",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-002",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "NEW10017days/221intervals plus old generation7 and error sample0",
+      "pass": "synthetic原本17日/221区間を表示。旧保存世代7と誤差sample0を別意味で保持",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-003",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "diagnosticsはplan_dateだけでrun/provider/訓練provenanceが欠け、学習表はmain時一回のglobal最新diagnosticsを読む",
+      "pass": "同dateでもempty/mixed runは未確認、正常PV/load/実績維持。single24同run一致だけ有効モデル説明",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": [
+        "D03"
+      ]
+    },
+    {
+      "id": "UI-004",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "null PVはchart gapだがhourly totalはn(null)=0。cost/self/月/lifeはmissing→0を含む",
+      "pass": "有効0は0、1区間欠測の合計は完全値として表示しない。全欠測は-",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-005",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "hourly対象日がlatest schedule日と異なる場合も最新target/night量/時刻を利用する",
+      "pass": "別日schedule9kWhは旧日の2kWh計画へ流用しない。同日優先は維持",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-006",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "0..6実績/参考再計算と07..23保存SOCが同じ予想SOC線に混在する",
+      "pass": "07..23の17点は保存値優先、0..6を同原本モデル予測と称さず、23終端を24時へずらさない",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-007",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "SOC spanGaps:trueが欠けた境界を線で結び、tensionが時間エネルギーを滑らかな曲線に見せる",
+      "pass": "欠測を存在した予測点として表示せず、定義された17境界を維持",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-008",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "hourly5kWh/h、daily PV30等の固定上限で有効なNEW100/負荷/費用ピークが見切れ得る",
+      "pass": "6kWh/h fixtureがtooltipだけでなくchart領域へ現れ、0..100SOC軸は維持",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-009",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "refreshDashboardは主にcached store再描画で、計画更新時刻/実績最新時刻/ブラウザ取得時刻は異なる",
+      "pass": "表示期間操作で計画更新時刻は進まない。JST表示とUTC原本時刻を区別",
+      "implementation_steps": [
+        "D02",
+        "D03"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-010",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "historyはdaily mapを新bootstrapより優先しないがhourly mergeは無条件で同hourを置換する。static monthly/params/diagはhistoryで更新しない",
+      "pass": "stale overlapping historyはdaily/時間別とも最新原本を巻戻さず、初期history要求0",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-011",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "review.dateだけで48件揃った説明を出し、findingsを毎回空にする。日合計PVとdecision窓が表示上区別されない",
+      "pass": "全24hPVと07..22部分を混同しない。未完了fixtureに48件完成を宣言しない",
+      "implementation_steps": [
+        "D04"
+      ],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-012",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "renderWindowが自家消費見出し4→2、節約額5→3へ書換え、他見出し番号と重複する",
+      "pass": "月/年/全てで一貫した1..10の番号と日/週単位を表示",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-013",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "lifeの累計は選択期間内、KPI容量はcycleのみでchartはcalendar/tempも含む。未来予測でないcopyと80%到達予測が併存する",
+      "pass": "選択期間の意味、推定と実測、将来年と観測内訳を区別し制御SOCは不変",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-014",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "警告は先頭6、fixed制約は先頭4だけ。settings_completed/statusから設定正常完了を出し同run/device readback検証はしない",
+      "pass": "警告7件/制約5件でも隠れた重要事項を説明。generated/adopted/appliedを同一視しない",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-015",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "任意model_parametersは未定義aliasでも表示、無効/空meanやsampleが0になり、単位/対象モデルが不明な補助係数も残る",
+      "pass": "不明値は-、正当0は0、unknown fieldは名前を保って過去/未分類と明示",
+      "implementation_steps": [
+        "D02"
+      ],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-016",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "対象HTMLにはform/select/input/連携設定や独立診断カードがなく、integration fieldを描画していない",
+      "pass": "HTML inventoryは37id/13見出し/8canvas/7buttonを全てcover、不在を実装済としない",
+      "implementation_steps": [],
+      "retention_steps": [
+        "D05"
+      ]
+    },
+    {
+      "id": "UI-017",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "actual loadはforecastを上書きし、min..max時刻の連続範囲として注記するが中間欠測を検証しない",
+      "pass": "actual有効0を保ち、飛び飛び実績を全時刻連続取得と称さない",
+      "implementation_steps": [
+        "D03"
+      ],
+      "retention_steps": []
+    },
+    {
+      "id": "UI-018",
+      "status": "PLANNED",
+      "target": "tests/test_dashboard_bootstrap.js or test_dashboard_calculations.js (future change; no tests edited)",
+      "fixture": "旧PV誤差sample0・neutral uncertainty・認定学習221区間は別概念。UIは旧mean/std/variance/sample rowsにNEWモデルの意味を付けない",
+      "pass": "0誤差sampleと17晴天/221訓練を同時表示でき、完璧な予測とは説明しない",
+      "implementation_steps": [
+        "D01",
+        "D02"
+      ],
+      "retention_steps": []
+    }
+  ],
+  "existing_tests": [
+    {
+      "path": "tests/test_dashboard_bootstrap.js",
+      "command": "node tests/test_dashboard_bootstrap.js",
+      "scope": "synthetic Chart/DOM bootstrap one request, lazy history, schedule-night summary, persisted early/SOC points, fixed/weekly axis tests; sparse5hour fixture not full24/17 coverage",
+      "execution": "parent prior canonical PASS; not independently rerun by frontend agent"
+    },
+    {
+      "path": "tests/test_dashboard_calculations.js",
+      "command": "node tests/test_dashboard_calculations.js",
+      "scope": "night interval allocation/same-time zero/wrap/fallback; planned schedule priority; actual-anchored SOC fallback",
+      "execution": "parent prior canonical PASS"
+    },
+    {
+      "path": "tests/test_dashboard_modules.js",
+      "command": "node tests/test_dashboard_modules.js",
+      "scope": "dates/JST leap/billing helpers, query/fetch/store contract",
+      "execution": "parent prior canonical PASS"
+    }
+  ],
+  "runtime_evidence": {
+    "mode": "READ_ONLY_SYNTHETIC_NODE_VM_NOT_REAL_BROWSER",
+    "execution_authorization": "parent: same-source canonical1168PASS1skip and lint/type/JS/security PASS; no source changes",
+    "source_hashes_match": true,
+    "fixture": {
+      "date": "2026-07-20",
+      "hours": 24,
+      "missing_pv_hour": 8,
+      "known_pv_hour9": 0.2,
+      "load_each_hour": 0.1,
+      "soc0_actual": 40,
+      "persisted_soc23": 99,
+      "old_schedule_night_kwh": 2,
+      "replacement_schedule": {
+        "plan_date": "2026-07-21",
+        "night_kwh": 9
+      },
+      "old_parameter_generation_count": 7,
+      "proposed_calibration_days": 17,
+      "proposed_calibration_samples": 221
+    },
+    "observed": {
+      "initial_http_requests": 0,
+      "hour_labels_count": 24,
+      "missing_pv_series_null": true,
+      "summary_claimed_forecast_total_kwh": 0.2,
+      "summary_partial_missing_label": false,
+      "soc23_output": 99,
+      "soc0_output": 40,
+      "cost_null_output": 0,
+      "learning_old_generation7_visible": true,
+      "new_training221_visible": false,
+      "empty_physical_rows_visible": true,
+      "cross_date_schedule9_used_in_old_date": true,
+      "hourly_axis_max": 5
+    },
+    "limits": [
+      "Chart stub/DOM stub; no pixel, responsive or CDN verification",
+      "calibration fields are synthetic candidate injection; actual producer missing projection confirmed separately",
+      "incomplete summary and cross-date binding are verified conditional fixtures, not claims about a live user plan",
+      "no external request, no backend read, no filesystem/source mutation in VM"
+    ],
+    "corrected_hypothesis": "SOC23 always-recompute suspicion REFUTED: persisted23=99 preferred.0actual40 in predicted series is a separate confirmed presentation issue.",
+    "proposed_summary_injection_note": "VM initially injected noncanonical calibration_pack candidate; canonical future schema is contracts.md C02 pv_model. No new model fields are currently read."
+  },
+  "protected": {
+    "algorithm_body_changes_forbidden": [
+      "static/dashboard.js::estimateHourlyForecastSoc",
+      "static/dashboard_calculations.js::forecastSocFromLatestActual"
+    ],
+    "anchors": [
+      {
+        "path": "static/dashboard.js",
+        "line": 1108,
+        "text": "HISTORICAL_FAILURE_LOCK (2026-09-05): a missing persisted plan must not"
+      },
+      {
+        "path": "static/dashboard.js",
+        "line": 1109,
+        "text": "make the predicted-SOC series disappear when hourly actual SOC exists."
+      }
+    ],
+    "invariants": [
+      "07h start/06:30 actual anchoring protected by parent contract",
+      "SOC17 boundary7..23;23 is22interval closing;PV24 independent scope",
+      "same-run frozen capacity/aging/temperature/charge-discharge efficiencies preserved",
+      "bootstrap31day/lazy history/versioned asset cache/ETag/gzip; no additional HTTP/no fulltrace/no GET learning or all-history DB fallback",
+      "Gantt schedule/no-midnight/charge-start-end locks preserved",
+      "generic n()/sumBucket()/period/billing/life金融計算の一括変更禁止; renderer局所だけ"
+    ]
+  },
+  "supplied_backend_evidence": [
+    {
+      "claim": "daily forecast_pv_kwh is whole selected date hourly sum (24h); fallback total also whole24; component daypart sums need not equal daily",
+      "refs": [
+        {
+          "path": "app/dashboard/aggregation.py",
+          "symbol": "_build_energy_daily",
+          "line": 166
+        },
+        {
+          "path": "app/dashboard/aggregation.py",
+          "symbol": "_build_energy_daily",
+          "line": 223
+        },
+        {
+          "path": "app/operations/domain.py",
+          "symbol": "extract_final_pv_totals_from_plan",
+          "line": 86
+        }
+      ],
+      "evidence_origin": "supplied targeted source inspection by /root/publication_packets; frontend agent did not read backend",
+      "certainty": "PRODUCER_SOURCE_EVIDENCE_NOT_BROWSER_PASS"
+    },
+    {
+      "claim": "Firestore persisted SOC keys7..23,23=22interval closing; same forecast_run join;0..6 outside persisted scope. Parent also reports SQL path lacks persisted SOC columns: display as reference/unlinked without adding schema.",
+      "refs": [
+        {
+          "path": "app/energy_plan/soc_cost.py",
+          "symbol": "_simulate_day",
+          "line": 395
+        },
+        {
+          "path": "app/energy_plan/soc_cost.py",
+          "symbol": "_simulate_day",
+          "line": 418
+        },
+        {
+          "path": "app/operations/forecast_persistence.py",
+          "symbol": "_forecast_projection_values",
+          "line": 106
+        },
+        {
+          "path": "app/dashboard/history_reconstruction.py",
+          "symbol": "_with_forecast_plan_metadata",
+          "line": 158
+        }
+      ],
+      "evidence_origin": "supplied targeted source inspection by /root/publication_packets; frontend agent did not read backend",
+      "certainty": "PRODUCER_SOURCE_EVIDENCE_NOT_BROWSER_PASS"
+    },
+    {
+      "claim": "current diagnostics exposes plan_date but drops NEW100 trace/run/training/provider metadata",
+      "refs": [
+        {
+          "path": "app/dashboard/slice_assembler.py",
+          "symbol": "extract_pv_forecast_diagnostics",
+          "line": 21
+        }
+      ],
+      "evidence_origin": "supplied targeted source inspection by /root/publication_packets; frontend agent did not read backend",
+      "certainty": "PRODUCER_SOURCE_EVIDENCE_NOT_BROWSER_PASS"
+    },
+    {
+      "claim": "model_parameters.sample_count counts old parameter immutable originals/generations; same raw retry increments0; not NEW100 training samples; names unfiltered",
+      "refs": [
+        {
+          "path": "app/operations/firestore.py",
+          "symbol": "_project_model_parameter_values",
+          "line": 927
+        },
+        {
+          "path": "app/operations/firestore.py",
+          "symbol": "_project_model_parameter_values",
+          "line": 948
+        },
+        {
+          "path": "app/dashboard/firestore_repository.py",
+          "symbol": "load_firestore_slice",
+          "line": 788
+        }
+      ],
+      "evidence_origin": "supplied targeted source inspection by /root/publication_packets; frontend agent did not read backend",
+      "certainty": "PRODUCER_SOURCE_EVIDENCE_NOT_BROWSER_PASS"
+    },
+    {
+      "claim": "backend schedule candidates and latest plan merging check matching date; frontend old hourly date/latest schedule mixing is not authorized by that contract",
+      "refs": [
+        {
+          "path": "app/dashboard/schedule.py",
+          "symbol": "_schedule_event_candidates",
+          "line": 123
+        },
+        {
+          "path": "app/dashboard/schedule.py",
+          "symbol": "_build_latest_schedule_from_events",
+          "line": 179
+        },
+        {
+          "path": "app/dashboard/slice_assembler.py",
+          "symbol": "merge_latest_plan_into_schedule",
+          "line": 49
+        }
+      ],
+      "evidence_origin": "supplied targeted source inspection by /root/publication_packets; frontend agent did not read backend",
+      "certainty": "PRODUCER_SOURCE_EVIDENCE_NOT_BROWSER_PASS"
+    }
+  ],
+  "coverage": {
+    "html_element_ids": [
+      {
+        "id": "statusMsg",
+        "line": 14,
+        "inventory_ids": [
+          "U02"
+        ]
+      },
+      {
+        "id": "dashboardWarnings",
+        "line": 17,
+        "inventory_ids": [
+          "U03"
+        ]
+      },
+      {
+        "id": "dailyReviewPrevBtn",
+        "line": 23,
+        "inventory_ids": [
+          "U04"
+        ]
+      },
+      {
+        "id": "dailyReviewDate",
+        "line": 24,
+        "inventory_ids": [
+          "U04"
+        ]
+      },
+      {
+        "id": "dailyReviewNextBtn",
+        "line": 25,
+        "inventory_ids": [
+          "U04"
+        ]
+      },
+      {
+        "id": "dailyReviewNote",
+        "line": 27,
+        "inventory_ids": [
+          "U04"
+        ]
+      },
+      {
+        "id": "dailyReviewGrid",
+        "line": 28,
+        "inventory_ids": [
+          "U05",
+          "U06",
+          "U07",
+          "U08",
+          "U09",
+          "U10",
+          "U11",
+          "U12",
+          "U13",
+          "U14",
+          "U15",
+          "U16",
+          "U17"
+        ]
+      },
+      {
+        "id": "dailyReviewFindings",
+        "line": 29,
+        "inventory_ids": [
+          "U18"
+        ]
+      },
+      {
+        "id": "hourlyForecastNote",
+        "line": 34,
+        "inventory_ids": [
+          "U25"
+        ]
+      },
+      {
+        "id": "hourlyForecastChart",
+        "line": 35,
+        "inventory_ids": [
+          "U20",
+          "U21",
+          "U22",
+          "U23",
+          "U24",
+          "U26"
+        ]
+      },
+      {
+        "id": "periodMonthBtn",
+        "line": 42,
+        "inventory_ids": [
+          "U28"
+        ]
+      },
+      {
+        "id": "periodYearBtn",
+        "line": 43,
+        "inventory_ids": [
+          "U28"
+        ]
+      },
+      {
+        "id": "periodAllBtn",
+        "line": 44,
+        "inventory_ids": [
+          "U28"
+        ]
+      },
+      {
+        "id": "periodPrevBtn",
+        "line": 45,
+        "inventory_ids": [
+          "U28"
+        ]
+      },
+      {
+        "id": "periodNextBtn",
+        "line": 46,
+        "inventory_ids": [
+          "U28"
+        ]
+      },
+      {
+        "id": "periodLabel",
+        "line": 47,
+        "inventory_ids": [
+          "U27"
+        ]
+      },
+      {
+        "id": "pvChart",
+        "line": 54,
+        "inventory_ids": [
+          "U30"
+        ]
+      },
+      {
+        "id": "loadChart",
+        "line": 60,
+        "inventory_ids": [
+          "U31"
+        ]
+      },
+      {
+        "id": "dailyKwhTitle",
+        "line": 64,
+        "inventory_ids": [
+          "U32"
+        ]
+      },
+      {
+        "id": "dailyKwhDesc",
+        "line": 65,
+        "inventory_ids": [
+          "U32"
+        ]
+      },
+      {
+        "id": "dailyKwhChart",
+        "line": 66,
+        "inventory_ids": [
+          "U32"
+        ]
+      },
+      {
+        "id": "dailyYenTitle",
+        "line": 70,
+        "inventory_ids": [
+          "U33"
+        ]
+      },
+      {
+        "id": "dailyYenDesc",
+        "line": 71,
+        "inventory_ids": [
+          "U33"
+        ]
+      },
+      {
+        "id": "dailyYenChart",
+        "line": 72,
+        "inventory_ids": [
+          "U33"
+        ]
+      },
+      {
+        "id": "monthlyCostChart",
+        "line": 78,
+        "inventory_ids": [
+          "U34"
+        ]
+      },
+      {
+        "id": "batteryTitle",
+        "line": 82,
+        "inventory_ids": [
+          "U35"
+        ]
+      },
+      {
+        "id": "batteryDesc",
+        "line": 83,
+        "inventory_ids": [
+          "U35"
+        ]
+      },
+      {
+        "id": "batteryChart",
+        "line": 84,
+        "inventory_ids": [
+          "U35"
+        ]
+      },
+      {
+        "id": "lifeTotalCharge",
+        "line": 92,
+        "inventory_ids": [
+          "U36"
+        ]
+      },
+      {
+        "id": "lifeTotalDischarge",
+        "line": 93,
+        "inventory_ids": [
+          "U37"
+        ]
+      },
+      {
+        "id": "lifeEquivalentCycles",
+        "line": 94,
+        "inventory_ids": [
+          "U38"
+        ]
+      },
+      {
+        "id": "lifeEstimatedCapacity",
+        "line": 95,
+        "inventory_ids": [
+          "U39"
+        ]
+      },
+      {
+        "id": "lifeEightyPercentYear",
+        "line": 96,
+        "inventory_ids": [
+          "U40"
+        ]
+      },
+      {
+        "id": "lifeMonthlyCycles",
+        "line": 97,
+        "inventory_ids": [
+          "U41"
+        ]
+      },
+      {
+        "id": "batteryLifeChart",
+        "line": 99,
+        "inventory_ids": [
+          "U42"
+        ]
+      },
+      {
+        "id": "constraintGantt",
+        "line": 106,
+        "inventory_ids": [
+          "U43",
+          "U44",
+          "U45",
+          "U46",
+          "U47"
+        ]
+      },
+      {
+        "id": "learningParamsTable",
+        "line": 122,
+        "inventory_ids": [
+          "U55",
+          "U56",
+          "U57",
+          "U58",
+          "U59",
+          "U60",
+          "U61",
+          "U62",
+          "U63",
+          "U64",
+          "U65",
+          "U66",
+          "U67",
+          "U68",
+          "U69",
+          "U70",
+          "U71",
+          "U72",
+          "U73",
+          "U74",
+          "U75",
+          "U76",
+          "U77",
+          "U78"
+        ]
+      }
+    ],
+    "html_id_count": 37,
+    "covered_html_id_count": 37,
+    "uncovered_html_ids": [],
+    "headings": [
+      {
+        "level": 1,
+        "text": "おうち発電ダッシュボード",
+        "line": 12,
+        "inventory_id": "U01"
+      },
+      {
+        "level": 2,
+        "text": "1. 予実レビュー（昨日まで）",
+        "line": 21,
+        "inventory_id": "U04"
+      },
+      {
+        "level": 2,
+        "text": "2. 時間別予測（最新計画）",
+        "line": 33,
+        "inventory_id": "U19"
+      },
+      {
+        "level": 2,
+        "text": "表示期間",
+        "line": 39,
+        "inventory_id": "U27"
+      },
+      {
+        "level": 2,
+        "text": "3.1 発電量（予測と実績）",
+        "line": 52,
+        "inventory_id": "U30"
+      },
+      {
+        "level": 2,
+        "text": "3.2 消費量（予測と実績）",
+        "line": 58,
+        "inventory_id": "U31"
+      },
+      {
+        "level": 2,
+        "text": "4. 自家消費kWh（日）",
+        "line": 64,
+        "inventory_id": "U32"
+      },
+      {
+        "level": 2,
+        "text": "5. 節約額（日）",
+        "line": 70,
+        "inventory_id": "U33"
+      },
+      {
+        "level": 2,
+        "text": "6. 自家消費と節約額（月）",
+        "line": 76,
+        "inventory_id": "U34"
+      },
+      {
+        "level": 2,
+        "text": "7. 蓄電池計画値と実績（日次）",
+        "line": 82,
+        "inventory_id": "U35"
+      },
+      {
+        "level": 2,
+        "text": "8. 蓄電池容量推定（実績）",
+        "line": 88,
+        "inventory_id": "U42"
+      },
+      {
+        "level": 2,
+        "text": "9. 制約管理ガントチャート（最新設定）",
+        "line": 104,
+        "inventory_id": "U43"
+      },
+      {
+        "level": 2,
+        "text": "10. 蓄電池方程式とパラメータ",
+        "line": 110,
+        "inventory_id": "U55"
+      }
+    ],
+    "heading_count": 13,
+    "covered_headings": 13,
+    "chart_count": 8,
+    "chart_series_count": 24,
+    "review_kpi_count": 13,
+    "learning_columns": [
+      "分類",
+      "パラメータ",
+      "現在値",
+      "サンプル数",
+      "意味"
+    ],
+    "known_parameter_aliases": 15,
+    "dynamic_learning_patterns": [
+      "one per unknown model_parameters.name",
+      "one per physical.scales.daypart key"
+    ],
+    "buttons": 7,
+    "html_forms": 0,
+    "html_input_select": 0,
+    "integration_card_count": 0,
+    "no_new100_reference_in_original_frontend": true
+  },
+  "contract_reference": "contracts.md C01..C07"
+}

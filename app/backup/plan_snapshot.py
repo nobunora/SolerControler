@@ -23,6 +23,16 @@ def archive_plan_snapshot(
 ) -> dict[str, Any]:
     """Keep exact original bytes; never label a generated plan as device-applied."""
     raw = path.read_bytes()
+    receipt, doc = archive_plan_original(raw, storage=storage, firestore=firestore, source=source, prefix=prefix)
+    project_plan_read_models(doc, raw, firestore=firestore)
+    return receipt
+
+
+def archive_plan_original(
+    raw: bytes, *, storage: Any, firestore: Any, source: str,
+    prefix: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Archive generated evidence without advancing mutable read models."""
     plan = json.loads(raw)
     day = date.fromisoformat(plan["forecast"]["date"]).isoformat()
     sha = hashlib.sha256(raw).hexdigest()
@@ -66,9 +76,19 @@ def archive_plan_snapshot(
             raise ValueError("immutable decision index checksum mismatch")
         # Reusing the same original must not replace its first recorded origin.
         doc = recorded
+    return {"decision_id": decision_id, "date": day, "detail_sha256": sha, "status": "verified"}, doc
+
+
+def project_plan_read_models(archived_doc: dict[str, Any], raw: bytes, *, firestore: Any) -> None:
+    """Advance the existing monotonic projections from verified original bytes."""
+    if hashlib.sha256(raw).hexdigest() != archived_doc.get("detail_sha256"):
+        raise ValueError("plan projection original checksum mismatch")
+    plan = json.loads(raw)
+    if plan["forecast"]["date"] != archived_doc.get("date") or plan.get("generated_at") != archived_doc.get("generated_at"):
+        raise ValueError("plan projection original generation mismatch")
+    _plan_order(archived_doc)
     # Compatibility read models point to the same verified immutable object.
-    _update_plan_read_models(firestore, doc, raw)
-    return {"decision_id": decision_id, "date": day, "detail_sha256": sha, "status": "verified"}
+    _update_plan_read_models(firestore, archived_doc, raw)
 
 
 def _plan_order(doc: dict[str, Any]) -> tuple[str, datetime]:

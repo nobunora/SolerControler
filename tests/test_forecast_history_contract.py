@@ -271,10 +271,11 @@ def test_explicit_vintage_mismatch_cannot_attach_same_timestamp_metadata():
     )
 
 
-def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch):
+def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch, tmp_path):
     from app.runtime import forecast_job
     client = Client(plan())
     events = []
+    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setattr(forecast_job, "_target_date", lambda: "2026-10-07")
     monkeypatch.setattr(forecast_job, "open_firestore", lambda: client)
     def recovery(_client, **kwargs):
@@ -283,6 +284,8 @@ def test_recovery_precedes_actual_refresh_and_current_publication(monkeypatch):
     def run(command, env, **kwargs):
         assert len(client.data["forecast_hourly_snapshots"]) == 24
         events.append(command[1])
+        if command[1] == "energy_model_main.py":
+            Path(env["KP_NIGHT_PLAN_PATH"]).write_text(json.dumps(plan()), encoding="utf-8")
     def persist(_client, **kwargs):
         events.append("current_saved")
         return 24

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -182,8 +183,11 @@ def _build_energy_daily(
     reconstructed_at_by_day: dict[str, str] = {}
     reconstruction_model_version_by_day: dict[str, str] = {}
     reconstruction_basis_by_day: dict[str, str] = {}
+    hourly_rows_by_day: dict[str, list[dict[str, Any]]] = {}
     for row in forecast_hourly or []:
         day = str(row.get("date") or "")
+        if day:
+            hourly_rows_by_day.setdefault(day, []).append(row)
         value = to_float(row.get("forecast_load_kwh"))
         if day and value is not None:
             hourly_load_by_day[day] = hourly_load_by_day.get(day, 0.0) + max(0.0, value)
@@ -250,6 +254,24 @@ def _build_energy_daily(
             pv_source=pv_source,
             load_source=load_source,
         )
+        selected_run = hourly_run_id_by_day.get(day)
+        selected_rows = [row for row in hourly_rows_by_day.get(day, [])
+                         if (row.get("forecast_run_id") or any(row.get(field) is not None
+                             for field in ("forecast_pv_kwh", "forecast_load_kwh")))
+                         and (not selected_run or row.get("forecast_run_id") == selected_run)]
+        forecast_hours = {
+            row["hour"] for row in selected_rows
+            if type(row.get("hour")) is int and 0 <= row["hour"] <= 23
+            and all(not isinstance(row.get(field), bool)
+                    and isinstance(row.get(field), (int, float))
+                    and math.isfinite(row[field]) and row[field] >= 0
+                    for field in ("forecast_pv_kwh", "forecast_load_kwh"))
+        }
+        private_identity: dict[str, Any] = {}
+        for field in ("_raw_plan_sha256", "_control_version_id", "_plan_generated_at"):
+            values = {row.get(field) if isinstance(row.get(field), str) and row.get(field) else None
+                      for row in selected_rows}
+            private_identity[field] = next(iter(values)) if len(values) == 1 and None not in values else None
         out.append(
             {
                 "date": day,
@@ -271,6 +293,8 @@ def _build_energy_daily(
                 "forecast_reconstruction_model_version": reconstruction_model_version_by_day.get(day),
                 "forecast_reconstruction_basis": reconstruction_basis_by_day.get(day),
                 "actual_load_kwh": actual.get("actual_load_kwh"),
+                "forecast_available_hour_count": len(forecast_hours) if selected_rows else None,
+                **private_identity,
             }
         )
     return out

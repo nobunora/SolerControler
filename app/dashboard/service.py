@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
@@ -10,23 +12,25 @@ def merge_forecast_hourly_actuals(
     forecast_rows: list[dict[str, Any]],
     monitoring_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Attach hourly actual load and latest SOC values to forecast rows."""
+    """Display saved halfhours and observed SOC without manufacturing missing values."""
     actuals: dict[tuple[str, int], dict[str, Any]] = {}
     for row in monitoring_rows:
-        ts = str(row.get("ts") or "")
-        if len(ts) < 13:
-            continue
         try:
-            hour = int(ts[11:13])
+            stamp = datetime.fromisoformat(str(row.get("ts") or "").replace("Z", "+00:00"))
         except (TypeError, ValueError):
             continue
-        if not 0 <= hour <= 23:
+        if stamp.tzinfo is not None:
+            stamp = stamp.astimezone(ZoneInfo("Asia/Tokyo"))
+        if stamp.minute not in (0, 30) or stamp.second or stamp.microsecond:
             continue
-        key = (ts[:10], hour)
+        ts = stamp.isoformat()
+        key = (stamp.date().isoformat(), stamp.hour)
         acc = actuals.setdefault(
             key,
             {
-                "actual_load_kwh": 0.0,
+                "actual_load_kwh": None,
+                "actual_pv_kwh": None,
+                "energy_slots": {"actual_pv_kwh": {}, "actual_load_kwh": {}},
                 "actual_soc_percent": None,
                 "latest_sample_at": None,
                 "first_sample_at": None,
@@ -40,18 +44,19 @@ def merge_forecast_hourly_actuals(
         if latest is None or ts > latest:
             acc["latest_sample_at"] = ts
 
-        try:
-            load_kwh = float(row.get("load_kwh") or 0.0)
-        except (TypeError, ValueError):
-            load_kwh = None
-        if load_kwh is not None and math.isfinite(load_kwh):
-            acc["actual_load_kwh"] += load_kwh
+        for source, field in (("pv_kwh", "actual_pv_kwh"), ("load_kwh", "actual_load_kwh")):
+            value = row.get(source)
+            numeric = float(value) if not isinstance(value, bool) and isinstance(value, (int, float)) else None
+            if numeric is not None and (not math.isfinite(numeric) or numeric < 0):
+                numeric = None
+            slots = acc["energy_slots"][field]
+            if stamp.minute not in slots:
+                slots[stamp.minute] = numeric
+            elif slots[stamp.minute] != numeric:
+                slots[stamp.minute] = None
 
         soc_value = row.get("soc_percent")
-        try:
-            soc = float(soc_value) if soc_value is not None else None
-        except (TypeError, ValueError):
-            soc = None
+        soc = float(soc_value) if not isinstance(soc_value, bool) and isinstance(soc_value, (int, float)) else None
         if soc is not None and math.isfinite(soc) and 0.0 <= soc <= 100.0:
             opening_soc_at = acc.get("opening_soc_at")
             if opening_soc_at is None or ts < opening_soc_at:
@@ -62,7 +67,13 @@ def merge_forecast_hourly_actuals(
                 acc["actual_soc_percent"] = soc
                 acc["actual_soc_at"] = ts
 
+    for aggregate in actuals.values():
+        for field, slots in aggregate["energy_slots"].items():
+            if set(slots) == {0, 30} and all(value is not None for value in slots.values()):
+                aggregate[field] = sum(slots.values())
+
     merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
     for row in forecast_rows:
         item = dict(row)
         try:
@@ -71,12 +82,19 @@ def merge_forecast_hourly_actuals(
         except (TypeError, ValueError):
             key = ("", -1)
         actual = actuals.get(key)
-        item["actual_load_kwh"] = actual["actual_load_kwh"] if actual else None
-        item["actual_soc_percent"] = actual.get("actual_soc_percent") if actual else None
-        item["first_sample_at"] = actual.get("first_sample_at") if actual else None
-        item["opening_soc_percent"] = actual.get("opening_soc_percent") if actual else None
-        item["latest_sample_at"] = actual["latest_sample_at"] if actual else None
+        for field in ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
+                      "opening_soc_percent", "latest_sample_at"):
+            if item.get(field) is None:
+                item[field] = actual.get(field) if actual else None
+        seen.add(key)
         merged.append(item)
+    for key, actual in actuals.items():
+        if key not in seen:
+            merged.append({"date": key[0], "hour": key[1], "forecast_pv_kwh": None,
+                           "forecast_load_kwh": None, "forecast_charge_kwh": None,
+                           "forecast_run_id": None, **{field: actual.get(field) for field in
+                           ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
+                            "opening_soc_percent", "latest_sample_at")}})
     merged.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
     return merged
 
@@ -91,6 +109,11 @@ def assemble_dashboard_slice(
     daily_reviews: list[dict[str, Any]] | None = None,
 ) -> DashboardSlice:
     """Build the stable API model from normalized backend rows."""
+    private_markers = {"_raw_plan_sha256", "_control_version_id", "_plan_generated_at"}
+    public_hourly = [{key: value for key, value in row.items() if key not in private_markers}
+                     for row in raw.forecast_hourly]
+    public_energy = [{key: value for key, value in row.items() if key not in private_markers}
+                     for row in raw.energy_daily]
     return DashboardSlice(
         data=DashboardData(
             pv_daily=raw.pv_daily,
@@ -99,8 +122,8 @@ def assemble_dashboard_slice(
             battery_daily=raw.battery_daily,
             model_parameters=raw.model_parameters,
             battery_flow_daily=raw.battery_flow_daily,
-            energy_daily=raw.energy_daily,
-            forecast_hourly=raw.forecast_hourly,
+            energy_daily=public_energy,
+            forecast_hourly=public_hourly,
             latest_schedule=raw.latest_schedule,
             dashboard_warnings=warnings,
             pv_forecast_diagnostics=pv_forecast_diagnostics or {},

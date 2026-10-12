@@ -1,0 +1,562 @@
+{
+  "schema_version": 1,
+  "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+  "allowed": [
+    {
+      "step": "D01",
+      "path": "app/dashboard/slice_assembler.py",
+      "symbol": "extract_pv_forecast_diagnostics",
+      "kind": "existing",
+      "variables": [
+        "data",
+        "producer_identity",
+        "forecast_run_id",
+        "pv_model"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D01-model-summary.md"
+    },
+    {
+      "step": "D01",
+      "path": "app/dashboard/slice_assembler.py",
+      "symbol": "_build_pv_model_summary",
+      "kind": "new",
+      "variables": [
+        "trace",
+        "pack",
+        "summary",
+        "status",
+        "reason_code",
+        "training_dates",
+        "theta",
+        "totals"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D01-model-summary.md"
+    },
+    {
+      "step": "D01",
+      "path": "app/dashboard/snapshots.py",
+      "symbol": "write_dashboard_snapshots",
+      "kind": "existing",
+      "variables": [
+        "original",
+        "publication_identity",
+        "payloads",
+        "forecast_run_id"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D01-model-summary.md"
+    },
+    {
+      "step": "D02",
+      "path": "templates/dashboard.html",
+      "symbol": "MODEL_AND_LEARNING_PANE",
+      "kind": "template",
+      "variables": [
+        "pvModelName",
+        "pvModelProvenance",
+        "pvModelLearningPeriod",
+        "pvModelTiming",
+        "pvModelRepair",
+        "pvModelExplanation"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D02",
+      "path": "static/dashboard.js",
+      "symbol": "fillLearningParamsTable",
+      "kind": "existing",
+      "variables": [
+        "summary",
+        "binding",
+        "category",
+        "sampleCount",
+        "meaning"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D02",
+      "path": "static/dashboard.js",
+      "symbol": "fillLearningParams",
+      "kind": "existing",
+      "variables": [
+        "summary",
+        "rows",
+        "date",
+        "binding"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D02",
+      "path": "static/dashboard.js",
+      "symbol": "refreshDashboard",
+      "kind": "existing",
+      "variables": [
+        "MODEL_DISPLAY_REBIND_CALL_ONLY"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D02",
+      "path": "static/dashboard.js",
+      "symbol": "renderPvModelSummary",
+      "kind": "new",
+      "variables": [
+        "summary",
+        "binding"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D02",
+      "path": "static/dashboard.js",
+      "symbol": "bindPvModelToForecast",
+      "kind": "new",
+      "variables": [
+        "summary",
+        "rows",
+        "date"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D02-learning-and-description.md"
+    },
+    {
+      "step": "D03",
+      "path": "static/dashboard.js",
+      "symbol": "renderHourlyForecast",
+      "kind": "existing",
+      "variables": [
+        "displayState",
+        "pointSources",
+        "plannedPeak",
+        "referencePeak"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D03-hourly-display.md"
+    },
+    {
+      "step": "D03",
+      "path": "static/dashboard.js",
+      "symbol": "hourlyDisplayState",
+      "kind": "new",
+      "variables": [
+        "rows",
+        "date",
+        "schedule",
+        "points",
+        "pointSources",
+        "boundSchedule",
+        "forecastCount",
+        "actualCount"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D03-hourly-display.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/firestore_repository.py",
+      "symbol": "_firestore_forecast_hourly_between",
+      "kind": "existing",
+      "variables": [
+        "fields",
+        "_raw_plan_sha256",
+        "_control_version_id",
+        "_plan_generated_at"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/firestore_repository.py",
+      "symbol": "_build_firestore_daily_reviews",
+      "kind": "existing",
+      "variables": [
+        "plan",
+        "hourly",
+        "review",
+        "plan_forecast_binding",
+        "plan_forecast_binding_reason",
+        "forecast_available_hour_count"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/aggregation.py",
+      "symbol": "_build_energy_daily",
+      "kind": "existing",
+      "variables": [
+        "_raw_plan_sha256",
+        "_control_version_id",
+        "_plan_generated_at",
+        "forecast_available_hour_count"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/service.py",
+      "symbol": "assemble_dashboard_slice",
+      "kind": "existing",
+      "variables": [
+        "raw",
+        "forecast_hourly",
+        "energy_daily",
+        "private_markers"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "static/dashboard.js",
+      "symbol": "renderDailyReview",
+      "kind": "existing",
+      "variables": [
+        "review",
+        "plan_forecast_binding",
+        "plan_forecast_binding_reason",
+        "forecast_available_hour_count"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "static/dashboard.js",
+      "symbol": "renderWindow",
+      "kind": "existing",
+      "variables": [
+        "coverage_caption",
+        "PV_LOAD_TOOLTIP_ONLY"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D03",
+      "path": "static/dashboard.js",
+      "symbol": "ensureVisibleChartRanges",
+      "kind": "new",
+      "variables": [
+        "chart",
+        "axisBounds"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D03-hourly-display.md"
+    },
+    {
+      "step": "D03",
+      "path": "static/dashboard.js",
+      "symbol": "renderMonthly",
+      "kind": "existing",
+      "variables": [
+        "chart",
+        "axisBounds"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D03-hourly-display.md"
+    },
+    {
+      "step": "D03",
+      "path": "static/dashboard.js",
+      "symbol": "renderBatteryLifeProjection",
+      "kind": "existing",
+      "variables": [
+        "chart",
+        "axisBounds"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D03-hourly-display.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/service.py",
+      "symbol": "merge_forecast_hourly_actuals",
+      "kind": "existing",
+      "variables": [
+        "monitoring_rows_out",
+        "missing_fields",
+        "actual_slots"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/history_reconstruction.py",
+      "symbol": "firestore_forecast_hourly_with_reconstruction",
+      "kind": "existing",
+      "variables": [
+        "monitoring_rows_out",
+        "missing_fields",
+        "actual_slots"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/sqlite_repository.py",
+      "symbol": "load_sqlite_query_snapshot",
+      "kind": "existing",
+      "variables": [
+        "monitoring_rows_out",
+        "missing_fields",
+        "actual_slots"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/postgres_repository.py",
+      "symbol": "load_postgres_slice",
+      "kind": "existing",
+      "variables": [
+        "monitoring_rows_out",
+        "missing_fields",
+        "actual_slots"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/firestore.py",
+      "symbol": "_monitoring_energy",
+      "kind": "new",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/firestore.py",
+      "symbol": "_add_monitoring_energy",
+      "kind": "new",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/firestore.py",
+      "symbol": "_log_monitoring_daily_source_quality",
+      "kind": "new",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/firestore.py",
+      "symbol": "recalc_dashboard_daily_metrics",
+      "kind": "existing",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/firestore.py",
+      "symbol": "recalc_monitoring_daily_metrics",
+      "kind": "existing",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/monitoring_sync.py",
+      "symbol": "MonitoringChangeSet",
+      "kind": "existing",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/monitoring_sync.py",
+      "symbol": "classify_monitoring_rows",
+      "kind": "existing",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D06",
+      "path": "app/operations/workflow.py",
+      "symbol": "_ingest_firestore",
+      "kind": "existing",
+      "variables": [
+        "source_calendar_dates",
+        "materialization_dates",
+        "metrics",
+        "missing"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D06-source-repair.md"
+    },
+    {
+      "step": "D04",
+      "path": "app/dashboard/firestore_repository.py",
+      "symbol": "_snapshot_forecast_rows_between",
+      "kind": "existing",
+      "variables": [
+        "private_identity"
+      ],
+      "authority": "USER_AUTHORIZED_2026_10_12_BOUNDED_IMPLEMENTATION",
+      "exact_scope": "steps/D04-review-binding.md"
+    }
+  ],
+  "protected": [
+    {
+      "path": "static/dashboard.js",
+      "symbols": [
+        "n",
+        "sumBucket",
+        "averageBucket",
+        "dualScales",
+        "estimateHourlyForecastSoc",
+        "estimateHourlyNightGridCharge",
+        "maxForecastSocPoint"
+      ],
+      "policy": "FUNCTION_BODY_UNCHANGED",
+      "exceptions": "Only ensureVisibleChartRanges before update allowed in renderMonthly/renderBatteryLifeProjection"
+    },
+    {
+      "path": "static/dashboard_calculations.js",
+      "symbols": [
+        "forecastSocFromLatestActual",
+        "plannedBatteryValues"
+      ],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/dashboard/snapshots.py",
+      "symbols": [
+        "_upload_artifact",
+        "_read_dashboard_source_epoch",
+        "_read_history_publication",
+        "_validate_publication_payload",
+        "load_precomputed_snapshot"
+      ],
+      "policy": "FUNCTION_BODY_UNCHANGED"
+    },
+    {
+      "path": "app/dashboard/server.py",
+      "symbols": [
+        "Handler._serve_snapshot",
+        "_static_version"
+      ],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/dashboard/schedule.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/dashboard/warnings.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/dashboard/history_reconstruction.py",
+      "symbols": [
+        "_metadata_matches_forecast_row"
+      ],
+      "policy": "FUNCTION_BODY_UNCHANGED"
+    },
+    {
+      "path": "app/operations/forecast_persistence.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/operations/firestore.py",
+      "symbols": [],
+      "policy": "UNCHANGED_EXCEPT_LISTED_D06_SYMBOLS",
+      "exceptions": "Only source daily aggregation; forecast/control publication/parameters unchanged"
+    },
+    {
+      "path": "app/operations/sqlite.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/operations/postgres.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/energy_plan/clear_ghi_adapter.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/energy_plan/clear_ghi_update.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/forecasting/pv_clear_ghi.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    },
+    {
+      "path": "app/backup/plan_snapshot.py",
+      "symbols": [],
+      "policy": "WHOLE_FILE_UNCHANGED"
+    }
+  ],
+  "extra_prohibition": "All unlisted production symbols; especially control/finance/SOC/storage/schema/dependencies"
+}

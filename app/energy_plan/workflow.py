@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import math
 import os
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone as utc_timezone
 from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 import requests
+
+from app.forecasting.pv_clear_ghi import ClearGhiCalibration, ClearGhiForecast
+from app.energy_plan.clear_ghi_adapter import _build_clear_ghi_forecast_bundle, _prepare_night_charge_from_hourly
+from app.energy_plan.clear_ghi_update import load_calibration_for_context
 
 from app.forecasting.consumption import ConsumptionForecast, forecast_daily_consumption
 from app.energy_plan import (
@@ -89,7 +95,7 @@ from app.energy_plan.plan_quality import (
     _to_optional_int,
     _uses_physical_pv_forecast,
 )
-from app.energy_plan.pv_selection import _build_selected_pv_forecast
+from app.energy_plan.pv_selection import _build_selected_pv_forecast as _build_selected_pv_forecast
 from app.energy_plan.result_builder import _build_energy_model_output
 from app.energy_plan.optimization import LegacyOptimizationDecision, OptimizationDecision
 
@@ -247,6 +253,7 @@ class PvForecastBundle:
     source: str
     uncertainty: PvForecastUncertainty
     sunset_hour: int
+    clear_ghi_forecast: ClearGhiForecast | None = None
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -328,6 +335,29 @@ def _weather_class(weather_code: int | None) -> str:
     return weather_class(weather_code)
 
 
+def _radiation_provenance(hourly: dict[str, Any], *, target_date: str, timezone: str, suffix: str = "") -> dict[str, object]:
+    """Preserve timestamped source values, including next midnight, from this response."""
+    times = hourly.get("time", [])
+    radiation = hourly.get(f"shortwave_radiation{suffix}", [])
+    if not isinstance(times, list) or not isinstance(radiation, list) or len(times) != len(radiation):
+        raise ValueError("radiation source arrays are not aligned")
+    day = date.fromisoformat(target_date)
+    zone = ZoneInfo(timezone)
+    next_midnight = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=zone)
+    rows = []
+    for stamp, value in zip(times, radiation, strict=True):
+        if not isinstance(stamp, str):
+            raise ValueError("radiation source timestamp is not an ISO string")
+        parsed = datetime.fromisoformat(stamp)
+        local = parsed.replace(tzinfo=zone) if parsed.tzinfo is None else parsed.astimezone(zone)
+        if local.date() == day or local == next_midnight:
+            rows.append({"time": stamp, "shortwave_radiation_w_m2": value})
+    raw = json.dumps({"target_date": target_date, "timezone": timezone, "source_rows": rows},
+                     sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return {"pv_radiation_rows": rows, "pv_forecast_input_sha256": hashlib.sha256(raw).hexdigest(),
+            "pv_forecast_retrieved_at": datetime.now(utc_timezone.utc).isoformat(), "pv_provider_issued_at": None}
+
+
 def _fetch_open_meteo_previous_day1_forecast(
     *,
     lat: float,
@@ -343,7 +373,7 @@ def _fetch_open_meteo_previous_day1_forecast(
         "longitude": lon,
         "timezone": timezone,
         "start_date": target_date,
-        "end_date": target_date,
+        "end_date": (date.fromisoformat(target_date) + timedelta(days=1)).isoformat(),
         "models": model,
         "hourly": (
             "weather_code_previous_day1,precipitation_previous_day1,"
@@ -370,6 +400,7 @@ def _fetch_open_meteo_previous_day1_forecast(
     dominant_code = _to_optional_int(summary.get("dominant_weather_code_7_17"))
     shortwave_sum_wh = _to_optional_float(summary.get("shortwave_sum_9_15_wh_m2")) or 0.0
     return {
+        **_radiation_provenance(hourly, target_date=target_date, timezone=timezone, suffix=suffix),
         "date": target_date,
         "sun_hours": None,
         "temp_c": _to_optional_float(summary.get("mean_temp_c_7_17")),
@@ -447,6 +478,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
     forecast_date = str(times[target_index])
     hourly_weather = hourly_weather_records_from_open_meteo(hourly, target_date=forecast_date) if isinstance(hourly, dict) else []
     return {
+        **_radiation_provenance(hourly if isinstance(hourly, dict) else {}, target_date=forecast_date, timezone=timezone),
         "date": forecast_date,
         "sun_hours": (_to_optional_float(_list_value(sunshine, target_index)) or 0.0) / 3600.0,
         "temp_c": _to_optional_float(_list_value(temp, target_index)) or 0.0,
@@ -511,6 +543,10 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
                     "hourly_weather",
                     "hourly_weather_summary",
                     "historical_forecast",
+                    "pv_radiation_rows",
+                    "pv_forecast_input_sha256",
+                    "pv_forecast_retrieved_at",
+                    "pv_provider_issued_at",
                 ):
                     if previous.get(key) is not None:
                         forecast[key] = previous[key]
@@ -1061,6 +1097,8 @@ def build_energy_plan(
     historical_input: HistoricalInputPort | None = None,
     forecast_input: ForecastInputPort | None = None,
     weather_history_port: WeatherHistoryPort | None = None,
+    calibration: ClearGhiCalibration | None = None,
+    as_of: datetime | None = None,
 ) -> EnergyModelOutput:
     """Coordinate the planning use case without persisting or reporting output."""
     if historical_input is None and forecast_input is None:
@@ -1076,8 +1114,19 @@ def build_energy_plan(
         if weather_history_port is None
         else _build_consumption_forecasts(context, weather_history_port=weather_history_port)
     )
-    night_charge = _prepare_night_charge(context, consumption_bundle)
-    pv_bundle = _build_selected_pv_forecast(context, consumption_bundle, night_charge)
+    if calibration is None:
+        if as_of is not None:
+            raise ValueError("as_of requires an explicitly supplied calibration")
+        calibration, as_of = load_calibration_for_context(context)
+    elif as_of is None:
+        raise ValueError("explicit calibration requires an aware as_of")
+    try:
+        pv_bundle = _build_clear_ghi_forecast_bundle(context, consumption_bundle, calibration, as_of=as_of)
+    except ValueError:
+        print(json.dumps({"event": "energy_plan_failed", "stage": "pv_forecast_bundle", "target_date": context.target_date,
+                          "reason_code": "invalid_forecast_or_calibration"}), flush=True)
+        raise
+    night_charge = _prepare_night_charge_from_hourly(context, consumption_bundle, pv_bundle)
     constraints = _build_soc_constraints(context, pv_bundle, night_charge)
     legacy_decision = _run_legacy_soc_optimization(
         context,

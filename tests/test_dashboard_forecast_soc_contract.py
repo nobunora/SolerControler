@@ -378,4 +378,6 @@ def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
     assert "forecastSocFromLatestActual(rows, capacityKwh, chargeEff, dischargeEff)" in source
     assert "if (!Number.isFinite(targetSocRaw)) return rows.map(() => null);" not in source
     assert 'label: "予想SOC(%)"' in source
-    assert "const soc = estimateHourlyForecastSoc(rows, date);" in source
+    assert "const state = hourlyDisplayState(rows, date, store.latestSchedule);" in source
+    assert "let soc = state.points;" in source
+    assert "estimated = estimateHourlyForecastSoc(rows, date);" in source

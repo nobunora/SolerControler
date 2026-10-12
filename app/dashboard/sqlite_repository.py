@@ -112,7 +112,16 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
             forecast_hourly = _rows_to_dicts(conn.execute(f"""
                 WITH hourly_actuals AS (
                     SELECT substr(ts,1,10) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour,
-                           COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
+                           CASE WHEN COUNT(*) = 2 AND COUNT(DISTINCT substr(ts,15,2)) = 2
+                                AND COUNT(CASE WHEN typeof(load_kwh) IN ('integer','real') AND load_kwh >= 0
+                                    AND load_kwh < 1e999 AND substr(ts,15,2) IN ('00','30')
+                                    AND substr(ts,18,2) = '00' THEN 1 END) = 2
+                                THEN SUM(load_kwh) END AS actual_load_kwh,
+                           CASE WHEN COUNT(*) = 2 AND COUNT(DISTINCT substr(ts,15,2)) = 2
+                                AND COUNT(CASE WHEN typeof(pv_kwh) IN ('integer','real') AND pv_kwh >= 0
+                                    AND pv_kwh < 1e999 AND substr(ts,15,2) IN ('00','30')
+                                    AND substr(ts,18,2) = '00' THEN 1 END) = 2
+                                THEN SUM(pv_kwh) END AS actual_pv_kwh,
                            MIN(ts) AS first_sample_at,
                            MAX(ts) AS latest_sample_at
                     FROM monitoring_samples
@@ -140,18 +149,23 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                           AND soc_percent >= 0 AND soc_percent <= 100
                     )
                     GROUP BY date, hour
+                ), display_hours AS (
+                    SELECT date, hour FROM forecast_hourly WHERE date >= ? AND date <= ?
+                    UNION SELECT date, hour FROM hourly_actuals
                 )
-                SELECT fh.date, fh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
-                       fh.forecast_charge_kwh, ah.actual_load_kwh, hs.actual_soc_percent,
+                SELECT dh.date, dh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
+                       fh.forecast_charge_kwh, ah.actual_load_kwh, ah.actual_pv_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
                        ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql},
                        fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
                        fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis
-                FROM forecast_hourly fh
-                LEFT JOIN hourly_actuals ah ON ah.date = fh.date AND ah.hour = fh.hour
-                LEFT JOIN hourly_soc hs ON hs.date = fh.date AND hs.hour = fh.hour
-                WHERE fh.date >= ? AND fh.date <= ? ORDER BY fh.date, fh.hour
-                """, (start_date, end_date_iso, start_date, end_date_iso, start_date, end_date_iso)).fetchall())
+                FROM display_hours dh
+                LEFT JOIN forecast_hourly fh ON fh.date = dh.date AND fh.hour = dh.hour
+                LEFT JOIN hourly_actuals ah ON ah.date = dh.date AND ah.hour = dh.hour
+                LEFT JOIN hourly_soc hs ON hs.date = dh.date AND hs.hour = dh.hour
+                WHERE dh.date >= ? AND dh.date <= ? ORDER BY dh.date, dh.hour
+                """, (start_date, end_date_iso, start_date, end_date_iso,
+                      start_date, end_date_iso, start_date, end_date_iso)).fetchall())
             for row in forecast_hourly:
                 for name in identity_fields:
                     if row.get(name) is None:
@@ -162,10 +176,14 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
         if _sqlite_table_exists(conn, "monitoring_samples"):
             raw_monitoring_daily = _rows_to_dicts(conn.execute("""
                 SELECT substr(ts,1,10) AS date,
-                       COALESCE(SUM(COALESCE(pv_kwh,0)), 0) AS actual_pv_kwh,
-                       COALESCE(SUM(COALESCE(load_kwh,0)), 0) AS actual_load_kwh,
-                       COALESCE(SUM(COALESCE(charge_kwh,0)), 0) AS charge_kwh,
-                       COALESCE(SUM(COALESCE(discharge_kwh,0)), 0) AS discharge_kwh
+                       CASE WHEN COUNT(CASE WHEN typeof(pv_kwh) IN ('integer','real') AND pv_kwh >= 0 AND pv_kwh < 1e999 THEN 1 END) = COUNT(*)
+                            THEN SUM(pv_kwh) END AS actual_pv_kwh,
+                       CASE WHEN COUNT(CASE WHEN typeof(load_kwh) IN ('integer','real') AND load_kwh >= 0 AND load_kwh < 1e999 THEN 1 END) = COUNT(*)
+                            THEN SUM(load_kwh) END AS actual_load_kwh,
+                       CASE WHEN COUNT(CASE WHEN typeof(charge_kwh) IN ('integer','real') AND charge_kwh >= 0 AND charge_kwh < 1e999 THEN 1 END) = COUNT(*)
+                            THEN SUM(charge_kwh) END AS charge_kwh,
+                       CASE WHEN COUNT(CASE WHEN typeof(discharge_kwh) IN ('integer','real') AND discharge_kwh >= 0 AND discharge_kwh < 1e999 THEN 1 END) = COUNT(*)
+                            THEN SUM(discharge_kwh) END AS discharge_kwh
                 FROM monitoring_samples WHERE substr(ts,1,10) >= ? AND substr(ts,1,10) <= ?
                 GROUP BY substr(ts,1,10) ORDER BY date
                 """, (history_start, end_date_iso)).fetchall())

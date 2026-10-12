@@ -176,20 +176,22 @@ def test_planner_reuses_canonical_computation_and_publishes_after_success(tmp_pa
     path.write_bytes(raw_plan())
     monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(path))
     calls = []
-    monkeypatch.setattr(planner.forecast_job, "main", lambda **kw: calls.append(("canonical", kw)) or 0)
+    monkeypatch.setattr(planner.forecast_job, "generate_forecast_plan", lambda: calls.append("canonical-generation") or path)
     monkeypatch.setattr(planner.forecast_job, "_target_date", lambda: "2099-01-01")
     monkeypatch.setattr(planner, "estimate_forced_charge_rate_percent_per_hour", lambda _paths: RATE)
     monkeypatch.setattr(planner, "FirestorePlanStore", lambda: SimpleNamespace(publish=lambda plan: calls.append(plan)))
     monkeypatch.setattr(planner, "open_firestore", lambda: "mock-client")
     monkeypatch.setattr(planner.storage, "Client", lambda: "mock-storage")
-    monkeypatch.setattr(planner, "archive_plan_snapshot", lambda *a, **kw: calls.append("archive-and-latest"))
-    monkeypatch.setattr(planner, "upsert_model_parameters_from_plan", lambda *a, **kw: calls.append("model-parameters"))
+    monkeypatch.setattr(planner, "archive_plan_original", lambda *a, **kw: calls.append("immutable") or ({"status": "verified"}, {}))
+    monkeypatch.setattr(planner, "project_forecast_plan", lambda *a, **kw: calls.append("forecast-projection"))
+    monkeypatch.setattr(planner, "project_plan_read_models", lambda *a, **kw: calls.append("archive-and-latest"))
+    monkeypatch.setattr(planner, "project_model_parameters", lambda *a, **kw: calls.append("model-parameters"))
     monkeypatch.setattr(planner, "dashboard_snapshot_prefix", lambda: "test-prefix")
-    monkeypatch.setattr(planner, "write_dashboard_snapshots", lambda *a: calls.append("read-models"))
+    monkeypatch.setattr(planner, "write_dashboard_snapshots", lambda *a, **kw: calls.append("read-models"))
     assert planner.main() == 0
-    assert calls[0] == ("canonical", {"publish_read_models": False})
-    assert calls[1:3] == ["archive-and-latest", "model-parameters"]
-    assert calls[3].raw_json.encode() == path.read_bytes() and calls[4] == "read-models"
+    assert calls[:2] == ["canonical-generation", "immutable"]
+    assert calls[2].raw_json.encode() == path.read_bytes()
+    assert calls[3:] == ["forecast-projection", "archive-and-latest", "model-parameters", "read-models"]
 
 
 def test_control_dependency_list_has_no_scientific_or_backup_packages():
@@ -208,9 +210,12 @@ def test_stale_and_future_generation_never_reaches_device(monkeypatch, generated
 
 
 def test_failed_canonical_calculation_does_not_publish(monkeypatch):
-    monkeypatch.setattr(planner.forecast_job, "main", lambda **kw: 1)
+    def fail_generation():
+        raise RuntimeError("calculation failed")
+    monkeypatch.setattr(planner.forecast_job, "generate_forecast_plan", fail_generation)
     monkeypatch.setattr(planner, "FirestorePlanStore", lambda: pytest.fail("failed calculation must not publish"))
-    assert planner.main() == 1
+    with pytest.raises(RuntimeError, match="calculation failed"):
+        planner.main()
 
 
 @pytest.mark.parametrize("forced,green,restored,expected", [

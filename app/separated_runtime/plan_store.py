@@ -10,6 +10,62 @@ from urllib.parse import quote
 from app.separated_runtime.plan import PublishedPlan
 
 
+def _provenance(plan: PublishedPlan) -> dict[str, Any]:
+    data = json.loads(plan.raw_json)
+    rationale = data.get("decision_rationale")
+    trace = rationale.get("pv_clear_ghi") if isinstance(rationale, dict) else None
+    return trace if isinstance(trace, dict) else {}
+
+
+def _provenance_time(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("plan publication provenance timestamp is missing")
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.utcoffset() is None:
+        raise ValueError("plan publication provenance requires timezone")
+    return stamp
+
+
+def _check_provenance(incoming: PublishedPlan, adopted: PublishedPlan) -> None:
+    new, old = _provenance(incoming), _provenance(adopted)
+    if not old:
+        return  # Preserve legacy plans without inventing provider evidence.
+    identity = ("model_id", "basis_version", "site_fingerprint")
+    if not new or any(not old.get(key) or new.get(key) != old[key] for key in identity):
+        raise ValueError("plan publication provenance model/site/basis mismatch")
+    old_issued, new_issued = old.get("provider_issued_at"), new.get("provider_issued_at")
+    if old_issued is not None:
+        if new_issued is None or _provenance_time(new_issued) < _provenance_time(old_issued):
+            raise ValueError("plan publication provider vintage cannot regress")
+    elif new_issued is None:
+        if _provenance_time(new.get("retrieved_at")) < _provenance_time(old.get("retrieved_at")):
+            raise ValueError("plan publication retrieval order cannot regress")
+        print(json.dumps({"event": "plan_publication_freshness_unknown", "stage": "control_cas",
+                          "target_date": incoming.target_date, "control_version_id": incoming.version_id,
+                          "reason_code": "provider_freshness_unknown"}), flush=True)
+    old_pack, new_pack = old.get("calibration_pack"), new.get("calibration_pack")
+    if not isinstance(old_pack, dict) or not isinstance(new_pack, dict):
+        raise ValueError("plan publication calibration provenance missing")
+    if _provenance_time(new_pack.get("training_as_of")) < _provenance_time(old_pack.get("training_as_of")):
+        raise ValueError("plan publication calibration training vintage cannot regress")
+
+
+def _validate_incoming_provenance(plan: PublishedPlan) -> None:
+    trace = _provenance(plan)
+    if not trace:
+        return
+    if any(not isinstance(trace.get(key), str) or not trace[key] for key in ("model_id", "basis_version", "site_fingerprint")):
+        raise ValueError("plan publication provenance identity missing")
+    generated = _provenance_time(json.loads(plan.raw_json)["generated_at"])
+    if _provenance_time(trace.get("retrieved_at")) > generated:
+        raise ValueError("plan publication retrieval is later than generation")
+    pack = trace.get("calibration_pack")
+    if not isinstance(pack, dict) or _provenance_time(pack.get("training_as_of")) > generated:
+        raise ValueError("plan publication calibration provenance invalid")
+    if trace.get("provider_issued_at") is not None:
+        _provenance_time(trace["provider_issued_at"])
+
+
 class FirestorePlanStore:
     def __init__(self, *, session: Any = None) -> None:
         project = os.environ["FIRESTORE_PROJECT_ID"]
@@ -33,6 +89,7 @@ class FirestorePlanStore:
         return PublishedPlan.from_document(document, target_date=target_date)
 
     def publish(self, plan: PublishedPlan) -> None:
+        _validate_incoming_provenance(plan)
         payload = json.dumps(plan.to_document(), sort_keys=True, separators=(",", ":"), allow_nan=False)
         if len(payload.encode("utf-8")) > 900_000:
             raise ValueError("encoded control plan exceeds the Firestore document budget")
@@ -51,6 +108,7 @@ class FirestorePlanStore:
                 old_time = datetime.fromisoformat(json.loads(old.raw_json)["generated_at"].replace("Z", "+00:00"))
                 if old_time > incoming_time or (old_time == incoming_time and old.version_id != plan.version_id):
                     raise ValueError("older or conflicting plan cannot replace the adopted plan")
+                _check_provenance(plan, old)
                 precondition = {"updateTime": stored["updateTime"]}
             else:
                 raise RuntimeError("control plan publication could not read the adopted plan")

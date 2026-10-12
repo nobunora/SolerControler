@@ -164,10 +164,10 @@ setImmediate(async () => {
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard/history")), false);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
   assert.match(elements.get("hourlyForecastNote").textContent, /夜間系統充電 3\.14kWh/);
-  assert.match(elements.get("hourlyForecastNote").textContent, /予想SOCピーク 07:00ごろ 77%/);
+  assert.match(elements.get("hourlyForecastNote").textContent, /取得済み計画SOC最大 3\/17 07:00 77%/);
   assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
-  const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "予想SOC(%)"));
-  assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [42, 48, 77, 63.2, 70.4]);
+  const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "計画SOC(%)"));
+  assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [null, null, 77, 63.2, 70.4]);
   assert.deepEqual({ min: hourlyChart.options.scales.y.min, max: hourlyChart.options.scales.y.max }, { min: 0, max: 5 });
   assert.deepEqual({ min: hourlyChart.options.scales.y2.min, max: hourlyChart.options.scales.y2.max }, { min: 0, max: 100 });
   assert.equal(hourlyChart.options.scales.y.ticks.count, hourlyChart.options.scales.y2.ticks.count);

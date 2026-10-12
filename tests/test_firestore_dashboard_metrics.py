@@ -59,7 +59,9 @@ def test_dashboard_metrics_materialize_review_night_window_and_morning_soc() -> 
             {"ts": "2026-07-16T00:00:00", "charge_kwh": 2.0, "buy_kwh": 3.0, "soc_percent": 30},
             {"ts": "2026-07-16T07:00:00", "buy_kwh": 4.0, "soc_percent": 80},
             {"ts": "2026-07-16T22:30:00", "buy_kwh": 5.0, "soc_percent": 40},
-            {"ts": "2026-07-16T23:00:00", "charge_kwh": 6.0, "soc_percent": 35},
+            # This window fixture contains measured zero buy, rather than an
+            # absent value (source-quality tests cover missing energy separately).
+            {"ts": "2026-07-16T23:00:00", "charge_kwh": 6.0, "buy_kwh": 0.0, "soc_percent": 35},
         ]
     )
 

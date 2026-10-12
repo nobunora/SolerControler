@@ -50,6 +50,20 @@ class MonitoringChangeSet:
     duplicate_same: int
     duplicate_conflict: int
     conflict_timestamps: tuple[str, ...]
+    source_calendar_dates: tuple[str, ...] = ()
+
+    @property
+    def materialization_dates(self) -> tuple[str, ...]:
+        """Dates actually supplied by CSV, including unchanged source evidence."""
+        return self.source_calendar_dates or self.calendar_dates
+
+    @property
+    def materialization_dashboard_dates(self) -> tuple[str, ...]:
+        # A day's 23:00 slots also belong to the next morning's charging window.
+        affected = set(self.materialization_dates)
+        affected.update((date.fromisoformat(day) + timedelta(days=1)).isoformat()
+                        for day in self.source_calendar_dates)
+        return tuple(sorted(affected))
 
     @property
     def changed_rows(self) -> tuple[dict[str, Any], ...]:
@@ -233,6 +247,7 @@ def classify_monitoring_rows(
         duplicate_same=prepared.duplicate_same,
         duplicate_conflict=prepared.duplicate_conflict,
         conflict_timestamps=prepared.conflict_timestamps,
+        source_calendar_dates=tuple(sorted({str(row["ts"])[:10] for row in prepared.rows})),
     )
 
 

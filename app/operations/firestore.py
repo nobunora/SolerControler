@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from google.cloud.firestore import transactional
+
+from app.operations.forecast_persistence import projection_identity, projection_may_advance
+from app.separated_runtime.plan import PublishedPlan
 
 from google.cloud import firestore
 
@@ -627,11 +633,35 @@ def recalc_battery_pv_charge_end_soc(client: Any, *, updated_at: str) -> int:
 
 
 # readable-code-audit: skip STRUCT-04 — Firestore aggregation and writes must use one consistent document-read snapshot for dashboard materialization
+def _monitoring_energy(value: Any) -> float | None:
+    """Keep missing/invalid source energy distinct from a measured zero."""
+    number = None if isinstance(value, bool) else to_float(value)
+    return number if number is not None and number >= 0 else None
+
+
+def _add_monitoring_energy(
+    accumulator: dict[str, float | str | None], key: str, value: Any,
+) -> None:
+    number = _monitoring_energy(value)
+    previous = accumulator.get(key, 0.0)
+    accumulator[key] = float(previous) + number if previous is not None and number is not None else None
+
+
+def _log_monitoring_daily_source_quality(day: str, metrics: dict[str, float | str | None]) -> None:
+    fields = ("actual_pv_kwh", "actual_load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh")
+    missing = [field for field in fields if metrics.get(field) is None]
+    count = int(float(metrics.get("sample_count") or 0))
+    if missing or count < 48:
+        print(json.dumps({"event": "monitoring_daily_source_incomplete", "date": day,
+                          "reason_code": "missing_energy" if missing else "incomplete_intervals",
+                          "sample_count": count, "missing_fields": missing}), flush=True)
+
+
 def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     """Materialize daily monitoring totals for fast dashboard reads."""
 
     by_day: dict[str, dict[str, float | str | None]] = {}
-    review_night_charge_by_day: dict[str, float] = defaultdict(float)
+    review_night_charge_by_day: dict[str, float | None] = defaultdict(float)
     for doc in client.collection("monitoring_samples").stream():
         row = doc.to_dict() or {}
         ts = str(row.get("ts", doc.id)).strip()
@@ -647,8 +677,6 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
                 "sell_kwh": 0.0,
                 "charge_kwh": 0.0,
                 "discharge_kwh": 0.0,
-                "day_buy_kwh": 0.0,
-                "night_buy_kwh": 0.0,
                 "morning_soc_percent": None,
                 "soc_min_percent": None,
                 "soc_max_percent": None,
@@ -660,19 +688,21 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
         )
         for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
             target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
-            acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
+            _add_monitoring_energy(acc, target, row.get(field))
         minute = ts[11:16]
-        buy_kwh = max(0.0, float(row.get("buy_kwh") or 0.0))
         if "07:00" <= minute < "23:00":
-            acc["day_buy_kwh"] = float(acc["day_buy_kwh"] or 0.0) + buy_kwh
+            _add_monitoring_energy(acc, "day_buy_kwh", row.get("buy_kwh"))
         else:
-            acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
-        charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
+            _add_monitoring_energy(acc, "night_buy_kwh", row.get("buy_kwh"))
+        charge_kwh = _monitoring_energy(row.get("charge_kwh"))
         review_day = day
         if minute >= "23:00":
             review_day = (datetime.fromisoformat(day) + timedelta(days=1)).date().isoformat()
         if minute < "07:00" or minute >= "23:00":
-            review_night_charge_by_day[review_day] += charge_kwh
+            previous_charge = review_night_charge_by_day[review_day]
+            review_night_charge_by_day[review_day] = (
+                previous_charge + charge_kwh if previous_charge is not None and charge_kwh is not None else None
+            )
         soc = to_float(row.get("soc_percent"))
         if soc is not None:
             acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
@@ -690,7 +720,10 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
     batch = client.batch()
     count = 0
     for day, metrics in by_day.items():
-        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day, 0.0)
+        metrics.setdefault("day_buy_kwh", None)
+        metrics.setdefault("night_buy_kwh", None)
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day)
+        _log_monitoring_daily_source_quality(day, metrics)
         batch.set(client.collection("dashboard_daily_metrics").document(day), {"date": day, **metrics, "updated_at": updated_at}, merge=True)
         count += 1
         if count >= 450:
@@ -737,7 +770,7 @@ def recalc_monitoring_daily_metrics(
         rows.append(row)
 
     by_day: dict[str, dict[str, float | str | None]] = {}
-    review_night_charge_by_day: dict[str, float] = defaultdict(float)
+    review_night_charge_by_day: dict[str, float | None] = defaultdict(float)
     latest_pv_charge_by_day: dict[str, tuple[str, float]] = {}
 
     for row in rows:
@@ -756,8 +789,6 @@ def recalc_monitoring_daily_metrics(
                     "sell_kwh": 0.0,
                     "charge_kwh": 0.0,
                     "discharge_kwh": 0.0,
-                    "day_buy_kwh": 0.0,
-                    "night_buy_kwh": 0.0,
                     "morning_soc_percent": None,
                     "soc_min_percent": None,
                     "soc_max_percent": None,
@@ -769,12 +800,11 @@ def recalc_monitoring_daily_metrics(
             )
             for field in ("pv_kwh", "load_kwh", "buy_kwh", "sell_kwh", "charge_kwh", "discharge_kwh"):
                 target = "actual_pv_kwh" if field == "pv_kwh" else "actual_load_kwh" if field == "load_kwh" else field
-                acc[target] = float(acc[target] or 0.0) + max(0.0, float(row.get(field) or 0.0))
-            buy_kwh = max(0.0, float(row.get("buy_kwh") or 0.0))
+                _add_monitoring_energy(acc, target, row.get(field))
             if "07:00" <= minute < "23:00":
-                acc["day_buy_kwh"] = float(acc["day_buy_kwh"] or 0.0) + buy_kwh
+                _add_monitoring_energy(acc, "day_buy_kwh", row.get("buy_kwh"))
             else:
-                acc["night_buy_kwh"] = float(acc["night_buy_kwh"] or 0.0) + buy_kwh
+                _add_monitoring_energy(acc, "night_buy_kwh", row.get("buy_kwh"))
             soc = to_float(row.get("soc_percent"))
             if soc is not None:
                 acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
@@ -789,17 +819,20 @@ def recalc_monitoring_daily_metrics(
             if ts > str(acc["latest_sample_at"] or ""):
                 acc["latest_sample_at"] = ts
 
-        charge_kwh = max(0.0, float(row.get("charge_kwh") or 0.0))
+        charge_kwh = _monitoring_energy(row.get("charge_kwh"))
         review_day = day_key
         if minute >= "23:00":
             review_day = (datetime.fromisoformat(day_key) + timedelta(days=1)).date().isoformat()
         if review_day in dashboard_affected_dates and (minute < "07:00" or minute >= "23:00"):
-            review_night_charge_by_day[review_day] += charge_kwh
+            previous_charge = review_night_charge_by_day[review_day]
+            review_night_charge_by_day[review_day] = (
+                previous_charge + charge_kwh if previous_charge is not None and charge_kwh is not None else None
+            )
 
         if day_key in calendar_dates:
-            pv_kwh = max(0.0, float(row.get("pv_kwh") or 0.0))
+            pv_kwh = _monitoring_energy(row.get("pv_kwh"))
             soc = to_float(row.get("soc_percent"))
-            if pv_kwh > 0.0 and charge_kwh > 0.0 and soc is not None:
+            if pv_kwh is not None and pv_kwh > 0.0 and charge_kwh is not None and charge_kwh > 0.0 and soc is not None:
                 previous = latest_pv_charge_by_day.get(day_key)
                 if previous is None or ts > previous[0]:
                     latest_pv_charge_by_day[day_key] = (ts, soc)
@@ -812,7 +845,10 @@ def recalc_monitoring_daily_metrics(
         metrics = by_day.get(day_key)
         if metrics is None:
             continue
-        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key, 0.0)
+        metrics.setdefault("day_buy_kwh", None)
+        metrics.setdefault("night_buy_kwh", None)
+        metrics["review_night_charge_kwh"] = review_night_charge_by_day.get(day_key)
+        _log_monitoring_daily_source_quality(day_key, metrics)
         batch.set(
             client.collection("dashboard_daily_metrics").document(day_key),
             {"date": day_key, **metrics, "updated_at": updated_at},
@@ -874,6 +910,16 @@ def upsert_model_parameters_from_plan(client: Any, *, night_plan_path: Path, upd
     coeff = data.get("coefficients", {})
     if not isinstance(coeff, dict):
         return
+    forecast = data.get("forecast")
+    if (callable(getattr(client, "transaction", None)) and isinstance(forecast, dict)
+            and forecast.get("date") and data.get("generated_at")):
+        raw = night_plan_path.read_bytes()
+        if json.loads(raw) != data:
+            raise ValueError("legacy parameter original changed during persistence")
+        identity = {"target_date": str(forecast["date"]), "generated_at": str(data["generated_at"]),
+                    "control_version_id": "", "raw_plan_sha256": hashlib.sha256(raw).hexdigest()}
+        _project_model_parameter_values(client, coeff=coeff, identity=identity, updated_at=updated_at)
+        return
     for name, value in coeff.items():
         try:
             mean = float(value)
@@ -897,6 +943,43 @@ def upsert_model_parameters_from_plan(client: Any, *, night_plan_path: Path, upd
             },
             merge=True,
         )
+
+
+def project_model_parameters(client: Any, *, raw: bytes, plan: PublishedPlan, updated_at: str) -> None:
+    """Project legacy coefficients once per adopted generation, atomically."""
+    identity = projection_identity(raw, plan)
+    coeff = json.loads(raw).get("coefficients", {})
+    if not isinstance(coeff, dict):
+        return
+    _project_model_parameter_values(client, coeff=coeff, identity=identity, updated_at=updated_at)
+
+
+def _project_model_parameter_values(client: Any, *, coeff: dict[str, Any], identity: dict[str, str], updated_at: str) -> None:
+    parameters: list[tuple[Any, str, float]] = []
+    for name, value in coeff.items():
+        try:
+            mean = float(value)
+        except (TypeError, ValueError):
+            continue
+        parameters.append((client.collection("model_parameters").document(name), name, mean))
+    if not parameters:
+        return
+
+    @transactional
+    def update(transaction: Any) -> None:
+        previous = [ref.get(transaction=transaction, timeout=3, retry=None).to_dict() or {} for ref, _, _ in parameters]
+        for (ref, name, mean), old in zip(parameters, previous):
+            if old.get("raw_plan_sha256") == identity["raw_plan_sha256"]:
+                if not old.get("control_version_id") and identity["control_version_id"]:
+                    transaction.set(ref, identity, merge=True)
+                continue
+            if not projection_may_advance(old, identity):
+                continue
+            transaction.set(ref, {"name": name, "mean_value": mean, "variance": abs(mean) * 0.05,
+                                  "sample_count": int(old.get("sample_count") or 0) + 1,
+                                  "hit_rate": None, "updated_at": updated_at, **identity}, merge=True)
+
+    update(client.transaction(max_attempts=3))
 
 
 def recalc_model_hit_rates(client: Any, *, updated_at: str) -> float | None:

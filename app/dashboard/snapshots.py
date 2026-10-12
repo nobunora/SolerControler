@@ -5,15 +5,22 @@ import hashlib
 import json
 import os
 import time
+import tempfile
+import base64
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from collections import defaultdict
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from app.dashboard.data import load_dashboard_slice
+from google.api_core.exceptions import NotFound, PreconditionFailed
+
+from app.dashboard.data import clear_dashboard_cache, load_dashboard_slice
 from app.dashboard.models import DashboardSlice
+from app.dashboard.slice_assembler import extract_pv_forecast_diagnostics
+from app.separated_runtime.plan import PublishedPlan
 
 
 SNAPSHOT_SCHEMA_VERSION = 1
@@ -240,6 +247,27 @@ def _read_existing_history_payload(*, storage_client: Any | None = None) -> dict
     return parsed
 
 
+def _read_history_publication(*, storage_client: Any) -> tuple[dict[str, Any] | None, dict[str, str]]:
+    """Read producer history bytes and revision metadata from one generation."""
+    bucket, name = _parse_gs_uri(snapshot_gcs_uri(HISTORY_KIND))
+    blob = storage_client.bucket(bucket).blob(name)
+    try:
+        blob.reload(timeout=4, retry=None)
+        raw = blob.download_as_bytes(if_generation_match=int(blob.generation), timeout=4, retry=None)
+    except NotFound:
+        return None, {}
+    parsed = json.loads(gzip.decompress(raw))
+    if (not isinstance(parsed, dict) or not isinstance(parsed.get("meta"), dict)
+            or parsed["meta"].get("snapshot_kind") != HISTORY_KIND
+            or parsed["meta"].get("snapshot_schema_version") != SNAPSHOT_SCHEMA_VERSION):
+        raise ValueError("dashboard history publication schema mismatch")
+    encoded = (blob.metadata or {}).get("source_epoch")
+    epoch = json.loads(gzip.decompress(base64.b64decode(encoded))) if encoded else {}
+    if not isinstance(epoch, dict):
+        raise ValueError("dashboard history publication revisions are invalid")
+    return parsed, epoch
+
+
 def build_dashboard_snapshot_payloads(
     db_path: Path,
     *,
@@ -290,17 +318,67 @@ def build_dashboard_snapshot_payloads(
     }
 
 
-def _upload_artifact(artifact: SnapshotArtifact, *, storage_client: Any) -> str:
+def _upload_artifact(
+    artifact: SnapshotArtifact, *, storage_client: Any,
+    publication_identity: dict[str, str] | None = None,
+    source_epoch: dict[str, str] | None = None,
+    source_client: Any | None = None,
+    history_scope: bool = False,
+) -> str:
     uri = snapshot_gcs_uri(artifact.kind)
     bucket_name, blob_name = _parse_gs_uri(uri)
     blob = storage_client.bucket(bucket_name).blob(blob_name)
-    blob.cache_control = "private, max-age=0, must-revalidate"
-    blob.metadata = {
+    metadata = {
         "dashboard_snapshot_schema": str(SNAPSHOT_SCHEMA_VERSION),
         "sha256": hashlib.sha256(artifact.raw).hexdigest(),
     }
-    blob.upload_from_string(artifact.gzip_bytes, content_type="application/gzip")
-    return uri
+    if publication_identity is not None:
+        if not source_epoch:
+            raise ValueError("dashboard source epoch is unproven")
+        metadata.update(publication_identity)
+        epoch_raw = json.dumps(source_epoch, sort_keys=True, separators=(",", ":")).encode()
+        metadata["source_epoch"] = base64.b64encode(gzip.compress(epoch_raw, mtime=0)).decode("ascii")
+    if sum(len(key.encode()) + len(value.encode()) for key, value in metadata.items()) > 8192:
+        raise ValueError("dashboard publication metadata exceeds 8 KiB")
+    deadline = time.monotonic() + 24.0
+    for _ in range(3):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard publication deadline exceeded")
+        compare_before = (source_epoch or {}).get("history_compare_before")
+        if source_client is not None and _read_dashboard_source_epoch(source_client, history_scope=history_scope, deadline=deadline,
+                                                                      history_compare_before=compare_before) != source_epoch:
+            raise ValueError("dashboard publication source revisions changed")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard publication deadline exceeded")
+        try:
+            blob.reload(timeout=min(4.0, remaining), retry=None)
+            expected_generation = int(blob.generation)
+            previous = blob.metadata or {}
+        except NotFound:
+            expected_generation, previous = 0, {}
+        if previous.get("control_version_id"):
+            if publication_identity is None:
+                raise ValueError("dashboard publication lacks adopted generation evidence")
+            old_order = (previous["target_date"], datetime.fromisoformat(previous["generated_at"].replace("Z", "+00:00")))
+            new_order = (publication_identity["target_date"], datetime.fromisoformat(publication_identity["generated_at"].replace("Z", "+00:00")))
+            if old_order > new_order or (old_order == new_order and previous["control_version_id"] != publication_identity["control_version_id"]):
+                raise ValueError("dashboard publication generation cannot regress")
+            old_epoch = json.loads(gzip.decompress(base64.b64decode(previous["source_epoch"])))
+            _check_source_epoch_order(old_epoch, source_epoch or {})
+        blob.cache_control = "private, max-age=0, must-revalidate"
+        blob.metadata = metadata
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard publication deadline exceeded")
+        try:
+            blob.upload_from_string(artifact.gzip_bytes, content_type="application/gzip",
+                                    if_generation_match=expected_generation, timeout=min(4.0, remaining), retry=None)
+            return uri
+        except PreconditionFailed:
+            continue
+    raise RuntimeError("concurrent dashboard publication did not converge")
 
 
 def write_dashboard_snapshots(
@@ -309,8 +387,32 @@ def write_dashboard_snapshots(
     storage_client: Any | None = None,
     update_history: bool = False,
     full_history_rebuild: bool = False,
+    published_plan: PublishedPlan | None = None,
+    source_epoch: dict[str, str] | None = None,
+    source_client: Any | None = None,
 ) -> dict[str, dict[str, Any]]:
     prefix = dashboard_snapshot_prefix()
+    # This is the producer cache, including the repository's own cache. The
+    # reader artifact cache in another process retains its existing 30s TTL.
+    clear_dashboard_cache()
+    if published_plan is None and os.getenv("DATA_BACKEND", "sqlite").lower() == "firestore":
+        if source_client is None:
+            from app.dashboard.firestore_repository import _open_dashboard_firestore_client
+            source_client = _open_dashboard_firestore_client()
+        latest = source_client.collection("night_charge_plans").document("latest").get(timeout=4, retry=None).to_dict() or {}
+        if latest.get("date"):
+            projection = source_client.collection("forecast_plans").document(latest["date"]).get(timeout=4, retry=None).to_dict() or {}
+            version = projection.get("control_version_id")
+            if version:
+                document = source_client.collection("control_plan_versions").document(version).get(timeout=4, retry=None).to_dict() or {}
+                published_plan = PublishedPlan.from_document(json.loads(document["payload"]), target_date=latest["date"])
+                if published_plan.sha256 != projection.get("raw_plan_sha256") or published_plan.version_id != version:
+                    raise ValueError("dashboard adopted projection identity mismatch")
+    publication_identity: dict[str, str] | None = None
+    if published_plan is not None:
+        original = json.loads(published_plan.raw_json)
+        publication_identity = {"target_date": published_plan.target_date, "generated_at": original["generated_at"],
+                                "control_version_id": published_plan.version_id, "raw_plan_sha256": published_plan.sha256}
     if prefix and storage_client is None:
         from google.cloud.storage import Client
 
@@ -321,11 +423,45 @@ def write_dashboard_snapshots(
         or _full_history_rebuild_requested()
     )
     history_requested = bool(update_history or full_history_rebuild)
-    existing_history_candidate = (
-        _read_existing_history_payload(storage_client=storage_client)
-        if history_requested
-        else None
-    )
+    previous_history_epoch: dict[str, str] = {}
+    if history_requested and published_plan is not None and prefix:
+        existing_history_candidate, previous_history_epoch = _read_history_publication(storage_client=storage_client)
+    else:
+        existing_history_candidate = _read_existing_history_payload(storage_client=storage_client) if history_requested else None
+    history_scope = bool(history_requested and (existing_history_candidate is not None or full_history_rebuild))
+    history_compare_before = previous_history_epoch.get("history_retained_before")
+    if published_plan is not None:
+        if os.getenv("DATA_BACKEND", "sqlite").lower() != "firestore":
+            raise ValueError("dashboard publication source revisions require Firestore")
+        if source_client is None:
+            from app.dashboard.firestore_repository import _open_dashboard_firestore_client
+            source_client = _open_dashboard_firestore_client()
+        observed = _read_dashboard_source_epoch(source_client, history_scope=history_scope,
+                                                history_compare_before=history_compare_before)
+        if source_epoch is not None and source_epoch != observed:
+            raise ValueError("dashboard supplied source revisions do not match storage")
+        source_epoch = observed
+        if history_scope and existing_history_candidate is not None and not full_history_rebuild:
+            previous_retained = {key.removeprefix("retained/"): value for key, value in previous_history_epoch.items() if key.startswith("retained/")}
+            observed_retained = {key.removeprefix("compare_retained/"): value for key, value in observed.items() if key.startswith("compare_retained/")}
+            # Legacy history has no retained-source evidence. Migrate once
+            # through the existing bounded rebuild instead of stamping it.
+            full_history_rebuild = not history_compare_before or previous_retained != observed_retained
+            if full_history_rebuild:
+                print(json.dumps({"event": "dashboard_history_rebuild_required", "stage": "snapshot_producer",
+                                  "reason_code": "retained_source_changed" if history_compare_before else "legacy_history_revision_missing"}), flush=True)
+            else:
+                refresh_end = date.fromisoformat(observed["history_retained_before"]) - timedelta(days=1)
+                refresh_start = date.fromisoformat(str(history_compare_before))
+                if refresh_end >= refresh_start:
+                    gap = load_dashboard_slice(db_path, end_date=refresh_end.isoformat(),
+                                               window_days=(refresh_end - refresh_start).days + 1, include_static=False)
+                    gap_payload = _payload_from_slice(gap)
+                    existing_history_candidate = dict(existing_history_candidate)
+                    for name in _DAILY_SERIES:
+                        rows = {str(row["date"]): row for row in existing_history_candidate.get(name, [])}
+                        _merge_rows(rows, list(gap_payload.get(name) or []))
+                        existing_history_candidate[name] = list(rows.values())
     if not history_requested or (
         existing_history_candidate is None and not full_history_rebuild
     ):
@@ -352,17 +488,34 @@ def write_dashboard_snapshots(
                         "snapshot_full_history_rebuild_date"
                     )
     results: dict[str, dict[str, Any]] = {}
+    if published_plan is not None and _read_dashboard_source_epoch(source_client, history_scope=history_scope,
+                                                                  history_compare_before=history_compare_before) != source_epoch:
+        raise ValueError("dashboard source revisions changed during materialization")
 
     for kind, payload in payloads.items():
+        if published_plan is not None and kind == BOOTSTRAP_KIND:
+            _validate_publication_payload(payload, published_plan)
+            forecast_run_id = next(row["forecast_run_id"] for row in payload["forecast_hourly"] if row["date"] == published_plan.target_date)
+            diagnostics = extract_pv_forecast_diagnostics(original, producer_identity=publication_identity, forecast_run_id=forecast_run_id)
+            payload["pv_forecast_diagnostics"] = diagnostics
+            summary = diagnostics["pv_model"]
+            if summary["status"] in {"invalid", "unsupported"}:
+                print(json.dumps({"event": "dashboard_pv_model_summary_unavailable", "stage": "bootstrap_summary",
+                                  "target_date": summary["plan_date"], "model_id": summary["model_id"], "reason_code": summary["reason_code"]}), flush=True)
         artifact = artifact_from_payload(kind, payload)
         if prefix:
-            uri = _upload_artifact(artifact, storage_client=storage_client)
+            uri = _upload_artifact(artifact, storage_client=storage_client,
+                                   publication_identity=publication_identity, source_epoch=source_epoch,
+                                   source_client=source_client, history_scope=history_scope)
             location = uri
         else:
             directory = dashboard_snapshot_local_dir()
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / _SNAPSHOT_FILENAMES[kind]
-            path.write_bytes(artifact.gzip_bytes)
+            with tempfile.NamedTemporaryFile(dir=directory, prefix=f"{kind}-", suffix=".part", delete=False) as temporary:
+                temporary.write(artifact.gzip_bytes)
+                temporary_path = Path(temporary.name)
+            temporary_path.replace(path)
             location = str(path)
         results[kind] = {
             "location": location,
@@ -375,6 +528,169 @@ def write_dashboard_snapshots(
 
     clear_snapshot_cache()
     return results
+
+
+def _check_source_epoch_order(previous: dict[str, str], incoming: dict[str, str]) -> None:
+    for key, old in previous.items():
+        if key.startswith(("scope/", "retained/", "compare_retained/", "history_")):
+            continue
+        if key not in incoming:
+            raise ValueError("dashboard source revision component missing")
+        new = incoming[key]
+        old_stamp, old_count, _ = old.split("|", 2)
+        new_stamp, new_count, _ = new.split("|", 2)
+        scope_advanced = incoming.get(f"scope/{key}", "") > previous.get(f"scope/{key}", "")
+        if (new_stamp < old_stamp or (int(new_count) < int(old_count) and not scope_advanced)
+                or (new_stamp == old_stamp and new != old and not scope_advanced)):
+            raise ValueError("dashboard actuals source epoch cannot regress")
+
+
+def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: float | None = None,
+                                history_compare_before: str | None = None) -> dict[str, str]:
+    """Producer-only bounded revision map of every Firestore payload source.
+
+    Native update_time owns ordering; stored ingestion timestamps are not
+    promoted to a new source epoch when an older producer finishes late.
+    """
+    groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    retained_before: str | None = None
+    retained_sources = {"sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
+                        "forecast_hourly_reconstructed", "forecast_plans", "dashboard_daily_metrics", "night_charge_plans",
+                        "monitoring_samples", "cost_daily", "analog_plans"}
+    read_count = 0
+    deadline = deadline if deadline is not None else time.monotonic() + 60.0
+
+    def timeout() -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("dashboard source revision deadline exceeded")
+        return min(4.0, remaining)
+
+    def record(collection: str, snapshots: list[Any], *, stamp_field: str = "date") -> list[Any]:
+        nonlocal read_count
+        read_count += len(snapshots)
+        if len(snapshots) > 3660:
+            raise ValueError("dashboard source revision query exceeds 3660 documents")
+        for snapshot in snapshots:
+            if not snapshot.exists:
+                continue
+            updated = snapshot.update_time
+            if not isinstance(updated, datetime) or updated.utcoffset() is None:
+                raise ValueError("dashboard source native revision is unavailable")
+            row = snapshot.to_dict() or {}
+            day = str(row.get(stamp_field) or snapshot.id)[:10]
+            nanos = getattr(updated, "nanosecond", 0) or updated.microsecond * 1000
+            revision = updated.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + f".{nanos:09d}+00:00"
+            # Every document participates in the digest, including corrected
+            # old dates. Grouping by source scope keeps full SHA256 evidence
+            # within GCS metadata; no row or digest is silently truncated.
+            groups[collection].append((f"{day}/{snapshot.id}", revision))
+            if retained_before and collection in retained_sources:
+                if day < retained_before:
+                    groups[f"retained/{collection}"].append((f"{day}/{snapshot.id}", revision))
+                if history_compare_before and day < history_compare_before:
+                    groups[f"compare_retained/{collection}"].append((f"{day}/{snapshot.id}", revision))
+        return snapshots
+
+    bounds: list[str] = []
+    bound_sources = (("sunshine_daily", "date"), ("cost_daily", "date"), ("battery_daily_metrics", "date"),
+                     ("forecast_hourly", "date"), ("monitoring_samples", "ts"), ("forecast_hourly_reconstructed", "date"))
+    for collection, field in bound_sources:
+        query = client.collection(collection).select([field]).order_by(field)
+        samples = list(query.limit(1).stream(timeout=timeout(), retry=None)) + list(query.limit_to_last(1).get(timeout=timeout(), retry=None))
+        for snapshot in record(f"bounds_{collection}", samples, stamp_field=field):
+            bounds.append(str((snapshot.to_dict() or {})[field])[:10])
+    if not bounds:
+        raise ValueError("dashboard source revision bounds are unavailable")
+    end = date.fromisoformat(max(bounds))
+    retained_before = (end - timedelta(days=30)).isoformat() if history_scope else None
+    start = date.fromisoformat(min(bounds)) if history_scope else end - timedelta(days=30)
+    monitoring_start = start - timedelta(days=14)
+    epoch: dict[str, str] = {}
+    if retained_before:
+        epoch["history_retained_before"] = retained_before
+        if history_compare_before:
+            date.fromisoformat(history_compare_before)
+            epoch["history_compare_before"] = history_compare_before
+    source_names = ("sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
+                    "forecast_hourly_reconstructed", "forecast_plans", "dashboard_daily_metrics", "night_charge_plans")
+    for name in source_names:
+        source_start = monitoring_start if name == "dashboard_daily_metrics" else start
+        fields = ["date"]
+        if name == "night_charge_plans":
+            fields.extend(["decision_rationale.forecast_correction.recent_and_analog_hourly_floor.analog_day",
+                           "daytime_soc_optimization.forecast_correction.recent_and_analog_hourly_floor.analog_day"])
+        query = client.collection(name).where("date", ">=", source_start.isoformat()).where("date", "<=", end.isoformat())
+        samples = record(name, list(query.select(fields).limit(3661).stream(timeout=timeout(), retry=None)))
+        epoch[f"scope/{name}"] = source_start.isoformat()
+        if name == "night_charge_plans":
+            analog_dates = set()
+            for snapshot in samples:
+                row = snapshot.to_dict() or {}
+                for section in ("decision_rationale", "daytime_soc_optimization"):
+                    correction = (row.get(section) or {}).get("forecast_correction") or {}
+                    analog_day = (correction.get("recent_and_analog_hourly_floor") or {}).get("analog_day")
+                    if analog_day:
+                        analog_dates.add(date.fromisoformat(str(analog_day)).isoformat())
+            if analog_dates:
+                refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
+                record("analog_plans", list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None)))
+    record("monitoring_samples", list(client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
+                                      .where("ts", "<", (end + timedelta(days=1)).isoformat()).select(["ts"])
+                                      .limit(3661).stream(timeout=timeout(), retry=None)), stamp_field="ts")
+    epoch["scope/monitoring_samples"] = monitoring_start.isoformat()
+    # Monthly summaries use all existing cost_daily history. This revalidation
+    # is explicitly bounded and runs only in the producer, never in a GET.
+    record("cost_daily", list(client.collection("cost_daily").select(["date"]).limit(3661).stream(timeout=timeout(), retry=None)))
+    record("model_parameters", list(client.collection("model_parameters").select(["name"]).limit(3661).stream(timeout=timeout(), retry=None)), stamp_field="name")
+    record("settings_events", list(client.collection("settings_events").select(["recorded_at"]).order_by("recorded_at")
+                                  .limit_to_last(40).get(timeout=timeout(), retry=None)), stamp_field="recorded_at")
+    record("latest_plan", list(client.get_all([client.collection("night_charge_plans").document("latest")], field_paths=["date"], timeout=timeout(), retry=None)))
+    record("latest_battery", list(client.collection("battery_daily_metrics").select(["date"]).order_by("date")
+                                 .limit_to_last(1).get(timeout=timeout(), retry=None)))
+    for key, rows in groups.items():
+        unique = sorted(set(rows))
+        digest = hashlib.sha256(json.dumps(unique, separators=(",", ":")).encode()).hexdigest()
+        epoch[key] = f"{max(stamp for _, stamp in unique)}|{len(unique)}|{digest}"
+    print(json.dumps({"event": "dashboard_source_revisions_read", "stage": "snapshot_producer",
+                      "document_reads": read_count, "components": len(epoch), "history_scope": history_scope}), flush=True)
+    return epoch
+
+
+def _validate_publication_payload(payload: dict[str, Any], plan: PublishedPlan) -> None:
+    """Validate values against the adopted original, never predict in a GET."""
+    from app.operations.domain import extract_hourly_forecast_from_plan
+    from app.operations.forecast_snapshot import build_forecast_snapshot_rows
+
+    original = json.loads(plan.raw_json)
+    rows = [row for row in payload.get("forecast_hourly", []) if row.get("date") == plan.target_date]
+    expected = extract_hourly_forecast_from_plan(original)
+    if len(rows) != 24 or {row.get("hour") for row in rows} != set(range(24)):
+        raise ValueError("dashboard forecast generation is incomplete")
+    values = {row["hour"]: row for row in rows}
+    snapshots = build_forecast_snapshot_rows(original, ingested_at=original["generated_at"], timezone="Asia/Tokyo")
+    run_id = snapshots[0]["forecast_run_id"]
+    for row in expected:
+        actual = values[row["hour"]]
+        if actual.get("forecast_run_id") != run_id or any(actual.get(key) != row.get(key) for key in ("forecast_pv_kwh", "forecast_load_kwh")):
+            raise ValueError("dashboard forecast generation mismatch")
+    schedule = payload.get("latest_schedule") or {}
+    if schedule.get("plan_date") != plan.target_date or schedule.get("planned_target_soc_percent") != original["result"]["target_soc_7_percent"]:
+        raise ValueError("dashboard schedule generation mismatch")
+    target = original["result"]["target_soc_7_percent"]
+    capacity = original["result"]["effective_capacity_kwh"]
+    for row in rows:
+        if row.get("forecast_target_soc_percent") != target or row.get("forecast_capacity_kwh") != capacity:
+            raise ValueError("dashboard SOC/capacity generation mismatch")
+    from app.energy_plan.soc_cost import simulate_daytime_soc_percent
+    expected_soc = simulate_daytime_soc_percent(
+        target_soc_percent=target, capacity_kwh=capacity,
+        hourly_load_kwh={int(row["hour"]): row["forecast_load_kwh"] for row in expected},
+        hourly_pv_kwh={int(row["hour"]): row["forecast_pv_kwh"] for row in expected},
+    )
+    for hour, soc in expected_soc.items():
+        if values.get(hour, {}).get("forecast_soc_percent") != soc:
+            raise ValueError("dashboard SOC series generation mismatch")
 
 
 def _full_history_rebuild_requested() -> bool:

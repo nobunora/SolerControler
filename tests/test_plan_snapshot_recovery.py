@@ -240,15 +240,16 @@ def test_planner_publishes_exact_same_original_to_control_and_existing_dashboard
     monkeypatch.setenv('KP_NIGHT_PLAN_PATH', str(path))
     monkeypatch.setenv('NIGHT_PLAN_ARCHIVE_GCS_PREFIX', 'gs://test/plans')
     monkeypatch.setenv('PLAN_SOURCE_REVISION', 'a' * 40)
-    monkeypatch.setattr(planner.forecast_job, 'main', lambda **kw: 0)
+    monkeypatch.setattr(planner.forecast_job, 'generate_forecast_plan', lambda: path)
     monkeypatch.setattr(planner.forecast_job, '_target_date', lambda: '2026-10-03')
     monkeypatch.setattr(planner, 'open_firestore', lambda: db)
     monkeypatch.setattr(planner.storage, 'Client', lambda: storage)
-    monkeypatch.setattr(planner, 'upsert_model_parameters_from_plan', lambda *a, **kw: None)
+    monkeypatch.setattr(planner, 'project_model_parameters', lambda *a, **kw: None)
+    monkeypatch.setattr(planner, 'project_forecast_plan', lambda *a, **kw: None)
     monkeypatch.setattr(planner, 'estimate_forced_charge_rate_percent_per_hour', lambda *a: {'percent_per_hour': 20})
     monkeypatch.setattr(planner, 'FirestorePlanStore', lambda: SimpleNamespace(publish=published.append))
     monkeypatch.setattr(planner, 'dashboard_snapshot_prefix', lambda: 'test')
-    monkeypatch.setattr(planner, 'write_dashboard_snapshots', lambda *a: snapshots.append(db.collection('night_charge_plans').records['latest']['plan_json']))
+    monkeypatch.setattr(planner, 'write_dashboard_snapshots', lambda *a, **kw: snapshots.append(db.collection('night_charge_plans').records['latest']['plan_json']))
     assert planner.main() == 0
     day = db.collection('night_charge_plans').records['2026-10-03']
     latest = db.collection('night_charge_plans').records['latest']
