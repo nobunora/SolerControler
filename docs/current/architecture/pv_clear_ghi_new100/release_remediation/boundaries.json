@@ -372,6 +372,67 @@
       "existing": true,
       "source_sha256": null,
       "implemented_source_sha256": "511e699f758029ac0d4213795afe58ead35af767dab297605cca38ba526fa07d"
+    },
+    {
+      "stage": "R04",
+      "path": "tests/g07/adapter_proof.py",
+      "symbols": [
+        "main"
+      ],
+      "variables": [
+        "pending",
+        "seen",
+        "chain",
+        "relation",
+        "parent",
+        "current",
+        "exception_type",
+        "safe_category",
+        "node_index",
+        "link",
+        "linked",
+        "summary"
+      ],
+      "change": "Existing main FAIL exception handler and FAIL stdout only: bounded safe exception cause/context types and basename/function/line frames; no messages, locals, SDK/retry/timeout/cleanup/server-case changes",
+      "existing": true,
+      "baseline_source_revision": "b5b541825aa3173b7bacda2e70c43c0b51b50b10",
+      "source_sha256": "1f3dc915fdc47f9cff03ee16e14ea87623ac51310a5158a068f7fa20ed3d6799",
+      "implemented_source_sha256": "1c7e7e9cfc23a9b68fcaf3a2b996815c7831281c5cf18204a9ec9d6eb8e1cce6",
+      "new_classes": "none",
+      "new_functions": "none",
+      "new_flags": "none",
+      "failure_diagnostic_contract": {
+        "condition": "FAIL only; successful receipts unchanged",
+        "receipt_and_stdout_fields": [
+          "failure_chain",
+          "failure_chain_truncated"
+        ],
+        "node_fields": [
+          "exception_type",
+          "category",
+          "relation",
+          "parent",
+          "frames"
+        ],
+        "relation_values": [
+          "root",
+          "cause",
+          "context"
+        ],
+        "frame_fields": [
+          "file",
+          "function",
+          "line"
+        ],
+        "file_semantics": "basename only",
+        "parent_semantics": "node index or null",
+        "max_unique_nodes": 8,
+        "max_frames_per_node": 32,
+        "cycles": "duplicate nodes excluded"
+      },
+      "associated_tests": [
+        "tests/test_adapter_proof_diagnostics.py::test_actual_cli_failure_chain_is_bounded_safe_and_still_fails"
+      ]
     }
   ],
   "protected": [
