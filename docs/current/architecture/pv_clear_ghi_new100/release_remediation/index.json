@@ -175,12 +175,16 @@
         "tests/g07/gcs_server_cases.py",
         "tests/test_release_probe_safety.py",
         "tests/test_separated_release_repair_order.py",
-        "tests/test_adapter_proof_diagnostics.py"
+        "tests/test_adapter_proof_diagnostics.py",
+        "tests/test_firestore_native_harness.py"
       ],
       "associated_test_selectors": [
         "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
         "tests/test_separated_release_repair_order.py::test_server_proof_restores_dedicated_job_without_environment_or_control_writes",
-        "tests/test_adapter_proof_diagnostics.py::test_actual_cli_failure_chain_is_bounded_safe_and_still_fails"
+        "tests/test_adapter_proof_diagnostics.py::test_actual_cli_failure_chain_is_bounded_safe_and_still_fails",
+        "tests/test_firestore_native_harness.py::test_actual_sdk_document_get_accepts_recorded_stream_iterator_without_network",
+        "tests/test_firestore_native_harness.py::test_actual_cleanup_restores_original_rpc_before_delete_commit_and_retains_primary",
+        "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit"
       ]
     },
     {

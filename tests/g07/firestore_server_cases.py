@@ -23,7 +23,7 @@ class RpcRecorder:
             started = time.monotonic()
             response = original(*args, **kwargs)
             if name == "batch_get_documents":
-                response = list(response)
+                response = iter(list(response))
             request = kwargs.get("request", {})
             self.calls.append({"method": name, "timeout": kwargs.get("timeout"),
                                "retry_disabled": kwargs.get("retry") is None,
@@ -191,6 +191,8 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
         error.add_note(f"native proof step=firestore.{step}")
         raise
     finally:
+        if isinstance(client._firestore_api_internal, RpcRecorder):
+            client._firestore_api_internal = client._firestore_api_internal.transport
         for ref in references:
             if ref.path in versions:
                 ref.delete(option=client.write_option(last_update_time=versions[ref.path]), timeout=4, retry=None)
@@ -198,6 +200,4 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
                     raise AssertionError("operation-owned document cleanup is unconfirmed")
         if len(versions) == len(references):
             cases.append({"name": "firestore_owned_cleanup_native_absence", "status": "PASS", "documents": len(references)})
-        if isinstance(client._firestore_api_internal, RpcRecorder):
-            client._firestore_api_internal = client._firestore_api_internal.transport
         client.close()

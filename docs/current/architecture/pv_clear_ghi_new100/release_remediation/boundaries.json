@@ -433,6 +433,33 @@
       "associated_tests": [
         "tests/test_adapter_proof_diagnostics.py::test_actual_cli_failure_chain_is_bounded_safe_and_still_fails"
       ]
+    },
+    {
+      "stage": "R04",
+      "path": "tests/g07/firestore_server_cases.py",
+      "symbols": [
+        "RpcRecorder.__getattr__.invoke",
+        "run"
+      ],
+      "variables": [
+        "response",
+        "client",
+        "_firestore_api_internal",
+        "transport"
+      ],
+      "change": "Test harness only: batch_get_documents response returns iter(list(response)); existing original-RPC restoration moves to the beginning of run finally before operation-owned cleanup. App/version/SDK requests/timeouts/retries and ACK-loss injection unchanged",
+      "existing": true,
+      "baseline_source_revision": "3b996ced62a2c6b4bbfff589fee3c463b56f00d4",
+      "source_sha256": "3d2ec4b03f790020b35221f6a318cb91ae31feb9aa43173b9bb7b4b22d8e325c",
+      "implemented_source_sha256": "783ca5f6b18b5da2afeda71f1e96dbec5b05092ae5d8c7424eddb1cd609bf52e",
+      "new_classes": "none",
+      "new_functions": "none",
+      "new_flags": "none",
+      "associated_tests": [
+        "tests/test_firestore_native_harness.py::test_actual_sdk_document_get_accepts_recorded_stream_iterator_without_network",
+        "tests/test_firestore_native_harness.py::test_actual_cleanup_restores_original_rpc_before_delete_commit_and_retains_primary",
+        "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit"
+      ]
     }
   ],
   "protected": [
