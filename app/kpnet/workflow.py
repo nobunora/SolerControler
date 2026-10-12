@@ -635,7 +635,7 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         operation_end = requested_end
     else:
         operation_end = min(deadline_monotonic, requested_end)
-        if operation_end - operation_start < MODE_OPERATION_START_BUDGET_SECONDS:
+        if deadline_monotonic < requested_end:
             raise TimeoutError("mode-only operation requires 240s I/O plus 60s release reserve")
     io_deadline = operation_end - MODE_OPERATION_RELEASE_RESERVE_SECONDS
     load_dotenv_if_present(); _setup_logging(); cfg = KpNetConfig.from_env(); client = KpNetClient(cfg, deadline_monotonic=io_deadline)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+import math
 import time as time_module
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -209,6 +210,38 @@ _MODE_ONLY_CONTROLLED_FIELDS = (
     "dischargeEndTimeM",
     "agreementAmpere",
 )
+
+
+@pytest.mark.parametrize(
+    ("deadline_kind", "allowed"),
+    [("ample", True), ("equal", True), ("ulp_short", False), ("299_seconds", False), ("none", True)],
+)
+def test_fractional_mode_only_start_keeps_exact_deadline_budget(
+    real_mode_only: tuple[_Clock, _Session, KpNetConfig], deadline_kind: str, allowed: bool,
+) -> None:
+    clock, session, _cfg = real_mode_only
+    clock.value = 4095.9
+    start = clock.value
+    requested_end = start + 300.0
+    # The old subtraction rejects even its own computed end after rounding.
+    assert requested_end - start < 300.0
+    deadline = {"ample": start + 13_920.0, "equal": requested_end,
+                "ulp_short": math.nextafter(requested_end, -math.inf),
+                "299_seconds": start + 299.0, "none": None}[deadline_kind]
+    session.current = _distinct_current_settings()
+    before = dict(session.current)
+    if not allowed:
+        with pytest.raises(TimeoutError, match="240s I/O plus 60s"):
+            workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=deadline)
+        assert session.requests == []
+        return
+    assert workflow.run_kpnet_mode_only_profile(profile="forced", deadline_monotonic=deadline) == 0
+    assert session.current["batteryOperatingMode"] == "3"
+    payload = session.confirm_payloads[-1]
+    assert [field for field in _MODE_ONLY_CONTROLLED_FIELDS if payload[field] != before[field]] == ["batteryOperatingMode"]
+    assert len([path for _at, _method, path, _timeout in session.requests if path.endswith("/write/request")]) == 1
+    assert all(at < requested_end - 60.0 for at, _method, _path, _timeout in session.requests)
+    assert clock.monotonic() <= requested_end
 
 
 def test_03_forced_mode_only_preserves_every_setting_except_operating_mode(
