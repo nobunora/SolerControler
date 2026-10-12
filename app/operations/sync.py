@@ -463,7 +463,14 @@ def sync_firestore_to_sqlite(*, sqlite_path: Path | None = None, project_id: str
                         start_date="0001-01-01",
                         end_date_iso="9998-12-31",
                     )
-                    docs = (_SyncDocument(row) for row in rows)
+                    # The dashboard also returns actual-only hours. Their saved
+                    # monitoring evidence belongs in monitoring_samples, not in
+                    # forecast storage with a fabricated generation timestamp.
+                    docs = (_SyncDocument(row) for row in rows if
+                            row.get("source") or row.get("forecast_run_id")
+                            or row.get("forecast_reconstruction_id") or row.get("updated_at")
+                            or any(row.get(field) is not None for field in
+                                   ("forecast_pv_kwh", "forecast_load_kwh", "forecast_charge_kwh")))
                 else:
                     docs = client.collection(table_name).stream()
                 count = 0
