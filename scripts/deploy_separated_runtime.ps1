@@ -28,6 +28,13 @@ if ($ReviewedRepairStateSha256 -and $ReviewedRepairStateSha256 -notmatch '^[a-f0
 if (-not $AdapterProofFixturePath) { throw 'Explicit adapter proof fixture is required before a separated release.' }
 $AdapterProofFixturePath = [IO.Path]::GetFullPath($AdapterProofFixturePath, $repoRoot)
 if (-not (Test-Path -LiteralPath $AdapterProofFixturePath)) { throw 'Adapter proof fixture is missing.' }
+$preparedFixture = Get-Content -Raw -LiteralPath $AdapterProofFixturePath | ConvertFrom-Json -AsHashtable
+if ($preparedFixture.source_commit -ne $commit -or $preparedFixture.backend -ne 'firestore' -or
+    $preparedFixture.project_id -ne (Get-RequiredProductionEnv 'FIRESTORE_PROJECT_ID') -or
+    $preparedFixture.database_id -ne (Get-RequiredProductionEnv 'FIRESTORE_DATABASE_ID') -or
+    $preparedFixture.bucket -ne ([Uri](Get-RequiredProductionEnv 'NIGHT_PLAN_ARCHIVE_GCS_PREFIX')).Host) {
+    throw 'Adapter fixture must match this commit and the configured backend before any build.'
+}
 $fixtureSha = (& python -c 'import json,hashlib,sys;v=json.load(open(sys.argv[1],encoding="utf-8-sig"));h=hashlib.sha256(json.dumps({k:x for k,x in v.items() if k!="fixture_sha256"},sort_keys=True,separators=(",",":"),allow_nan=False).encode()).hexdigest();assert h==v["fixture_sha256"];print(h)' $AdapterProofFixturePath).Trim()
 if ($LASTEXITCODE -ne 0 -or $fixtureSha -notmatch '^[a-f0-9]{64}$') { throw 'Adapter fixture identity is invalid.' }
 if ($MonitoringRepairStatePath) { $MonitoringRepairStatePath = [IO.Path]::GetFullPath($MonitoringRepairStatePath, $repoRoot) }

@@ -107,7 +107,7 @@ try {
     $container = $candidate.spec.template.spec.template.spec.containers[0]
     if ($container.image -ne $ImmutablePlannerImage -or ($container.command -join ',') -ne 'python' -or
         ($container.args | ConvertTo-Json -Compress) -ne (@('-c', $loader, $bundleUri, $bundleSha, [string]$bundle.generation, $imageDigest) | ConvertTo-Json -Compress)) { throw 'Candidate proof entrypoint readback mismatch.' }
-    $executionText = (& $gcloud run jobs execute $ProbeJobName --project $project --region $region --wait --format json) -join "`n"
+    $executionText = (& $gcloud run jobs execute $ProbeJobName --project $project --region $region --update-env-vars "PLAN_SOURCE_REVISION=$($fixture.source_commit),PLAN_IMAGE_DIGEST=$imageDigest" --wait --format json) -join "`n"
     $executionExit = $LASTEXITCODE
     $executionText | Set-Content -LiteralPath (Join-Path $privateDirectory 'execution.private.json') -Encoding utf8
     $execution = $executionText | ConvertFrom-Json -AsHashtable
@@ -133,7 +133,9 @@ try {
     if ($proofs.Count -ne 1) { throw 'Exact execution proof is absent or ambiguous.' }
     $proof = $proofs[0].jsonPayload.receipt
     $proof | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $ReceiptPath -Encoding utf8
-    if ($proof.image_digest -ne $imageDigest -or $proof.fixture_sha256 -ne $fixture.fixture_sha256 -or $proof.status -ne 'PASS' -or $executionExit -ne 0) { throw 'Real server proof remains incomplete.' }
+    if ($proof.image_digest -ne $imageDigest -or $proof.fixture_sha256 -ne $fixture.fixture_sha256 -or
+        $proof.source_commit -ne $fixture.source_commit -or $proof.runtime_plan_source_revision -ne $fixture.source_commit -or
+        $proof.status -ne 'PASS' -or $executionExit -ne 0) { throw 'Real server proof remains incomplete.' }
 } catch { $proofError = $_ }
 finally {
     if ($attemptedUpdate) {

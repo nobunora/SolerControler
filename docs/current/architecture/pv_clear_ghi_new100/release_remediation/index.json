@@ -144,7 +144,10 @@
         "tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_preserves_all_components_requests_bytes_and_dependencies",
         "tests/test_dashboard_epoch_parallel.py::test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_puts",
         "tests/test_dashboard_epoch_parallel.py::test_expired_shared_deadline_cancels_queued_and_followup_reads",
-        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
+        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc",
+        "tests/test_monitoring_repair_derived.py::test_failed_stage_records_bounded_safe_active_exception_and_preserves_primary",
+        "tests/test_monitoring_repair_derived.py::test_failed_stage_without_active_exception_records_unknown_frames",
+        "tests/test_monitoring_repair_derived.py::test_success_stage_receipt_and_hash_unchanged_during_active_exception"
       ]
     },
     {
@@ -170,7 +173,9 @@
         "app/operations/forecast_snapshot.py"
       ],
       "planned_new_sources": [
-        "scripts/run_server_adapter_proof_from_env.ps1"
+        "scripts/run_server_adapter_proof_from_env.ps1",
+        "scripts/prepare_server_adapter_fixture.py",
+        "scripts/prepare_server_adapter_fixture_from_env.ps1"
       ],
       "new_classes": "none in production; R04 test fixtures only",
       "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
@@ -178,7 +183,8 @@
       "planned_test_sources": [
         "tests/g07/adapter_proof.py",
         "tests/g07/firestore_server_cases.py",
-        "tests/g07/gcs_server_cases.py"
+        "tests/g07/gcs_server_cases.py",
+        "tests/test_server_adapter_fixture_preparation.py"
       ],
       "associated_test_sources": [
         "tests/test_forecast_projection_generation.py",
@@ -192,7 +198,8 @@
         "tests/test_adapter_proof_diagnostics.py",
         "tests/test_firestore_native_harness.py",
         "tests/test_gcs_native_harness.py",
-        "tests/test_dashboard_epoch_parallel.py"
+        "tests/test_dashboard_epoch_parallel.py",
+        "tests/test_server_adapter_fixture_preparation.py"
       ],
       "associated_test_selectors": [
         "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
@@ -208,7 +215,12 @@
         "tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_preserves_all_components_requests_bytes_and_dependencies",
         "tests/test_dashboard_epoch_parallel.py::test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_puts",
         "tests/test_dashboard_epoch_parallel.py::test_expired_shared_deadline_cancels_queued_and_followup_reads",
-        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
+        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc",
+        "tests/test_server_adapter_fixture_preparation.py::test_prepares_exact_owned_future_fixture_and_canonical_patch_without_cloud",
+        "tests/test_server_adapter_fixture_preparation.py::test_refuses_overwrite_and_path_escape_before_writing",
+        "tests/test_server_adapter_fixture_preparation.py::test_invalid_preparation_stops_without_output",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_sdk_execution_revision_override_and_receipt_guard"
       ]
     },
     {
@@ -228,20 +240,33 @@
         "scripts/run_cloud_job_from_env.ps1",
         "scripts/run_drive_backup_cloud_from_env.ps1"
       ],
-      "planned_new_sources": [],
+      "planned_new_sources": [
+        "scripts/summarize_production_validation.py"
+      ],
       "new_classes": "none in production; R04 test fixtures only",
       "tests_status": "LOCAL_FOCUSED_COMPLETE_FINAL_GATE_PENDING",
       "implementation_status": "IMPLEMENTED_LOCAL_VERIFICATION",
       "planned_test_sources": [
-        "tests/test_separated_release_repair_order.py"
+        "tests/test_separated_release_repair_order.py",
+        "tests/test_production_validation_summary.py"
       ],
       "associated_test_sources": [
         "tests/test_separated_release_repair_order.py",
         "tests/test_release_probe_safety.py",
-        "tests/test_forecast_execution_logs.py"
+        "tests/test_forecast_execution_logs.py",
+        "tests/test_production_validation_summary.py",
+        "tests/test_server_adapter_fixture_preparation.py"
       ],
       "associated_test_selectors": [
-        "tests/test_forecast_execution_logs.py::test_forecast_receipt_filter_handles_system_records_and_exact_execution"
+        "tests/test_forecast_execution_logs.py::test_forecast_receipt_filter_handles_system_records_and_exact_execution",
+        "tests/test_production_validation_summary.py::test_native_sdk_pass_is_separate_from_incomplete_deployment_and_device_test",
+        "tests/test_production_validation_summary.py::test_unmatched_native_proof_never_passes",
+        "tests/test_production_validation_summary.py::test_complete_requires_every_stage_and_native_receipt",
+        "tests/test_production_validation_summary.py::test_not_run_preflight_and_missing_receipt_are_not_server_sdk_pass",
+        "tests/test_production_validation_summary.py::test_failed_repair_receipt_is_reported_without_private_values",
+        "tests/test_production_validation_summary.py::test_bad_or_missing_evidence_fails_safely_without_messages",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build",
+        "tests/test_production_validation_summary.py::test_stale_runtime_revision_is_reported_and_blocks_overall_success"
       ]
     }
   ],
