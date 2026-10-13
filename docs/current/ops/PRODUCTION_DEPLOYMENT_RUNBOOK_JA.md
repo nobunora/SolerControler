@@ -13,6 +13,34 @@
 
 認証情報、project、region、resource IDはGit管理外の `.env` と `scripts/production_env.ps1` から取得します。値をコマンド、tracked file、報告、チャットへ転記しません。
 
+## 0. 固定した実行経路と禁止手順
+
+コマンドを作る前にこの節で経路を確定する。成功した既存wrapper・build設定を使い、同等に見える別コマンドを組み立てない。
+
+| 対象 | 固定する成功経路 | 完了判定 |
+| --- | --- | --- |
+| 共通準備 | 最終commit・clean worktree → `production_deployment_gate.ps1 -RunPreRelease` → 正式wrapper。preflightの`repository_commit`がHEADと一致し、`status=passed`かつ`checks`配列の必須項目がすべて`success`であることを確認 | source/DB backup、security、ValidateOnly、全体・統合検査を省略しない |
+| 分離構成の画面限定 | `deploy_production_from_env.ps1 -DeploymentScope dashboard -StatePath ...` → `cloudbuild.web.yaml` / `Dockerfile.web` → commit固定imageをdigestへ解決 → service imageだけを更新 | created/ready revision一致、Ready=True、新revisionへtraffic 100%、API/browser受入、Job/Scheduler/IAM/env/secret不変 |
+| 分離構成の全体反映 | 同wrapperの`-SeparatedRuntime`又は環境設定による分離経路。`auto/full`の既存工程を順に実行 | 同commit/digestのSDK証拠、原本・派生一致、実機read-back/60秒保持/復元、backup、最終verification。個別stage成功を全体成功へ読み替えない |
+| 中断からの再開 | 実行・復元をread-only照合 → 元のcommit/layout/scope/StatePathを保持 → 正式wrapperの`-Resume` | `success`工程と一致するidentity/receiptだけを再利用。未成功工程は完了確認後に正規の再開判定へ渡す |
+
+固定の根拠は2026-10-14の全12工程成功と、その後の画面限定成功である。これらは特定commitの実証であり、将来の変更のgateを免除しない。legacy構成の互換経路は2.0節と各scopeの条件に従い、分離構成の成功証拠を流用しない。
+
+### コマンド生成時点で禁止する操作
+
+| 失敗・誤判定しやすい操作 | 禁止手順 | 使用する代替手順 |
+| --- | --- | --- |
+| layout/buildの混同 | 分離webへ`Dockerfile.dashboard`やlegacy依存を使う、画面限定要求を`full`へ拡大する、既存env/IAMを作り直す | 上記の明示dashboard経路。scope拒否は停止し、承認範囲内の経路を調査する |
+| 手組みbuildと引数の崩れ | credential-bearingな`gcloud`の再構築、複雑なfilter/JSON/CLI flagの文字列連結、Windows cmdの引用符へ依存する再実装 | repository wrapperの検証済み引数渡し・build YAMLをそのまま使う。引数/quote変更は関連回帰と全体gateを通す |
+| ログ選択・JSON解析の失敗 | `labels=null`をmapとして参照する、UTC日時の暗黙cast、欠落したfieldを0/false/成功とみなす、filter不一致を通信遅延と決めつけてretryする | 既存のbounded exact-execution receipt選択・safe summaryを使い、schema/任意fieldを確認する。build、SDK、receipt取得/解析を別判定する |
+| 外側timeout後の重複実行 | `running/unknown`のまま新build・新D・新実機往復を起動する | exact executionの終端と復元をread-only確認してから、同StatePathのResume。待機終了だけではCloud失敗と判定しない |
+| イメージ・fixtureの取り違え | mutable `latest`を今回の成功根拠にする、新HEADに旧fixture/承認SHA/採用receiptを付け替える | commit/digest/fixture SHA/receipt identityを照合する。source変更時は新gate・prepare・formal stateを作る |
+| 手動skipによる取りこぼし | build/job/import/backupのskip flagを並べて部分再開を代用する、失敗stateを書き換える | 3節の正規Resume。`-SkipPreRelease`は同commitの必須preflight全成功又は同stateのpre-release成功がある場合だけ使用する |
+| SOC取得だけの一時失敗 | SOC read失敗を理由にforced/greenのSET・保持・復元を自動で繰り返す | 既存SOC readerの読み取りだけのretry（最大3回・全体60秒）とsafe診断を使う。復元確認と失敗記録を保持する |
+| 成功証拠の混同 | build SUCCESS、HTTP 200、Job受付、local fakeのPASSだけで本番全体や実機成功とする | 対象scopeの4節の全条件を確認。scheduled 03/07はその実executionとdevice read-backを別途確認する |
+
+表の禁止事項は診断のための低レベルread-only操作を禁止するものではない。診断で成功経路を置き換えず、機密値を出力せず、元のfailed/unknown記録を保持する。
+
 ## 1. 事前確認
 
 ### SOC API 認証と実測確認（2026-10-10）
@@ -44,6 +72,8 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 - `-ValidateOnly` が必須設定を検証し、「No deployment was performed」と表示する
 
 ゲートは `artifacts/deployment_state/preflight-*.json` に非機密の判定結果を保存します。ゲートが失敗した場合は本番ラッパーを起動しません。
+
+以下の例の`-SkipPreRelease`は、このゲートの全必須チェック成功と同commitを確認した直後の重複検査を省くための指定です。gateの`status=passed`だけでは、任意skipしたチェックの成功を証明できません。`checks`配列の各`name/status`も確認し、保存済みpreflightのパスを運用記録に残します。wrapper側の`pre_release=skipped_manual`は外部ゲート実行の証拠ではなく、外部preflightと組にして判定します。
 
 ## 2. 通常デプロイ
 
@@ -207,66 +237,24 @@ pending日と理由を最終報告へ必ず列挙し、衛星値の補完・0埋
 
 ## 3. Windowsで途中終了した場合の再開
 
-`artifacts/deployment_state/production-*.json` の `status=complete` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。dashboard/forecast scopeの `settings_roundtrip=skipped_not_applicable` は、そのscopeでのみ正規の非該当状態です。
+まず元のstateを読み、exact Cloud Build/Cloud Run executionの終端・設定復元をread-only確認します。`status=complete`は全工程完了の判定であり、中断stateを再開する前提ではありません。`failed`、`running`、`skipped_manual`は成功扱いにしません。dashboard/forecast scopeの`settings_roundtrip=skipped_not_applicable`だけは、そのscopeの正規の非該当状態です。
 
-同じcommitの状態ファイルを明示して再開します。`-Resume` はJSON内で明示的に `success` となった工程だけをスキップし、Cloud側の現在状態から成功を推測しません。非制御scopeのsettings round-tripだけはscope契約に基づき再度`skipped_not_applicable`として扱います。
+元のcommit/layout/scope/状態ファイルを保持して再開します。`-Resume`はJSON内の明示的な`success`工程だけをスキップし、Cloud側の現在状態から成功を推測しません。0節と2.3節のidentity/receipt照合も必要です。元の明示scopeがdashboardなら、再開でも同じscopeを指定します。
+
+分離全体反映では、開始時の`-ApprovedCalculationPatchSha256`、`-AdapterProofFixturePath`、`-MonitoringRepairStatePath`、`-ReviewedRepairStateSha256`などの承認・fixture引数も保持する。state pathだけでこれらの入力が自動復元されると仮定しない。開始時の正規コマンドへ`-Resume`を追加し、同じ`-StatePath`を明示する。時間外操作の承認は今回の再開にも適用できることを確認し、旧セッションの一回限り承認を流用しない。
+
+画面限定の再開例:
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
+  -DeploymentScope dashboard `
   -Resume `
   -StatePath artifacts/deployment_state/production-<開始時刻>.json
 ```
 
-### 3.1 pre-release後に終了した場合
+`WORKING/QUEUED`又は非終端のexecutionがある間は再開せず、監視を続けます。Cloud側だけで成功を確認した未記録工程も、stateを手動成功化したりblindに再実行したりしません。既存の正規復旧・照合手順で解消できない場合はその境界で停止し、最小修正をレビュー・検証します。
 
-状態ファイルで `pre_release.status=success` が確認できる場合だけ `-Resume` または `-SkipPreRelease` を使用します。
-
-```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 -SkipPreRelease
-```
-
-### 3.2 Cloud Build開始後に終了した場合
-
-Cloud Buildが `SUCCESS` であることを読み取り専用で確認します。成功確認後だけ、ビルド済みの `runner:latest` を再利用します。
-
-```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
-  -SkipPreRelease -SkipJobBuild -SkipDashboardBuild -SkipKpNetImport -SkipDriveBackup
-```
-
-`WORKING`、`QUEUED`、失敗、または状態不明のビルドを再利用しません。
-
-外側のPowerShellや実行環境の待機が先に終了しても、Cloud Build／Cloud Runの状態を読み取り専用で確認するまで失敗・成功を推測しません。再開時は同じcommitの状態ファイルを使い、`success` が記録された工程だけをスキップします。各工程の失敗時には、機密語を除去したエラー概要を状態ファイルへ保存します。
-
-### 3.3 ジョブ1本の更新後に終了した場合
-
-更新成功が出力されたジョブだけをスキップし、残りをジョブ単位で再開します。
-
-03時ジョブだけを更新する例:
-
-```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
-  -SkipPreRelease -SkipJobBuild -SkipJob23Deploy -SkipJob07Deploy `
-  -SkipDashboardBuild -SkipKpNetImport -SkipDriveBackup
-```
-
-07時ジョブだけを更新する例:
-
-```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
-  -SkipPreRelease -SkipJobBuild -SkipJob23Deploy -SkipJob03Deploy `
-  -SkipDashboardBuild -SkipKpNetImport -SkipDriveBackup
-```
-
-23時ジョブだけを更新する場合は `-SkipJob03Deploy -SkipJob07Deploy` を指定します。
-
-### 3.4 ジョブ更新済みでScheduler工程だけ再開する場合
-
-```powershell
-pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
-  -SkipPreRelease -SkipJobBuild -SkipJobDeploy `
-  -SkipDashboardBuild -SkipKpNetImport -SkipDriveBackup
-```
+`-SkipJobBuild`、`-SkipDashboardBuild`、`-SkipJobDeploy`、`-SkipJob23Deploy`、`-SkipJob03Deploy`、`-SkipJob07Deploy`、`-SkipKpNetImport`、`-SkipDriveBackup`を手動で組み合わせる旧例は使用禁止です。これらの既存flagを通常再開の入口にしません。wrapper内部のscope選択・success判定は維持します。
 
 ## 4. 本番反映の合格条件
 

@@ -89,11 +89,8 @@ def test_production_deployment_runbook_documents_safe_resume_and_verification() 
     for required in (
         "-ValidateOnly",
         "-SkipPreRelease",
-        "-SkipJobBuild",
-        "-SkipJob23Deploy",
-        "-SkipJob03Deploy",
-        "-SkipJob07Deploy",
-        "-SkipJobDeploy",
+        "-StatePath",
+        "-Resume",
         "scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun",
         "Completed=True",
     ):
@@ -291,6 +288,33 @@ def test_runbook_fixes_single_build_cache_resume_and_roundtrip_rules() -> None:
         "同じ状態ファイルの`-Resume`",
     ):
         assert required in runbook
+
+
+def test_runbook_keeps_fixed_paths_and_excludes_unsafe_recovery_commands() -> None:
+    runbook = (ROOT / "docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md").read_text(encoding="utf-8")
+    instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "fixed execution paths and prohibited procedures in section 0" in instructions
+    for contract in (
+        "## 0. 固定した実行経路と禁止手順",
+        "cloudbuild.web.yaml",
+        "Dockerfile.web",
+        "checks`配列の必須項目がすべて`success",
+        "commit/digest/fixture SHA/receipt identity",
+        "SOC read失敗を理由にforced/greenのSET・保持・復元を自動で繰り返す",
+        "元のcommit/layout/scope/状態ファイルを保持",
+    ):
+        assert contract in runbook
+    unsafe_flags = (
+        "-SkipJobBuild", "-SkipDashboardBuild", "-SkipJobDeploy", "-SkipJob23Deploy",
+        "-SkipJob03Deploy", "-SkipJob07Deploy", "-SkipKpNetImport", "-SkipDriveBackup",
+    )
+    blocks = runbook.split("```powershell")[1:]
+    for block in blocks:
+        command = block.split("```", 1)[0]
+        assert "runner:latest" not in command
+        assert not any(flag in command for flag in unsafe_flags), command
+    assert "成功確認後だけ、ビルド済みの" not in runbook
+    assert "status=complete` を確認してから" not in runbook
 
 
 def test_dashboard_cloudbuild_requires_an_explicit_image_substitution() -> None:
