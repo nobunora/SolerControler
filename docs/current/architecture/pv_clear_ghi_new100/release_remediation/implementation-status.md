@@ -21,6 +21,16 @@ R07は10/13の明示承認による限定例外。workflow::run_kpnet_mode_only_
 
 変更境界のimplemented_source_sha256はCRLFをLFへ正規化したsource textのSHA-256。Windows checkoutの改行変換で別実装と判定しない。設計基準source_sha256は当時のレビューcopyを示す値として維持し、実装整合は正規化SHAとGit差分で確認する。
 
+## 10/13 source0・閉じた過去日cost・forecastログの限定追加
+
+R02は初回35/13と、全48原本/native一致のfresh48/0だけを受け付ける。後者は既存ingested_at/source_csv/unknown fieldsを保持し、source Write指定時もSDK create/update/commit0。D前の既存校正private pin/SHAをsource receiptへ残す。旧13件repairのmanifest/journal/承認SHAは保存し、新commitで別prepareをreviewする。
+
+R03はfresh prepareのexclusive cost_endを既存cfg.timezoneのTODAY00へ変更し、9/20訂正を最後の完了暦日まで伝播する。JST10/13なら9/1〜10/12の42日。開いている10/13 actual/costは通常Dが所有し、append再認証helper/全追加receipt fields/10回帰を撤回した。strict fixed source/count/native/policy/baseline/SDK予算/最終照合は不変、新helper/flag0。通常D changed_count>0の時だけcost再集計する条件を保持し、Fは同policy/旧43scopeを使うread-only当日金融readbackで全business値一致を確認する。不一致/driftを本番成功へ読み替えない。
+
+R05のexact forecast logs代入はdictionary/key guardだけを追加し、system/null/array labelsを除外する。新var/flag、追加GET、terminal判定緩和、他slot変更は0。旧D872を新releaseへcarryoverする案は撤回。新HEAD/fresh repair stateで通常Dを一回所有し、strict control producer source==release commitを保持する。同HEADの既存executionは再D禁止の根拠として保持する。
+
+親の初回全体gateはmandatory静的PASS、新15case PASS、全体1536 PASS/1 skip/1 FAIL。これは撤回前helperを含む履歴結果で、最終sourceの成功件数へ転記しない。bootstrap-only fixtureはambient Firestore backendを引き継いでいたため、fixtureだけをsqlite固定＋Firestore opener fail-fastへ限定修正した。局所2回帰とambient Firestore指定下の同test1回帰がPASS、外部read/write0。production dashboard sourceは変更0。最終sourceではclosed calendar end/正の当日実測分離の2回帰とsource0/48を保持し、親の最終local pre_releaseはRuff/Import3/mypy217/JS/compile/Node/securityと1530 PASS/1 skipでEXIT0。これはローカルgateの結果で、本番完了とは記録しない。正式新HEADのnative/repair全連鎖/当日金融/history/parity/control/backup受入はそれぞれreceiptで確定する。
+
 ## 検証と残条件
 
 全体静的検査（Ruff、Import Linter3契約、mypy、tracked JS Oxlint/node構文、compileall）と全体pre-releaseはPASS（1408 passed / 1 skipped、security PASS）。R06と既存mode-onlyの17回帰PASS、R00/R01の66回帰PASS。準備段階の実サーバーGETにより、9/20のcandidate13件・既存35件、料金範囲9/1–10/12、校正currentのnative不存在を証明した。まだsource writeは0。最後の変更を含む正式preflight gate、候補imageのnative proof、元13区間の本番修復、採用D/readmodel/history/Drive証拠、完全部署後の実SOC設定往復は個別のruntime receiptで確認する。

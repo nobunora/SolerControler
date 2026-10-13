@@ -3,6 +3,12 @@
 依存: R02 source receipt確定。文書の完成と、実装/SDK/本番全連鎖の完了は別。現在は調査とPLANNED仕様。
 通常producerの式/GET/schemaを保ち、一回限りrepair runnerから既存計算を明示順序で呼ぶ。
 
+10/13追加実装は修復costの範囲を閉じた過去暦日へ固定する。fresh prepareが9/1〜設定timezoneのTODAY00をexclusive範囲とし、JST10/13なら9/20訂正を10/12まで42日へ再集計する。開いている10/13 actual/costは通常Dが所有し、Dの正の実測appendを修復scopeへ含めない。strict prepared source/count/native revision・policy・baseline・既存SDK予算/保存unit/最終照合を緩めない。append再認証helper・専用receipt fields・carryover例外は撤回し、新helper/flag/classは追加しない。
+
+通常Dのcost再集計は `workflow._ingest_firestore` のchanged_count>0が条件で、変更月の月初から実行し、その直前cost_dailyのcumulative baselineを読む。10月なら修復済9/30を基準に10月分を再集計する。changed_count0や既run経路ではcostを再計算しないため「Dが必ず開いている当日料金を更新する」とは言わない。今回の旧43行read-only診断は10/13を含むbusiness値の一致を示したが、新D後の受入は改めて確認する。
+
+Fのread-only金融確認では、保持した旧43日scope/同policy/baselineを既存 `_source_range`・`_cost_expected`・`_matches` で再計算し、current-dayを含む全対象native cost_dailyのdate/self_consumption_kwh/savings_yen/cumulative_kwh/cumulative_yenを照合する（既存rel_tol=1e-10/abs_tol=1e-8）。source前後digestも一致を要求し、updated_atを金融値へ混ぜない。changed_count/cost再計算ログが存在すればexact executionへ関連付け、ログ不在を再計算成功へ推測しない。changed0なら既存当日値が修復済baselineで正しいことをreadbackで要求し、不一致/drift/不足はSTOP。これは金融受入用read-only検証でrepair endの拡張・raw/cost mutation・旧manifest/journalの書換えを行わない。current/history同原本・全source epochも既存最終条件を保持し、並行writerをatomicに防いだとは宣言しない。
+
 ## 入口・参照範囲
 
 readset: [調査正本](../research-source-repair.md)、[R02](R02-source-repair.md)、[publication契約](../../publication-contracts.md)、[日計 (line 738)](../../../../../../app/operations/firestore.py)、[料金 (line 441)](../../../../../../app/operations/firestore.py)、[校正 (line 61)](../../../../../../app/energy_plan/clear_ghi_update.py)、[snapshot (line 384)](../../../../../../app/dashboard/snapshots.py)、[Drive scope (line 179)](../../../../../../app/backup/drive.py)。
@@ -108,6 +114,10 @@ unit_prepared callback失敗はそのunit未commitで停止するが、以前の
 
 既存server regressionは`tests/test_dashboard_server.py::test_bootstrap_http_uses_precomputed_gzip_etag_without_db`、history fallback境界は同fileのmissing_history_snapshot testを維持する。
 partial source4/17/当日10/12はcomplete48と呼ばない。fixtureでは未取得を保持し、修復対象の定義外の金融値を変更しない。
+
+追加回帰DERIVED-13は `tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer`。TODAY00以後の正のload/buyが修復cost sourceへ入らず、通常producerが当日self_consumption_kwh=9を計算した後も閉じた過去日のsame-source resumeで追加commit0、当日値を修復から書き換えないことを確認する。これを通常Dの本番再計算・当日金融readback済みという証明へ昇格しない。
+
+既存 `tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only` はlocal fixtureのDATA_BACKENDをsqliteへ固定し、`_unexpected_firestore_client()` を既存Firestore openerへ置いてAssertionErrorで外部読取を検出する。ambient backendに依存せずbootstrapだけを検査する。production dashboard source、GET/cache/source epochは変更0。
 
 ## 中断条件
 

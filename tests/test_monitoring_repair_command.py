@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
@@ -13,6 +14,39 @@ from google.cloud.firestore_v1.types import Document
 from app.operations import monitoring_repair as repair
 from app.operations.sqlite import PipelineConfig
 from test_incremental_monitoring_backends import _write_csv
+
+
+def test_prepare_cli_pins_closed_calendar_end_in_configured_timezone(prepared_repair, monkeypatch):
+    from pathlib import Path
+
+    client, cfg, path, _ = prepared_repair
+    cfg = replace(cfg, timezone="Asia/Tokyo")
+    script = Path(__file__).resolve().parents[1] / "scripts/repair_monitoring_source.py"
+    spec = importlib.util.spec_from_file_location("repair_closed_calendar_cli", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    captured = []
+
+    class FixedClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            # UTC is still October 12; the configured JST calendar is October 13.
+            return datetime(2026, 10, 12, 15, 30, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(module, "datetime", FixedClock)
+    monkeypatch.setattr(module, "PipelineConfig", SimpleNamespace(from_env=lambda: cfg))
+    monkeypatch.setattr(module, "open_firestore", lambda: client)
+
+    def prepare(**kwargs):
+        captured.append(kwargs)
+        return {"status": "prepared", "candidate_count": 0}
+
+    monkeypatch.setattr(module, "prepare_source_repair", prepare)
+    assert module.main(["--state-path", str(path.parent / "fresh-cli.json"), "--stage", "prepare",
+                        "--csv-run-dirs", str(path.parent)]) == 0
+    assert len(captured) == 1 and captured[0]["cost_end_ts"] == "2026-10-13T00:00:00"
+    assert client.writes == [] and client.commit_attempts == 0
 
 
 class RepairRef:
@@ -169,6 +203,55 @@ def test_prepare_pins_full_payload_timestamp_and_native_unknown_fields(prepared_
     assert proto.fields["foreign"].bytes_value == b"unknown-field"
     repair._save_stage(path, "example", {"status": "failed"})
     assert repair._load(path)["reviewed_state_sha256"] == result["reviewed_state_sha256"]
+
+
+def test_fresh_verified_48_source_manifest_has_no_cloud_write_and_pins_calibration(prepared_repair):
+    client, cfg, old_path, result = prepared_repair
+    assert repair.apply_source_repair(client=client, state_path=old_path,
+        reviewed_state_sha256=result["reviewed_state_sha256"])["status"] == "verified"
+    old_manifest = old_path.read_bytes()
+    native = {key: repair._native(RepairSnapshot(RepairRef(client, key)))
+              for key in client.data if key.startswith("monitoring_samples/")}
+    fresh_path = old_path.parent / "fresh-repair.private.json"
+    prepared = repair.prepare_source_repair(client=client, cfg=cfg, cost_end_ts="2026-10-14T00:00:00",
+        csv_run_dirs=(old_path.parent,), target_dates=(date(2026, 9, 20),), state_path=fresh_path)
+    state = repair._load(fresh_path)
+    assert prepared["candidate_count"] == 0 and len(state["existing"]) == 48
+    repair._atomic_json(repair._directory(fresh_path) / "forecast-intent.json", {
+        "prepared_sha256": prepared["reviewed_state_sha256"], "target_date": "2026-10-13",
+    })
+    commits = client.commit_attempts
+    client.writes.clear()
+    applied = repair.apply_source_repair(client=client, state_path=fresh_path,
+        reviewed_state_sha256=prepared["reviewed_state_sha256"])
+    assert applied["status"] == "verified" and applied["raw_writes"] == 0
+    assert applied["calibration_preimage_sha256"] == state["calibration_preimage_sha256"]
+    assert (repair._directory(fresh_path) / "previous-calibration-plan.json").exists()
+    repeated = repair.apply_source_repair(client=client, state_path=fresh_path,
+        reviewed_state_sha256=prepared["reviewed_state_sha256"])
+    assert repeated["calibration_preimage_sha256"] == state["calibration_preimage_sha256"]
+    assert client.writes == [] and client.commit_attempts == commits
+    assert old_path.read_bytes() == old_manifest
+    assert {key: repair._native(RepairSnapshot(RepairRef(client, key))) for key in native} == native
+
+
+@pytest.mark.parametrize("failure", ["missing_one", "different_value", "boolean_value"])
+def test_fresh_verified_manifest_rejects_partial_or_different_source(prepared_repair, failure):
+    client, cfg, old_path, result = prepared_repair
+    repair.apply_source_repair(client=client, state_path=old_path, reviewed_state_sha256=result["reviewed_state_sha256"])
+    target = "monitoring_samples/2026-09-20T00:00:00"
+    if failure == "missing_one":
+        del client.data[target]
+    elif failure == "different_value":
+        client.data[target]["soc_percent"] = 51.0
+    else:
+        client.data[target]["pv_kwh"] = True
+    commits = client.commit_attempts
+    client.writes.clear()
+    with pytest.raises(ValueError):
+        repair.prepare_source_repair(client=client, cfg=cfg, cost_end_ts="2026-10-14T00:00:00",
+            csv_run_dirs=(old_path.parent,), target_dates=(date(2026, 9, 20),), state_path=old_path.parent / "fresh-rejected.json")
+    assert client.writes == [] and client.commit_attempts == commits
 
 
 def test_atomic_create_13_and_same_input_retry_no_raw_rewrite(prepared_repair):

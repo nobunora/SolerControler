@@ -4,6 +4,12 @@
 本stageは9/20の欠測13区間だけを対象にする。10/12の20件や他日の既存値訂正は別scopeとして再準備する。
 ローカル総8526件には10/12追加20も含まれる。本stageだけなら同baseline8493から8506件だが、本番の他日通常更新は別に存在し得るため総件数を固定PASS条件にせず、対象日48/追加13/他日write0を確認する。
 
+10/13の限定実装は、同じCSV原本の9/20全48行が既にnative保存済みの場合にもfresh prepareを受け付ける。許可件数は `(existing,candidates)=(35,13)` または `(48,0)` だけ。後者は全MONITORING_FIELDSのCSV一致、energy/SOC非bool、全48行のnative preimageを固定し、raw create/update/commit0を要求する。以下の35/13記載は初回create分岐に適用し、fresh0の受入は全48 native不変で判断する。欠損1行・異値・native driftを部分修復へ読み替えない。
+
+同じ既存3関数を使い、`verify_source_repair.candidate_count=len(state["candidates"])` で分類する。候補0のverified receiptは `attempted_count=verified_count=raw_writes=0` で、これは候補件数の結果であり48行の検査を省いた意味ではない。`apply_source_repair` はSDK batchを作らず、既存 `_pin_calibration_preimage` によるD前原本/packのprivate保全と `calibration_preimage_sha256` 検査を保持して戻る。prepare時刻を既存48行のingested_atへ書き直さない。
+
+旧13件のmanifest/journal/承認SHAは保持し、別StatePathの新commit prepareと新承認SHAを使う。正規入口は `run_monitoring_source_repair_from_env.ps1 -Stage prepare -StatePath <fresh-private-state> -CsvRunDirs artifacts/20261012-203830`。prepareへWrite/Resumeを付けず、既存stateを置換しない。`scripts.repair_monitoring_source.main` は既存cfg.timezoneの当日00:00をexclusive cost_end_tsへ固定する。JST10/13なら9/1〜10/13T00:00:00（10/12まで42暦日）、対象9/20・影響9/20–21を結果で確認する。開いている10/13料金は通常Dの責任と分離し、prepare後にendを時刻進行で拡張しない。新flag/helper/class/env/schema追加0、全体gate・本番連鎖受入は未完。
+
 ## 入口・参照範囲
 
 readset: [調査正本](../research-source-repair.md)、[publication契約](../../publication-contracts.md)、R01結果、[import wrapper (line 1)](../../../../../../scripts/run_kpnet_import_from_env.ps1)、[CSV sync (line 119)](../../../../../../app/operations/firestore.py)、[日付選択 (line 45)](../../../../../../app/operations/monitoring_sync.py)、[workflow (line 374)](../../../../../../app/operations/workflow.py)。
@@ -83,6 +89,8 @@ candidate_sha256はtimestamp順のdocument_idと**実write完全payload**のcano
 | REPAIR-06 | 同state retry/途中終了/別DB/別CSVhash/source_csv変更/prepare時刻変更。same file `-k resume` | runningをskipしない、成功readback再確認、prepared_at=13row ingested_at固定、全write payload SHA一致、候補差替え拒否、旧35値・metadata不変。 |
 | REPAIR-07 | 未承認/Write無し/invalidStage/秘密を含む例外。same file `-k authority` | remote write0、state hash不一致停止、stdout/state公開要約にcredential/project ID/source body0。 |
 | REPAIR-08 | 原本と復旧bundle/native型/明示rollbackdryrun。same file `-k backup` | lossless restore candidateとnative preimage一致。実rollbackは別承認、他writer更新を上書きしない。 |
+
+追加回帰REPAIR-09は `tests/test_monitoring_repair_command.py::test_fresh_verified_48_source_manifest_has_no_cloud_write_and_pins_calibration` と `::test_fresh_verified_manifest_rejects_partial_or_different_source`（missing_one/different_value/boolean_value）。PASSはcandidate0/48 native不変、旧manifest不変、raw write/commit0、校正private pin/SHA保持。1欠損/異値/boolはprepare非0・cloud write0。REPAIR-10 `::test_prepare_cli_pins_closed_calendar_end_in_configured_timezone` は凍結時計/設定timezoneからTODAY00をpinし、翌日00へ戻さない。fixtureを本番native成功へ昇格しない。
 
 ## 中断条件
 
