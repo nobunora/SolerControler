@@ -121,10 +121,17 @@ try {
     $execution = $text | ConvertFrom-Json -AsHashtable
     $executionName = ([string]$execution.metadata.name -split '/')[-1]
     if (-not $executionName) { throw 'SOC probe execution identity is unknown.' }
-    $records = @(Invoke-SocCloud @('logging', 'read', "resource.type=cloud_run_job AND resource.labels.job_name=$ProbeJobName",
+    $filter = ('resource.type=cloud_run_job AND resource.labels.job_name="' + $ProbeJobName +
+        '" AND labels."run.googleapis.com/execution_name"="' + $executionName + '" AND jsonPayload.message="post-deploy-soc-setting-probe"').Replace('"', '\"')
+    $records = @(Invoke-SocCloud @('logging', 'read', $filter,
         '--project', $project, '--freshness', '1d', '--limit', '200', '--format', 'json') | ConvertFrom-Json -AsHashtable)
-    $proofs = @($records | Where-Object { $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and
-        $_.jsonPayload.message -eq 'post-deploy-soc-setting-probe' })
+    $proofs = @($records | Where-Object {
+        $_ -is [System.Collections.IDictionary] -and $_.Contains('labels') -and
+        $_.labels -is [System.Collections.IDictionary] -and $_.labels.Contains('run.googleapis.com/execution_name') -and
+        $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and
+        $_.Contains('jsonPayload') -and $_.jsonPayload -is [System.Collections.IDictionary] -and
+        $_.jsonPayload.Contains('message') -and $_.jsonPayload.message -eq 'post-deploy-soc-setting-probe'
+    })
     if ($proofs.Count -ne 1) { throw 'Exact execution SOC proof is absent or ambiguous.' }
     $proof = $proofs[0].jsonPayload
     $receipt.device_proof = $proof

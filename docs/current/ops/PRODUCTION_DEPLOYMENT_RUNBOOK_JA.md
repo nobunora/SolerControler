@@ -195,7 +195,12 @@ D採用済みなら固定原本と唯一の採用receiptを保持し、正規Res
 失敗stateやunknownを手でsuccessへ書き換えない。
 
 校正のprovider gap、actual/pack/trace不一致、原本不足、未復元device状態は既存STOP条件のまま。
-未採用日の衛星欠測をpendingのまま受け入れる案は、別の明示承認があるまで適用しない。
+今回利用者が明示承認した[R03の未採用9/20 satellite gap限定例外](../architecture/pv_clear_ghi_new100/release_remediation/steps/R03-derived-history.md)だけは、
+修復actual26 SHA・source48/旧35/修復13・採用raw/current・selected pack/原本の必須検証を保持し、
+9/20を `journal.stages.verify.calibration.dates` の `pending_satellite_hour_missing` として残して受入を進める。
+selected日のgap、retained actualgap、理由不明の未読、不一致は例外対象外で停止する。
+pending日と理由を最終報告へ必ず列挙し、衛星値の補完・0埋め・非晴天認定・歴史校正完了の宣言を行わない。
+他のstage/実機安全条件は免除せず、未実施deployment工程をPASSへ昇格しない。
 未回答の提案・待機中operator判断を許可としてResumeや実機probeを進めない。
 
 ## 3. Windowsで途中終了した場合の再開

@@ -83,9 +83,11 @@ unit_prepared callback失敗はそのunit未commitで停止するが、以前の
 8. **校正準備（read-only）**: Dのtarget dateに対する現在＋前請求期間の通常context読取範囲に9/20が含まれることを、実際のstart/endとraw timestampで検査する。現在の10/12〜13想定では含まれ得るが、実行日から推測でPASSにしない。修復日が範囲外ならSTOP/別historical仕様へ渡し、特殊reader/flag/暗黙の期間拡張を追加しない。既存calibration/as_of injectionで固定計算する別案は、context/Job入力配送が増えるため今回採らない。
    既存load_monitoring_historyのstartはprevious_billing_period_for_target(target_date).previous_start、endはtarget_dateT00:00。修復日05:00>=start、17:30<endが必要。stored/CSV mergeはCSV優先なので範囲一致だけでは不足し、Dの26unique dt/pv入力が修復後保存ts/pv_kwhと一致することを後段の観測原本hashで証明する。特殊なcontext flagを追加しない。
 9. 05〜17時26samplesの17:30だけが今回追加窓に入る。既存衛星観測・認証・fitを使用し、実測/certification availabilityは今回取得終了時刻、既存同hashの日は旧availabilityを保持。未来/当日を学習せず、target/as_ofを遡及させない。
-10. fit/store更新はDの通常 `load_calibration_for_context` 一回だけ。D後に既存`pv_calibration_observations`イベントのexcluded_dates/retained_observation_gapsとimmutable actual/certification/calibration/stateをread-only照合しrepair receiptへ取り込む。included/valid-not-certifiedは根拠付きで区別、actual不足/provider gap/retained failureは未解決。理由が無い旧day未収録を「非晴天」と推測しない。
+10. fit/store更新はDの通常 `load_calibration_for_context` 一回だけ。D後に既存`pv_calibration_observations`イベントのexcluded_dates/retained_observation_gapsとimmutable actual/certification/calibration/stateをread-only照合しrepair receiptへ取り込む。included/valid-not-certifiedは根拠付きで区別、actual不足/provider gap/retained failureは未解決。理由が無い旧day未収録を「非晴天」と推測しない。今回明示承認された9/20の未採用日satellite gapだけは、下記の全条件を満たす場合に限りpendingを残して他の修復受入を進める。
 11. 新packが不要なら修復rawの観測hash/records同値＋再検証理由を記録する。R03からfit/publish/restoreを呼ばない。校正current変更は将来runだけへ適用し、採用済plan/forecast/pv_model summaryは当時のpackを保持する。
     実測hashの正本はSHA(canonical_bytes({'date':対象日,'samples':[{'hour':h,'actual_halfhour_kwh':[pv[h:00],pv[h:30]]} for h in 5..17]}))。採用immutable state.clear_days[date]のactual_sha256/actual_source/13hours、certification_sha256/認証原本hash/availability<=as_of/site/basis、D raw decision_rationale.pv_clear_ghi.calibration_sha256/calibration_packを照合する。非晴天は既存excluded_dates.not_certified_clearとtraining_dates除外の証拠が必要。provider gap/未読/retainedを同値変更不要と呼ばない。
+    **承認済み限定pending受入**: 修復対象2026-09-20が採用pack.training_datesに存在せず、exact採用executionの同じ観測eventでsatellite_hour_missing分類と修復後26区間actual SHAのchecked_actual_sha256_by_date一致を確認し、retained_observation_gapsには無いことを要求する。actual SHAの従来照合も先に維持し、raw48/旧35 native/修復13完全payload/採用current raw SHA、pack SHA/site/basis/cohort/時刻・原本の既存検証を保持する。全selected training日のsatellite/retained gap、actual不足、hash/pack/原本不一致は引き続きFAIL。既存calibration.dates[date]へ `pending_satellite_hour_missing` を記録し、recordの存在/不存在・校正済み・非晴天・変更不要を認定しない。修復日以外や理由不明の未読をこの例外へ拡張しない。
+    限定変更は `app.operations.monitoring_repair._calibration_readback(client:Any,cfg:PipelineConfig,state_path:Path,state:dict[str,Any],plan:Any)->dict[str,Any]` 内のgap判定/既存dates値分類だけ。fit/publish/params/weather補完・0埋め・availability遡及・新flag/class/env/collection/APIは0。verify_repairの後続金融/daily/asset/sourceepoch検証を全て通した結果だけを既存status=verifiedとして保存し、`journal.stages.verify.calibration.dates` のpendingをreceipt SHAに含める。CLIのfiltered stdout/exit0はこの限定受入範囲の検証を意味し、校正全履歴完了を証明しない。未完日と理由は最終報告にも必ず列挙する。
 12. **revision paging**: monitoring_start〜endの固定範囲をwhere(ts>=start).where(ts<end).order_by("ts").order_by("__name__").select(["ts"])で取得。1pageはlimit3661、先頭3660を採用しsentinel有なら最後の採用snapshotをstart_afterして続ける。最後のsentinelを捨てて終了しない。before/materialize/after/CAS retryの全再読で同じ全範囲を使う。既存indexでSDK queryが通る証拠はR04で確認し、新indexを必要とする場合は停止する。
 13. 合計52,608超、欠落cursor、非増加cursor、重複doc異version、native update_time欠落、deadlineはFAIL。accepted全docを従来groupsへ入れ、最終max(update_time)/count/SHA(sorted(id,version))を計算する。metadataへpage数分のvectorを増やさず既存componentを保持する。
     pageごとにdeadlineを新設せず、既存引数deadlineを全pageで共有する。各SDK streamは残り予算と4秒の小さい方・retry=Noneを守り、sentinelを含む実読取件数/SDK request数/bytesを記録する。
@@ -124,6 +126,8 @@ partial source4/17/当日10/12はcomplete48と呼ばない。fixtureでは未取
 
 追加回帰DERIVED-13は `tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer`。TODAY00以後の正のload/buyが修復cost sourceへ入らず、通常producerが当日self_consumption_kwh=9を計算した後も閉じた過去日のsame-source resumeで追加commit0、当日値を修復から書き換えないことを確認する。これを通常Dの本番再計算・当日金融readback済みという証明へ昇格しない。
 
+承認済みpending例外の回帰は既存 `tests/test_monitoring_repair_derived.py` の `test_calibration_readback_preserves_unselected_satellite_gap_as_pending`、`test_calibration_readback_rejects_selected_or_unproven_gap`（11cases）、`test_calibration_readback_pending_does_not_bypass_pack_or_source_guards`（9cases）、`test_calibration_readback_keeps_clear_and_not_certified_paths`（2cases）、`test_verify_repair_keeps_pending_date_observable` の計24cases。実行候補はmandatory品質後に `python -m pytest -q tests/test_monitoring_repair_derived.py -k "calibration_readback or verify_repair_keeps_pending"`。selected/別selected日/retained/event・hash不足/別event混同/actual不足・bool・NaN、execution/pack/site/preimage/basis/cohort/original/旧35/修復13不一致はFAIL、正常既存分岐は保持、pendingは最終journal/SHAへ残ることを要求する。fullverify試験のGCS/plan/validator境界はstubであり、source/derived式は既存helperを使う。本番PV/容量/SOC・実SDK・全deployment完了の再実証へ昇格しない。
+
 既存 `tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only` はlocal fixtureのDATA_BACKENDをsqliteへ固定し、`_unexpected_firestore_client()` を既存Firestore openerへ置いてAssertionErrorで外部読取を検出する。ambient backendに依存せずbootstrapだけを検査する。production dashboard source、GET/cache/source epochは変更0。
 
 parallel追加回帰は、serial対parallelの全key/value・native ns/max/count/digest/retained/compare境界の完全一致、field mask/filter/order/limit/cursor/refのrequest集合とsentinel込みread/bytes一致、maxinflight4、bounds先行/monitoring・analog依存直列、main-thread canonical統合を要求する。shared deadline reset0、1worker stream failureとmain wait/result/timeout interruptionの両方でEvent停止・pending cancel・後続RPC0・全join/threads0・元例外保持・成功receipt0を検査する。既存CAS3/24秒/60秒/8KiB・paging予算・schema/API/GET/cache/ETag/31日/lazyhistory回帰を継続する。
@@ -132,12 +136,13 @@ exact selectorsは `tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_
 
 ## 中断条件
 
-baseline/policy不明、派生scope不足、input/source drift未収束、output不一致、校正未解決/原本CAS競合、source予算/期限/metadata超過、asset CAS未収束、backup hash不足はstage非0。
+baseline/policy不明、派生scope不足、input/source drift未収束、output不一致、上記承認済み未採用9/20 satellite pending以外の校正未解決/原本CAS競合、source予算/期限/metadata超過、asset CAS未収束、backup hash不足はstage非0。
 任意stage失敗時は前stageの確定結果と未完unitを残す。通常producer/制御Jobを止める権限をこのCLIから発明せず、必要な運用調整は別承認へ渡す。
 source→derivedのnonatomic窓とsource再検証→GCS uploadの窓は残る。state/after digestは観測時点の整合証拠であり、全writer排他の証明ではない。
 
 ## 出口・引継ぎ
 
 source/daily/cost中間read-backだけではoverall PARTIAL。修復全連鎖PASSはraw48、daily/前夜/全cost範囲、Dの校正結果と唯一採用receipt、current bootstrap/history generationの同原本照合/全最終verify、R05所有backup/read-back、G07実adapter証拠が揃った時だけ。
+今回の承認済み限定受入では全必須工程を通した場合も `pending_satellite_hour_missing` の日付をjournal/最終報告へ保持し、historical校正完了や未完0とは記録しない。pendingを消すことや未実施deployment工程をPASSへ変更することは、この承認に含まれない。
 known partial day/旧forecast原本/旧pack採用計画は保持。R04独立reviewへstage receipts、diff counts、最大read/time/bytes、未解決理由を渡す。
 文書の完成時はPLANNED完了で停止し、本番Write/Cloud実行/deploy/merge承認を求める前にreviewableな候補を準備する。
