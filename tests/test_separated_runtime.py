@@ -247,3 +247,37 @@ def test_soc_api_failure_prevents_live_probe_device_mutation(monkeypatch):
     monkeypatch.setattr("scripts.kpnet_soc_api_probe.run_probe", unavailable)
     with pytest.raises(RuntimeError, match="SOC API unavailable"):
         control.main()
+
+
+def test_post_restore_soc_retry_does_not_repeat_device_mutation(monkeypatch):
+    from app.kpnet.soc_api import SocApiError
+    from app.runtime.soc_reading import SocReading
+    from scripts import kpnet_soc_api_probe as probe
+    plan = PublishedPlan.from_bytes(raw_plan(), target_date="2099-01-01", charge_rate_info=RATE,
+                                   producer_source_revision="a" * 40, inputs_verified=True)
+    monkeypatch.setenv("CLOUD_JOB_SLOT", "settings-roundtrip")
+    monkeypatch.setattr(control, "install_unknown_write_guard", lambda: None)
+    monkeypatch.setattr(cloud_job, "_tokyo_now", lambda: Clock().at)
+    monkeypatch.setattr(control, "FirestorePlanStore", lambda: SimpleNamespace(fetch=lambda *a, **kw: plan))
+    seconds = [0.0]
+    mutations = []
+    reads = []
+    retry = probe.read_realtime_soc_with_retry
+    monkeypatch.setattr(probe.time, "monotonic", lambda: seconds[0])
+    def sleep(delay):
+        seconds[0] += delay
+    monkeypatch.setattr(probe, "read_realtime_soc_with_retry", lambda **kw: retry(sleep=sleep, **kw))
+    def physical_roundtrip():
+        mutations.append("one_roundtrip")
+        return {"status": "passed", "forced_proof": "passed", "green_proof": "passed", "restore_verified": True}
+    def read(*, deadline_monotonic):
+        reads.append((len(mutations), deadline_monotonic))
+        if len(mutations) and len(reads) < 4:
+            raise SocApiError("refresh was not accepted")
+        return SocReading(14, "realtime", None, Clock().at, Clock().at)
+    monkeypatch.setattr(control, "run_settings_roundtrip", physical_roundtrip)
+    monkeypatch.setattr(probe, "latest_realtime_soc_reading", read)
+    assert control.main() == 0
+    assert mutations == ["one_roundtrip"]
+    assert reads == [(0, 60), (1, 60), (1, 60), (1, 60)]
+    assert seconds[0] == 40

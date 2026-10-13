@@ -103,6 +103,12 @@ class KpNetSocClient:
                     pass
                 return sample
             if data.get("endCd") != "20001":
+                code = data.get("endCd")
+                safe_code = code if isinstance(code, str) and len(code) == 5 and code.isascii() and code.isdecimal() else "unrecognized"
+                try:
+                    print(json.dumps({"message": "kpnet-soc-api-rejected", "end_code": safe_code}), flush=True)
+                except Exception:
+                    pass
                 raise SocApiError("SOC API refresh was not accepted")
             identifier = data.get("identifiId")
             if not isinstance(identifier, str) or not identifier or data.get("mePrt") != []:
