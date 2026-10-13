@@ -115,7 +115,8 @@ if ($ValidateOnly) {
     return
 }
 
-if ($SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated') {
+$useSeparatedRuntime = $SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated'
+if ($useSeparatedRuntime -and $DeploymentScope -ne 'dashboard') {
     if ($DeploymentScope -notin @('auto', 'full')) {
         throw 'Separated runtime requires auto/full scope; an explicit non-control scope must never be expanded to a control release.'
     }
@@ -359,6 +360,31 @@ Invoke-DeploymentStage -Name 'jobs' -Skip:($SkipJobBuild -and $SkipJobDeploy) -A
 
 $dashboardImage = "$region-docker.pkg.dev/$projectId/$dashboardRepository/${dashboardImageName}:latest"
 Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
+    if ($useSeparatedRuntime) {
+        # Keep the separated web runtime and its existing configuration intact.
+        # Only the service image changes; the control/planner owners are untouched.
+        $webImageBase = "$region-docker.pkg.dev/$projectId/$dashboardRepository/$dashboardImageName"
+        $webImage = "${webImageBase}:git-$($state.repository_commit)"
+        $webCacheImage = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format 'value(spec.template.spec.containers[0].image)').Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $webCacheImage) { throw 'Current web image could not be resolved.' }
+        & $gcloud builds submit --config cloudbuild.web.yaml --ignore-file .gcloudignore-separated --region $region --project $projectId --substitutions "_WEB_IMAGE=$webImage,_WEB_CACHE_IMAGE=$webCacheImage" .
+        if ($LASTEXITCODE -ne 0) { throw 'Separated web image build failed.' }
+        $webDigest = (& $gcloud artifacts docker images describe $webImage --project $projectId --format 'value(image_summary.digest)').Trim()
+        if ($LASTEXITCODE -ne 0 -or $webDigest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Separated web image digest could not be resolved.' }
+        $immutableWebImage = "$webImageBase@$webDigest"
+        & $gcloud run services update $dashboardService --region $region --project $projectId --image $immutableWebImage
+        if ($LASTEXITCODE -ne 0) { throw 'Separated web service update failed.' }
+        $webServiceState = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format json) | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0 -or $webServiceState.spec.template.spec.containers[0].image -ne $immutableWebImage -or
+            -not $webServiceState.status.latestCreatedRevisionName -or
+            $webServiceState.status.latestReadyRevisionName -ne $webServiceState.status.latestCreatedRevisionName -or
+            (@($webServiceState.status.traffic | Where-Object { $_.revisionName -eq $webServiceState.status.latestCreatedRevisionName } |
+                Measure-Object -Property percent -Sum).Sum -ne 100) -or
+            -not @($webServiceState.status.conditions | Where-Object { $_.type -eq 'Ready' -and $_.status -eq 'True' }).Count) {
+            throw 'Separated web service is not ready on the requested image.'
+        }
+        return
+    }
     $dashboardIgnoreFile = Join-Path $repoRoot '.gcloudignore-dashboard'
     & $gcloud builds submit --config cloudbuild.dashboard.yaml --ignore-file $dashboardIgnoreFile --region $region --project $projectId --substitutions "_DASHBOARD_IMAGE=$dashboardImage" .
     if ($LASTEXITCODE -ne 0) {

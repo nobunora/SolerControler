@@ -53,7 +53,7 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 既存wrapperでは単一runnerを再配布してしまうため、正式入口に`-SeparatedRuntime`を追加した。
 `scripts/deploy_production_from_env.ps1 -SeparatedRuntime -StatePath artifacts/deployment_state/production-<開始時刻>.json`を使う。
 移行後はGit管理外`.env`の`SOLAR_RUNTIME_LAYOUT=separated`で通常入口もこの経路に固定する。
-この移行経路は`auto/full`のみ受け付ける。非制御scopeを指定したときは制御操作へ拡大せず、明示的に拒否する。
+この移行経路は`auto/full`を受け付ける。明示`dashboard`だけは下記の画面限定経路へ進み、それ以外の非制御scopeを指定したときは制御操作へ拡大せず、明示的に拒否する。
 `SOLAR_RECOVERY_BACKUP_PATH`には保存済み完全バックアップのローカルパスを指定する。
 ゲート、保存済み原本との比較、運用設定backup、3役割build、計算Job更新・実行、
 同じ制御imageでのforced/green各SET/read-backと60秒保持・元モード復元、制御Job更新、
@@ -92,6 +92,8 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 `-DeploymentScope control-readonly` は control Job を更新できない（即時エラー）。23/03/07 の image-only 反映は `scripts/deploy_control_jobs_image_only.ps1` を使い、clean worktree と immutable digest を確認した上で、CSV/plan/実機 settings round-trip（60秒保持・read-back 復元）を含む必須 live probe が成功する場合だけ完了とする。probe が失敗したら既存 image へ rollback し、完了扱いにしない。
 
 `-DeploymentScope dashboard` は dashboard Cloud Run service だけを更新する正式な非制御経路です。このscopeではrunner、23/03/07、02:30 forecast job、Scheduler、KP-NET import、Drive backup、機器settingsを変更しません。
+
+`SOLAR_RUNTIME_LAYOUT=separated` または `-SeparatedRuntime` の場合も、明示`dashboard`は画面限定で受け付けます。`cloudbuild.web.yaml`で既存の`Dockerfile.web`・web依存関係を使用し、現在の画面imageをcacheにしてcommit固定のimageを一度buildします。digestへ解決してserviceのimageだけを更新し、同imageのcreated/ready revision一致とReady=Trueを確認します。既存service account、IAM、env、secretは保持し、従来のdashboard環境変数再構築を通しません。分離構成の`auto/full`は従来の完全経路を維持し、`forecast/runner/control-readonly`は引き続き拒否します。通常の事前gate、状態記録、browser/API受入、非制御scopeの機器試験非該当条件は省略しません。
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
