@@ -108,7 +108,7 @@
       "change": "Reviewed raw13 create/readback retains old35; exact alternate fresh48/0 verifies full CSV/native source, preserves all existing fields and D-before private calibration pin/SHA, with no raw batch/create/update/commit",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "10476cecbd5b242797cf7f8a10c7be28c538f4776d13a2f775101f441fd01447",
+      "implemented_source_sha256": "79eb30c9f9a001a89aed57c5d97a191c5bd3ba26df3f47853245fe86f7647aa0",
       "variables": [
         "candidate_count",
         "existing",
@@ -145,22 +145,33 @@
       "path": "app/operations/monitoring_repair.py",
       "symbols": [
         "NEW regenerate_derived",
-        "_save_stage"
+        "_save_stage",
+        "_calibration_readback"
       ],
-      "change": "existing daily/cost functions plus before-after source and output verification; canonical fresh prepare limits repair to closed calendar dates (exclusive TODAY00), normal producer owns the open current day; no append helper/carryover exceptions; failed-only private safe failure_frames, success receipt/hash unchanged; calibration gate unchanged",
+      "change": "existing daily/cost functions plus before-after source and output verification; canonical fresh prepare limits repair to closed calendar dates (exclusive TODAY00), normal producer owns the open current day; no append helper/carryover exceptions; failed-only private safe failure_frames, success receipt/hash unchanged; diagnostics preserve other calibration guards; explicitly approved unselected Sept20 satellite gap remains pending after exact same-event actual SHA proof; selected/retained/hash guards retained; no new locals or calibration mutation",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "10476cecbd5b242797cf7f8a10c7be28c538f4776d13a2f775101f441fd01447",
+      "implemented_source_sha256": "79eb30c9f9a001a89aed57c5d97a191c5bd3ba26df3f47853245fe86f7647aa0",
       "associated_tests": [
         "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer",
         "tests/test_monitoring_repair_derived.py::test_failed_stage_records_bounded_safe_active_exception_and_preserves_primary",
         "tests/test_monitoring_repair_derived.py::test_failed_stage_without_active_exception_records_unknown_frames",
-        "tests/test_monitoring_repair_derived.py::test_success_stage_receipt_and_hash_unchanged_during_active_exception"
+        "tests/test_monitoring_repair_derived.py::test_success_stage_receipt_and_hash_unchanged_during_active_exception",
+        "tests/test_monitoring_repair_derived.py::test_calibration_readback_preserves_unselected_satellite_gap_as_pending",
+        "tests/test_monitoring_repair_derived.py::test_calibration_readback_rejects_selected_or_unproven_gap",
+        "tests/test_monitoring_repair_derived.py::test_calibration_readback_pending_does_not_bypass_pack_or_source_guards",
+        "tests/test_monitoring_repair_derived.py::test_calibration_readback_keeps_clear_and_not_certified_paths",
+        "tests/test_monitoring_repair_derived.py::test_verify_repair_keeps_pending_date_observable"
       ],
       "variables": [
         "exception_type",
         "exception_traceback",
-        "frame"
+        "frame",
+        "observations",
+        "pack",
+        "verified_dates",
+        "day_string",
+        "actual_sha"
       ],
       "failure_diagnostics_contract": {
         "field": "failure_frames",
@@ -176,7 +187,34 @@
         "failed_only": true,
         "success_receipt_hash": "unchanged",
         "message_locals_absolute_paths": "excluded",
-        "calibration_readback": "unchanged; satellite gap remains FAIL"
+        "calibration_readback": "separate explicitly approved unselected Sept20 pending exception only; diagnostics cannot waive other calibration guards"
+      },
+      "unselected_satellite_pending_contract": {
+        "approved_repair_date": "2026-09-20",
+        "existing_function": "_calibration_readback",
+        "existing_variables": [
+          "observations",
+          "pack",
+          "verified_dates",
+          "day_string",
+          "actual_sha"
+        ],
+        "new_locals": 0,
+        "new_flags_classes_env_api": 0,
+        "dates_literal": "pending_satellite_hour_missing",
+        "same_event_required": [
+          "excluded_dates.satellite_hour_missing",
+          "checked_actual_sha256_by_date"
+        ],
+        "training_dates": "repair date must be unselected; all selected satellite/retained gaps reject",
+        "retained_target_actual_gap": "reject",
+        "actual_source_pack_original_identity": "all existing mandatory checks retained",
+        "record_presence": "not certified or inferred by pending",
+        "storage": "nested journal.stages.verify.calibration.dates, included in receipt SHA",
+        "final_report": "pending date and reason mandatory; historical calibration remains incomplete",
+        "caller_status": "existing verified/exit0 means approved limited acceptance, not historical calibration completion",
+        "remote_calibration_weather_mutations": 0,
+        "regression_scope": "24 local cases; GCS/plan/validator boundary stubs, no native PV/capacity/SOC proof"
       }
     },
     {
@@ -313,7 +351,7 @@
         "placement": "before Cloud build/update/execution",
         "failure": "reject stale fixture; no Cloud call",
         "runtime_flag": "none",
-        "calibration_gate": "unchanged; strict satellite gap remains FAIL"
+        "calibration_gate": "approved unselected Sept20 pending only; selected/retained/hash mismatch remain FAIL"
       },
       "associated_tests": [
         "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build"
@@ -530,15 +568,21 @@
       "symbols": [
         "deployment guard",
         "exact execution",
-        "finally Job restore"
+        "finally Job restore",
+        "filter",
+        "records",
+        "proofs"
       ],
-      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest; existing flagsPath/restorePath generated CLI keys --command/--args only; execution/ownership/restoration guards preserved",
+      "change": "complete current-commit deployment before actual-server SOC setting; same deployed control digest; existing flagsPath/restorePath generated CLI keys --command/--args only; execution/ownership/restoration guards preserved; logging exact job/execution/message filter and null/type/key selection guards only; physical setting, hold, restore, window and identity unchanged",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "202903607f834d0ac5b8d7e2ef9adf9e824ab028e9e34dc90a21ee39a33806ad",
+      "implemented_source_sha256": "57b578f694f02925425abda3cddaf4cfd19f3757e14ed86db7cb29030b7e78d4",
       "variables": [
         "flagsPath",
-        "restorePath"
+        "restorePath",
+        "filter",
+        "records",
+        "proofs"
       ],
       "flag_dict_contract": [
         {
@@ -559,8 +603,30 @@
         }
       ],
       "associated_tests": [
-        "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names"
-      ]
+        "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
+        "tests/test_soc_setting_probe_receipt_selection.py::test_soc_probe_actual_powershell_selects_only_one_exact_receipt"
+      ],
+      "receipt_selection_contract": {
+        "server_filter_fields": [
+          "resource.type",
+          "resource.labels.job_name",
+          "labels.run.googleapis.com/execution_name",
+          "jsonPayload.message"
+        ],
+        "message": "post-deploy-soc-setting-probe",
+        "windows_quote_encoding": "existing .Replace double quote exactly once",
+        "local_guards": [
+          "record IDictionary",
+          "labels IDictionary/Contains execution_name",
+          "jsonPayload IDictionary/Contains message"
+        ],
+        "exact_receipt_count": 1,
+        "missing_or_duplicate": "FAIL",
+        "physical_set_readback_hold_restore_window_identity": "unchanged",
+        "unverified_restore_or_execution": "STOP; no automatic repeated SET",
+        "additional_API_reads": 0,
+        "regression_scope": "local actual PowerShell selection only; no Cloud/device proof"
+      }
     },
     {
       "stage": "R07",
@@ -1487,7 +1553,11 @@
     "R05": [
       "tests/test_separated_release_repair_order.py",
       "tests/test_production_validation_summary.py",
-      "tests/test_server_adapter_fixture_preparation.py"
+      "tests/test_server_adapter_fixture_preparation.py",
+      "tests/test_soc_setting_probe_receipt_selection.py"
+    ],
+    "R06": [
+      "tests/test_soc_setting_probe_receipt_selection.py"
     ]
   },
   "test_rule": "append meaningful fixtures; preserve existing historical assertions and failure/skip behavior",

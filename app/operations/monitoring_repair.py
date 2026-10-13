@@ -701,9 +701,11 @@ def _calibration_readback(client: Any, cfg: PipelineConfig, state_path: Path, st
         raise ValueError("selected immutable calibration state is unavailable")
     records = {record["date"]: record for record in current["clear_days"]}
     observations = [event for event in events if event.get("event") == "pv_calibration_observations"]
-    if any(day in event.get("retained_observation_gaps", []) or
+    if any(day in event.get("retained_observation_gaps", [])
+           for day in state["target_dates"] for event in observations) or any(
+           day in event.get("retained_observation_gaps", []) or
            day in event.get("excluded_dates", {}).get("satellite_hour_missing", [])
-           for day in state["target_dates"] for event in observations):
+           for day in pack["training_dates"] for event in observations):
         raise ValueError("calibration provider gap after source repair")
     verified_dates: dict[str, str] = {}
     for day_string in state["target_dates"]:
@@ -719,6 +721,16 @@ def _calibration_readback(client: Any, cfg: PipelineConfig, state_path: Path, st
         actual_sha = hashlib.sha256(canonical_bytes(actual_source)).hexdigest()
         if not any(event.get("checked_actual_sha256_by_date", {}).get(day_string) == actual_sha for event in observations):
             raise ValueError("normal planner calibration input hash does not match repaired source")
+        if any(day_string in event.get("excluded_dates", {}).get("satellite_hour_missing", []) for event in observations):
+            if day_string in pack["training_dates"] or not any(
+                    day_string in event.get("excluded_dates", {}).get("satellite_hour_missing", []) and
+                    event.get("checked_actual_sha256_by_date", {}).get(day_string) == actual_sha
+                    for event in observations):
+                raise ValueError("unselected calibration gap lacks matching repaired actual evidence")
+            # Approved release acceptance only: this day remains uncertified and
+            # is not part of the active pack. Keep its unresolved state visible.
+            verified_dates[day_string] = "pending_satellite_hour_missing"
+            continue
         record = records.get(day_string)
         if record is None:
             # An absent training day alone is not evidence of non-clear sky.

@@ -77,6 +77,8 @@ calculation内 `Invoke-PreparedMonitoringRepair` は既存forecast job実行**�
 
 Dの通常取込はcurrent4日、日計/変更月costを含む。R03の9/20–21修復とは対象を分け、同一入力で修復計算を再起動しない。fresh inputに伴う通常Dの後続料金更新は許可済み正常workflowとしてsource/output hashesとexact executionで因果を記録する。D後も修復13payload/旧35不変、修復日計/September料金/October累積基準と採用plan金融入力の整合を再確認する。R03 fit0、D updater一回/fit・publish各最大一回。予測前asset公開、D後bootstrapの無条件再PUT、Drive二重起動0。
 
+Fの校正受入には、利用者が明示承認した[R03の未採用9/20 satellite gap限定例外](R03-derived-history.md)を適用できる。修復actual26 SHA、source48/旧35/修復13、採用raw/current identity、active selected packと原本の全検証を免除しない。selected training gap・retained actualgap・理由不明/未読・raw/pack/hash不一致はSTOP。9/20だけを `journal.stages.verify.calibration.dates[date]=pending_satellite_hour_missing` として残し、後続金融/daily/asset/sourceepochと他の必須stageを完了した場合に限りcalculation受入へ進む。CLI exit0/verifiedをhistorical校正全面完了と読まない。最終release報告にもpending日・理由を必ず明記し、未実施control/browser/backup/physicalをこの例外でPASSへ昇格しない。新flag/waiver field/caller成功判定の追加は0。
+
 D再開は起動前intentと唯一の採用receiptで判定する。R05 local Invoke-PreparedMonitoringRepairが `${MonitoringRepairStatePath}.d/forecast-intent.json` にprepared SHA/planner digest/command,args/対象日/起動前current native versionと参照原本SHAを固定。canonical wrapperのExecutionReceiptPathは同directoryのforecast-execution.json。planner.mainへCAS確定後・投影前の既存identity項目だけの構造化成功logを追加し、exact executionログとcontrol immutable version/raw/archive/currentを照合できた場合だけR05がadopted-forecast.jsonを保存する。history/verifyは同固定pathのreceiptを読取、別CLI引数や別採用stageを作らない。release state/repair journalはSHA参照だけ。
 送信後ACK不明でも候補identityログとnative採用が一致すれば採用済みとして投影だけ復旧。execution名不明、ログ前crash、候補複数、他run/current差替えで一意binding不能ならUNKNOWN/STOP、時刻/commitだけで採用を推測せずplanner再起動禁止。採用後E/F失敗のresumeはplanner.main/生成/archive/control CASを呼ばない。
 既存currentはcontrol_plan_current/{target_date}、immutableはcontrol_plan_versions/{version}。REST側payloadはfields.payload.stringValueで、decodeは既存PlanStore契約を使う。exact executionはprivate metadata.name、status.conditions/status.failedCount、execution_name log labelとtarget/version/rawSHAを照合する。missingを成功/failed0へ変換しない。public要約にresource名を出さない。
@@ -118,6 +120,9 @@ FのNEW受入は `Assert-AdoptedForecastEvidence` が唯一parity CLIの `[forec
 
 追加回帰 [tests/test_forecast_execution_logs.py](../../../../../../tests/test_forecast_execution_logs.py) の `test_forecast_receipt_filter_handles_system_records_and_exact_execution`（include_match=True/False）は実PS ASTの既存logs代入をmixed記録へ適用し、system/missing/null/array/他executionを除外する。PASSはexact1件又は0件のarray保持。Cloud取得/job/device操作は行わず、fixtureを正式execution成功へ昇格しない。
 
+SOC-only受入のreceipt選別は既存 `scripts/run_kpnet_soc_setting_probe_from_env.ps1` のlogging `filter/records/proofs` だけを限定変更する。server filterはexact job/executionと `jsonPayload.message="post-deploy-soc-setting-probe"` をANDし、既存Windows CLI境界のquote escapeを一回だけ行う。local選別はrecord/labels/jsonPayloadのIDictionary型とContainsを確認し、null・欠落・他executionを除外する。exact receiptが0件又は複数ならFAIL。物理SET/readback/60秒保持/元設定復元・時間帯・commit/image identity・Job復元の条件と追加API取得0を維持する。未完復元やreceipt不明を理由にSOC設定を自動で再実行しない。
+関連回帰は [tests/test_soc_setting_probe_receipt_selection.py](../../../../../../tests/test_soc_setting_probe_receipt_selection.py) の `test_soc_probe_actual_powershell_selects_only_one_exact_receipt`。実PowerShellの選別式をmixed/null labels・exact無し・exact複数へ適用し、正常exact1件だけ受け入れ、他は拒否することを確認する。local fixtureは機器/Cloud操作0で、SET成功・復元成功・正式SOC試験完了の証拠へ昇格しない。
+
 ## 中断条件
 
 現在のSQL容量/SOC48 gate失敗、原本hash/forecast generation/asset mismatch、repair prepared-state未承認/競合、G06必要採用根拠不足、固定commit不一致、品質未完、activecontrol、時間帯条件不成立、CloudJob4条件不足、physicalUNKNOWN/restore不足は、それぞれ該当stageで停止。R04は候補build前にfixture・隔離server準備/品質/target source契約が必須。同planner digestの実server・期限・writer証明未完はbuild successとplanner以降を停止するが、準備と品質が揃った承認scope内の候補構築を未生成digest証明不足だけで禁止しない。校正正常窓外、採用binding不明、history/最終receipt欠落、中間PARTIALだけの最終success、旧digest互換未証明を無視したrollback可能宣言も停止。停止理由と確定済stageを分け、不能をclosedとしない。
@@ -125,3 +130,4 @@ FのNEW受入は `Assert-AdoptedForecastEvidence` が唯一parity CLIの `[forec
 ## 出口・引継ぎ
 
 PASSはrelease commit/image/state、source修復receipt、同raw current/asset/browser/physical/backup/性能が全て揃う場合だけ。FAILは既知不一致、INCONCLUSIVEは準備/証拠不足またはcommit不明。G04/G07/G08を証拠ごとに更新し、G06 historical不明等は残るscopeを明記する。最小次手は今のR01不一致を解消し、R02prepared差分/R04隔離server証拠を具体化した後、この限定wrapper接続を実装すること。
+承認済みpending例外を使う場合は採用pack/修復actualの受入とhistorical校正未完を分けて報告する。deployment全体の成功を今回の文書変更だけで記録せず、全必須stage/receiptが揃うまでは未完を保持する。
