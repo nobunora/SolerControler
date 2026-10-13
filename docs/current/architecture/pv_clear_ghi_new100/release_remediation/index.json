@@ -244,7 +244,9 @@
         "scripts/assert_control_probe_evidence.ps1",
         "scripts/run_cloud_job_from_env.ps1",
         "scripts/run_drive_backup_cloud_from_env.ps1",
-        "scripts/run_kpnet_soc_setting_probe_from_env.ps1"
+        "scripts/run_kpnet_soc_setting_probe_from_env.ps1",
+        "scripts/kpnet_soc_api_probe.py",
+        "app/kpnet/soc_api.py"
       ],
       "planned_new_sources": [
         "scripts/summarize_production_validation.py"
@@ -262,7 +264,10 @@
         "tests/test_forecast_execution_logs.py",
         "tests/test_production_validation_summary.py",
         "tests/test_server_adapter_fixture_preparation.py",
-        "tests/test_soc_setting_probe_receipt_selection.py"
+        "tests/test_soc_setting_probe_receipt_selection.py",
+        "tests/test_soc_api_probe.py",
+        "tests/test_soc_api.py",
+        "tests/test_separated_runtime.py"
       ],
       "associated_test_selectors": [
         "tests/test_forecast_execution_logs.py::test_forecast_receipt_filter_handles_system_records_and_exact_execution",
@@ -274,7 +279,13 @@
         "tests/test_production_validation_summary.py::test_bad_or_missing_evidence_fails_safely_without_messages",
         "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build",
         "tests/test_production_validation_summary.py::test_stale_runtime_revision_is_reported_and_blocks_overall_success",
-        "tests/test_soc_setting_probe_receipt_selection.py::test_soc_probe_actual_powershell_selects_only_one_exact_receipt"
+        "tests/test_soc_setting_probe_receipt_selection.py::test_soc_probe_actual_powershell_selects_only_one_exact_receipt",
+        "tests/test_soc_api_probe.py::test_probe_recovers_with_one_shared_deadline",
+        "tests/test_soc_api_probe.py::test_probe_exhaustion_remains_failure",
+        "tests/test_soc_api_probe.py::test_probe_incomplete_measurement_is_not_accepted",
+        "tests/test_soc_api.py::test_rejected_refresh_logs_only_safe_provider_code",
+        "tests/test_soc_api.py::test_rejected_refresh_log_failure_does_not_change_rejection",
+        "tests/test_separated_runtime.py::test_post_restore_soc_retry_does_not_repeat_device_mutation"
       ]
     }
   ],
@@ -322,6 +333,36 @@
       ],
       "approval": "2026-10-13 explicit user approval for one absolute-deadline comparison and regression",
       "runtime_status": "PENDING_DEPLOYMENT"
+    },
+    {
+      "id": "R08",
+      "file": "steps/R08-soc-read-retry-diagnostics.md",
+      "production_requires": [
+        "R00.quality_gate"
+      ],
+      "new_classes": "none",
+      "sources": [
+        "scripts/kpnet_soc_api_probe.py",
+        "app/kpnet/soc_api.py"
+      ],
+      "read_set": [
+        "app/runtime/soc_reading.py"
+      ],
+      "tests": [
+        "tests/test_soc_api_probe.py",
+        "tests/test_soc_api.py",
+        "tests/test_separated_runtime.py"
+      ],
+      "runtime_status": "PENDING_DEPLOYMENT",
+      "dependency_meaning": "Read-only retry within existing R05 control call after restored roundtrip; no R05.complete prerequisite cycle; R06 prerequisites unchanged",
+      "associated_test_selectors": [
+        "tests/test_soc_api_probe.py::test_probe_recovers_with_one_shared_deadline",
+        "tests/test_soc_api_probe.py::test_probe_exhaustion_remains_failure",
+        "tests/test_soc_api_probe.py::test_probe_incomplete_measurement_is_not_accepted",
+        "tests/test_soc_api.py::test_rejected_refresh_logs_only_safe_provider_code",
+        "tests/test_soc_api.py::test_rejected_refresh_log_failure_does_not_change_rejection",
+        "tests/test_separated_runtime.py::test_post_restore_soc_retry_does_not_repeat_device_mutation"
+      ]
     }
   ]
 }

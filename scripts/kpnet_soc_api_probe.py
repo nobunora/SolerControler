@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import json
+import time
 
-from app.runtime.soc_reading import latest_realtime_soc_reading
+from app.runtime.night_soc_time_contract import SOC_OPERATION_MAX_SECONDS
+from app.runtime.soc_reading import latest_realtime_soc_reading, read_realtime_soc_with_retry
 
 
 def run_probe() -> dict[str, object]:
-    reading = latest_realtime_soc_reading()
+    deadline = time.monotonic() + SOC_OPERATION_MAX_SECONDS
+    reading = read_realtime_soc_with_retry(
+        latest_realtime=lambda: latest_realtime_soc_reading(deadline_monotonic=deadline),
+        env_int=lambda _name, default: default,
+        env_float=lambda _name, default: default,
+        deadline_monotonic=deadline,
+    )
     if reading.value_percent is None or reading.observed_at is None or reading.retrieved_at is None:
         raise RuntimeError("SOC API probe returned no timestamped measurement")
     evidence: dict[str, object] = {

@@ -136,6 +136,29 @@ def test_pending_error_or_wrong_correlation_fails_closed(api_harness, change):
     assert "private-error" not in str(exc.value)
 
 
+@pytest.mark.parametrize("code,expected", [("20000", "20000"), ("99999", "99999"),
+                                         ("private-token", "unrecognized"), (12345, "unrecognized"),
+                                         ("１２３４５", "unrecognized")])
+def test_rejected_refresh_logs_only_safe_provider_code(api_harness, code, expected, capsys):
+    responses, _, _, _ = api_harness
+    responses[0].update({"endCd": code, "private": "private-provider-body"})
+    with pytest.raises(SocApiError, match="refresh was not accepted"):
+        soc_api.KpNetSocClient(deadline_monotonic=60).read_soc()
+    output = capsys.readouterr().out
+    assert json.loads(output) == {"message": "kpnet-soc-api-rejected", "end_code": expected}
+    assert "private" not in output
+
+
+def test_rejected_refresh_log_failure_does_not_change_rejection(api_harness, monkeypatch):
+    responses, _, _, _ = api_harness
+    responses[0]["endCd"] = "20000"
+    def broken_log(*args, **kwargs):
+        raise OSError("private-log-detail")
+    monkeypatch.setattr(soc_api, "print", broken_log, raising=False)
+    with pytest.raises(SocApiError, match="refresh was not accepted"):
+        soc_api.KpNetSocClient(deadline_monotonic=60).read_soc()
+
+
 def test_timeout_does_not_start_another_poll(api_harness):
     _, calls, _, _ = api_harness
     with pytest.raises(SocApiError, match="deadline"):

@@ -1039,6 +1039,79 @@
         "tests/test_production_validation_summary.py::test_failed_repair_receipt_is_reported_without_private_values",
         "tests/test_production_validation_summary.py::test_bad_or_missing_evidence_fails_safely_without_messages"
       ]
+    },
+    {
+      "stage": "R08",
+      "path": "scripts/kpnet_soc_api_probe.py",
+      "symbols": [
+        "run_probe"
+      ],
+      "variables": [
+        "deadline",
+        "SOC_OPERATION_MAX_SECONDS"
+      ],
+      "change": "Reuse existing read_realtime_soc_with_retry with one shared 60-second absolute deadline, default at most three reads and bounded fair-share sleep; freshness and failure unchanged; no physical/caller-position changes",
+      "existing": true,
+      "source_sha256": "cc6f63e1b212b3c83d15724f7fe5e6826583b0ed94a95e3f975fc47ff3676664",
+      "baseline_source_revision": "27755f5e8838f8486570b022c1223c354a4b017c",
+      "associated_tests": [
+        "tests/test_soc_api_probe.py::test_probe_recovers_with_one_shared_deadline",
+        "tests/test_soc_api_probe.py::test_probe_exhaustion_remains_failure",
+        "tests/test_soc_api_probe.py::test_probe_incomplete_measurement_is_not_accepted",
+        "tests/test_separated_runtime.py::test_post_restore_soc_retry_does_not_repeat_device_mutation"
+      ],
+      "retry_contract": {
+        "new_local": "deadline",
+        "existing_helper": "app.runtime.soc_reading.read_realtime_soc_with_retry",
+        "helper_change": "none",
+        "keywords": [
+          "latest_realtime",
+          "env_int",
+          "env_float",
+          "deadline_monotonic"
+        ],
+        "max_attempts": 3,
+        "shared_operation_seconds": 60,
+        "default_sleep_seconds": 300,
+        "sleep_policy": "existing fair-share constrained by remaining shared deadline",
+        "reading_failure": "SocReading(value_percent=None, source='unavailable', error=...) remains RuntimeError/FAIL through existing SOC/measurement/retrieval checks; no Python None return",
+        "freshness": "unchanged strict date/time conditions",
+        "new_class_flag_env_dependency": 0,
+        "physical_set_restore_control_plan_economics": "unchanged"
+      },
+      "implemented_source_sha256": "563f7d7c1d789ce010780f443ec346ee04ff6e69066e263d982f3a279b93e897"
+    },
+    {
+      "stage": "R08",
+      "path": "app/kpnet/soc_api.py",
+      "symbols": [
+        "KpNetSocClient.read_soc"
+      ],
+      "variables": [
+        "code",
+        "safe_code"
+      ],
+      "change": "Refresh reject branch only: best-effort secret-free JSON message/end_code; valid five-character ASCII decimal or unrecognized; original SocApiError maintained",
+      "existing": true,
+      "source_sha256": "a64ef10cc2ea46f2b258f74ea949d7944dc54e78a005b5264bbe729c16166b1b",
+      "baseline_source_revision": "27755f5e8838f8486570b022c1223c354a4b017c",
+      "associated_tests": [
+        "tests/test_soc_api.py::test_rejected_refresh_logs_only_safe_provider_code",
+        "tests/test_soc_api.py::test_rejected_refresh_log_failure_does_not_change_rejection"
+      ],
+      "reject_log_contract": {
+        "fields": [
+          "message",
+          "end_code"
+        ],
+        "message": "kpnet-soc-api-rejected",
+        "end_code": "str length five, ASCII decimal, else unrecognized",
+        "excluded": "raw response, secret, token, ID, message, locals",
+        "logging_error": "best effort; original SocApiError still raised",
+        "successful_path_requests_auth": "unchanged",
+        "new_logger_class_flag_env_dependency": 0
+      },
+      "implemented_source_sha256": "343dc8f83f843101878b5b11c176657d97b41181ac7f116f89ea965e2cb61eb7"
     }
   ],
   "protected": [
@@ -1554,10 +1627,18 @@
       "tests/test_separated_release_repair_order.py",
       "tests/test_production_validation_summary.py",
       "tests/test_server_adapter_fixture_preparation.py",
-      "tests/test_soc_setting_probe_receipt_selection.py"
+      "tests/test_soc_setting_probe_receipt_selection.py",
+      "tests/test_soc_api_probe.py",
+      "tests/test_soc_api.py",
+      "tests/test_separated_runtime.py"
     ],
     "R06": [
       "tests/test_soc_setting_probe_receipt_selection.py"
+    ],
+    "R08": [
+      "tests/test_soc_api_probe.py",
+      "tests/test_soc_api.py",
+      "tests/test_separated_runtime.py"
     ]
   },
   "test_rule": "append meaningful fixtures; preserve existing historical assertions and failure/skip behavior",
