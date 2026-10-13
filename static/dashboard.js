@@ -1264,8 +1264,12 @@
           return value;
         });
       }
-      // Keep the 07-23 optimizer trace authoritative, while retaining the
-      // pre-07 observed/estimated SOC restored in commit 1dd21ae.
+      // HISTORICAL_FAILURE_LOCK (2026-10-14): 1dd21ae restored pre-07 SOC;
+      // 848c3cf restored it again after the saved 07-23 plan suppressed it.
+      // Always compose 00-06 SOC, even when a daytime optimizer trace exists.
+      // Valid observations (including 0) take priority independently of plan availability.
+      // Missing observations use only a valid bound night plan; preserve every 07-23 point.
+      // Change only with explicit user approval and test_dashboard_hourly_display.js regression coverage.
       const capacities = new Set(rows.filter((row) => row.date === date)
         .map((row) => displayFinite(row.forecast_capacity_kwh)).filter((value) => value !== null && value > 0));
       const morningIndex = rows.findIndex((row) => row.date === date && row.hour === 7);
@@ -1283,6 +1287,7 @@
         return !state.invalidSaved && !state.mixedRuns && state.boundSchedule && isForecastRow(row)
           && displayFinite(reference) !== null && reference >= 0 && reference <= 100 ? reference : null;
       });
+      // End of protected 00-06 SOC composition.
       const latestActual = rows
         .map((row) => row.latest_sample_at || "")
         .filter(Boolean)

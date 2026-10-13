@@ -10,7 +10,7 @@
 | Oxlint / node --check | Git管理下の全JavaScriptのlint・構文 |
 | compileall | 既存のアプリ・起動入口のPython構文 |
 | pytest | 全体回帰・歴史的障害保護契約 |
-| Node tests | dashboardの計算・モジュール・bootstrap動作 |
+| Node tests | dashboardの計算・モジュール・bootstrap動作・時間別表示（00〜06時SOCの必須回帰を含む） |
 | security_check | 秘密情報と設定のセキュリティ検査 |
 
 `-CheckPrerequisites` は必要コマンドの存在確認のみで、リリース合格ではない。`-SkipInstall` は依存インストールだけを省略する。失敗を許容するモードは設けない。

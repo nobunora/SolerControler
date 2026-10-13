@@ -89,6 +89,10 @@
     });
   }
 
+  // HISTORICAL_FAILURE_LOCK (2026-10-14): 848c3cf restored missing 00-06 SOC.
+  // Return hour-start references anchored to 07:00, including valid zero, without touching 07-23.
+  // Incomplete/invalid night inputs remain unavailable; do not manufacture observations.
+  // Change only with explicit user approval and test_dashboard_calculations.js regression coverage.
   function forecastNightSocAtHourStart(rows, gridCharge, targetSoc, capacityKwh, chargeEfficiency) {
     const valid = (value, min, max) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
     const unavailable = () => rows.map(() => null);
