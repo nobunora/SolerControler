@@ -8,6 +8,8 @@
 
 新HEADは旧formal stateのResumeや旧intentのcommit/digest書換えで導入しない。fresh repairのcandidate0でも新intentに新commit/digestをpinし、strict control probeのproducer_source_revision==ExpectedCommitを保持する。旧Dを新release生成物へ偽stampしない。同StatePath/同HEAD内の復旧では既存executionPathがDの二回起動を防ぎ、確定採用原本から投影/historyだけを回復する。
 
+epoch scheduling修正で新HEADへ進む場合もこの契約を維持する。旧0c6/formal103200のfailed history・成功D/native原本・repair/fixture/全receiptを保存し、手動successへ変更しない。新commit/全品質/新native fixture/新build digestを固定し、canonical fresh prepareの別StatePath/Reviewed SHAをreviewして新formal stateを作る。新HEADの通常Dを一回実行し、旧0c6の同HEAD Dを再起動しない。旧execution/adopted receiptを新HEADへ流用せず、strict control producer source==new release commitを維持する。same-head復旧だけは既存executionPathを保存し、exact terminal/採用証拠を確認して未完投影/historyへ進む。running/unknownやbody一致だけでdeployment/history成功を手入力しない。
+
 fresh repair costは9/1〜TODAY00、Dは開いている当日を所有する。Dのchanged_count>0時のみ通常cost再集計が動く条件を保持する。FはR03のread-only当日金融再計算/readbackを追加受入として要求し、changed0でも既存当日costが修復済baselineに整合することを確認する。金融不一致のままhistory/parity/control成功へ進まず、通常式変更・修復scope拡張・手動successで回避しない。
 
 ## 入口・参照範囲

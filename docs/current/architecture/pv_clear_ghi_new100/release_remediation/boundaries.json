@@ -176,7 +176,7 @@
       "change": "bounded raw revision paging and history-only full rebuild; bootstrap writer unchanged",
       "existing": true,
       "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
-      "implemented_source_sha256": "a6ff2bccbd5e5b6b47da4047754a1d286873ba4cb677b188ce9e8d00743830e6"
+      "implemented_source_sha256": "8fc65835199cc08bbe1b8b6dfd35028119775ed3a8a75551012701ff2f63f9b2"
     },
     {
       "stage": "R04",
@@ -238,7 +238,7 @@
       "change": "cold finite timeout and late source drift observation/republication only; CAS/cache preserved",
       "existing": true,
       "source_sha256": "c88c9dc930e069cdc6647aa72f353cba544f06319c48c2998006bfb6514d439f",
-      "implemented_source_sha256": "a6ff2bccbd5e5b6b47da4047754a1d286873ba4cb677b188ce9e8d00743830e6"
+      "implemented_source_sha256": "8fc65835199cc08bbe1b8b6dfd35028119775ed3a8a75551012701ff2f63f9b2"
     },
     {
       "stage": "R05",
@@ -674,6 +674,119 @@
         "tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only"
       ],
       "implemented_source_sha256": "65f960951450293b9bca5fc6405952b62d4fc53374c9271bfd3866f210b851c6"
+    },
+    {
+      "stage": "R03",
+      "path": "app/dashboard/snapshots.py",
+      "symbols": [
+        "_read_dashboard_source_epoch",
+        "_read_dashboard_source_epoch.timeout",
+        "_read_dashboard_source_epoch.record",
+        "_read_dashboard_source_epoch.read_parallel",
+        "_read_dashboard_source_epoch.read_parallel.read_one",
+        "_read_dashboard_source_epoch.bound_rows",
+        "_read_dashboard_source_epoch.source_rows",
+        "_read_dashboard_source_epoch.monitoring_rows"
+      ],
+      "variables": [
+        "stop_event",
+        "executor",
+        "futures",
+        "failure",
+        "results",
+        "reader",
+        "done",
+        "pending",
+        "failed",
+        "future",
+        "exc",
+        "bound_results",
+        "readers",
+        "analog",
+        "pages",
+        "sentinel_reads"
+      ],
+      "change": "Scoped producer epoch-read scheduling only: bounds six then fourteen independent source tasks, max four stdlib workers; sequential monitoring cursor/analog dependencies; canonical record/hash/counters remain on main thread; Event on worker or main BaseException, cancel pending, final join and retain original failure",
+      "existing": true,
+      "baseline_source_revision": "0c6f3a64c1f6ad041747d2d8c7a491aa277064a1",
+      "source_sha256": "a6ff2bccbd5e5b6b47da4047754a1d286873ba4cb677b188ce9e8d00743830e6",
+      "new_classes": "none",
+      "new_flags": "none",
+      "new_dependencies": "none",
+      "stdlib_imports": [
+        "Callable",
+        "FIRST_EXCEPTION",
+        "CancelledError",
+        "ThreadPoolExecutor",
+        "wait",
+        "partial",
+        "Event"
+      ],
+      "new_functions": [
+        "_read_dashboard_source_epoch.read_parallel",
+        "_read_dashboard_source_epoch.read_parallel.read_one",
+        "_read_dashboard_source_epoch.bound_rows",
+        "_read_dashboard_source_epoch.source_rows",
+        "_read_dashboard_source_epoch.monitoring_rows"
+      ],
+      "new_function_contracts": [
+        {
+          "symbol": "_read_dashboard_source_epoch.read_parallel",
+          "signature": "(readers: list[Callable[[], Any]]) -> list[Any]",
+          "role_return": "Ordered per-task native read results; cancel/join before original error propagation",
+          "exceptions": "SDK/budget/deadline or caller interruption propagates; partial epoch and successful receipt forbidden"
+        },
+        {
+          "symbol": "_read_dashboard_source_epoch.read_parallel.read_one",
+          "signature": "(reader: Callable[[], Any]) -> Any",
+          "role_return": "Invoke read callback; set local stop Event on BaseException",
+          "exceptions": "SDK/budget/deadline or caller interruption propagates; partial epoch and successful receipt forbidden"
+        },
+        {
+          "symbol": "_read_dashboard_source_epoch.bound_rows",
+          "signature": "(collection: str, field: str) -> list[Any]",
+          "role_return": "Existing bounded first/last query results only",
+          "exceptions": "SDK/budget/deadline or caller interruption propagates; partial epoch and successful receipt forbidden"
+        },
+        {
+          "symbol": "_read_dashboard_source_epoch.source_rows",
+          "signature": "(name: str) -> tuple[list[Any], list[Any]]",
+          "role_return": "Existing source snapshots plus dependent analog snapshots",
+          "exceptions": "SDK/budget/deadline or caller interruption propagates; partial epoch and successful receipt forbidden"
+        },
+        {
+          "symbol": "_read_dashboard_source_epoch.monitoring_rows",
+          "signature": "() -> tuple[list[list[Any]], int]",
+          "role_return": "Sequential cursor pages and sentinel read count; existing budgets unchanged",
+          "exceptions": "SDK/budget/deadline or caller interruption propagates; partial epoch and successful receipt forbidden"
+        }
+      ],
+      "parallel_contract": {
+        "max_workers": 4,
+        "phases": {
+          "bounds": 6,
+          "source_tasks": 14
+        },
+        "record_digest_counters_owner": "main thread in unchanged canonical order",
+        "Event": "per-invocation error-stop primitive only; no config or persistent state",
+        "shared_absolute_deadline": true,
+        "rpc_timeout_max_seconds": 4,
+        "rpc_retry": null,
+        "main_interruption": "set Event before finally shutdown; normal finally does not set Event",
+        "shutdown": "wait=True, cancel_futures=True; no worker threads retained",
+        "CAS_tries_unchanged": 3,
+        "upload_budget_seconds_unchanged": 24,
+        "epoch_budget_seconds_unchanged": 60,
+        "metadata_limit_bytes_unchanged": 8192,
+        "API_schema_GET_cache_unchanged": true
+      },
+      "associated_tests": [
+        "tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_preserves_all_components_requests_bytes_and_dependencies",
+        "tests/test_dashboard_epoch_parallel.py::test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_puts",
+        "tests/test_dashboard_epoch_parallel.py::test_expired_shared_deadline_cancels_queued_and_followup_reads",
+        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
+      ],
+      "implemented_source_sha256": "8fc65835199cc08bbe1b8b6dfd35028119775ed3a8a75551012701ff2f63f9b2"
     }
   ],
   "protected": [
