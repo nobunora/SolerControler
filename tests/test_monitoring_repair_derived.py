@@ -163,3 +163,52 @@ def test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_norma
     assert repeated["reason_code"] == "verified_existing_output"
     assert all(client.data[key] == value for key, value in closed.items())
     assert client.writes == [] and client.commit_attempts == commits
+
+
+def test_failed_stage_records_bounded_safe_active_exception_and_preserves_primary(tmp_path):
+    path = tmp_path / "repair.json"
+    secret = "PRIVATE_FAILURE_MESSAGE_AND_LOCAL"
+    namespace = {"secret": secret}
+    exec(compile("def fail(depth):\n    private_local = secret\n    if depth:\n        return fail(depth - 1)\n    raise ValueError(private_local)\n",
+                 "C:\\PRIVATE_RESOURCE_PATH\\provider_read.py", "exec"), namespace)
+    receipt = {"status": "failed", "reason_code": "ValueError", "finished_at": "fixed", "units": [{"event": "commit_ack"}]}
+    primary = []
+    with pytest.raises(ValueError, match=secret) as caught:
+        try:
+            namespace["fail"](20)
+        except ValueError as error:
+            primary.append(error)
+            saved = repair._save_stage(path, "history", receipt)
+            assert error.__traceback__ is not None
+            raise
+    assert caught.value is primary[0] and str(caught.value) == secret
+    frames = saved["failure_frames"]
+    assert len(frames) == 8
+    assert all(set(frame) == {"type", "file", "function", "line"} for frame in frames)
+    assert all(frame == {"type": "ValueError", "file": "provider_read.py", "function": "fail", "line": frame["line"]}
+               for frame in frames)
+    assert frames[-1]["line"] == 5
+    assert saved["units"] == receipt["units"] and "failure_frames" not in receipt
+    assert saved["receipt_sha256"] == repair._sha({key: value for key, value in saved.items() if key != "receipt_sha256"})
+    journal_raw = (repair._directory(path) / "journal.json").read_text(encoding="utf-8")
+    assert secret not in journal_raw and "PRIVATE_RESOURCE_PATH" not in journal_raw
+    assert repair._journal(path)["stages"]["history"] == saved
+
+
+def test_failed_stage_without_active_exception_records_unknown_frames(tmp_path):
+    saved = repair._save_stage(tmp_path / "repair.json", "verify", {
+        "status": "failed", "reason_code": "ValueError", "finished_at": "fixed",
+    })
+    assert saved["failure_frames"] == []
+    assert saved["receipt_sha256"] == repair._sha({key: value for key, value in saved.items() if key != "receipt_sha256"})
+
+
+def test_success_stage_receipt_and_hash_unchanged_during_active_exception(tmp_path):
+    receipt = {"status": "verified", "finished_at": "fixed", "reason_code": "verified_existing_output"}
+    expected = {**receipt, "receipt_sha256": repair._sha(receipt)}
+    try:
+        raise ValueError("unrelated active diagnostic")
+    except ValueError:
+        saved = repair._save_stage(tmp_path / "repair.json", "cost", receipt)
+    assert saved == expected
+    assert repair._journal(tmp_path / "repair.json")["stages"]["cost"] == expected

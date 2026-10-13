@@ -146,6 +146,58 @@ runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキ�
 - forecast-onlyではsettings round-tripを起動せず、23/03/07 Job revisionとsettings-roundtrip Job revisionが不変であること、23/03/07 Schedulerの実効設定が前後一致することをread-onlyで確認する。
 - `failed`または`running`の工程を手動で成功へ書き換えない。実機設定が復元済みであることをログから確認した後にのみ、同じ状態ファイルの`-Resume`で未成功工程を再実行する。
 
+### 2.3 再現可能な準備・実server検証・復旧の判定
+
+役割分離版のfixtureは、最終merged commitへ固定し、local/remote HEAD一致・clean worktreeを確認した後に
+[正規準備wrapper](../../../scripts/prepare_server_adapter_fixture_from_env.ps1)で生成する。
+wrapperは `production_env.ps1` 経由で `.env` を読み、
+[local準備本体](../../../scripts/prepare_server_adapter_fixture.py)へ渡す。
+prepareはCloud接続・本番書込0で、既存fixtureのコピー改変や上書きを行わない。
+既存出力があれば別の明示したprivate出力先を使う。fixtureはUUID、基準時計から732日後の対象日、
+source commit、環境identity、計算差分SHA（既承認のSHAとは別途照合）、canonical SHAを束ねる。
+token・project/resource ID・raw値はGitignored private artifactだけに保持する。
+承認noteは既に受領した承認の参照であり、operator pendingやprepare成功を本番操作の許可へ変換しない。
+
+build前にprepareのcommit/環境identity/計算差分SHAを照合する。一つのmetadata field一致やfixture生成成功は
+SDK実証ではない。候補planner digestを固定し、同digestの実server proofでSDK版・fixture SHA・exact execution・
+全case・native cleanup/Job復元を確認してからbuildを成功とする。
+PowerShell flags/quote/receipt guardやSDK harnessを修正した場合は、関連回帰と正規の全体gateを再実行する。
+local fake/CLI helpのPASSを本番SDK PASSへ昇格させない。
+
+SDK専用Jobのexecuteには、既存 `PLAN_SOURCE_REVISION` と `PLAN_IMAGE_DIGEST` を今回のfixture commit/digestで
+execution単位に上書きする。`--update-env-vars` は [公式execute仕様](https://docs.cloud.google.com/sdk/gcloud/reference/run/jobs/execute)
+に従い、保存Jobのenvを変更する経路へ置き換えない。receiptの `source_commit` と `runtime_plan_source_revision` は
+ともに今回の40hex commitと一致することを必須とする。source/digest/fixture SHAが一致し12caseがPASSでも、
+runtime revisionが古ければ全体成功にはしない。local readerもSDK case結果と `runtime_revision_matches` を別表示し、
+全体exit0には両方の一致を要求する。
+
+| 判定対象 | 成功の証拠と限界 |
+| --- | --- |
+| image build | Cloud Buildの終端SUCCESSと固定digest。SDK・本番統合の成功とは別 |
+| 実server SDK proof | 同commit/digest/fixtureの全case PASS、receipt SHA/native cleanup/復元一致。source修復・browser・実機の成功とは別 |
+| source/派生/history | 各journal receiptとnative readback/source epoch一致。最終verifyの成功とは別 |
+| 本番全体 | 必須工程のidentity付き成功、同原本、最終verify、browser、control/readback/restore、backupをすべて要求 |
+
+最新状態の確認は [local状態要約](../../../scripts/summarize_production_validation.py)でformal state・proof・repair journalを
+読み、工程ごとの `PASS` / `FAIL` / `NOT_RUN` を分ける。state/receiptが不足・未到達・runningの場合は、
+未評価項目の値をUNKNOWNとして扱い、不存在・false・成功を推測しない。
+SDKがPASSでもcalculationがFAILなら本番全体はFAILで、未着手のcontrol/web/backupをFAIL実行済みと表現しない。
+失敗はimage build、SDK実行、receipt取得/解析、source/派生/history、最終verifyのどこかを明記する。
+修復のfailed receiptは `failure_frames` に最後8frameまでのtype/basename/function/lineを保存し、
+message・locals・絶対path・秘密を出さない。active exceptionが無い空arrayは原因UNKNOWNであり、原因不存在ではない。
+成功receiptとそのSHAは診断追加で変更しない。
+後続の値をまだ評価していない場合は、その値をUNKNOWNのまま記録する。
+
+同HEADでCloud BuildやDがrunning/unknownなら、新build・新Dをblindに起動せずexact executionの終端を確認する。
+成功工程をskipするにはstateのsuccessに加え、commit/digest/fixture/receipt SHAとnative identityが一致する必要がある。
+D採用済みなら固定原本と唯一の採用receiptを保持し、正規Resumeで未完投影/history/verifyだけへ進む。
+新HEADへ進む場合は新prepare/fixture/formal stateと通常D一回を所有し、旧HEADのD・承認SHA・採用receiptを流用しない。
+失敗stateやunknownを手でsuccessへ書き換えない。
+
+校正のprovider gap、actual/pack/trace不一致、原本不足、未復元device状態は既存STOP条件のまま。
+未採用日の衛星欠測をpendingのまま受け入れる案は、別の明示承認があるまで適用しない。
+未回答の提案・待機中operator判断を許可としてResumeや実機probeを進めない。
+
 ## 3. Windowsで途中終了した場合の再開
 
 `artifacts/deployment_state/production-*.json` の `status=complete` を確認してから、同じ公式ラッパーを再開します。`failed`、`running`、`skipped_manual` は成功扱いにしません。dashboard/forecast scopeの `settings_roundtrip=skipped_not_applicable` は、そのscopeでのみ正規の非該当状態です。

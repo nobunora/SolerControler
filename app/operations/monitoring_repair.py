@@ -7,8 +7,10 @@ import json
 import math
 import os
 import subprocess
+import sys
 import tempfile
 import time
+import traceback
 from datetime import date, datetime, timedelta, timezone
 from dataclasses import asdict
 from pathlib import Path
@@ -123,6 +125,13 @@ def _journal(state_path: Path) -> dict[str, Any]:
 def _save_stage(state_path: Path, stage: str, receipt: dict[str, Any]) -> dict[str, Any]:
     journal = _journal(state_path)
     stored = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    if stored.get("status") == "failed":
+        exception_type, _, exception_traceback = sys.exc_info()
+        stored["failure_frames"] = [
+            {"type": exception_type.__name__, "file": Path(frame.filename.replace("\\", "/")).name,
+             "function": frame.name, "line": frame.lineno}
+            for frame in traceback.extract_tb(exception_traceback, limit=-8)
+        ] if exception_type is not None and exception_traceback is not None else []
     if stored.get("status") not in {"running", "pending"}:
         stored.setdefault("finished_at", _now())
     stored["receipt_sha256"] = _sha(stored)

@@ -108,7 +108,7 @@
       "change": "Reviewed raw13 create/readback retains old35; exact alternate fresh48/0 verifies full CSV/native source, preserves all existing fields and D-before private calibration pin/SHA, with no raw batch/create/update/commit",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "390f79bf772aa5cddbeb1a1dcb427dc7f1341c6c6fd3fa5c63dda40b420b44ee",
+      "implemented_source_sha256": "10476cecbd5b242797cf7f8a10c7be28c538f4776d13a2f775101f441fd01447",
       "variables": [
         "candidate_count",
         "existing",
@@ -144,15 +144,40 @@
       "stage": "R03",
       "path": "app/operations/monitoring_repair.py",
       "symbols": [
-        "NEW regenerate_derived"
+        "NEW regenerate_derived",
+        "_save_stage"
       ],
-      "change": "existing daily/cost functions plus before-after source and output verification; canonical fresh prepare limits repair to closed calendar dates (exclusive TODAY00), normal producer owns the open current day; no append helper/carryover exceptions",
+      "change": "existing daily/cost functions plus before-after source and output verification; canonical fresh prepare limits repair to closed calendar dates (exclusive TODAY00), normal producer owns the open current day; no append helper/carryover exceptions; failed-only private safe failure_frames, success receipt/hash unchanged; calibration gate unchanged",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "390f79bf772aa5cddbeb1a1dcb427dc7f1341c6c6fd3fa5c63dda40b420b44ee",
+      "implemented_source_sha256": "10476cecbd5b242797cf7f8a10c7be28c538f4776d13a2f775101f441fd01447",
       "associated_tests": [
-        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer"
-      ]
+        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer",
+        "tests/test_monitoring_repair_derived.py::test_failed_stage_records_bounded_safe_active_exception_and_preserves_primary",
+        "tests/test_monitoring_repair_derived.py::test_failed_stage_without_active_exception_records_unknown_frames",
+        "tests/test_monitoring_repair_derived.py::test_success_stage_receipt_and_hash_unchanged_during_active_exception"
+      ],
+      "variables": [
+        "exception_type",
+        "exception_traceback",
+        "frame"
+      ],
+      "failure_diagnostics_contract": {
+        "field": "failure_frames",
+        "shape": "list[dict]",
+        "frame_fields": {
+          "type": "str",
+          "file": "basename str",
+          "function": "str",
+          "line": "int"
+        },
+        "max_frames": 8,
+        "without_active_exception": "empty list means UNKNOWN, not no failure",
+        "failed_only": true,
+        "success_receipt_hash": "unchanged",
+        "message_locals_absolute_paths": "excluded",
+        "calibration_readback": "unchanged; satellite gap remains FAIL"
+      }
     },
     {
       "stage": "R03",
@@ -266,12 +291,33 @@
         "post-adoption-evidence.json",
         "Assert-ControlProbeOwnerWindow",
         "ownerNow",
-        "ownerMinutes"
+        "ownerMinutes",
+        "preparedFixture",
+        "prebuild source/environment identity guard"
       ],
       "change": "same-digest build proof, one repair journal, adopted-plan resume, canonical repair orchestration",
       "existing": true,
       "source_sha256": "8431ad0a44a7ef0bdc60e0c7d13caca7dee7d11b5c53111d8efc03e1dd15a733",
-      "implemented_source_sha256": "b5bf40af1c10be999089e68c3cb87ac3f82424a1c63f532f8598ffaadf01d5ac"
+      "implemented_source_sha256": "df83d15a21c9a50eb1cdcb0af70a61332f3e240eb7a474b64dd0323d22606b9d",
+      "variables": [
+        "preparedFixture"
+      ],
+      "early_fixture_guard": {
+        "fields": [
+          "source_commit",
+          "backend",
+          "project",
+          "database",
+          "bucket"
+        ],
+        "placement": "before Cloud build/update/execution",
+        "failure": "reject stale fixture; no Cloud call",
+        "runtime_flag": "none",
+        "calibration_gate": "unchanged; strict satellite gap remains FAIL"
+      },
+      "associated_tests": [
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build"
+      ]
     },
     {
       "stage": "R04",
@@ -356,7 +402,7 @@
       "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix; existing flagsPath/restorePath generated CLI keys --image/--command/--args only; execution/ownership/restoration guards preserved; existing filter/records/proofs now select exact native execution and terminal event, guard null/type before key access, and save the existing records as a private array snapshot without extra API reads; completed filter concatenation is encoded once at the Windows CLI boundary to preserve server-side literal quotes; common gcloud helper unchanged",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "fe1879692c3642eefbac42845da24f8d8d238f29008747b1693d55df5185d6ce",
+      "implemented_source_sha256": "880c13c90a612d73c233e42855233b8150e5febe5bf3e1fe6f82bfbf5376d257",
       "variables": [
         "flagsPath",
         "restorePath",
@@ -388,7 +434,8 @@
         "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
         "tests/test_separated_release_repair_order.py::test_server_proof_restores_dedicated_job_without_environment_or_control_writes",
         "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[False]",
-        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]"
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_sdk_execution_revision_override_and_receipt_guard"
       ],
       "native_evidence_contract": {
         "existing_variables": [
@@ -451,6 +498,19 @@
             "boundary": "Read-only receipt query only; full native acceptance and formal deployment remain pending"
           }
         }
+      },
+      "execution_identity_contract": {
+        "existing_env_keys": [
+          "PLAN_SOURCE_REVISION",
+          "PLAN_IMAGE_DIGEST"
+        ],
+        "scope": "execute --update-env-vars only; saved Job env unchanged",
+        "receipt_required_equal_commit": [
+          "source_commit",
+          "runtime_plan_source_revision"
+        ],
+        "missing_or_stale_runtime_revision": "reject; SDK case PASS alone is insufficient",
+        "official_reference": "https://docs.cloud.google.com/sdk/gcloud/reference/run/jobs/execute"
       }
     },
     {
@@ -787,6 +847,132 @@
         "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
       ],
       "implemented_source_sha256": "8fc65835199cc08bbe1b8b6dfd35028119775ed3a8a75551012701ff2f63f9b2"
+    },
+    {
+      "stage": "R04",
+      "path": "scripts/prepare_server_adapter_fixture.py",
+      "symbols": [
+        "NEW canonical",
+        "NEW git",
+        "NEW prepare",
+        "NEW main"
+      ],
+      "variables": [
+        "BASELINE",
+        "CALCULATION_PATHS",
+        "ROOT",
+        "approval",
+        "archive",
+        "args",
+        "content",
+        "database",
+        "destination",
+        "fixture",
+        "handle",
+        "ignored",
+        "name",
+        "names",
+        "operation",
+        "parser",
+        "patch",
+        "patch_sha",
+        "paths",
+        "prefix",
+        "project",
+        "proof_root",
+        "runner",
+        "suffix"
+      ],
+      "change": "Local-only immutable fixture preparation after clean final merged HEAD; canonical SHA, future clock, environment/source/calculation patch identity and approval-note reference; no Cloud or existing-output overwrite",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "fe5f7832a7adc2694bcad2be70b20a500c9c642c22da43da587dabef71a26976",
+      "associated_tests": [
+        "tests/test_server_adapter_fixture_preparation.py::test_prepares_exact_owned_future_fixture_and_canonical_patch_without_cloud",
+        "tests/test_server_adapter_fixture_preparation.py::test_refuses_overwrite_and_path_escape_before_writing",
+        "tests/test_server_adapter_fixture_preparation.py::test_invalid_preparation_stops_without_output",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_sdk_execution_revision_override_and_receipt_guard"
+      ]
+    },
+    {
+      "stage": "R04",
+      "path": "scripts/prepare_server_adapter_fixture_from_env.ps1",
+      "symbols": [
+        "parameters",
+        "top-level local fixture preparation"
+      ],
+      "variables": [
+        "ApprovalNote",
+        "ExpectedCommit",
+        "OutputDirectory",
+        "arguments",
+        "repoRoot"
+      ],
+      "change": "Canonical production_env import and local Python preparation only; no Cloud; approval-note metadata references received permission and does not grant permission",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "623c28727fd43c792243546b73695c5894919d14f11e61d35cc675b2c7c8e6f9",
+      "associated_tests": [
+        "tests/test_server_adapter_fixture_preparation.py::test_prepares_exact_owned_future_fixture_and_canonical_patch_without_cloud",
+        "tests/test_server_adapter_fixture_preparation.py::test_refuses_overwrite_and_path_escape_before_writing",
+        "tests/test_server_adapter_fixture_preparation.py::test_invalid_preparation_stops_without_output",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_deployment_guard_rejects_stale_fixture_before_build",
+        "tests/test_server_adapter_fixture_preparation.py::test_actual_sdk_execution_revision_override_and_receipt_guard"
+      ]
+    },
+    {
+      "stage": "R05",
+      "path": "scripts/summarize_production_validation.py",
+      "symbols": [
+        "NEW read_json",
+        "NEW status",
+        "NEW summarize",
+        "NEW main"
+      ],
+      "variables": [
+        "ROOT",
+        "STAGES",
+        "args",
+        "build",
+        "cases",
+        "commit",
+        "deployment_status",
+        "digest",
+        "entry",
+        "fixture_sha",
+        "journal",
+        "journal_path",
+        "matches",
+        "name",
+        "parser",
+        "proof",
+        "proof_name",
+        "proof_path",
+        "repair_name",
+        "repair_path",
+        "result",
+        "sdk_pass",
+        "stage_statuses",
+        "stages",
+        "state",
+        "unique_cases",
+        "value",
+        "version"
+      ],
+      "change": "Read-only local formal state/proof/journal summary with source/fixture/digest/proof binding; distinct PASS/FAIL/NOT_RUN, unevaluated UNKNOWN; no state mutation or production query",
+      "existing": false,
+      "source_sha256": null,
+      "implemented_source_sha256": "eded0e0ca92df26b528d5df332a9a6592e144d3ef086049f46f092c923ce067d",
+      "associated_tests": [
+        "tests/test_production_validation_summary.py::test_native_sdk_pass_is_separate_from_incomplete_deployment_and_device_test",
+        "tests/test_production_validation_summary.py::test_unmatched_native_proof_never_passes",
+        "tests/test_production_validation_summary.py::test_complete_requires_every_stage_and_native_receipt",
+        "tests/test_production_validation_summary.py::test_stale_runtime_revision_is_reported_and_blocks_overall_success",
+        "tests/test_production_validation_summary.py::test_not_run_preflight_and_missing_receipt_are_not_server_sdk_pass",
+        "tests/test_production_validation_summary.py::test_failed_repair_receipt_is_reported_without_private_values",
+        "tests/test_production_validation_summary.py::test_bad_or_missing_evidence_fails_safely_without_messages"
+      ]
     }
   ],
   "protected": [
@@ -1295,10 +1481,13 @@
       "tests/test_forecast_projection_generation.py",
       "tests/test_dashboard_publication_generation.py",
       "tests/test_control_publication_provenance.py",
-      "tests/test_pv_clear_ghi_backup_roundtrip.py"
+      "tests/test_pv_clear_ghi_backup_roundtrip.py",
+      "tests/test_server_adapter_fixture_preparation.py"
     ],
     "R05": [
-      "tests/test_separated_release_repair_order.py"
+      "tests/test_separated_release_repair_order.py",
+      "tests/test_production_validation_summary.py",
+      "tests/test_server_adapter_fixture_preparation.py"
     ]
   },
   "test_rule": "append meaningful fixtures; preserve existing historical assertions and failure/skip behavior",
