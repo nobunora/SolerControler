@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from datetime import datetime, timezone
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -90,3 +91,29 @@ def test_ack_loss_injection_still_occurs_after_delegated_commit():
     assert [name for name, _ in calls] == ['commit']
     assert recorder.drop_commit_ack is False
     assert recorder.calls[0]['method'] == 'commit'
+
+
+def test_measurement_rpc_count_includes_payload_read_rpcs():
+    module = load_harness()
+    client, reference, api, calls = sdk_client()
+    recorder = module.RpcRecorder(api)
+    recorder.calls.append({'method': 'prior'})
+    client._firestore_api_internal = recorder
+    tree = ast.parse(SOURCE.read_text(encoding='utf-8'))
+    run = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run')
+    guarded = next(node for node in run.body if isinstance(node, ast.Try) and node.finalbody)
+    measurement = next(node for node in guarded.body if isinstance(node, ast.Expr)
+                       and any(isinstance(value, ast.Constant) and value.value == 'native_transaction_deadline_and_rpc_counts'
+                               for value in ast.walk(node)))
+    index = guarded.body.index(measurement)
+    statements = [measurement]
+    if isinstance(guarded.body[index-1], ast.Assign):
+        statements.insert(0, guarded.body[index-1])
+    program = compile(ast.Module(body=statements, type_ignores=[]), str(SOURCE), 'exec')
+    cases = []
+    exec(program, {'recorder': recorder, 'references': [reference, reference], 'json': json, 'cases': cases})
+    assert cases[0]['rpc_count'] == len(cases[0]['rpc_calls']) == 3
+    assert cases[0]['payload_bytes'] == 8
+    assert [name for name, _ in calls] == ['get', 'get']
+    client._firestore_api_internal = api
+    client.close()

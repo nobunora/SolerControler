@@ -183,9 +183,10 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
             raise AssertionError("expired transaction was started")
         assert len(recorder.calls) == baseline
         assert all(call["timeout"] <= 4 and call["retry_disabled"] for call in recorder.calls if call["method"] in {"begin_transaction", "commit", "rollback"})
+        payload_bytes = sum(len(json.dumps(ref.get(timeout=4, retry=None).to_dict()).encode()) for ref in references)
         cases.append({"name": "native_transaction_deadline_and_rpc_counts", "status": "PASS",
                       "rpc_calls": recorder.calls, "rpc_count": len(recorder.calls),
-                      "payload_bytes": sum(len(json.dumps(ref.get(timeout=4, retry=None).to_dict()).encode()) for ref in references)})
+                      "payload_bytes": payload_bytes})
         return cases
     except Exception as error:
         error.add_note(f"native proof step=firestore.{step}")

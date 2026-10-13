@@ -280,13 +280,16 @@
         "finally restore",
         "Assert-ProofTerminal"
       ],
-      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix; existing flagsPath/restorePath generated CLI keys --image/--command/--args only; execution/ownership/restoration guards preserved",
+      "change": "existing dedicated Job temporary image/command/args only, exact-owned future synthetic documents and object prefix; existing flagsPath/restorePath generated CLI keys --image/--command/--args only; execution/ownership/restoration guards preserved; existing filter/records/proofs now select exact native execution and terminal event, guard null/type before key access, and save the existing records as a private array snapshot without extra API reads; completed filter concatenation is encoded once at the Windows CLI boundary to preserve server-side literal quotes; common gcloud helper unchanged",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "78987161fc4fb9b5b8bc748065c5a7e852d0d9246bf2a721f7802051c55108d8",
+      "implemented_source_sha256": "fe1879692c3642eefbac42845da24f8d8d238f29008747b1693d55df5185d6ce",
       "variables": [
         "flagsPath",
-        "restorePath"
+        "restorePath",
+        "filter",
+        "records",
+        "proofs"
       ],
       "flag_dict_contract": [
         {
@@ -310,8 +313,72 @@
       ],
       "associated_tests": [
         "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
-        "tests/test_separated_release_repair_order.py::test_server_proof_restores_dedicated_job_without_environment_or_control_writes"
-      ]
+        "tests/test_separated_release_repair_order.py::test_server_proof_restores_dedicated_job_without_environment_or_control_writes",
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[False]",
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]"
+      ],
+      "native_evidence_contract": {
+        "existing_variables": [
+          "filter",
+          "records",
+          "proofs"
+        ],
+        "existing_read_fields": [
+          "labels",
+          "jsonPayload",
+          "event"
+        ],
+        "selection": "Exact execution and terminal event only; null/type/key guards exclude malformed or unrelated records",
+        "private_snapshot": "proof-records.private.json",
+        "private_snapshot_shape": "Array retaining zero, one or multiple existing records",
+        "additional_api_reads": 0,
+        "new_variables": "none",
+        "new_functions": "none",
+        "new_classes": "none",
+        "new_flags": "none",
+        "regression_parameters": {
+          "log_shape": [
+            "normal",
+            "mixed",
+            "empty",
+            "missing_exact",
+            "duplicate_exact"
+          ],
+          "proof_status": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "runtime_acceptance": "Prior actual SDK cases PASS; wrapper evidence retrieval failed on null labels; corrected real-server wrapper acceptance and formal deployment pending",
+        "cli_filter_encoding": {
+          "owner_variable": "filter",
+          "assignment_count": 1,
+          "replace_count": 1,
+          "source_character": "\"",
+          "encoded_character": "\\\"",
+          "stage": "After completing the existing filter concatenation, before the existing pwsh-to-cmd native argument boundary",
+          "server_semantics": "Exact execution and event literal quotes are preserved after cmd decoding; no second encoding",
+          "common_gcloud_helper_changed": false,
+          "new_variables": "none",
+          "new_functions": "none",
+          "new_classes": "none",
+          "new_flags": "none",
+          "regression_parameters": [
+            false,
+            true
+          ],
+          "read_only_native_query_evidence": {
+            "artifact": "artifacts/analysis/fixed-native-receipt-filter-20261013.safe.json",
+            "status": "PASS",
+            "source_filter_extracted_by_ast": true,
+            "record_limit": 200,
+            "returned_records": 1,
+            "logging_requests": 1,
+            "serialized_bytes": 7893,
+            "boundary": "Read-only receipt query only; full native acceptance and formal deployment remain pending"
+          }
+        }
+      }
     },
     {
       "stage": "R06",
@@ -445,20 +512,22 @@
         "response",
         "client",
         "_firestore_api_internal",
-        "transport"
+        "transport",
+        "payload_bytes"
       ],
-      "change": "Test harness only: batch_get_documents response returns iter(list(response)); existing original-RPC restoration moves to the beginning of run finally before operation-owned cleanup. App/version/SDK requests/timeouts/retries and ACK-loss injection unchanged",
+      "change": "Test harness only: batch_get_documents response returns iter(list(response)); existing original-RPC restoration moves to the beginning of run finally before operation-owned cleanup. App/version/SDK requests/timeouts/retries and ACK-loss injection unchanged; run measures the existing two payload read RPCs into payload_bytes before recording rpc_calls/count, so the measurement includes all 18 recorded RPCs without adding reads",
       "existing": true,
       "baseline_source_revision": "3b996ced62a2c6b4bbfff589fee3c463b56f00d4",
       "source_sha256": "3d2ec4b03f790020b35221f6a318cb91ae31feb9aa43173b9bb7b4b22d8e325c",
-      "implemented_source_sha256": "783ca5f6b18b5da2afeda71f1e96dbec5b05092ae5d8c7424eddb1cd609bf52e",
+      "implemented_source_sha256": "2f69c3cb59df101ddfef466b861f5d6c948f7d122eb3c5e9cc4700d01b916080",
       "new_classes": "none",
       "new_functions": "none",
       "new_flags": "none",
       "associated_tests": [
         "tests/test_firestore_native_harness.py::test_actual_sdk_document_get_accepts_recorded_stream_iterator_without_network",
         "tests/test_firestore_native_harness.py::test_actual_cleanup_restores_original_rpc_before_delete_commit_and_retains_primary",
-        "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit"
+        "tests/test_firestore_native_harness.py::test_ack_loss_injection_still_occurs_after_delegated_commit",
+        "tests/test_firestore_native_harness.py::test_measurement_rpc_count_includes_payload_read_rpcs"
       ]
     },
     {
