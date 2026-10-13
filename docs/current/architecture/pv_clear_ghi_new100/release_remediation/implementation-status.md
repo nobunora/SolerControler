@@ -33,6 +33,8 @@ R05のexact forecast logs代入はdictionary/key guardだけを追加し、syste
 
 ## 検証と残条件
 
+0c6のformal103200はD/source/daily/closed cost完了後、historyでRuntimeErrorとなりcontrol/web未着手。親のread-only確認でGCS history body/hash/adopted identity/native epochは一致したが、期限failureを成功扱いへ変更しない。限定修正は `_read_dashboard_source_epoch` 内の二段最大4worker scheduleと内部Event停止同期だけ。CAS/24秒/60秒/3tries/schema/API/cacheは保持し、新persisted state/feature flag/cache/class/dependencyは0。host SDK2.31の試作はparallel6.888秒対warm serial-after9.295秒、同42component/13,705docs/29RPC/2,193,628bytesで25.9%一回短縮、hash/request/source安定/threads0を確認。これは同じhost SDK2.31を使うR03正規history経路の実server epoch読取証拠である。history全工程60秒/upload全工程24秒・cold/authと、新Cloud D bootstrapのimage SDK2.34実証・正式deploymentの受入は未完。新HEADは別prepare/fixture/formal stateで通常Dを一回所有し、旧0c6のDを重複実行しない。
+
 全体静的検査（Ruff、Import Linter3契約、mypy、tracked JS Oxlint/node構文、compileall）と全体pre-releaseはPASS（1408 passed / 1 skipped、security PASS）。R06と既存mode-onlyの17回帰PASS、R00/R01の66回帰PASS。準備段階の実サーバーGETにより、9/20のcandidate13件・既存35件、料金範囲9/1–10/12、校正currentのnative不存在を証明した。まだsource writeは0。最後の変更を含む正式preflight gate、候補imageのnative proof、元13区間の本番修復、採用D/readmodel/history/Drive証拠、完全部署後の実SOC設定往復は個別のruntime receiptで確認する。
 
 G06：旧予報に当時のNEW100入力provenanceや全旧scenarioが存在しなかった範囲は復元済みとはしない。今朝の保存原本には旧optimizer全scenarioがあり、PV比較は可能だがNEW100 radiation receiptは存在しないため、時間意味から再構築したcounterfactualとして区別する。

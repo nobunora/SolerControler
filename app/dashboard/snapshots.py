@@ -13,6 +13,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from collections import defaultdict
+from collections.abc import Callable
+from concurrent.futures import FIRST_EXCEPTION, CancelledError, ThreadPoolExecutor, wait
+from functools import partial
+from threading import Event
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -652,6 +656,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
     Native update_time owns ordering; stored ingestion timestamps are not
     promoted to a new source epoch when an older producer finishes late.
     """
+    stop_event = Event()
     groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
     retained_before: str | None = None
     retained_sources = {"sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
@@ -663,13 +668,61 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         raise ValueError("dashboard source revision requires a finite deadline")
 
     def timeout() -> float:
+        if stop_event.is_set():
+            raise CancelledError("dashboard source read stopped")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RuntimeError("dashboard source revision deadline exceeded")
         return min(4.0, remaining)
 
+    def read_parallel(readers: list[Callable[[], Any]]) -> list[Any]:
+        executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dashboard-epoch")
+        futures = []
+        failure: BaseException | None = None
+        results: list[Any] = []
+
+        def read_one(reader: Callable[[], Any]) -> Any:
+            try:
+                timeout()
+                return reader()
+            except BaseException:
+                stop_event.set()
+                raise
+
+        try:
+            futures = [executor.submit(read_one, reader) for reader in readers]
+            done, pending = wait(futures, return_when=FIRST_EXCEPTION)
+            failed = next((future for future in futures if future in done and not future.cancelled()
+                           and future.exception() is not None
+                           and not isinstance(future.exception(), CancelledError)), None)
+            if failed is not None:
+                for future in pending:
+                    future.cancel()
+                failed.result()
+            timeout()
+            results = [future.result() for future in futures]
+        except BaseException as exc:
+            stop_event.set()
+            failure = exc
+        finally:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+        if failure is not None:
+            if isinstance(failure, CancelledError):
+                # A sibling can observe stop before the originating worker's
+                # Future has stored its exception. Resolve it after joining.
+                failed = next((future for future in futures if not future.cancelled()
+                               and future.exception() is not None
+                               and not isinstance(future.exception(), CancelledError)), None)
+                if failed is not None:
+                    failed.result()
+            raise failure
+        return results
+
     def record(collection: str, snapshots: list[Any], *, stamp_field: str = "date") -> list[Any]:
         nonlocal read_count
+        timeout()
         read_count += len(snapshots)
         if len(snapshots) > 3660:
             raise ValueError("dashboard source revision query exceeds 3660 documents")
@@ -697,9 +750,12 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
     bounds: list[str] = []
     bound_sources = (("sunshine_daily", "date"), ("cost_daily", "date"), ("battery_daily_metrics", "date"),
                      ("forecast_hourly", "date"), ("monitoring_samples", "ts"), ("forecast_hourly_reconstructed", "date"))
-    for collection, field in bound_sources:
+    def bound_rows(collection: str, field: str) -> list[Any]:
         query = client.collection(collection).select([field]).order_by(field)
-        samples = list(query.limit(1).stream(timeout=timeout(), retry=None)) + list(query.limit_to_last(1).get(timeout=timeout(), retry=None))
+        return list(query.limit(1).stream(timeout=timeout(), retry=None)) + list(query.limit_to_last(1).get(timeout=timeout(), retry=None))
+    bound_results = read_parallel([partial(bound_rows, collection, field)
+                                   for collection, field in bound_sources])
+    for (collection, field), samples in zip(bound_sources, bound_results):
         for snapshot in record(f"bounds_{collection}", samples, stamp_field=field):
             bounds.append(str((snapshot.to_dict() or {})[field])[:10])
     if not bounds:
@@ -716,15 +772,17 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             epoch["history_compare_before"] = history_compare_before
     source_names = ("sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
                     "forecast_hourly_reconstructed", "forecast_plans", "dashboard_daily_metrics", "night_charge_plans")
-    for name in source_names:
+    def source_rows(name: str) -> tuple[list[Any], list[Any]]:
         source_start = monitoring_start if name == "dashboard_daily_metrics" else start
         fields = ["date"]
         if name == "night_charge_plans":
             fields.extend(["decision_rationale.forecast_correction.recent_and_analog_hourly_floor.analog_day",
                            "daytime_soc_optimization.forecast_correction.recent_and_analog_hourly_floor.analog_day"])
         query = client.collection(name).where("date", ">=", source_start.isoformat()).where("date", "<=", end.isoformat())
-        samples = record(name, list(query.select(fields).limit(3661).stream(timeout=timeout(), retry=None)))
-        epoch[f"scope/{name}"] = source_start.isoformat()
+        samples = list(query.select(fields).limit(3661).stream(timeout=timeout(), retry=None))
+        analog: list[Any] = []
+        if len(samples) > 3660:
+            raise ValueError("dashboard source revision query exceeds 3660 documents")
         if name == "night_charge_plans":
             analog_dates = set()
             for snapshot in samples:
@@ -736,43 +794,62 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                         analog_dates.add(date.fromisoformat(str(analog_day)).isoformat())
             if analog_dates:
                 refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
-                record("analog_plans", list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None)))
-    monitoring_max_documents = 48 * 1096
-    monitoring_count = 0
-    monitoring_query = (client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
-                        .where("ts", "<", (end + timedelta(days=1)).isoformat())
-                        .order_by("ts").order_by("__name__").select(["ts"]))
-    monitoring_cursor: tuple[str, str] | None = None
-    monitoring_ids: set[str] = set()
-    while True:
-        page = list(monitoring_query.limit(3661).stream(timeout=timeout(), retry=None))
-        timeout()
-        # Sentinels are read again by the following query and counted as reads.
-        read_count += max(0, len(page) - 3660)
-        accepted = page[:3660]
-        monitoring_count += len(accepted)
-        if monitoring_count > monitoring_max_documents:
-            raise ValueError("dashboard monitoring source exceeds 52608 documents")
-        for snapshot in accepted:
-            cursor = (str((snapshot.to_dict() or {}).get("ts", "")), str(snapshot.id))
-            if not cursor[0] or (monitoring_cursor is not None and cursor <= monitoring_cursor) or snapshot.id in monitoring_ids:
-                raise ValueError("dashboard monitoring source cursor did not advance")
-            monitoring_cursor = cursor
-            monitoring_ids.add(snapshot.id)
-        record("monitoring_samples", accepted, stamp_field="ts")
-        if len(page) <= 3660:
-            break
-        monitoring_query = monitoring_query.start_after(accepted[-1])
+                analog = list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None))
+        return samples, analog
+    def monitoring_rows() -> tuple[list[list[Any]], int]:
+        pages: list[list[Any]] = []
+        sentinel_reads = 0
+        monitoring_max_documents = 48 * 1096
+        monitoring_count = 0
+        monitoring_query = (client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
+                            .where("ts", "<", (end + timedelta(days=1)).isoformat())
+                            .order_by("ts").order_by("__name__").select(["ts"]))
+        monitoring_cursor: tuple[str, str] | None = None
+        monitoring_ids: set[str] = set()
+        while True:
+            page = list(monitoring_query.limit(3661).stream(timeout=timeout(), retry=None))
+            timeout()
+            # Sentinels are read again by the following query and counted as reads.
+            sentinel_reads += max(0, len(page) - 3660)
+            accepted = page[:3660]
+            monitoring_count += len(accepted)
+            if monitoring_count > monitoring_max_documents:
+                raise ValueError("dashboard monitoring source exceeds 52608 documents")
+            for snapshot in accepted:
+                cursor = (str((snapshot.to_dict() or {}).get("ts", "")), str(snapshot.id))
+                if not cursor[0] or (monitoring_cursor is not None and cursor <= monitoring_cursor) or snapshot.id in monitoring_ids:
+                    raise ValueError("dashboard monitoring source cursor did not advance")
+                monitoring_cursor = cursor
+                monitoring_ids.add(snapshot.id)
+            pages.append(accepted)
+            if len(page) <= 3660:
+                break
+            monitoring_query = monitoring_query.start_after(accepted[-1])
+        return pages, sentinel_reads
+    readers: list[Callable[[], Any]] = [partial(source_rows, name) for name in source_names]
+    readers.extend([
+        monitoring_rows,
+        lambda: list(client.collection("cost_daily").select(["date"]).limit(3661).stream(timeout=timeout(), retry=None)),
+        lambda: list(client.collection("model_parameters").select(["name"]).limit(3661).stream(timeout=timeout(), retry=None)),
+        lambda: list(client.collection("settings_events").select(["recorded_at"]).order_by("recorded_at").limit_to_last(40).get(timeout=timeout(), retry=None)),
+        lambda: list(client.get_all([client.collection("night_charge_plans").document("latest")], field_paths=["date"], timeout=timeout(), retry=None)),
+        lambda: list(client.collection("battery_daily_metrics").select(["date"]).order_by("date").limit_to_last(1).get(timeout=timeout(), retry=None)),
+    ])
+    results = read_parallel(readers)
+    for name, (samples, analog) in zip(source_names, results[:len(source_names)]):
+        record(name, samples)
+        source_start = monitoring_start if name == "dashboard_daily_metrics" else start
+        epoch[f"scope/{name}"] = source_start.isoformat()
+        if analog:
+            record("analog_plans", analog)
+    pages, sentinel_reads = results[len(source_names)]
+    read_count += sentinel_reads
+    for page in pages:
+        record("monitoring_samples", page, stamp_field="ts")
     epoch["scope/monitoring_samples"] = monitoring_start.isoformat()
-    # Monthly summaries use all existing cost_daily history. This revalidation
-    # is explicitly bounded and runs only in the producer, never in a GET.
-    record("cost_daily", list(client.collection("cost_daily").select(["date"]).limit(3661).stream(timeout=timeout(), retry=None)))
-    record("model_parameters", list(client.collection("model_parameters").select(["name"]).limit(3661).stream(timeout=timeout(), retry=None)), stamp_field="name")
-    record("settings_events", list(client.collection("settings_events").select(["recorded_at"]).order_by("recorded_at")
-                                  .limit_to_last(40).get(timeout=timeout(), retry=None)), stamp_field="recorded_at")
-    record("latest_plan", list(client.get_all([client.collection("night_charge_plans").document("latest")], field_paths=["date"], timeout=timeout(), retry=None)))
-    record("latest_battery", list(client.collection("battery_daily_metrics").select(["date"]).order_by("date")
-                                 .limit_to_last(1).get(timeout=timeout(), retry=None)))
+    for name, field, rows in zip(("cost_daily", "model_parameters", "settings_events", "latest_plan", "latest_battery"),
+                                 ("date", "name", "recorded_at", "date", "date"), results[len(source_names)+1:]):
+        record(name, rows, stamp_field=field)
     for key, rows in groups.items():
         unique = sorted(set(rows))
         digest = hashlib.sha256(json.dumps(unique, separators=(",", ":")).encode()).hexdigest()

@@ -4,6 +4,8 @@
 
 ## 入口・参照範囲
 
+10/13 epoch scheduling試作の実Firestore read-only測定はhost SDK2.31でserial14.861/parallel6.888/warm serial-after9.295秒。42component、13,705docs、29RPC、2,193,628Document bytesとrequest shape/hashが完全一致、source前後安定、SDK bindings復元/threads0/cloud writes0。一回のwarm serial-after比25.9%短縮。R03 canonical history writerはlocal Python/SDK2.31で、この実server epoch読取は同runtimeの証拠である。history全工程60秒・upload全工程24秒とcold token refreshはまだ未実証。Cloud D bootstrapはSDK2.34 imageの別経路なのでfresh Dでsource-map/実SDK版/phase elapsed/read数を確認する。failure又はmain interruptionのcancel/join/元例外保持、auth/DNS/TLS hard cancellation・全工程期限が未確認ならG07はそのscopeをOPEN/INCONCLUSIVEに保つ。
+
 正本は[調査](../research-adapter-proof.md)、[gates](../../gates.json)、[公開契約](../../publication-contracts.md)、[R03](R03-derived-history.md)。readsetはclear_ghi_store/clear_ghi_calibration_io、forecast_persistence、firestoreのparameter projection、separated_runtimeのplan_store/planner、dashboard snapshotsのpublication/readだけ。関連5testのfake/transport分類は調査表に固定する。親のCBM target＋1hopを使用、独自CLI起動0。
 
 ユーザー最新指示に従い、正式検証先は既存本番Firestore/GCSと既存dedicated Job。新project/DB/infraを作らず、owned synthetic scopeだけを使う。local SDK/transport/emulatorは実サーバー証拠を代替しない。[公式emulator限界](https://docs.cloud.google.com/firestore/native/docs/emulator?hl=en)も保持する。agentによる今回のcloud操作0、実行は親の正規wrapperに委ねる。

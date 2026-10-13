@@ -135,11 +135,16 @@
         "tests/test_dashboard_publication_generation.py",
         "tests/test_clear_ghi_runtime.py",
         "tests/test_dashboard_snapshots.py",
-        "tests/test_dashboard_new100_diagnostics.py"
+        "tests/test_dashboard_new100_diagnostics.py",
+        "tests/test_dashboard_epoch_parallel.py"
       ],
       "associated_test_selectors": [
         "tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only",
-        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer"
+        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer",
+        "tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_preserves_all_components_requests_bytes_and_dependencies",
+        "tests/test_dashboard_epoch_parallel.py::test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_puts",
+        "tests/test_dashboard_epoch_parallel.py::test_expired_shared_deadline_cancels_queued_and_followup_reads",
+        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
       ]
     },
     {
@@ -186,7 +191,8 @@
         "tests/test_separated_release_repair_order.py",
         "tests/test_adapter_proof_diagnostics.py",
         "tests/test_firestore_native_harness.py",
-        "tests/test_gcs_native_harness.py"
+        "tests/test_gcs_native_harness.py",
+        "tests/test_dashboard_epoch_parallel.py"
       ],
       "associated_test_selectors": [
         "tests/test_release_probe_safety.py::test_actual_update_and_restore_flags_emit_cli_option_names",
@@ -198,7 +204,11 @@
         "tests/test_gcs_native_harness.py::test_actual_storage_sdk_ack_generations_survive_cas_restore_and_exact_cleanup",
         "tests/test_firestore_native_harness.py::test_measurement_rpc_count_includes_payload_read_rpcs",
         "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[False]",
-        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]"
+        "tests/test_separated_release_repair_order.py::test_actual_cmd_boundary_preserves_exact_filter_quotes_once[True]",
+        "tests/test_dashboard_epoch_parallel.py::test_parallel_epoch_preserves_all_components_requests_bytes_and_dependencies",
+        "tests/test_dashboard_epoch_parallel.py::test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_puts",
+        "tests/test_dashboard_epoch_parallel.py::test_expired_shared_deadline_cancels_queued_and_followup_reads",
+        "tests/test_dashboard_epoch_parallel.py::test_main_wait_interruption_sets_stop_before_workers_start_second_rpc"
       ]
     },
     {
