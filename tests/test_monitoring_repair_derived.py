@@ -139,3 +139,27 @@ def test_verified_same_source_resume_has_no_extra_derived_commit(prepared_repair
     retry = repair.regenerate_derived(client=client, cfg=cfg, state_path=path, stage="cost")
     assert first["status"] == retry["status"] == "verified"
     assert retry["reason_code"] == "verified_existing_output" and client.commit_attempts == commits
+
+
+def test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer(prepared_repair):
+    client, cfg, path = apply_fixture(prepared_repair)
+    state = repair._load(path)
+    assert state["cost_end_ts"] == "2026-10-13T00:00:00"
+    first = repair.regenerate_derived(client=client, cfg=cfg, state_path=path, stage="cost")
+    closed = {key: dict(value) for key, value in client.data.items() if key.startswith("cost_daily/")}
+    client.put("monitoring_samples/2026-10-13T00:00:00", {
+        "ts": "2026-10-13T00:00:00", "load_kwh": 10.0, "buy_kwh": 1.0,
+    })
+    # The ordinary producer owns the open day and starts October from the
+    # corrected preceding cost baseline; repair retains its closed-day scope.
+    assert producer.recalc_cost_daily_from(client, start_date="2026-10-01", end_ts="2026-10-14T00:00:00",
+        updated_at="normal-producer", deadline=time.monotonic() + 60, **state["policy"]) == 1
+    assert client.data["cost_daily/2026-10-13"]["self_consumption_kwh"] == 9.0
+    commits = client.commit_attempts
+    client.writes.clear()
+    repeated = repair.regenerate_derived(client=client, cfg=cfg, state_path=path, stage="cost")
+    assert first["status"] == repeated["status"] == "verified"
+    assert first["source_after_sha256"] == repeated["source_after_sha256"]
+    assert repeated["reason_code"] == "verified_existing_output"
+    assert all(client.data[key] == value for key, value in closed.items())
+    assert client.writes == [] and client.commit_attempts == commits

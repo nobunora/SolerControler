@@ -94,6 +94,11 @@
       "associated_test_sources": [
         "tests/test_monitoring_repair_command.py",
         "tests/test_monitoring_source_repair.py"
+      ],
+      "associated_test_selectors": [
+        "tests/test_monitoring_repair_command.py::test_fresh_verified_48_source_manifest_has_no_cloud_write_and_pins_calibration",
+        "tests/test_monitoring_repair_command.py::test_fresh_verified_manifest_rejects_partial_or_different_source",
+        "tests/test_monitoring_repair_command.py::test_prepare_cli_pins_closed_calendar_end_in_configured_timezone"
       ]
     },
     {
@@ -131,6 +136,10 @@
         "tests/test_clear_ghi_runtime.py",
         "tests/test_dashboard_snapshots.py",
         "tests/test_dashboard_new100_diagnostics.py"
+      ],
+      "associated_test_selectors": [
+        "tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only",
+        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer"
       ]
     },
     {
@@ -218,7 +227,11 @@
       ],
       "associated_test_sources": [
         "tests/test_separated_release_repair_order.py",
-        "tests/test_release_probe_safety.py"
+        "tests/test_release_probe_safety.py",
+        "tests/test_forecast_execution_logs.py"
+      ],
+      "associated_test_selectors": [
+        "tests/test_forecast_execution_logs.py::test_forecast_receipt_filter_handles_system_records_and_exact_execution"
       ]
     }
   ],

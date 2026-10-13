@@ -72,10 +72,28 @@
       "symbols": [
         "NEW main"
       ],
-      "change": "direct stage dispatch; no framework",
+      "change": "direct stage dispatch; no framework; prepare end is configured-timezone TODAY00 exclusive instead of tomorrow00; no new flag/parameter and immutable end retained on resume",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "be66726a9500508c034990b5fa1e964e23a84b8c2107695c14215bb13aa0152a"
+      "implemented_source_sha256": "a8117091663d1f968849a210cda31d053298cabb80bba2c9e65589ec07518a42",
+      "variables": [
+        "cfg",
+        "args",
+        "end"
+      ],
+      "closed_cost_scope_contract": {
+        "clock_timezone": "cfg.timezone",
+        "exclusive_end": "datetime.now(ZoneInfo(cfg.timezone)).date().isoformat() + 'T00:00:00'",
+        "start": "2026-09-01",
+        "open_current_day_owner": "normal producer",
+        "same_state_resume_end": "immutable",
+        "new_flags": "none",
+        "new_functions": "none",
+        "new_classes": "none"
+      },
+      "associated_tests": [
+        "tests/test_monitoring_repair_command.py::test_prepare_cli_pins_closed_calendar_end_in_configured_timezone"
+      ]
     },
     {
       "stage": "R02",
@@ -87,10 +105,40 @@
         "prepared monthly source native revisions",
         "calibration current native preimage"
       ],
-      "change": "reviewed raw13 create and readback; no old35 update",
+      "change": "Reviewed raw13 create/readback retains old35; exact alternate fresh48/0 verifies full CSV/native source, preserves all existing fields and D-before private calibration pin/SHA, with no raw batch/create/update/commit",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
+      "implemented_source_sha256": "390f79bf772aa5cddbeb1a1dcb427dc7f1341c6c6fd3fa5c63dda40b420b44ee",
+      "variables": [
+        "candidate_count",
+        "existing",
+        "candidates",
+        "before",
+        "previous",
+        "current_sha"
+      ],
+      "source_cardinality_contract": {
+        "allowed_existing_candidates": [
+          [
+            35,
+            13
+          ],
+          [
+            48,
+            0
+          ]
+        ],
+        "no_op_candidate_count": 0,
+        "no_op_raw_writes": 0,
+        "no_op_commits": 0,
+        "calibration_preimage_sha256": "pin and verify before local source receipt",
+        "existing_payload_fields": "preserved including source_csv, ingested_at and unknown fields",
+        "fresh_state": "new immutable manifest; retain prior raw13 audit"
+      },
+      "associated_tests": [
+        "tests/test_monitoring_repair_command.py::test_fresh_verified_48_source_manifest_has_no_cloud_write_and_pins_calibration",
+        "tests/test_monitoring_repair_command.py::test_fresh_verified_manifest_rejects_partial_or_different_source"
+      ]
     },
     {
       "stage": "R03",
@@ -98,10 +146,13 @@
       "symbols": [
         "NEW regenerate_derived"
       ],
-      "change": "existing daily/cost functions plus before-after source and output verification",
+      "change": "existing daily/cost functions plus before-after source and output verification; canonical fresh prepare limits repair to closed calendar dates (exclusive TODAY00), normal producer owns the open current day; no append helper/carryover exceptions",
       "existing": false,
       "source_sha256": null,
-      "implemented_source_sha256": "11005fb2b0c14d3f548190430b5db51ce32bb16571babe69b25749a5c39aec2e"
+      "implemented_source_sha256": "390f79bf772aa5cddbeb1a1dcb427dc7f1341c6c6fd3fa5c63dda40b420b44ee",
+      "associated_tests": [
+        "tests/test_monitoring_repair_derived.py::test_closed_calendar_cost_resume_ignores_positive_current_day_owned_by_normal_producer"
+      ]
     },
     {
       "stage": "R03",
@@ -254,10 +305,32 @@
         "forecast exact execution verification",
         "Assert-ForecastReceiptTerminal"
       ],
-      "change": "private exact-execution capture instead of latest execution; other slots and physical control unchanged",
+      "change": "private exact-execution capture instead of latest execution; other slots and physical control unchanged; existing forecast logs assignment excludes non-dictionary/missing/null/array labels before exact execution matching; no extra fetch/flags/variables/other-slot changes",
       "existing": true,
       "source_sha256": "78c253b00e5844ddd566da7add313a43dc5d290c9bec6540003c7e88bb08073f",
-      "implemented_source_sha256": "875a3004b59688835cc3e4bcf12a76b65bd6c3d59e725f0d03359b4276386cf6"
+      "implemented_source_sha256": "5bb04fc1cc9d429d71e4420ca4f9a002953a1ab0614815f20a0bed1fa1f2fd74",
+      "variables": [
+        "forecastReceipt",
+        "logsText",
+        "exactName"
+      ],
+      "forecast_log_guard_contract": {
+        "record_type": "IDictionary",
+        "required_key": "labels",
+        "labels_type": "IDictionary",
+        "match_key": "run.googleapis.com/execution_name",
+        "additional_cloud_fetches": 0,
+        "new_variables": "none",
+        "new_functions": "none",
+        "new_flags": "none",
+        "parameter_cases": [
+          true,
+          false
+        ]
+      },
+      "associated_tests": [
+        "tests/test_forecast_execution_logs.py::test_forecast_receipt_filter_handles_system_records_and_exact_execution"
+      ]
     },
     {
       "stage": "R03",
@@ -570,6 +643,37 @@
       "associated_tests": [
         "tests/test_gcs_native_harness.py::test_actual_storage_sdk_ack_generations_survive_cas_restore_and_exact_cleanup"
       ]
+    },
+    {
+      "stage": "R03",
+      "path": "tests/test_dashboard_snapshots.py",
+      "symbols": [
+        "test_first_run_outside_slot_23_builds_bootstrap_only",
+        "test_first_run_outside_slot_23_builds_bootstrap_only._unexpected_firestore_client"
+      ],
+      "variables": [
+        "monkeypatch"
+      ],
+      "change": "Local existing bootstrap-only fixture sets existing DATA_BACKEND=sqlite and replaces Firestore opener with fail-fast callback; ambient backend cannot trigger external reads. Production dashboard unchanged",
+      "existing": true,
+      "baseline_source_revision": "872163cd3b3e288df23b21f2dfab23fc6be46733",
+      "source_sha256": "0a678c61abb8e8f47f122c1d41e1ca855b186b728f0c5aff57192d0a937f7bf9",
+      "new_classes": "none",
+      "new_flags": "none",
+      "new_functions": [
+        "test_first_run_outside_slot_23_builds_bootstrap_only._unexpected_firestore_client"
+      ],
+      "new_function_contracts": [
+        {
+          "symbol": "test_first_run_outside_slot_23_builds_bootstrap_only._unexpected_firestore_client",
+          "signature": "()",
+          "return": "never returns; raises AssertionError if external Firestore opener is invoked"
+        }
+      ],
+      "associated_tests": [
+        "tests/test_dashboard_snapshots.py::test_first_run_outside_slot_23_builds_bootstrap_only"
+      ],
+      "implemented_source_sha256": "65f960951450293b9bca5fc6405952b62d4fc53374c9271bfd3866f210b851c6"
     }
   ],
   "protected": [

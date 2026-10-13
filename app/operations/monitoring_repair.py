@@ -231,8 +231,11 @@ def prepare_source_repair(
             payload = {field: row[field] for field in MONITORING_FIELDS}
             payload.update(source_csv=row["_source_csv"], ingested_at=prepared_at)
             candidates.append({"document_id": ts, "payload": payload})
-    if len(existing) != 35 or len(candidates) != 13:
-        raise ValueError("repair requires exactly 35 existing and 13 absent source documents")
+    if (len(existing), len(candidates)) not in {(35, 13), (48, 0)}:
+        raise ValueError("repair requires 35 existing/13 absent or 48 verified existing source documents")
+    if not candidates and any(isinstance((snapshots[f"monitoring_samples/{ts}"].to_dict() or {}).get(field), bool)
+                              for ts in expected for field in MONITORING_FIELDS[1:]):
+        raise ValueError("verified existing source contains invalid boolean energy/SOC")
     cost_start = target_dates[0].replace(day=1).isoformat()
     if datetime.fromisoformat(cost_end_ts) <= datetime.fromisoformat(f"{target}T00:00:00"):
         raise ValueError("cost end must include the repaired day")
@@ -367,7 +370,8 @@ def verify_source_repair(*, client: Any, state_path: Path) -> dict[str, Any]:
             verified += 1
         else:
             conflicting += 1
-    status = "committed_drift" if drift else "conflict" if conflicting else "verified" if verified == 13 else "not_committed" if absent == 13 else "partial"
+    candidate_count = len(state["candidates"])
+    status = "committed_drift" if drift else "conflict" if conflicting else "verified" if verified == candidate_count else "not_committed" if absent == candidate_count else "partial"
     return {"schema_version": 1, "repair_id": state["repair_id"], "stage": "source", "target_dates": state["target_dates"],
             "candidate_sha256": state["candidate_sha256"], "source_before_sha256": _sha(state["existing"]),
             "source_after_sha256": _sha({ts: _native(snapshots[f"monitoring_samples/{ts}"]) for ts in ids}),
@@ -383,9 +387,11 @@ def apply_source_repair(*, client: Any, state_path: Path, reviewed_state_sha256:
     before = verify_source_repair(client=client, state_path=state_path)
     if before["status"] == "verified":
         previous = _journal(state_path)["stages"].get("source", {})
-        if previous.get("calibration_preimage_sha256"):
+        if not state["candidates"] and not previous.get("calibration_preimage_sha256"):
+            _pin_calibration_preimage(client, state_path, state)
+        if previous.get("calibration_preimage_sha256") or not state["candidates"]:
             current_sha = hashlib.sha256((_directory(state_path) / "calibration-preimage.json").read_bytes()).hexdigest()
-            if current_sha != previous["calibration_preimage_sha256"]:
+            if current_sha != previous.get("calibration_preimage_sha256", state["calibration_preimage_sha256"]):
                 raise ValueError("old calibration recovery preimage changed")
             before["calibration_preimage_sha256"] = current_sha
         return _save_stage(state_path, "source", before)
@@ -405,7 +411,7 @@ def apply_source_repair(*, client: Any, state_path: Path, reviewed_state_sha256:
         result = verify_source_repair(client=client, state_path=state_path)
     except Exception as error:
         result = {**before, "status": "unknown_commit", "reason_code": type(error).__name__}
-    result.update(attempted_count=13, raw_writes=None if commit_error else 13,
+    result.update(attempted_count=len(state["candidates"]), raw_writes=None if commit_error else len(state["candidates"]),
                   elapsed_ms=int((time.monotonic() - started) * 1000), commit_response_reason=commit_error,
                   calibration_preimage_sha256=hashlib.sha256((_directory(state_path) / "calibration-preimage.json").read_bytes()).hexdigest())
     return _save_stage(state_path, "source", result)

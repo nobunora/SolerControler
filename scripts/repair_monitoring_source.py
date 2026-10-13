@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.stage == "prepare":
             if args.write or args.resume or not args.csv_run_dirs:
                 raise ValueError("prepare requires explicit CSV run directories and no Write/Resume")
-            end = (datetime.now(ZoneInfo(cfg.timezone)).date() + timedelta(days=1)).isoformat() + "T00:00:00"
+            end = datetime.now(ZoneInfo(cfg.timezone)).date().isoformat() + "T00:00:00"
             result = prepare_source_repair(client=client, cfg=cfg, cost_end_ts=end,
                 csv_run_dirs=tuple(args.csv_run_dirs), target_dates=(date(2026, 9, 20),), state_path=args.state_path)
         elif args.stage == "verify":

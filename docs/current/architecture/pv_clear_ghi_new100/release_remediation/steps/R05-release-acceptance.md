@@ -2,6 +2,14 @@
 
 状態：**PLANNED、今回deployment/修復/job/backup/browser/device試験0**。依存R00〜R04。対象はseparated runtimeの現行正規wrapper。ユーザーの本番導入承認は親が受領済み。承認を再要求するためのstageではなく、具体的gateと実測を揃えて実行するstageである。ただし新しいprepared repair state/復旧対象/時間帯overrideへの承認を推測しない。
 
+10/13追加の運用修正はR02候補0 fresh prepare、R03修復costの閉じた過去暦日scope、forecast exact-logのlabels dictionary guardに限定する。採用後append再認証helperと、新HEADのformal stateへ旧872採用Dをcarryoverする案は撤回した。新commit/品質/native proof/fresh repair SHAを固定し、全48原本検証後にそのcommitの通常Dを一回実行する。旧Dのterminal/原本/修復13receiptは保全し、同commitの失敗を理由にDをblind rerunしない。正式deployment/最終control受入は別証拠で未完を保持する。
+
+`scripts/run_cloud_job_from_env.ps1` の既存forecastReceipt.logs代入は、record/labelsのIDictionaryとlabels key guardでsystem/missing/null/array labelsを除外し、exact execution labelだけをarrayへ保存する。既存GET/limit200、terminal条件、他slotは保持する。新var/function/flagと追加Cloud fetchは0。
+
+新HEADは旧formal stateのResumeや旧intentのcommit/digest書換えで導入しない。fresh repairのcandidate0でも新intentに新commit/digestをpinし、strict control probeのproducer_source_revision==ExpectedCommitを保持する。旧Dを新release生成物へ偽stampしない。同StatePath/同HEAD内の復旧では既存executionPathがDの二回起動を防ぎ、確定採用原本から投影/historyだけを回復する。
+
+fresh repair costは9/1〜TODAY00、Dは開いている当日を所有する。Dのchanged_count>0時のみ通常cost再集計が動く条件を保持する。FはR03のread-only当日金融再計算/readbackを追加受入として要求し、changed0でも既存当日costが修復済baselineに整合することを確認する。金融不一致のままhistory/parity/control成功へ進まず、通常式変更・修復scope拡張・手動successで回避しない。
+
 ## 入口・参照範囲
 
 [README](../README.md)、[R01](R01-validation-contract.md)、[R02](R02-source-repair.md)、[R03](R03-derived-history.md)、[R04](R04-adapter-proof.md)、[gates](../../gates.json)、[production runbook](../../../../ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md)全文と `solar-production-deployment` Skillを実行直前に読み直す。今回このrunbook/Skillと下記wrapperを読んだ。過去成功state、HTTP200、provider status1、Job exit0は今回のphysical/control/asset成功を意味しない。
@@ -105,6 +113,8 @@ FのNEW受入は `Assert-AdoptedForecastEvidence` が唯一parity CLIの `[forec
 | runtime read/backup | initial/lazy/DB0/cache実測、current/history同原本表示、修復旧日反映、Drive原本SHA、別current recovery証拠、cleanup成否別記録 |
 
 新local回帰予定commandは `python -m pytest tests/test_separated_release_repair_order.py -q`。このNEW fileは未作成で、command実行済みとはしない。既存wrapper regressionもR00 mandatory suiteで維持する。実server suiteはR04 runnerに従い、実deviceは上記canonical releaseのcontrol stageに含める。
+
+追加回帰 [tests/test_forecast_execution_logs.py](../../../../../../tests/test_forecast_execution_logs.py) の `test_forecast_receipt_filter_handles_system_records_and_exact_execution`（include_match=True/False）は実PS ASTの既存logs代入をmixed記録へ適用し、system/missing/null/array/他executionを除外する。PASSはexact1件又は0件のarray保持。Cloud取得/job/device操作は行わず、fixtureを正式execution成功へ昇格しない。
 
 ## 中断条件
 

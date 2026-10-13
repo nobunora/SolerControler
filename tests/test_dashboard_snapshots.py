@@ -112,6 +112,7 @@ def test_first_run_outside_slot_23_builds_bootstrap_only(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
     monkeypatch.delenv("DASHBOARD_SNAPSHOT_GCS_PREFIX", raising=False)
     monkeypatch.delenv("NIGHT_PLAN_ARCHIVE_GCS_PREFIX", raising=False)
     monkeypatch.delenv("DASHBOARD_SNAPSHOT_FULL_HISTORY_REBUILD", raising=False)
@@ -119,6 +120,11 @@ def test_first_run_outside_slot_23_builds_bootstrap_only(
     clear_snapshot_cache()
 
     monkeypatch.setattr(dashboard_snapshots, "load_dashboard_slice", lambda *_args, **_kwargs: _slice())
+
+    def _unexpected_firestore_client():
+        raise AssertionError("local bootstrap fixture attempted to open Firestore")
+
+    monkeypatch.setattr("app.dashboard.firestore_repository._open_dashboard_firestore_client", _unexpected_firestore_client)
 
     def _unexpected_full_history(*_args, **_kwargs):
         raise AssertionError("non-23 first run attempted a full history rebuild")

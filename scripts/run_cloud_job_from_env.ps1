@@ -228,7 +228,9 @@ if ($Slot -eq 'forecast') {
         $logsText = (& $gcloud logging read $filter --project $projectId --freshness 1d --limit 200 --format json) -join "`n"
         if ($LASTEXITCODE -ne 0) { throw 'Forecast execution logs readback failed.' }
         $forecastReceipt.logs = @($logsText | ConvertFrom-Json -AsHashtable | Where-Object {
-            $_.labels['run.googleapis.com/execution_name'] -eq $exactName
+            $_ -is [System.Collections.IDictionary] -and $_.ContainsKey('labels') -and
+                $_['labels'] -is [System.Collections.IDictionary] -and
+                $_['labels']['run.googleapis.com/execution_name'] -eq $exactName
         })
         Assert-ForecastReceiptTerminal $exact
         if ($executeExit -ne 0) { throw 'Exact forecast execution command did not complete successfully.' }
