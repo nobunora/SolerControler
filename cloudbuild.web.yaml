@@ -1,0 +1,9 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: web-cache
+    args: ['pull', '${_WEB_CACHE_IMAGE}']
+    allowFailure: true
+  - name: gcr.io/cloud-builders/docker
+    id: web
+    args: ['build', '--cache-from', '${_WEB_CACHE_IMAGE}', '-t', '${_WEB_IMAGE}', '-f', 'Dockerfile.web', '.']
+images: ['${_WEB_IMAGE}']
