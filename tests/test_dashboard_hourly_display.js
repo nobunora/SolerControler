@@ -54,6 +54,54 @@ async function tests() {
   assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), nightReference,
     "night reference must be anchored to the saved 07:00 SOC, not another schedule target");
 
+  // HISTORICAL_FAILURE_LOCK (2026-10-14): saved daytime plans must never suppress 00-06 SOC.
+  // Exercise successive snapshots, not just the initial render, including observed/reference zero.
+  const refreshed = fixture();
+  const observedNight = [0, null, 12, null, 50, null, 0];
+  refreshed.forecast_hourly.forEach((row) => {
+    row.actual_soc_percent = row.hour < 7 ? observedNight[row.hour] : null;
+  });
+  await h.replace(refreshed);
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)),
+    observedNight.map((value, hour) => value ?? nightReference[hour]));
+  refreshed.forecast_hourly.forEach((row) => { row.actual_soc_percent = null; });
+  await h.replace(refreshed);
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), nightReference,
+    "a refreshed saved daytime plan must retain all seven night reference points");
+  refreshed.latest_schedule.planned_night_charge_kwh = 0;
+  refreshed.forecast_hourly[7].forecast_soc_percent = 0;
+  await h.replace(refreshed);
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), Array(7).fill(0),
+    "zero night references are visible values, not missing data");
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(7)),
+    refreshed.forecast_hourly.slice(7).map((row) => row.forecast_soc_percent));
+
+  const observationsOnly = fixture();
+  observationsOnly.latest_schedule = null;
+  observationsOnly.battery_daily = [];
+  observationsOnly.forecast_hourly.forEach((row) => {
+    row.forecast_soc_percent = null;
+    row.forecast_capacity_kwh = null;
+    row.forecast_run_id = null;
+    row.forecast_pv_kwh = null;
+    row.forecast_load_kwh = null;
+    row.forecast_charge_kwh = null;
+    row.actual_soc_percent = row.hour < 7 ? [0, 5, 10, 25, 50, 75, 100][row.hour] : null;
+  });
+  h.run("store.latestSchedule=null");
+  await h.replace(observationsOnly);
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), [0, 5, 10, 25, 50, 75, 100],
+    "all seven observations survive without any forecast, schedule or capacity");
+  observationsOnly.forecast_hourly[2].actual_soc_percent = null;
+  observationsOnly.forecast_hourly[5].actual_soc_percent = null;
+  await h.replace(observationsOnly);
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), [0, 5, null, 25, 50, null, 100],
+    "unavailable night references must not erase valid observations or fabricate missing observations");
+  assert.ok(chart.data.datasets[4].data.slice(7).every((value) => value === null));
+  await h.replace(fixture());
+  assert.deepEqual(Array.from(chart.data.datasets[4].data.slice(0, 7)), Array(7).fill(40),
+    "observations must return after forecast snapshots recover");
+
   const partial = fixture();
   partial.forecast_hourly[8].forecast_pv_kwh = null;
   await h.replace(partial);

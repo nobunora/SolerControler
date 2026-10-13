@@ -381,3 +381,17 @@ def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
     assert "const state = hourlyDisplayState(rows, date, store.latestSchedule);" in source
     assert "let soc = state.points;" in source
     assert "estimated = estimateHourlyForecastSoc(rows, date);" in source
+
+
+def test_night_soc_display_protection_and_release_gate_are_registered() -> None:
+    root = Path(__file__).parents[1]
+    lock = "HISTORICAL_FAILURE_LOCK (2026-10-14)"
+    for relative_path in ("static/dashboard.js", "static/dashboard_calculations.js",
+                          "tests/test_dashboard_hourly_display.js", "scripts/pre_release_local.ps1"):
+        assert lock in (root / relative_path).read_text(encoding="utf-8"), relative_path
+    protected = (root / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
+    assert "forecastNightSocAtHourStart" in protected
+    assert "test_dashboard_hourly_display.js" in protected
+    gate = (root / "scripts/pre_release_local.ps1").read_text(encoding="utf-8")
+    assert gate.count("node .\\tests\\test_dashboard_hourly_display.js") == 1
+    assert 'if ($LASTEXITCODE -ne 0) { throw "dashboard hourly SOC display regression failed" }' in gate

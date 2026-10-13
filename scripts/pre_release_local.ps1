@@ -77,6 +77,11 @@ if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript module tests failed" }
 node .\tests\test_dashboard_bootstrap.js
 if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript bootstrap test failed" }
 
+# HISTORICAL_FAILURE_LOCK (2026-10-14): 00-06 SOC disappeared repeatedly.
+# Keep the renderer regression mandatory in local, CI and production preflight.
+node .\tests\test_dashboard_hourly_display.js
+if ($LASTEXITCODE -ne 0) { throw "dashboard hourly SOC display regression failed" }
+
 python .\scripts\security_check.py
 if ($LASTEXITCODE -ne 0) { throw "security_check failed" }
 
