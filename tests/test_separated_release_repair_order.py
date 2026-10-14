@@ -104,6 +104,14 @@ def test_server_proof_restores_dedicated_job_without_environment_or_control_writ
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     shutil.copy(ROOT / "scripts/run_server_adapter_proof_from_env.ps1", scripts)
+    if log_shape in {'empty', 'missing_exact'}:
+        # These fixtures never produce a receipt. Accelerate only their copied
+        # timeout; production retains its full log-delivery budget.
+        copied = scripts / "run_server_adapter_proof_from_env.ps1"
+        source = copied.read_text(encoding='utf-8')
+        assert '[DateTime]::UtcNow.AddSeconds(60)' in source
+        copied.write_text(source.replace('[DateTime]::UtcNow.AddSeconds(60)',
+                                         '[DateTime]::UtcNow.AddSeconds(2)'), encoding='utf-8')
     (scripts / "production_env.ps1").write_text("function Import-ProductionEnv {}\nfunction Get-RequiredProductionEnv($Name) { return 'test-value' }\n")
     for name in ("adapter_proof.py", "firestore_server_cases.py", "gcs_server_cases.py"):
         (tmp_path / "tests/g07").mkdir(parents=True, exist_ok=True)
