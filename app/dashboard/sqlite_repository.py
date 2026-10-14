@@ -8,6 +8,7 @@ from typing import Any
 
 from app.dashboard.repositories import DashboardLoadRequest, DashboardQuerySnapshot
 from app.dashboard.models import DashboardSlice
+from app.dashboard.aggregation import _monitoring_history_start
 from app.dashboard.slice_assembler import build_slice_from_query_snapshot
 from app.dashboard.repository_support import pick_min_max_dates as _pick_min_max_dates, rows_to_dicts as _rows_to_dicts, to_date_or_none as _to_date_or_none
 
@@ -170,7 +171,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 for name in identity_fields:
                     if row.get(name) is None:
                         row.pop(name, None)
-        history_start = (start_obj - timedelta(days=14)).isoformat()
+        history_start = _monitoring_history_start(start_obj, include_static=request.include_static)
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []
         if _sqlite_table_exists(conn, "monitoring_samples"):

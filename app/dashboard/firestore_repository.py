@@ -14,7 +14,7 @@ from app.dashboard.schedule import _build_latest_schedule_from_events, _default_
 from app.dashboard.aggregation import (
     _build_cost_monthly, _build_energy_daily, _aggregation_close_day,
     _accounting_month_label, _accounting_period_bounds, _date_add_iso,
-    _today_jst_iso,
+    _today_jst_iso, _monitoring_history_start,
 )
 from app.dashboard.slice_assembler import (
     build_dashboard_slice as _build_dashboard_slice,
@@ -784,8 +784,8 @@ def load_firestore_slice(
         start_date=start_date,
         end_date_iso=end_date_iso,
     )
-    # 直近2週間を添えて、表示期間の初日に必要な移動集計・比較の前提データを欠かさない。
-    history_start = (start_obj - timedelta(days=14)).isoformat()
+    # 移動集計の2週間と、最初のレビュー日の請求起点を両方取得する。
+    history_start = _monitoring_history_start(start_obj, include_static=include_static)
     monitoring_daily = monitoring(
         client,
         start_date=history_start,
@@ -906,6 +906,5 @@ class FirestoreDashboardRepository:
             window_days=request.window_days,
             include_static=request.include_static,
         )
-
 
 
