@@ -213,6 +213,10 @@ SDK実executionの終端成功と、Cloud Loggingでのreceipt検索可能時刻
 失敗時は、同じfilterの再照会でログ反映を確認し、元execution・専用Job復元・cleanupを調査する。
 成功済みbuildやSDK書込のblind retry、stateの手動成功化は引き続き禁止する。
 
+分離forecastの設定spec比較は、更新・復元時にgcloudが付け替える
+`spec.template.metadata.labels.client.knative.dev/nonce`だけを除外する。
+その他のlabel、env、command/args、resources、secret参照、SA等は維持し、制御Jobのgeneration不変も確認する。
+
 | 判定対象 | 成功の証拠と限界 |
 | --- | --- |
 | image build | Cloud Buildの終端SUCCESSと固定digest。SDK・本番統合の成功とは別 |
