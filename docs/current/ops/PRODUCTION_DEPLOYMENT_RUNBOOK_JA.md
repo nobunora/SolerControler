@@ -83,7 +83,7 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 既存wrapperでは単一runnerを再配布してしまうため、正式入口に`-SeparatedRuntime`を追加した。
 `scripts/deploy_production_from_env.ps1 -SeparatedRuntime -StatePath artifacts/deployment_state/production-<開始時刻>.json`を使う。
 移行後はGit管理外`.env`の`SOLAR_RUNTIME_LAYOUT=separated`で通常入口もこの経路に固定する。
-この移行経路は`auto/full`を受け付ける。明示`dashboard`だけは下記の画面限定経路へ進み、それ以外の非制御scopeを指定したときは制御操作へ拡大せず、明示的に拒否する。
+この移行経路は`auto/full`を受け付ける。明示`dashboard`は画面限定、明示`forecast`は下記の計算限定経路へ進む。それ以外の非制御scopeを指定したときは制御操作へ拡大せず、明示的に拒否する。
 `SOLAR_RECOVERY_BACKUP_PATH`には保存済み完全バックアップのローカルパスを指定する。
 ゲート、保存済み原本との比較、運用設定backup、3役割build、計算Job更新・実行、
 同じ制御imageでのforced/green各SET/read-backと60秒保持・元モード復元、制御Job更新、
@@ -123,7 +123,7 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 
 `-DeploymentScope dashboard` は dashboard Cloud Run service だけを更新する正式な非制御経路です。このscopeではrunner、23/03/07、02:30 forecast job、Scheduler、KP-NET import、Drive backup、機器settingsを変更しません。
 
-`SOLAR_RUNTIME_LAYOUT=separated` または `-SeparatedRuntime` の場合も、明示`dashboard`は画面限定で受け付けます。`cloudbuild.web.yaml`で既存の`Dockerfile.web`・web依存関係を使用し、現在の画面imageをcacheにしてcommit固定のimageを一度buildします。digestへ解決してserviceのimageだけを更新し、同imageのcreated/ready revision一致とReady=Trueを確認します。既存service account、IAM、env、secretは保持し、従来のdashboard環境変数再構築を通しません。分離構成の`auto/full`は従来の完全経路を維持し、`forecast/runner/control-readonly`は引き続き拒否します。通常の事前gate、状態記録、browser/API受入、非制御scopeの機器試験非該当条件は省略しません。
+`SOLAR_RUNTIME_LAYOUT=separated` または `-SeparatedRuntime` の場合も、明示`dashboard`は画面限定で受け付けます。`cloudbuild.web.yaml`で既存の`Dockerfile.web`・web依存関係を使用し、現在の画面imageをcacheにしてcommit固定のimageを一度buildします。digestへ解決してserviceのimageだけを更新し、同imageのcreated/ready revision一致とReady=Trueを確認します。既存service account、IAM、env、secretは保持し、従来のdashboard環境変数再構築を通しません。分離構成の`auto/full`は従来の完全経路を維持し、`runner/control-readonly`は引き続き拒否します。通常の事前gate、状態記録、browser/API受入、非制御scopeの機器試験非該当条件は省略しません。
 
 ```powershell
 pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
@@ -142,6 +142,10 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 ```
 
 この`forecast` scopeは明示指定専用です。`auto`が`app/`差分をrunner/fullと判定した場合でも、レビューで変更がforecast-only ownerに限定され、23/03/07を更新しないことが証明できる場合にのみ使用します。
+
+分離構成では同じ正式入口の明示`forecast`を`deploy_separated_forecast_from_env.ps1`へ渡す。最終merged commitの全必須preflight成功と、そのcommitに固定した`AdapterProofFixturePath`、明示`StatePath`を要求する。`cloudbuild.planner.yaml`で`Dockerfile.planner`だけを一度buildし、固定digestの既存SDK proofを成功・cleanup・専用検証Job復元まで確認してから、`solar-forecast-daily`のimageと既存の`PLAN_SOURCE_REVISION`/`PLAN_IMAGE_DIGEST`だけを更新する。23/03/07、backup、Scheduler、web、IAM、secret、計算条件は変更しない。SDK proofは専用settings-roundtrip Jobのテストcommandを一時更新・復元するため、そのJobのrevisionは変わり得るが設定specの前後一致を必須とする。機器SETは実行しない。通常制御Jobのrevisionは維持する。画像buildとSDK proofを別stageで記録し、SDK失敗を理由に成功済みimageを再buildしない。running/unknownからのblind Resumeは禁止する。
+
+計算側と画面の共通表示ロジックを修正した場合は、同じcommitで明示`forecast`と明示`dashboard`を別StatePathで実行する。計算Job実行・表示データ再生成は既存`run_cloud_job_from_env.ps1 -Slot forecast -ExecutionReceiptPath ...`で終端と失敗task 0まで確認する。bootstrapに加え、既存のbounded `/api/dashboard?end_date=...&window_days=...`で請求境界を検証する。機器試験や通常制御Jobの手動実行を追加しない。
 
 `dashboard`と`forecast`はいずれもdeployed control ownerを変更しないため、実機settings round-tripは実行せず、stateの `settings_roundtrip.status` を `skipped_not_applicable` として記録します。これは手動skipではなく、非制御scopeで制御系を触らないための標準契約です。`skipped_manual`、`running`、`failed` をこれと同一視しません。
 
@@ -175,7 +179,7 @@ runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキ�
 - `-SkipInlineSmokeTest` は、runner/fullで直後に公式07時DryRunを実行する場合だけ使う。設定往復テストと07時DryRunの双方のCloud Run終端条件を確認するまで合格にしない。
 - 設定往復テストはrunner/fullで専用Jobだけから明示実行する。Schedulerを追加せず、Cloud Runの再試行は0回とし、失敗時に同じ設定変更を自動で重ねない。
 - dashboard-onlyではsettings round-tripを起動せず、`skipped_not_applicable`をstateに残し、23/03/07・02:30・Scheduler・機器settingsが変更されていないことをread-onlyで確認する。
-- forecast-onlyではsettings round-tripを起動せず、23/03/07 Job revisionとsettings-roundtrip Job revisionが不変であること、23/03/07 Schedulerの実効設定が前後一致することをread-onlyで確認する。
+- forecast-onlyではsettings round-tripを起動せず、23/03/07 Job revisionが不変、23/03/07 Schedulerの実効設定が前後一致することをread-onlyで確認する。legacyでは専用検証Job revisionも不変。分離構成の必須SDK proofでは専用検証Jobの設定spec復元を確認する。
 - `failed`または`running`の工程を手動で成功へ書き換えない。実機設定が復元済みであることをログから確認した後にのみ、同じ状態ファイルの`-Resume`で未成功工程を再実行する。
 
 ### 2.3 再現可能な準備・実server検証・復旧の判定
@@ -301,7 +305,7 @@ pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 - stateの `jobs.status=success`
 - stateの `settings_roundtrip.status=skipped_not_applicable`
 - `solar-forecast-daily`だけが今回buildしたrunner imageへ更新されている
-- 23/03/07 Job revisionとsettings-roundtrip Job revisionがdeploy前後で不変
+- 23/03/07 Job revisionがdeploy前後で不変。settings-roundtrip Jobはlegacyではrevision不変、分離構成のSDK proofでは設定specの復元一致
 - forecast Schedulerを明示skipした場合、そのschedule/time-zone/targetが不変
 - 23/03/07 Schedulerはdeploy前後のschedule/time-zone/targetが一致し、実効変更0
 - 機器settings/device stateを変更していない

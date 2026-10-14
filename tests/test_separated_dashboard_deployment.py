@@ -32,7 +32,7 @@ def _run(tmp_path: Path, code: str, **environment: str) -> subprocess.CompletedP
     ("legacy", False, "dashboard", "dashboard"),
     ("separated", False, "auto", "full"),
     ("separated", False, "full", "full"),
-    ("separated", False, "forecast", "reject"),
+    ("separated", False, "forecast", "forecast"),
     ("separated", False, "runner", "reject"),
     ("separated", False, "control-readonly", "reject"),
 ])
@@ -40,6 +40,9 @@ def test_separated_scope_never_expands_dashboard_into_control(
     tmp_path: Path, layout: str, explicit: bool, scope: str, expected: str,
 ) -> None:
     (tmp_path / "deploy_separated_runtime.ps1").write_text("Write-Output 'full'", encoding="utf-8")
+    (tmp_path / "deploy_separated_forecast_from_env.ps1").write_text(
+        "param($StatePath,$Resume,$AdapterProofFixturePath)\nWrite-Output 'forecast'", encoding="utf-8"
+    )
     completed = _run(tmp_path, r"""
 function Get-ProductionEnv { param($Name, $Default) return $env:TEST_LAYOUT }
 $SeparatedRuntime = [bool]::Parse($env:TEST_EXPLICIT)
@@ -50,7 +53,7 @@ $ApprovedCalculationPatchSha256 = ''
 $AllowOutOfWindowLiveProbe = $false
 $MonitoringRepairStatePath = ''
 $ReviewedRepairStateSha256 = ''
-$AdapterProofFixturePath = ''
+$AdapterProofFixturePath = 'test-fixture.json'
 $source = Get-Content -Raw -LiteralPath $env:TEST_DEPLOY_SCRIPT
 $start = $source.IndexOf('$useSeparatedRuntime =')
 $end = $source.IndexOf('$artifactsRoot =', $start)
