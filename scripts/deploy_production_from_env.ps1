@@ -116,6 +116,13 @@ if ($ValidateOnly) {
 }
 
 $useSeparatedRuntime = $SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated'
+if ($useSeparatedRuntime -and $DeploymentScope -eq 'forecast') {
+    if (-not $StatePath -or -not $AdapterProofFixturePath) {
+        throw 'Separated forecast release requires StatePath and AdapterProofFixturePath.'
+    }
+    & (Join-Path $PSScriptRoot 'deploy_separated_forecast_from_env.ps1') -StatePath $StatePath -Resume:$Resume -AdapterProofFixturePath $AdapterProofFixturePath
+    return
+}
 if ($useSeparatedRuntime -and $DeploymentScope -ne 'dashboard') {
     if ($DeploymentScope -notin @('auto', 'full')) {
         throw 'Separated runtime requires auto/full scope; an explicit non-control scope must never be expanded to a control release.'

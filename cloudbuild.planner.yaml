@@ -1,0 +1,11 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: planner-cache
+    args: ['pull', '${_PLANNER_CACHE_IMAGE}']
+    allowFailure: true
+  - name: gcr.io/cloud-builders/docker
+    id: planner
+    waitFor: ['planner-cache']
+    args: ['build', '--cache-from', '${_PLANNER_CACHE_IMAGE}', '-t', '${_PLANNER_IMAGE}', '-f', 'Dockerfile.planner', '.']
+images: ['${_PLANNER_IMAGE}']
+timeout: 1200s

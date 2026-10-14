@@ -81,6 +81,19 @@ def _accounting_period_bounds(month_label: str, *, close_day: int) -> tuple[str,
     return start.isoformat(), end.isoformat()
 
 
+def _monitoring_history_start(start: date, *, include_static: bool) -> str:
+    history_start = start - timedelta(days=14)
+    if include_static:
+        close_day = _aggregation_close_day()
+        label = _accounting_month_label(start.isoformat(), close_day=close_day)
+        bounds = _accounting_period_bounds(label or "", close_day=close_day)
+        if bounds is not None:
+            # Regression 2026-10-14: a fixed 14-day lookback omitted 8/15-8/30
+            # from the 9/14 bill. Review totals need the whole billing period.
+            history_start = min(history_start, date.fromisoformat(bounds[0]))
+    return history_start.isoformat()
+
+
 def _build_cost_monthly(cost_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     close_day = _aggregation_close_day()
     by_month: dict[str, dict[str, float]] = {}
