@@ -207,6 +207,12 @@ execution単位に上書きする。`--update-env-vars` は [公式execute仕様
 runtime revisionが古ければ全体成功にはしない。local readerもSDK case結果と `runtime_revision_matches` を別表示し、
 全体exit0には両方の一致を要求する。
 
+SDK実executionの終端成功と、Cloud Loggingでのreceipt検索可能時刻は一致するとは限らない。
+`run_server_adapter_proof_from_env.ps1`は固定executionのreceipt検索だけを60秒の予算で繰り返す。
+他execution・labels欠落を受け入れず、複数receiptは即時停止する。予算切れでも実executionを再実行しない。
+失敗時は、同じfilterの再照会でログ反映を確認し、元execution・専用Job復元・cleanupを調査する。
+成功済みbuildやSDK書込のblind retry、stateの手動成功化は引き続き禁止する。
+
 | 判定対象 | 成功の証拠と限界 |
 | --- | --- |
 | image build | Cloud Buildの終端SUCCESSと固定digest。SDK・本番統合の成功とは別 |
