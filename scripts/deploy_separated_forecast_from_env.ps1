@@ -120,6 +120,11 @@ function Canonical-Json($Value) {
 }
 function Comparable-Spec($Spec) {
     $copy = $Spec | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
+    # gcloud regenerates this revision nonce even when restoring an identical
+    # template. Preserve every other label and all runtime configuration.
+    if ($copy.template.Contains('metadata') -and $copy.template.metadata.Contains('labels')) {
+        $copy.template.metadata.labels.Remove('client.knative.dev/nonce')
+    }
     foreach ($item in $copy.template.spec.template.spec.containers) {
         if ($item.Contains('env')) { $item.env = @($item.env | Sort-Object { $_.name }) }
     }

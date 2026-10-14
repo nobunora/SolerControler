@@ -65,7 +65,9 @@ if ($args[3] -eq 'solar-forecast-daily' -and $changed) {
 $entries = @(@{ name='PLAN_SOURCE_REVISION'; value=$revision }, @{ name='PLAN_IMAGE_DIGEST'; value=$digest }, @{ name='KEEP'; value='yes' })
 if ($env:TEST_FAILURE -eq 'unexpected' -and $changed) { $entries[2].value = 'no' }
 $ready = if ($env:TEST_FAILURE -eq 'ready' -and $changed) { 'False' } else { 'True' }
-@{ metadata=@{generation=1}; status=@{conditions=@(@{type='Ready';status=$ready})}; spec=@{ template=@{ spec=@{ template=@{ spec=@{ containers=@(@{
+$labels=@{'client.knative.dev/nonce'=[Guid]::NewGuid().ToString();managed='keep'}
+if ($env:TEST_FAILURE -eq 'label' -and $changed) { $labels.managed='changed' }
+@{ metadata=@{generation=1}; status=@{conditions=@(@{type='Ready';status=$ready})}; spec=@{ template=@{metadata=@{labels=$labels}; spec=@{ template=@{ spec=@{ containers=@(@{
     image=$image; command=@('python'); args=@('planner_job_main.py'); env=$entries
 }) } } } } } } | ConvertTo-Json -Depth 15
 """
@@ -117,7 +119,7 @@ def _run(tmp_path: Path, runner: Path, failure: str = "", resume: bool = False) 
              "TEST_CALLS": str(tmp_path / "calls.jsonl"), "TEST_UPDATED": str(tmp_path / "updated.txt")})
 
 
-@pytest.mark.parametrize("failure", ["", "build", "digest", "proof", "active", "update", "unexpected", "ready"])
+@pytest.mark.parametrize("failure", ["", "build", "digest", "proof", "active", "update", "unexpected", "ready", "label"])
 def test_forecast_release_is_pinned_and_never_updates_control(tmp_path: Path, failure: str) -> None:
     runner, state_path = _setup(tmp_path)
     result = _run(tmp_path, runner, failure)

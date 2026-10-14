@@ -81,6 +81,26 @@ $flagsPath = Join-Path $privateDirectory 'proof-update.private.json'
 $attemptedUpdate = $false
 $restored = $false
 $proofError = $null
+function Read-ExactProofReceipt([string]$ExecutionName, [string]$Filter, [datetime]$Deadline) {
+    # Cloud Run can finish before its structured receipt is searchable. Retry
+    # only this read; never repeat the completed execution or its SDK writes.
+    while ([DateTime]::UtcNow -lt $Deadline) {
+        $records = @(Invoke-ProofCloud @('logging', 'read', $Filter, '--project', $project, '--freshness', '1d', '--limit', '200', '--format', 'json') | ConvertFrom-Json -AsHashtable)
+        ConvertTo-Json -InputObject $records -Depth 40 | Set-Content -LiteralPath (Join-Path $privateDirectory 'proof-records.private.json') -Encoding utf8
+        $proofs = @($records | Where-Object {
+            $_ -is [System.Collections.IDictionary] -and $_.Contains('labels') -and
+            $_.labels -is [System.Collections.IDictionary] -and $_.labels.Contains('run.googleapis.com/execution_name') -and
+            $_.labels['run.googleapis.com/execution_name'] -eq $ExecutionName -and
+            $_.Contains('jsonPayload') -and $_.jsonPayload -is [System.Collections.IDictionary] -and
+            $_.jsonPayload.Contains('event') -and $_.jsonPayload.event -eq 'server_adapter_proof'
+        })
+        if ($proofs.Count -gt 1) { throw 'Exact execution proof is ambiguous.' }
+        if ($proofs.Count -eq 1) { return $proofs[0].jsonPayload.receipt }
+        if ([DateTime]::UtcNow -lt $Deadline) { Start-Sleep -Milliseconds 1000 }
+    }
+    throw 'Exact execution proof was not available within the read budget.'
+}
+
 function Assert-ProofTerminal([hashtable]$Execution) {
     if (-not $Execution.status -or -not $Execution.status.completionTime) { throw 'Native proof execution is not terminal.' }
     foreach ($type in @('Completed', 'ResourcesAvailable', 'Started', 'ContainerReady')) {
@@ -121,17 +141,7 @@ try {
     Assert-ProofTerminal $exactExecution
     $filter = ('resource.type=cloud_run_job AND resource.labels.job_name="' + $ProbeJobName +
         '" AND labels."run.googleapis.com/execution_name"="' + $executionName + '" AND jsonPayload.event="server_adapter_proof"').Replace('"', '\"')
-    $records = @(Invoke-ProofCloud @('logging', 'read', $filter, '--project', $project, '--freshness', '1d', '--limit', '200', '--format', 'json') | ConvertFrom-Json -AsHashtable)
-    ConvertTo-Json -InputObject $records -Depth 40 | Set-Content -LiteralPath (Join-Path $privateDirectory 'proof-records.private.json') -Encoding utf8
-    $proofs = @($records | Where-Object {
-        $_ -is [System.Collections.IDictionary] -and $_.Contains('labels') -and
-        $_.labels -is [System.Collections.IDictionary] -and $_.labels.Contains('run.googleapis.com/execution_name') -and
-        $_.labels['run.googleapis.com/execution_name'] -eq $executionName -and
-        $_.Contains('jsonPayload') -and $_.jsonPayload -is [System.Collections.IDictionary] -and
-        $_.jsonPayload.Contains('event') -and $_.jsonPayload.event -eq 'server_adapter_proof'
-    })
-    if ($proofs.Count -ne 1) { throw 'Exact execution proof is absent or ambiguous.' }
-    $proof = $proofs[0].jsonPayload.receipt
+    $proof = Read-ExactProofReceipt $executionName $filter ([DateTime]::UtcNow.AddSeconds(60))
     $proof | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $ReceiptPath -Encoding utf8
     if ($proof.image_digest -ne $imageDigest -or $proof.fixture_sha256 -ne $fixture.fixture_sha256 -or
         $proof.source_commit -ne $fixture.source_commit -or $proof.runtime_plan_source_revision -ne $fixture.source_commit -or
