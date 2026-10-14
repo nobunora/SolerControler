@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from app.dashboard.data import clear_dashboard_cache, load_dashboard_slice
+from app.dashboard.aggregation import _monitoring_history_start
 from app.dashboard.models import DashboardSlice
 from app.dashboard.slice_assembler import extract_pv_forecast_diagnostics
 from app.separated_runtime.plan import PublishedPlan
@@ -763,7 +764,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
     end = date.fromisoformat(max(bounds))
     retained_before = (end - timedelta(days=30)).isoformat() if history_scope else None
     start = date.fromisoformat(min(bounds)) if history_scope else end - timedelta(days=30)
-    monitoring_start = start - timedelta(days=14)
+    monitoring_start = date.fromisoformat(_monitoring_history_start(start, include_static=True))
     epoch: dict[str, str] = {}
     if retained_before:
         epoch["history_retained_before"] = retained_before

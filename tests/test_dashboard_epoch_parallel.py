@@ -193,6 +193,25 @@ def test_worker_failure_keeps_original_error_stops_second_bound_rpc_and_never_pu
     assert blob.uploads == []
 
 
+def test_bootstrap_epoch_detects_changes_in_all_billing_inputs(monkeypatch):
+    monkeypatch.setenv('DASHBOARD_AGGREGATION_CLOSE_DAY', '14')
+    client = ObservedClient()
+    stamp = datetime(2026, 10, 14, tzinfo=timezone.utc)
+    client.rows['sunshine_daily'].append(RevisionDocument('end', {'date': '2026-10-14'}, stamp))
+    daily = RevisionDocument('billing-start', {'date': '2026-08-15'}, stamp)
+    sample = RevisionDocument('billing-start-sample', {'ts': '2026-08-15T00:00:00'}, stamp)
+    client.rows['dashboard_daily_metrics'].append(daily)
+    client.rows['monitoring_samples'].append(sample)
+    before = snapshots._read_dashboard_source_epoch(client, history_scope=False)
+    assert before['scope/monitoring_samples'] == '2026-08-15'
+    daily.update_time += timedelta(seconds=1)
+    changed_daily = snapshots._read_dashboard_source_epoch(client, history_scope=False)
+    assert changed_daily['dashboard_daily_metrics'] != before['dashboard_daily_metrics']
+    sample.update_time += timedelta(seconds=1)
+    changed_raw = snapshots._read_dashboard_source_epoch(client, history_scope=False)
+    assert changed_raw['monitoring_samples'] != changed_daily['monitoring_samples']
+
+
 def test_expired_shared_deadline_cancels_queued_and_followup_reads(monkeypatch):
     client = ObservedClient()
     clock = [0.0]
