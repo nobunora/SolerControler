@@ -21,7 +21,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 - bootstrapとhistoryは生成時刻が異なる。古いhistoryで最新日・締め日設定を巻き戻さない。
   請求締め日を跨ぐfixtureで「全て→1ヶ月」のラベル・グラフ日付一致を検証する。
-- 長いモデルSHA・数式・容量値を320/390/768/1440pxで実ブラウザ描画する。
+- 長いモデルSHA・数式・容量値・予実レビューKPIを320/390/768/1440pxで実ブラウザ描画する。
   document全体の横溢れと文字欠けを禁止し、ガント内の横スクロールを維持する。
   bodyのoverflowを隠して合格させない。
 - `test_dashboard_bootstrap.js`と`test_dashboard_responsive_layout.py`を通常gateで実行する。
