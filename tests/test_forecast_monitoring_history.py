@@ -121,5 +121,37 @@ def test_default_context_uses_stored_previous_month_and_seven_days_for_fitting(t
     assert context.latest_soc_percent == 25.0
     assert context.history_selection["days"] == [f"2026-10-{day:02d}" for day in range(1, 8)]
     assert len(fitted) == 336 and len(context.rows) == 336
+    assert len(context.consumption_rows) == 23 * 48
+    assert context.load_training_selection["requested_day_count"] == 60
     assert all(row["dt"].date().isoformat() < "2026-10-08" for row in context.rows)
     assert monthly_day_buy_kwh_before_target(context.billing_rows, target_date="2026-10-08")["kwh"] == pytest.approx(73.6)
+
+
+def test_training_window_preserves_complete_day_rules_and_seven_day_default():
+    start = datetime(2026, 8, 1)
+    rows = [row for offset in range(75) for row in day_rows((start + timedelta(days=offset)).date().isoformat())]
+    rows[-49]["load"] = None
+    rows.pop(-1)
+    target = "2026-10-15"
+    rows += day_rows(target, load=99.0)
+    selected = recent_forecast_rows(rows, target_date=target, day_count=60)
+    assert len(selected) == 60 * 48
+    assert selected[-1]["dt"].date().isoformat() == "2026-10-12"
+    assert len(recent_forecast_rows(rows, target_date=target)) == 7 * 48
+    assert all(row["load"] == 0.2 for row in selected)
+    with pytest.raises(ValueError, match="180"):
+        recent_forecast_rows(rows, target_date=target, day_count=181)
+
+
+def test_long_training_history_fetches_older_than_billing_window(tmp_path, monkeypatch):
+    db = tmp_path / "history.db"
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+    monkeypatch.setenv("DATA_DB_PATH", str(db))
+    rows = [row for offset in range(90) for row in day_rows((datetime(2026, 7, 1) + timedelta(days=offset)).date().isoformat())]
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE monitoring_samples (ts TEXT, pv_kwh REAL, load_kwh REAL)")
+        conn.executemany("INSERT INTO monitoring_samples VALUES (?,?,?)", [(r["dt"].isoformat(),r["pv"],r["load"]) for r in rows])
+    loaded = load_monitoring_history(target_date="2026-10-15", minimum_complete_days=60)
+    selected = recent_forecast_rows(loaded, target_date="2026-10-15", day_count=60)
+    assert len(selected) == 60 * 48
+    assert selected[0]["dt"] < datetime(2026, 9, 1)

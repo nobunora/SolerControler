@@ -186,6 +186,12 @@ class EnergyModelContext:
     occupancy_events: list[OccupancyScheduleEvent]
     billing_rows: list[dict[str, Any]] | None = None
     history_selection: dict[str, object] = field(default_factory=dict)
+    load_training_rows: list[dict[str, Any]] | None = None
+    load_training_selection: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def consumption_rows(self) -> list[dict[str, Any]]:
+        return self.rows if self.load_training_rows is None else self.load_training_rows
 
 
 class _DefaultHistoricalInputPort:
@@ -790,8 +796,22 @@ def _load_execution_context(
     )
     billing_rows = None
     selection: dict[str, object] = {}
+    load_training_rows: list[dict[str, Any]] | None = None
+    load_training_selection: dict[str, object] = {}
     if historical_input is None:
-        billing_rows = merge_monitoring_rows(load_monitoring_history(target_date=target_date), rows)
+        training_days = max(60, config.consumption_min_training_days,
+            math.ceil(max(24, _env_float("LOAD_COMFORT_MODEL_MIN_SAMPLES", 336.0)) / 24))
+        if training_days > 180:
+            raise ValueError("load training requirements exceed the bounded 180-day history")
+        billing_rows = merge_monitoring_rows(load_monitoring_history(
+            target_date=target_date, minimum_complete_days=training_days), rows)
+        load_training_rows = recent_forecast_rows(billing_rows, target_date=target_date, day_count=training_days)
+        load_training_selection = {
+            "policy": "latest_complete_observed_load_training_days",
+            "days": sorted({row["dt"].date().isoformat() for row in load_training_rows}),
+            "sample_count": len(load_training_rows), "requested_day_count": training_days,
+            "sample_interval_minutes": 30,
+        }
         rows = recent_forecast_rows(billing_rows, target_date=target_date)
         selected_days = sorted({row["dt"].date().isoformat() for row in rows})
         selection = {"policy": "latest_7_complete_observed_days", "days": selected_days, "sample_count": len(rows), "requested_day_count": 7}
@@ -820,6 +840,8 @@ def _load_execution_context(
         occupancy_events=history.load_occupancy_events(),
         billing_rows=billing_rows,
         history_selection=selection,
+        load_training_rows=load_training_rows,
+        load_training_selection=load_training_selection,
     )
 
 
@@ -830,10 +852,10 @@ def _build_consumption_forecasts(
 ) -> ConsumptionForecastBundle:
     config = context.config
     weather_source = weather_history_port or _DefaultWeatherHistoryPort()
-    load_rows = load_rows_for_consumption_forecast(context.rows)
+    load_rows = load_rows_for_consumption_forecast(context.consumption_rows)
     training_rows = filter_training_load_rows(load_rows, context.occupancy_events)
     weather_history = weather_source.load_history(
-        context.rows,
+        context.consumption_rows,
         latitude=config.latitude,
         longitude=config.longitude,
         timezone=config.timezone,
@@ -855,6 +877,7 @@ def _build_consumption_forecasts(
     diagnostics: dict[str, object] = {
         **asdict(weather_history),
         "history_selection": context.history_selection,
+        "load_training_selection": context.load_training_selection,
         "rows": None,
         "requested_start_date": (
             weather_history.requested_dates[0] if weather_history.requested_dates else None

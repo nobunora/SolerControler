@@ -80,6 +80,7 @@ class ForecastCorrectionInput:
     longitude: float
     timezone: str
     forecast: dict[str, object]
+    load_training_rows: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def build_forecast_correction(
         }
     return calculate_forecast_correction(
         rows=correction_input.rows,
+        load_training_rows=correction_input.load_training_rows,
         hourly_load_forecast=correction_input.hourly_load_forecast,
         hourly_pv_forecast=correction_input.hourly_pv_forecast,
         target_date=correction_input.target_date,
