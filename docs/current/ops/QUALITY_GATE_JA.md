@@ -13,7 +13,7 @@
 | Node tests | dashboardの計算・モジュール・bootstrap動作・時間別表示（00〜06時SOCの必須回帰を含む） |
 | security_check | 秘密情報と設定のセキュリティ検査 |
 
-`-CheckPrerequisites` は必要コマンドの存在確認のみで、リリース合格ではない。`-SkipInstall` は依存インストールだけを省略する。失敗を許容するモードは設けない。
+`-CheckPrerequisites` は必要コマンドと分離PythonのAsia/Tokyoロードを確認し、再発防止ルールを表示する早期診断で、リリース合格ではない。`-SkipInstall` は依存インストールだけを省略する。失敗を許容するモードは設けない。正規pytestは子プロセスのWindows handleを維持する`--capture=sys`で実行し、全テスト選択を維持する。
 
 ## 通常リリースから除外する探索的チェック
 

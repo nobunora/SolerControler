@@ -43,6 +43,12 @@
 
 ## 1. 事前確認
 
+毎回 [失敗再発防止ルール](DEPLOYMENT_FAILURE_RULES_JA.md) を読む。
+正規gateは同文書を表示し、SHA-256と`release_prerequisites`の結果をstateへ記録する。
+`python -I`でAsia/Tokyoが使えない環境は全体テスト前に停止する。
+local/integrationのpytestはWindows子プロセスのhandleを維持する`--capture=sys`で実行する。
+必須checkをskipしたgateは非ゼロ終了し、`passed`にはならない。
+
 ### SOC API 認証と実測確認（2026-10-10）
 
 SOC はアプリの `get-measurement-data/v2` に `measureFlg=GW` を送って取得する。
@@ -73,7 +79,7 @@ pwsh -NoProfile -File scripts/production_deployment_gate.ps1 -RunPreRelease
 
 ゲートは `artifacts/deployment_state/preflight-*.json` に非機密の判定結果を保存します。ゲートが失敗した場合は本番ラッパーを起動しません。
 
-以下の例の`-SkipPreRelease`は、このゲートの全必須チェック成功と同commitを確認した直後の重複検査を省くための指定です。gateの`status=passed`だけでは、任意skipしたチェックの成功を証明できません。`checks`配列の各`name/status`も確認し、保存済みpreflightのパスを運用記録に残します。wrapper側の`pre_release=skipped_manual`は外部ゲート実行の証拠ではなく、外部preflightと組にして判定します。
+以下の例の`-SkipPreRelease`は、このゲートの全必須チェック成功と同commitを確認した直後の重複検査を省くための指定です。旧版gateには任意skipを含んでも`status=passed`と記録するものがあるため、`checks`配列の各`name/status`も確認し、保存済みpreflightのパスを運用記録に残します。wrapper側の`pre_release=skipped_manual`は外部ゲート実行の証拠ではなく、外部preflightと組にして判定します。
 
 ## 2. 通常デプロイ
 
@@ -322,6 +328,11 @@ pwsh -NoProfile -File scripts/run_cloud_job_from_env.ps1 -Slot 07 -DryRun
 - Secret値を出力していない
 
 ### dashboard-only
+
+forecastで表示用データを更新した場合もbrowser受入を別判定する。
+`scripts/check_dashboard_browser_from_env.ps1` を失敗再発防止ルールの引数で実行し、
+初期表示・全て→1ヶ月・mobile・console・履歴遅延取得のreceiptとPNGを確認する。
+browserのFAIL/INCONCLUSIVEをHTTP 200やJob成功で上書きしない。
 
 次のすべてを確認します。
 

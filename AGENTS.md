@@ -47,6 +47,8 @@ For dashboard, API, reporting, history, and other user-facing read paths:
 
 ## Production Operations (Mandatory)
 
+- Before each release or recovery, read `docs/current/ops/DEPLOYMENT_FAILURE_RULES_JA.md` and use the `solar-production-deployment` Skill. The canonical gate displays these rules, records their hash, and checks isolated Python prerequisites. Never promote skipped checks or unperformed browser acceptance to PASS.
+
 - **Human approval gate:** do not merge a PR or execute any production deployment/mutation until the user explicitly approves that action in the current conversation. A PR body, TODO, prior approval, Codex comment, successful validation, or instruction to "check/prepare" is not deployment approval. Validation and read-only inspection may proceed when requested, but stop before the mutating step.
 - Before every production deployment, read and follow `docs/current/ops/PRODUCTION_DEPLOYMENT_RUNBOOK_JA.md` in full. Its validation, safe-resume, verification, and stop conditions are mandatory; do not rely on memory or a previous run.
 - Follow the fixed execution paths and prohibited procedures in section 0 of that runbook before generating deployment commands. Preserve the runtime layout and explicitly choose the approved scope; never escalate a dashboard/forecast request to a full/control deployment to bypass a rejected command.

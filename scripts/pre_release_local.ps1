@@ -27,6 +27,8 @@ foreach ($commandName in @("python", "git", "node", "npx")) {
 
 if ($CheckPrerequisites) {
     $null = @(Get-TrackedJavaScriptFiles)
+    & (Join-Path $PSScriptRoot 'check_release_prerequisites.ps1')
+    if ($LASTEXITCODE -ne 0) { throw 'release prerequisites failed' }
     Write-Host "Quality gate prerequisites passed."
     exit 0
 }
@@ -35,6 +37,9 @@ if (-not $SkipInstall) {
     python -m pip install -r .\requirements-dev.txt
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 }
+
+& (Join-Path $PSScriptRoot 'check_release_prerequisites.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'release prerequisites failed' }
 
 # The release contract is fixed in docs/current/ops/QUALITY_GATE_JA.md.
 # Every check below is mandatory; exploratory tools are not release checks.
@@ -65,7 +70,8 @@ if ($javaScriptFiles.Count -gt 0) {
 python -m compileall app main.py kpnet_main.py energy_model_main.py cloud_job_runner.py db_pipeline_main.py dashboard_server.py
 if ($LASTEXITCODE -ne 0) { throw "compileall failed" }
 
-python -m pytest -q
+# sys capture preserves native subprocess handles on Windows (WinError 6).
+python -m pytest -q --capture=sys
 if ($LASTEXITCODE -ne 0) { throw "pytest failed" }
 
 node .\tests\test_dashboard_calculations.js

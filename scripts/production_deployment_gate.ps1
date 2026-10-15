@@ -29,6 +29,7 @@ $state = [ordered]@{
     started_at = (Get-Date).ToUniversalTime().ToString('o')
     updated_at = $null
     status = 'running'
+    failure_rules_sha256 = $null
     checks = [System.Collections.Generic.List[object]]::new()
 }
 
@@ -101,6 +102,10 @@ function Invoke-GateCheck {
 }
 
 try {
+    Invoke-GateCheck -Name 'release_prerequisites' -Action {
+        & (Join-Path $PSScriptRoot 'check_release_prerequisites.ps1')
+        $state.failure_rules_sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot 'docs/current/ops/DEPLOYMENT_FAILURE_RULES_JA.md') -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     Invoke-GateCheck -Name 'working_tree_clean' -Action {
         $status = @(git status --porcelain --untracked-files=all)
         if ($status.Count -ne 0) {
@@ -156,6 +161,9 @@ try {
         Add-SkippedCheck -Name 'pre_release_integration' -Reason 'RunPreRelease was not specified'
     }
 
+    if (@($state.checks | Where-Object { $_.status -ne 'success' }).Count -gt 0) {
+        throw 'Required checks were not completed. A partial gate cannot pass.'
+    }
     $state.status = 'passed'
     Save-State
     Write-Host "Production deployment gate passed. State: $StatePath"

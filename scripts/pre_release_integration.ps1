@@ -10,11 +10,11 @@ Set-Location $repoRoot
 if ($LASTEXITCODE -ne 0) { throw "local pre-release checks failed" }
 
 Write-Host "Run HISTORICAL_FAILURE_LOCK contract..."
-python -m pytest .\tests\test_dashboard_history_contract.py .\tests\test_historical_forecast_replay_contract.py -q
+python -m pytest .\tests\test_dashboard_history_contract.py .\tests\test_historical_forecast_replay_contract.py -q --capture=sys
 if ($LASTEXITCODE -ne 0) { throw "dashboard historical failure lock failed" }
 
 Write-Host "Run predicted-SOC and dashboard-only deployment failure locks..."
-python -m pytest .\tests\test_dashboard_forecast_soc_contract.py .\tests\test_dashboard_only_deployment_contract.py -q
+python -m pytest .\tests\test_dashboard_forecast_soc_contract.py .\tests\test_dashboard_only_deployment_contract.py -q --capture=sys
 if ($LASTEXITCODE -ne 0) { throw "dashboard SOC/deployment failure lock failed" }
 
 Write-Host "Synchronize Firestore and local SQLite before validation..."
