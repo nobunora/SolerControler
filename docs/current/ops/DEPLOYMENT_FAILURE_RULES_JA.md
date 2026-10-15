@@ -12,6 +12,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 | 同日: Cloud Runの省略されたrunningCountをStrictModeで直接参照して診断が失敗 | exact executionを正規wrapperで照合。欠落fieldはUNKNOWN。診断失敗をCloud失敗とみなして再実行しない |
 | 2026-10-16: API/Job成功後のbrowserで全て→1ヶ月の日付逆転と390px画面の横溢れを発見 | 表示対象の変更ではbrowser受入を別実行。初期表示、全て→1ヶ月、mobile、consoleを確認。FAIL/未実施のまま一連の確認をPASSと報告しない |
 | gateが任意skipを含んでもpassedを記録できた（実装レビューで発見） | 全checksがsuccessの場合だけpassed。省略したgateは非ゼロ終了。過去stateも個別checksを確認 |
+| 2026-10-16: 新しい前提検査をCIの依存導入前に呼び、未導入tzdataで停止 | CIは依存導入→前提検査→品質gateの順。コマンド存在確認を依存ロード検査へ拡張するときは呼出側の実行順も検証する |
 
 ## 毎回の順序
 

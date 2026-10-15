@@ -83,3 +83,9 @@ def test_canonical_pytest_preserves_native_handles() -> None:
                     if line.startswith("python -m pytest")]
         assert commands
         assert all("--capture=sys" in command for command in commands)
+
+
+def test_ci_installs_dependencies_before_import_prerequisites() -> None:
+    workflow = (ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
+    assert workflow.index("pip install -r requirements-dev.txt") < workflow.index("-CheckPrerequisites")
+    assert workflow.index("-CheckPrerequisites") < workflow.index("-SkipInstall")
