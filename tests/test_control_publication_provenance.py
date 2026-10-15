@@ -70,10 +70,10 @@ def test_unknown_provider_compares_retrieval_without_claiming_provider_freshness
 
 
 def test_control_publication_deadline_prevents_later_cas_attempt(monkeypatch):
-    import time
     monkeypatch.setenv("FIRESTORE_PROJECT_ID", "local-test")
     calls = []
-    clock = [time.monotonic()]
+    # Exact fake time keeps deadline subtraction independent of host uptime.
+    clock = [1000.0]
     monkeypatch.setattr("app.separated_runtime.plan_store.time.monotonic", lambda: clock[0])
     def get(*args, **kwargs):
         calls.append(("read", kwargs))
