@@ -13,8 +13,20 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 | 2026-10-16: API/Job成功後のbrowserで全て→1ヶ月の日付逆転と390px画面の横溢れを発見 | 表示対象の変更ではbrowser受入を別実行。初期表示、全て→1ヶ月、mobile、consoleを確認。FAIL/未実施のまま一連の確認をPASSと報告しない |
 | gateが任意skipを含んでもpassedを記録できた（実装レビューで発見） | 全checksがsuccessの場合だけpassed。省略したgateは非ゼロ終了。過去stateも個別checksを確認 |
 | 2026-10-16: 新しい前提検査をCIの依存導入前に呼び、未導入tzdataで停止 | CIは依存導入→前提検査→品質gateの順。コマンド存在確認を依存ロード検査へ拡張するときは呼出側の実行順も検証する |
+| 同日: 期限テストの偽時計初期値がhost稼働時間由来で、丸めにより60秒を僅かに超過 | 偽時計は正確に表現できる固定値から開始する。実時間を混ぜず、期限後の再要求拒否のassertionを維持する |
 
 ## 毎回の順序
+
+画面の期間・レイアウト変更では次の回帰を必須とする。
+
+- bootstrapとhistoryは生成時刻が異なる。古いhistoryで最新日・締め日設定を巻き戻さない。
+  請求締め日を跨ぐfixtureで「全て→1ヶ月」のラベル・グラフ日付一致を検証する。
+- 長いモデルSHA・数式・容量値・予実レビューKPIを320/390/768/1440pxで実ブラウザ描画する。
+  document全体の横溢れと文字欠けを禁止し、ガント内の横スクロールを維持する。
+  bodyのoverflowを隠して合格させない。
+- `test_dashboard_bootstrap.js`と`test_dashboard_responsive_layout.py`を通常gateで実行する。
+  CIは既存PlaywrightのChromiumを明示導入する。ローカルも同browserが必要で、未導入はskipしない。
+- 初期history要求0回、明示遷移後1回、月へ戻る際の追加要求0回を維持する。
 
 1. 本番runbook全文を読み、承認済みscope・固定commit・元StatePathを確定する。
 2. `scripts/pre_release_local.ps1 -CheckPrerequisites` は早期診断だけ。正式検査は

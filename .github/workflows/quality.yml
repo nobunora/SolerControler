@@ -21,6 +21,8 @@ jobs:
       - name: Check quality-gate prerequisites
         shell: pwsh
         run: pwsh -NoProfile -File scripts/pre_release_local.ps1 -CheckPrerequisites
+      - name: Install Chromium for offline layout regression
+        run: python -m playwright install chromium
       - name: Run local quality gate
         shell: pwsh
         run: pwsh -NoProfile -File scripts/pre_release_local.ps1 -SkipInstall

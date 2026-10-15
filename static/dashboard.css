@@ -43,7 +43,7 @@
     }
     .full { grid-column: 1 / -1; }
     .card h2 { margin: 0 0 6px; font-size: 16px; }
-    .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; }
+    .desc { margin: 0 0 10px; color: var(--sub); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
     .chart-box { position: relative; width: 100%; min-width: 0; height: 300px; }
     .battery-life-card { display: grid; gap: 8px; }
     .battery-life-kpis {
@@ -53,6 +53,8 @@
     }
     .battery-life-kpi {
       display: flex;
+      flex-wrap: wrap;
+      min-width: 0;
       align-items: baseline;
       justify-content: space-between;
       gap: 5px;
@@ -77,7 +79,9 @@
       line-height: 1;
       letter-spacing: -0.02em;
       text-align: right;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      min-width: 0;
     }
     .battery-life-value small {
       color: #5a6f85;
@@ -209,6 +213,7 @@
     .review-nav .period-label { min-width: 7.5em; margin: 0; text-align: center; }
     canvas { display: block; width: 100% !important; height: 100% !important; }
     .equation {
+      overflow-wrap: anywhere;
       background: #f6fbff;
       border: 1px solid #dce9f4;
       border-radius: 10px;
@@ -222,7 +227,7 @@
     th, td { padding: 7px 5px; border-bottom: 1px solid #eaf0f6; text-align: left; overflow-wrap: anywhere; word-break: break-word; }
     th { background: #f8fbff; }
     .diag-grid { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 7px 0 9px; }
-    .diag-kpi { display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 3px 6px; border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; background: #fbfdff; white-space: nowrap; }
+    .diag-kpi { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 3px 6px; border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; background: #fbfdff; white-space: normal; max-width: 100%; min-width: 0; box-sizing: border-box; }
     .diag-label { display: inline; color: var(--muted); font-size: 10px; margin: 0; }
     .diag-value { font-weight: 700; font-size: 12px; overflow-wrap: anywhere; }
     .diag-subvalue { display: inline; color: var(--sub); font-size: 10px; line-height: 1.3; }

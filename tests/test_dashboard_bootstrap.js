@@ -109,14 +109,16 @@ const context = {
         meta: isHistory
           ? {
               window_days: 201,
+              aggregation_close_day: 31,
               oldest_loaded_date: "2026-01-01",
-              newest_loaded_date: "2026-07-20",
+              newest_loaded_date: "2026-07-14",
               global_oldest_date: "2026-01-01",
-              global_newest_date: "2026-07-20",
+              global_newest_date: "2026-07-14",
               has_more_before: false,
             }
           : {
               window_days: 31,
+              aggregation_close_day: 14,
               oldest_loaded_date: "2026-06-15",
               newest_loaded_date: "2026-07-20",
               global_oldest_date: "2026-01-01",
@@ -172,6 +174,15 @@ setImmediate(async () => {
   assert.deepEqual({ min: hourlyChart.options.scales.y2.min, max: hourlyChart.options.scales.y2.max }, { min: 0, max: 100 });
   assert.equal(hourlyChart.options.scales.y.ticks.count, hourlyChart.options.scales.y2.ticks.count);
   const pvChart = ChartStub.instances[1];
+  const initialPeriodLabel = elements.get("periodLabel").textContent;
+  const initialDailyLabels = Array.from(pvChart.data.labels);
+  // A separately generated history snapshot may end before the current billing month.
+  await elements.get("periodAllBtn").listeners.click();
+  await elements.get("periodMonthBtn").listeners.click();
+  assert.equal(elements.get("periodLabel").textContent, initialPeriodLabel);
+  assert.deepEqual(Array.from(pvChart.data.labels), initialDailyLabels);
+  assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
+  assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
   assert.deepEqual(
     { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
     { min: 0, max: 30, step: 6 },
