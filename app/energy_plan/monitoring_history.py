@@ -25,9 +25,14 @@ MONITORING_FIELDS = {
 }
 
 
-def recent_forecast_rows(rows: list[dict[str, Any]], *, target_date: str) -> list[dict[str, Any]]:
+def recent_forecast_rows(
+    rows: list[dict[str, Any]], *, target_date: str, day_count: int = FORECAST_HISTORY_DAYS,
+) -> list[dict[str, Any]]:
     # HISTORICAL_FAILURE_LOCK: forecast history is seven observed complete days,
     # not seven calendar days or the newest CSV month. Missing telemetry is not zero.
+    # Load training explicitly requests its own bounded window; PV keeps the default.
+    if not 1 <= day_count <= MAX_HISTORY_SAMPLES // 48:
+        raise ValueError("observed history day count must be between 1 and 180")
     target = date.fromisoformat(target_date)
     by_day: dict[date, dict[datetime, dict[str, Any]]] = {}
     for row in rows:
@@ -43,7 +48,7 @@ def recent_forecast_rows(rows: list[dict[str, Any]], *, target_date: str) -> lis
         if any(to_float(row.get(key)) is None or float(row[key]) < 0 for row in samples.values() for key in ("pv", "load")):
             continue
         selected.append(day)
-        if len(selected) == FORECAST_HISTORY_DAYS:
+        if len(selected) == day_count:
             break
     return [by_day[day][timestamp] for day in sorted(selected) for timestamp in sorted(by_day[day])]
 
@@ -59,8 +64,10 @@ def merge_monitoring_rows(stored: list[dict[str, Any]], fresh: list[dict[str, An
     return [by_timestamp[timestamp] for timestamp in sorted(by_timestamp)]
 
 
-def load_monitoring_history(*, target_date: str) -> list[dict[str, Any]]:
-    """Read billing periods plus bounded pages until seven observed days exist."""
+def load_monitoring_history(*, target_date: str, minimum_complete_days: int = FORECAST_HISTORY_DAYS) -> list[dict[str, Any]]:
+    """Read billing periods and bounded older pages for the requested training window."""
+    if not FORECAST_HISTORY_DAYS <= minimum_complete_days <= MAX_HISTORY_SAMPLES // 48:
+        raise ValueError("monitoring history requires between 7 and 180 complete days")
     target = date.fromisoformat(target_date)
     previous_start, _, _ = previous_billing_period_for_target(target)
     start_ts, end_ts = f"{previous_start}T00:00:00", f"{target_date}T00:00:00"
@@ -78,7 +85,7 @@ def load_monitoring_history(*, target_date: str) -> list[dict[str, Any]]:
         rows = [_monitoring_row(doc.to_dict() or {}) for doc in billing_query.stream()]
         before = start_ts
         scanned = 0
-        while len(recent_forecast_rows(rows, target_date=target_date)) < 48 * FORECAST_HISTORY_DAYS and scanned < MAX_HISTORY_SAMPLES:
+        while len(recent_forecast_rows(rows, target_date=target_date, day_count=minimum_complete_days)) < 48 * minimum_complete_days and scanned < MAX_HISTORY_SAMPLES:
             query = collection.where(filter=FieldFilter("ts", "<", before)).order_by("ts", direction=firestore.Query.DESCENDING).limit(HISTORY_PAGE_SAMPLES)
             page = [_monitoring_row(doc.to_dict() or {}) for doc in query.stream()]
             if not page:
@@ -98,7 +105,7 @@ def load_monitoring_history(*, target_date: str) -> list[dict[str, Any]]:
             return []
         raw_rows = connection.execute("SELECT * FROM monitoring_samples WHERE ts >= ? AND ts < ? ORDER BY ts", (start_ts, end_ts)).fetchall()
         rows = [_monitoring_row(dict(row)) for row in raw_rows]
-        if len(recent_forecast_rows(rows, target_date=target_date)) < 48 * FORECAST_HISTORY_DAYS:
+        if len(recent_forecast_rows(rows, target_date=target_date, day_count=minimum_complete_days)) < 48 * minimum_complete_days:
             older = connection.execute("SELECT * FROM monitoring_samples WHERE ts < ? ORDER BY ts DESC LIMIT ?", (start_ts, MAX_HISTORY_SAMPLES)).fetchall()
             rows.extend(_monitoring_row(dict(row)) for row in older)
     return sorted(rows, key=lambda row: row["dt"])

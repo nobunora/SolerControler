@@ -714,13 +714,16 @@ def _prepare_load_correction(
     load_ratio_raw = to_float(load_summary.get("raw_ratio")) or 1.0
     load_ratio = _clip_float(load_ratio_raw, min_val=load_ratio_min, max_val=load_ratio_max)
 
-    history_dates = sorted(set(forecast_history) & set(actual_history))
+    # Comfort learning requires weather for every actual training day, including
+    # days without a saved forecast. Forecast pairs remain limited to their overlap.
+    history_dates = sorted(day for day in actual_history if day < target_date)
     weather_by_day: dict[str, dict[int, dict[str, float]]] = {}
     if history_dates:
         history_start = (datetime.fromisoformat(history_dates[0]) - timedelta(hours=ADAPTIVE_LOOKBACK_HOURS)).date().isoformat()
+        history_end = (datetime.fromisoformat(target_date) - timedelta(days=1)).date().isoformat()
         weather_by_day = deepcopy(weather_fetch(
             lat=latitude, lon=longitude, timezone=timezone,
-            start_date=history_start, end_date=history_dates[-1], archive=True,
+            start_date=history_start, end_date=history_end, archive=True,
         ))
     weather_by_day[target_date] = deepcopy(_target_weather_from_forecast(
         forecast, target_date=target_date, latitude=latitude, longitude=longitude,
@@ -889,6 +892,7 @@ def calculate_forecast_correction(
     temperature_corrector: Callable[..., dict[str, object]] = _evening_temperature_correction,
     physical_corrector: Callable[..., tuple[dict[int, float], dict[str, object]]] = _physical_vector_residual_correction,
     comfort_predictor: Callable[..., dict[str, object]] = predict_hourly_comfort_load,
+    load_training_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
     """Calculate one correction snapshot from I/O-free inputs and weather port."""
     forecast_history, history_source = history_loader(target_date=target_date)
@@ -899,15 +903,15 @@ def calculate_forecast_correction(
     )
     pv_ratio_raw = to_float(pv_summary.get("raw_ratio")) or 1.0
     pv_ratio = _clip_float(pv_ratio_raw, min_val=pv_ratio_min, max_val=pv_ratio_max)
+    load_actual_history = actual_hourly_totals_by_day(load_training_rows, target_date=target_date) if load_training_rows is not None else actual_history
     preparation = _prepare_load_correction(
-        forecast_history=forecast_history, actual_history=actual_history, history_source=history_source,
+        forecast_history=forecast_history, actual_history=load_actual_history, history_source=history_source,
         target_date=target_date, latitude=latitude, longitude=longitude, timezone=timezone,
         forecast=forecast, load_ewma_alpha=load_ewma_alpha,
         load_ratio_min=load_ratio_min, load_ratio_max=load_ratio_max,
         weather_fetch=weather_fetch, temperature_corrector=temperature_corrector,
     )
     forecast_history = preparation.forecast_history
-    actual_history = preparation.actual_history
     corrected_pv, vector_residual, pv_multiplier = _correct_hourly_pv(
         hourly_pv_forecast=hourly_pv_forecast,
         pv_ratio=pv_ratio,

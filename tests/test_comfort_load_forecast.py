@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timedelta
 
-from app.forecasting.comfort_load import MODEL_NAME, predict_hourly_comfort_load
+from app.forecasting.comfort_load import MODEL_NAME, build_comfort_feature_map, predict_hourly_comfort_load
 
 
 def _synthetic_history(*, days: int) -> tuple[
@@ -78,3 +78,32 @@ def test_predict_hourly_comfort_load_rejects_insufficient_history() -> None:
         "sample_count": 48,
         "min_samples": 336,
     }
+
+
+def test_measured_zero_load_counts_but_invalid_load_does_not():
+    actual, weather, target = _synthetic_history(days=20)
+    for hours in actual.values():
+        hours[0]["load"] = 0.0
+        hours[1]["load"] = float("nan")
+        hours[2]["load"] = -1.0
+        hours[3].pop("load")
+    result = predict_hourly_comfort_load(actual_history=actual, weather_by_day=weather, target_date=target, min_samples=336)
+    assert result["applied"] is True
+    assert result["sample_count"] == 20 * 21
+
+
+def test_previous_day_temperature_changes_thermal_context_with_same_current_weather():
+    target = datetime(2026, 10, 15)
+    current = {"temp_c": 24.0, "relative_humidity_percent": 60.0, "wind_speed_10m": 2.0}
+    cold = {target - timedelta(hours=h): {**current, "temp_c": 16.0} for h in range(1, 49)}
+    warm = {target - timedelta(hours=h): {**current, "temp_c": 32.0} for h in range(1, 49)}
+    cold[target] = warm[target] = current
+    cold_features = build_comfort_feature_map(target, cold)
+    warm_features = build_comfort_feature_map(target, warm)
+    assert cold_features is not None and warm_features is not None
+    assert cold_features["temp_current"] == warm_features["temp_current"]
+    for name in ("prevailing_temp", "temp_ewm_12h", "temp_ewm_24h"):
+        assert cold_features[name] < warm_features[name]
+    # Later weather must never change a historical sample's feature vector.
+    cold[target + timedelta(hours=1)] = {**current, "temp_c": 50.0}
+    assert build_comfort_feature_map(target, cold) == cold_features

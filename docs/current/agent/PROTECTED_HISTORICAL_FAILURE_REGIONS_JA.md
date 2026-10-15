@@ -56,6 +56,12 @@
 `tests/test_forecast_monitoring_history.py` が月跨ぎ・年跨ぎ・欠損日・CSV金融値の
 集計・重複排除・期間欠落時の停止を固定する。ダッシュボードSOC起点の契約は変更しない。
 
+2026-10-15の消費学習修正では、利用者承認により消費専用の学習窓を分離した。
+`recent_forecast_rows` の既定7日とPVの選択済み7日を維持し、消費学習のみ明示日数を指定する。
+完全日・実測0・未来除外・請求期間の契約は同じである。
+学習窓は [消費学習履歴契約](../architecture/LOAD_TRAINING_HISTORY_JA.md) に従い上限を設け、
+`tests/test_load_training_history.py` で学習適用とPV入力期間の分離を追加検証する。
+
 ### PV残差の欠損と実測0（2026-10-07障害）
 
 `app/forecasting/correction_model.py::_physical_vector_residual_correction` と

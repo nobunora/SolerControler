@@ -71,6 +71,7 @@ def _build_selected_pv_forecast(
     correction = build_forecast_correction(
         ForecastCorrectionInput(
             rows=context.rows,
+            load_training_rows=context.consumption_rows,
             hourly_load_forecast=raw_hourly_load,
             hourly_pv_forecast=raw_hourly_pv,
             target_date=context.target_date,

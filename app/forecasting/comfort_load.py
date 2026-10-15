@@ -203,8 +203,8 @@ def predict_hourly_comfort_load(
         for hour, values in sorted(actual_history[day].items()):
             ts = current_day.replace(hour=hour)
             features = build_comfort_feature_map(ts, weather)
-            load = float(values.get("load", 0.0))
-            if features is None or load <= 0.0:
+            load = float(values.get("load", float("nan")))
+            if features is None or not math.isfinite(load) or load < 0.0:
                 continue
             training_rows.append([features[name] for name in FEATURE_NAMES])
             training_targets.append(load)

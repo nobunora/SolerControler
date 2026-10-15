@@ -355,7 +355,7 @@ def test_missing_timestamped_radiation_stops_before_decision_or_output(monkeypat
     from app.energy_plan.workflow import EnergyModelConfig, build_energy_plan
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("FORECAST_CORRECTION_ENABLED", "false")
-    context = SimpleNamespace(config=EnergyModelConfig.from_env(), rows=[], target_date="2026-10-15", forecast={})
+    context = SimpleNamespace(config=EnergyModelConfig.from_env(), rows=[], consumption_rows=[], target_date="2026-10-15", forecast={})
     consumption = SimpleNamespace(daily=SimpleNamespace(daytime_load_kwh=3.2, morning_load_kwh=0.6), occupancy_adjustment=None)
     monkeypatch.setattr("app.energy_plan.workflow._load_execution_context", lambda config: context)
     monkeypatch.setattr("app.energy_plan.workflow._build_consumption_forecasts", lambda context: consumption)

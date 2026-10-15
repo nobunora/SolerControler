@@ -36,7 +36,7 @@ def _build_clear_ghi_forecast_bundle(
     config = context.config
     raw_load = build_hourly_load_forecast(context.rows, daytime_load_kwh=consumption.daily.daytime_load_kwh,
         morning_load_kwh=consumption.daily.morning_load_kwh, overnight_load_by_hour=None)
-    correction = build_load_forecast_correction(rows=context.rows, hourly_load_forecast=raw_load,
+    correction = build_load_forecast_correction(rows=context.consumption_rows, hourly_load_forecast=raw_load,
         target_date=context.target_date, latitude=config.latitude, longitude=config.longitude, timezone=config.timezone,
         forecast=context.forecast, policy=ForecastCorrectionPolicy.from_env(allow_load_safety_floor=consumption.occupancy_adjustment is None))
     hourly_load = _valid_hourly(correction.get("hourly_load_kwh"))
