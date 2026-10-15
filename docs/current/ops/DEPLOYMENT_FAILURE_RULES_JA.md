@@ -1,0 +1,33 @@
+# デプロイ失敗の再発防止ルール
+
+毎回、production gateとlocal pre-releaseがこの文書を表示し、分離Python環境を検査する。
+production gateは文書のSHA-256をstateに保存する。これは適用したルールの版の記録であり、
+人間やagentが読んだことの証明ではない。実行者は出力を確認してから次の工程へ進む。
+
+| 実際に起きた失敗 | 固定する対策・停止条件 |
+| --- | --- |
+| 2026-10-15: テストfakeに消費学習入力がなくAttributeError | fixtureを実際の境界契約へ合わせ、関連テストと全体gateを再実行。テストをskipしない |
+| 同日: 通常Pythonで使えるtzdataが `python -I` では見えず、image import試験が失敗 | 最初に同じ分離モードでAsia/Tokyoをロード。失敗したら使用interpreterの環境を修復。自動のglobal pip installはしない |
+| 同日: pytestのfd capture下でgit子プロセスがWinError 6 | 正規local/integration入口は `--capture=sys` を明示。テスト選択や件数は削らない。ログredirect方法だけの変更では解消しなかった |
+| 同日: Cloud Runの省略されたrunningCountをStrictModeで直接参照して診断が失敗 | exact executionを正規wrapperで照合。欠落fieldはUNKNOWN。診断失敗をCloud失敗とみなして再実行しない |
+| 2026-10-16: API/Job成功後のbrowserで全て→1ヶ月の日付逆転と390px画面の横溢れを発見 | 表示対象の変更ではbrowser受入を別実行。初期表示、全て→1ヶ月、mobile、consoleを確認。FAIL/未実施のまま一連の確認をPASSと報告しない |
+| gateが任意skipを含んでもpassedを記録できた（実装レビューで発見） | 全checksがsuccessの場合だけpassed。省略したgateは非ゼロ終了。過去stateも個別checksを確認 |
+| 2026-10-16: 新しい前提検査をCIの依存導入前に呼び、未導入tzdataで停止 | CIは依存導入→前提検査→品質gateの順。コマンド存在確認を依存ロード検査へ拡張するときは呼出側の実行順も検証する |
+
+## 毎回の順序
+
+1. 本番runbook全文を読み、承認済みscope・固定commit・元StatePathを確定する。
+2. `scripts/pre_release_local.ps1 -CheckPrerequisites` は早期診断だけ。正式検査は
+   clean commitで `scripts/production_deployment_gate.ps1 -RunPreRelease` を実行する。
+3. 全必須checks成功を確認。新しいcommitでは古いgate/fixture/receiptを流用しない。
+4. 正規wrapperでのみ反映する。timeout/running/unknownではexact executionと復元を確認し、
+   元StatePathのResumeへ進む。新build・実機SETのblind retryは禁止。
+5. デプロイ、実server SDK、予測Job、browser、実機を別々に判定する。
+   forecast/dashboard scopeで07 DryRunや実機往復を追加しない。
+6. browserは `scripts/check_dashboard_browser_from_env.ps1 -InventoryPath <private inventory> -OutputDirectory <artifacts配下の新規directory>`。
+   同じ本番URLへの認証だけを許可し、receiptと画像を保存する。終了0は記載した表示チェックの合格のみ。
+   未導入Playwright/Chromium・認証失敗・timeoutはINCONCLUSIVEで停止。勝手にinstall/retryしない。
+   PNGも目視し、予測値・実績・SOC・出典の正しさは当該変更のAPI/原本照合で別途検証する。
+
+この表は既知障害の再現防止であり、将来の全障害が発生しない保証ではない。
+新しい失敗を追加するときは観測根拠、実行可能なチェック、停止条件を同じ変更に含める。
