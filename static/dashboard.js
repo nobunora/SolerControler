@@ -361,7 +361,20 @@
           store.latestReviewDate = String(store.dailyReview.date);
         }
       }
-      store.meta = payload.meta || store.meta;
+      const previousMeta = store.meta || {};
+      store.meta = { ...previousMeta, ...(payload.meta || {}) };
+      if (!includeStatic) {
+        // History may be older than bootstrap. Its rows must not shorten the
+        // available range or replace the current billing configuration.
+        for (const key of ["global_newest_date", "newest_loaded_date"]) {
+          if (previousMeta[key] && (!store.meta[key] || previousMeta[key] > store.meta[key])) {
+            store.meta[key] = previousMeta[key];
+          }
+        }
+        if (previousMeta.aggregation_close_day != null) {
+          store.meta.aggregation_close_day = previousMeta.aggregation_close_day;
+        }
+      }
       rebuildDateIndex();
     }
 

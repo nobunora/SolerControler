@@ -16,6 +16,17 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 ## 毎回の順序
 
+画面の期間・レイアウト変更では次の回帰を必須とする。
+
+- bootstrapとhistoryは生成時刻が異なる。古いhistoryで最新日・締め日設定を巻き戻さない。
+  請求締め日を跨ぐfixtureで「全て→1ヶ月」のラベル・グラフ日付一致を検証する。
+- 長いモデルSHA・数式・容量値を320/390/768/1440pxで実ブラウザ描画する。
+  document全体の横溢れと文字欠けを禁止し、ガント内の横スクロールを維持する。
+  bodyのoverflowを隠して合格させない。
+- `test_dashboard_bootstrap.js`と`test_dashboard_responsive_layout.py`を通常gateで実行する。
+  CIは既存PlaywrightのChromiumを明示導入する。ローカルも同browserが必要で、未導入はskipしない。
+- 初期history要求0回、明示遷移後1回、月へ戻る際の追加要求0回を維持する。
+
 1. 本番runbook全文を読み、承認済みscope・固定commit・元StatePathを確定する。
 2. `scripts/pre_release_local.ps1 -CheckPrerequisites` は早期診断だけ。正式検査は
    clean commitで `scripts/production_deployment_gate.ps1 -RunPreRelease` を実行する。
