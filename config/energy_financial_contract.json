@@ -1,5 +1,5 @@
 {
-  "export_start_date": null,
+  "export_start_date": "2026-09-01",
   "export_start_month": "2026-09",
   "export_years_1_to_4_yen_per_kwh": 24.0,
   "export_years_5_to_10_yen_per_kwh": 8.3

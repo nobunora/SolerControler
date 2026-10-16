@@ -97,6 +97,11 @@ def test_projected_month_is_included_without_extra_penalty(contract):
 def test_contract_config_is_deployable():
     data = json.loads(financial_contract.CONTRACT_PATH.read_text())
     assert data['export_start_month'] == '2026-09'
+    assert data['export_start_date'] == '2026-09-01'
+    current = apply_financial_contract(model(), '2026-10-16')
+    assert current.financial_contract_start_date_confirmed is True
+    assert current.financial_contract_rate_end_date == '2030-09-01'
+    assert apply_financial_contract(model(), '2030-09-01').sell_revenue_yen_per_kwh == 8.3
     assert data['export_years_1_to_4_yen_per_kwh'] == 24
     assert data['export_years_5_to_10_yen_per_kwh'] == 8.3
 
