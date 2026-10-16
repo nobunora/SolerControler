@@ -63,6 +63,12 @@ class SocCostModel:
     tier1_crossing_penalty_yen_per_kwh: float = 0.0
     tier2_extra_penalty_yen_per_kwh: float = 0.0
     tier3_extra_penalty_yen_per_kwh: float = 0.0
+    terminal_energy_value_yen_per_kwh: float = 0.0
+    financial_contract_start_date: str = ""
+    financial_contract_start_month: str = ""
+    financial_contract_start_date_confirmed: bool = False
+    financial_contract_rate_end_date: str = ""
+    financial_objective: str = "legacy"
 
     @property
     def night_effective_rate_yen_per_kwh(self) -> float:
@@ -146,6 +152,7 @@ class ScenarioReplay:
     sell_opportunity_cost_yen: float
     peak_unmet_kwh: float = 0.0
     peak_unmet_cost_yen: float = 0.0
+    terminal_energy_credit_yen: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -164,6 +171,7 @@ class SocCandidate:
     decision_prior_cost_yen: float
     total_expected_cost_yen: float
     scenario_replays: tuple[ScenarioReplay, ...]
+    expected_terminal_energy_credit_yen: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -177,6 +185,7 @@ class SocCandidateSummary:
     expected_monthly_tier_landing_penalty_yen: float
     decision_prior_cost_yen: float
     rejection_reason: str
+    expected_terminal_energy_credit_yen: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -207,6 +216,7 @@ class SocCostOptimizationResult:
     cost_model: SocCostModel
     sigma_buckets: tuple[SigmaBucket, ...]
     forecast_scenarios: tuple[ForecastScenario, ...]
+    expected_terminal_energy_credit_yen: float = 0.0
 
 
 # 正規分布を6区間で近似し、極端な予測誤差も候補比較に含めながら計算量を一定に保つ。
@@ -503,6 +513,7 @@ def _candidate_summary(*, candidate: SocCandidate, best: SocCandidate) -> SocCan
         expected_monthly_tier_landing_penalty_yen=candidate.expected_monthly_tier_landing_penalty_yen,
         decision_prior_cost_yen=candidate.decision_prior_cost_yen,
         rejection_reason=reason,
+        expected_terminal_energy_credit_yen=candidate.expected_terminal_energy_credit_yen,
     )
 
 
@@ -547,6 +558,7 @@ def evaluate_soc_candidate(
     expected_sell_cost = 0.0
     expected_peak_unmet = 0.0
     expected_peak_unmet_cost = 0.0
+    expected_terminal_credit = 0.0
     replays: list[ScenarioReplay] = []
     peak_target = _bounded_soc(peak_soc_target_percent) if peak_soc_target_percent is not None else None
     peak_penalty = max(0.0, peak_soc_unmet_penalty_yen_per_kwh)
@@ -574,6 +586,12 @@ def evaluate_soc_candidate(
         )
         day_buy_cost = cost_model.day_buy_cost_yen(buy_kwh)
         sell_cost = sell_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
+        # At 23:00 the device enters standby. This is carried inventory, not
+        # assumed overnight discharge or an additional export revenue stream.
+        terminal_rate = min(max(0.0, cost_model.terminal_energy_value_yen_per_kwh),
+                            max(0.0, cost_model.night_buy_rate_yen_per_kwh))
+        terminal_credit = end_soc * capacity_kwh / 100.0 * terminal_rate
+        expected_terminal_credit += probability * terminal_credit
         peak_unmet_kwh = 0.0
         peak_unmet_cost = 0.0
         if peak_target is not None and peak_penalty > 0.0:
@@ -600,6 +618,7 @@ def evaluate_soc_candidate(
                 sell_opportunity_cost_yen=sell_cost,
                 peak_unmet_kwh=peak_unmet_kwh,
                 peak_unmet_cost_yen=peak_unmet_cost,
+                terminal_energy_credit_yen=terminal_credit,
             )
         )
 
@@ -617,6 +636,7 @@ def evaluate_soc_candidate(
         + expected_peak_unmet_cost
         + monthly_tier_landing_penalty
         + decision_prior_cost
+        - expected_terminal_credit
     )
     return SocCandidate(
         target_soc_percent=target_soc,
@@ -633,6 +653,7 @@ def evaluate_soc_candidate(
         decision_prior_cost_yen=decision_prior_cost,
         total_expected_cost_yen=total,
         scenario_replays=tuple(replays),
+        expected_terminal_energy_credit_yen=expected_terminal_credit,
     )
 
 
@@ -778,6 +799,7 @@ def optimize_soc_by_expected_cost(
         cost_model=cost_model,
         sigma_buckets=sigma_buckets,
         forecast_scenarios=scenarios,
+        expected_terminal_energy_credit_yen=best.expected_terminal_energy_credit_yen,
     )
 
 

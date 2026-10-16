@@ -12,6 +12,8 @@ from app.energy_plan.monitoring_history import (
     validate_current_billing_history,
 )
 from app.energy_plan.monthly_projection import monthly_day_buy_kwh_before_target
+from app.energy_plan.financial_contract import apply_financial_contract
+from app.energy_plan.soc_cost import SocCostModel
 from app.energy_plan.workflow import _read_rows, _load_execution_context, EnergyModelConfig
 
 
@@ -74,6 +76,13 @@ def test_csv_and_storage_billing_aggregate_crosses_months_without_double_count(t
     billed = monthly_day_buy_kwh_before_target(combined, target_date="2026-10-08")
     assert billed["kwh"] == pytest.approx(23 * 32 * 0.1)
     assert billed["sample_day_count"] == 23
+    # CSV -> billing-period aggregate -> contract -> stepped objective.
+    cost_model = apply_financial_contract(SocCostModel(
+        39.1, 28.85, .92, 0, monthly_day_buy_kwh_before_target=billed["kwh"],
+        expected_rest_of_month_day_buy_kwh=20,
+    ), "2026-10-08")
+    assert cost_model.day_buy_cost_yen(2) == pytest.approx(2 * 39.1)
+    assert cost_model.sell_opportunity_loss_yen_per_kwh == -24
     assert len(recent_forecast_rows(combined, target_date="2026-10-08")) == 336
     with pytest.raises(RuntimeError, match="2026-09-15"):
         validate_current_billing_history(fresh, target_date="2026-10-08")

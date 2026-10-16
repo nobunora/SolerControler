@@ -272,6 +272,7 @@ def _decision_cost_breakdown(optimization_payload: dict[str, object] | None) -> 
             "expected_monthly_tier_landing_penalty_yen"
         ),
         "decision_prior_yen": optimization_payload.get("decision_prior_cost_yen"),
+        "terminal_energy_value_yen": -(_to_optional_float(optimization_payload.get("expected_terminal_energy_credit_yen")) or 0.0),
         "total_expected_yen": optimization_payload.get("total_expected_cost_yen"),
     }
 
