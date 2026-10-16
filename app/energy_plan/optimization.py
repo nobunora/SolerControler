@@ -10,6 +10,7 @@ from typing import Any, Callable, TYPE_CHECKING
 from app.energy_plan.energy_model import DaytimeSocOptimizationResult
 from app.energy_plan.energy_model import optimize_target_soc_for_daytime, to_dict
 from app.energy_plan.decision_feedback import load_soc_decision_prior_from_firestore
+from app.energy_plan.financial_contract import apply_financial_contract
 from app.energy_plan.soc_cost import SocCostModel, SocOptimizationRequest, optimize_soc_request, to_plain_dict
 from app.energy_plan.soc_cost import DEFAULT_SIGMA_BUCKETS, ForecastScenario, PvForecastUncertainty, SigmaBucket
 
@@ -271,6 +272,7 @@ def run_current_optimizer(
             ),
         )
         respect_guard = config.cost_respect_morning_headroom_cap
+        cost_model = apply_financial_contract(cost_model, context.target_date)
         from app.energy_plan.optimization import cost_max_target_soc
 
         cost_max_soc = cost_max_target_soc(
@@ -328,6 +330,12 @@ def run_current_optimizer(
             )
             or 0.0
         )
+        if cost_model.financial_objective != "legacy":
+            # Monetary objective only: avoid adding heuristic penalties to cash costs.
+            peak_penalty_factor = 0.0
+            prior_weight = 0.0
+            prior_max_penalty = 0.0
+            prior = {**(prior or {}), "applied": False, "reason": "disabled_net_cost_objective"}
         optimized = optimize_request(SocOptimizationRequest(
             capacity_kwh=night_charge.result.effective_capacity_kwh,
             soc_now_percent=context.latest_soc_percent,
@@ -357,7 +365,13 @@ def run_current_optimizer(
         if optimized is not None:
             cost_payload = {
                 **to_plain_dict(optimized),
-                "objective": "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
+                "objective": cost_model.financial_objective if cost_model.financial_objective != "legacy" else "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
+                "terminal_energy_valuation": {
+                    "basis": "carried_inventory_at_night_purchase_rate",
+                    "overnight_discharge_assumed": False,
+                    "rate_yen_per_kwh": cost_model.terminal_energy_value_yen_per_kwh,
+                    "expected_credit_yen": optimized.expected_terminal_energy_credit_yen,
+                },
                 "morning_pv_headroom_guard": constraints.morning_headroom,
                 "daytime_net_surplus_headroom_guard": constraints.daytime_net_surplus,
                 "historical_daytime_soc_gain_guard": constraints.historical_soc_gain,
