@@ -228,6 +228,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             forecast_pv_kwh REAL,
             forecast_load_kwh REAL,
             forecast_charge_kwh REAL,
+            forecast_soc_percent REAL,
+            forecast_grid_charge_kwh REAL,
             forecast_weather_code INTEGER,
             forecast_precipitation_mm REAL,
             forecast_precipitation_probability REAL,
@@ -272,6 +274,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn,
         "forecast_hourly",
         {
+            "forecast_soc_percent": "REAL",
+            "forecast_grid_charge_kwh": "REAL",
             "forecast_weather_code": "INTEGER",
             "forecast_precipitation_mm": "REAL",
             "forecast_precipitation_probability": "REAL",
@@ -554,6 +558,7 @@ def ingest_sunshine_from_night_plan(
             """
             INSERT INTO forecast_hourly (
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_soc_percent, forecast_grid_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                 forecast_temp_c, forecast_relative_humidity_percent,
@@ -562,6 +567,7 @@ def ingest_sunshine_from_night_plan(
             )
             VALUES (
                 :date, :hour, :forecast_pv_kwh, :forecast_load_kwh, :forecast_charge_kwh,
+                :forecast_soc_percent, :forecast_grid_charge_kwh,
                 :forecast_weather_code, :forecast_precipitation_mm, :forecast_precipitation_probability,
                 :forecast_cloud_cover, :forecast_shortwave_radiation_w_m2,
                 :forecast_temp_c, :forecast_relative_humidity_percent,
@@ -572,6 +578,8 @@ def ingest_sunshine_from_night_plan(
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
                 forecast_charge_kwh=excluded.forecast_charge_kwh,
+                forecast_soc_percent=excluded.forecast_soc_percent,
+                forecast_grid_charge_kwh=excluded.forecast_grid_charge_kwh,
                 forecast_weather_code=excluded.forecast_weather_code,
                 forecast_precipitation_mm=excluded.forecast_precipitation_mm,
                 forecast_precipitation_probability=excluded.forecast_precipitation_probability,
@@ -584,7 +592,7 @@ def ingest_sunshine_from_night_plan(
                 source=excluded.source,
                 updated_at=excluded.updated_at
             """,
-            hourly_rows,
+            [{"forecast_soc_percent": None, "forecast_grid_charge_kwh": None, **row} for row in hourly_rows],
         )
 
     today_date = datetime.now().date().isoformat()

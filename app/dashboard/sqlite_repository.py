@@ -110,6 +110,10 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
             identity_fields = ("forecast_run_id", "forecast_issued_at")
             columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(forecast_hourly)")}
             identity_sql = "".join(f", fh.{name}" for name in identity_fields if name in columns)
+            plan_fields = ("forecast_soc_percent", "forecast_grid_charge_kwh")
+            plan_sql = "".join(
+                f", fh.{name}" if name in columns else f", NULL AS {name}" for name in plan_fields
+            )
             forecast_hourly = _rows_to_dicts(conn.execute(f"""
                 WITH hourly_actuals AS (
                     SELECT substr(ts,1,10) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour,
@@ -157,7 +161,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 SELECT dh.date, dh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, ah.actual_pv_kwh, hs.actual_soc_percent,
                        hs.opening_soc_percent,
-                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql},
+                       ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql}{plan_sql},
                        fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
                        fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis
                 FROM display_hours dh

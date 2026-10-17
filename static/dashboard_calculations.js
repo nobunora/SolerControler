@@ -17,8 +17,7 @@
     let start = minuteOf(startTime);
     let end = minuteOf(endTime);
     if (start == null || end == null) {
-      start = 4 * 60;
-      end = 7 * 60;
+      return rows.map(() => null);
     }
     if (start === end) return rows.map(() => 0);
     if (end < start) end += 24 * 60;
@@ -89,31 +88,5 @@
     });
   }
 
-  // HISTORICAL_FAILURE_LOCK (2026-10-14): 848c3cf restored missing 00-06 SOC.
-  // Return hour-start references anchored to 07:00, including valid zero, without touching 07-23.
-  // Incomplete/invalid night inputs remain unavailable; do not manufacture observations.
-  // Change only with explicit user approval and test_dashboard_calculations.js regression coverage.
-  function forecastNightSocAtHourStart(rows, gridCharge, targetSoc, capacityKwh, chargeEfficiency) {
-    const valid = (value, min, max) => typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
-    const unavailable = () => rows.map(() => null);
-    if (!valid(targetSoc, 0, 100) || !valid(capacityKwh, Number.MIN_VALUE, Infinity)
-        || !valid(chargeEfficiency, Number.MIN_VALUE, 1) || gridCharge.length !== rows.length) return unavailable();
-    const night = new Map();
-    for (let index = 0; index < rows.length; index += 1) {
-      const hour = rows[index].hour;
-      if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !valid(gridCharge[index], 0, Infinity)) return unavailable();
-      if (hour < 7) {
-        if (night.has(hour)) return unavailable();
-        night.set(hour, gridCharge[index]);
-      }
-    }
-    if (night.size !== 7) return unavailable();
-    return rows.map((row) => {
-      if (row.hour >= 7) return null;
-      const remaining = [...night].filter(([hour]) => hour >= row.hour).reduce((total, [, charge]) => total + charge, 0);
-      return Math.round(Math.max(0, Math.min(100, targetSoc - remaining * chargeEfficiency / capacityKwh * 100)) * 10) / 10;
-    });
-  }
-
-  return { minuteOf, allocateNightGridCharge, plannedBatteryValues, forecastSocFromLatestActual, forecastNightSocAtHourStart };
+  return { minuteOf, allocateNightGridCharge, plannedBatteryValues, forecastSocFromLatestActual };
 });

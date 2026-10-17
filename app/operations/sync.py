@@ -127,6 +127,8 @@ TABLE_SPECS: dict[str, dict[str, Any]] = {
             "forecast_pv_kwh",
             "forecast_load_kwh",
             "forecast_charge_kwh",
+            "forecast_soc_percent",
+            "forecast_grid_charge_kwh",
             "forecast_weather_code",
             "forecast_precipitation_mm",
             "forecast_precipitation_probability",
@@ -290,6 +292,7 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
             """
             INSERT INTO forecast_hourly (
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_soc_percent, forecast_grid_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                 forecast_temp_c, forecast_relative_humidity_percent,
@@ -297,7 +300,7 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 source, is_reconstructed, forecast_reconstruction_id,
                 forecast_reconstructed_at, forecast_reconstruction_model_version,
                 forecast_reconstruction_basis, updated_at, forecast_run_id, forecast_issued_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row.get("date"),
@@ -305,6 +308,8 @@ def _insert_sqlite_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_pv_kwh")),
                 _as_float(row.get("forecast_load_kwh")),
                 _as_float(row.get("forecast_charge_kwh")),
+                _as_float(row.get("forecast_soc_percent")),
+                _as_float(row.get("forecast_grid_charge_kwh")),
                 _as_int(row.get("forecast_weather_code")),
                 _as_float(row.get("forecast_precipitation_mm")),
                 _as_float(row.get("forecast_precipitation_probability")),
@@ -368,6 +373,7 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
             """
             INSERT INTO forecast_hourly (
                 date, hour, forecast_pv_kwh, forecast_load_kwh, forecast_charge_kwh,
+                forecast_soc_percent, forecast_grid_charge_kwh,
                 forecast_weather_code, forecast_precipitation_mm, forecast_precipitation_probability,
                 forecast_cloud_cover, forecast_shortwave_radiation_w_m2,
                 forecast_temp_c, forecast_relative_humidity_percent,
@@ -375,11 +381,13 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 source, is_reconstructed, forecast_reconstruction_id,
                 forecast_reconstructed_at, forecast_reconstruction_model_version,
                 forecast_reconstruction_basis, updated_at, forecast_run_id, forecast_issued_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date, hour) DO UPDATE SET
                 forecast_pv_kwh=excluded.forecast_pv_kwh,
                 forecast_load_kwh=excluded.forecast_load_kwh,
                 forecast_charge_kwh=excluded.forecast_charge_kwh,
+                forecast_soc_percent=excluded.forecast_soc_percent,
+                forecast_grid_charge_kwh=excluded.forecast_grid_charge_kwh,
                 forecast_weather_code=excluded.forecast_weather_code,
                 forecast_precipitation_mm=excluded.forecast_precipitation_mm,
                 forecast_precipitation_probability=excluded.forecast_precipitation_probability,
@@ -405,6 +413,8 @@ def _sqlite_upsert_row(conn: sqlite3.Connection, table: str, row: dict[str, Any]
                 _as_float(row.get("forecast_pv_kwh")),
                 _as_float(row.get("forecast_load_kwh")),
                 _as_float(row.get("forecast_charge_kwh")),
+                _as_float(row.get("forecast_soc_percent")),
+                _as_float(row.get("forecast_grid_charge_kwh")),
                 _as_int(row.get("forecast_weather_code")),
                 _as_float(row.get("forecast_precipitation_mm")),
                 _as_float(row.get("forecast_precipitation_probability")),

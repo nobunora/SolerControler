@@ -29,6 +29,11 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
     if not isinstance(load_by_hour, dict):
         load_by_hour = {}
     weather_by_hour: dict[int, dict[str, Any]] = {}
+    rationale = data.get("decision_rationale")
+    night = rationale.get("night_soc_projection") if isinstance(rationale, dict) else None
+    night = night if isinstance(night, dict) and night.get("target_date") == forecast_date and night.get("status") == "ready" else {}
+    night_soc = night.get("hourly_soc_percent", {})
+    night_charge = night.get("hourly_grid_charge_kwh", {})
     hourly_weather = forecast.get("hourly_weather", []) if isinstance(forecast, dict) else []
     if isinstance(hourly_weather, list):
         for item in hourly_weather:
@@ -62,10 +67,17 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
         pv_kwh = pv_kwh if pv_kwh is not None and math.isfinite(pv_kwh) and pv_kwh >= 0.0 else None
         load_kwh = load_kwh if load_kwh is not None and math.isfinite(load_kwh) and load_kwh >= 0.0 else None
         weather = weather_by_hour.get(hour, {})
+        saved_soc = to_float(night_soc.get(str(hour))) if isinstance(night_soc, dict) and hour < 7 else None
+        saved_grid_charge = to_float(night_charge.get(str(hour))) if isinstance(night_charge, dict) and hour < 7 else None
+        saved_soc = saved_soc if saved_soc is not None and math.isfinite(saved_soc) and 0 <= saved_soc <= 100 else None
+        saved_grid_charge = saved_grid_charge if saved_grid_charge is not None and math.isfinite(saved_grid_charge) and saved_grid_charge >= 0 else None
         rows.append(
             {
                 "date": forecast_date,
                 "hour": hour,
+                **({"forecast_soc_percent": saved_soc,
+                    "forecast_grid_charge_kwh": saved_grid_charge}
+                   if night and hour < 7 and isinstance(night_soc, dict) and isinstance(night_charge, dict) else {}),
                 "forecast_pv_kwh": round(pv_kwh, 4) if pv_kwh is not None else None,
                 "forecast_load_kwh": round(load_kwh, 4) if load_kwh is not None else None,
                 "forecast_charge_kwh": round(max(0.0, pv_kwh - load_kwh), 4) if pv_kwh is not None and load_kwh is not None else None,

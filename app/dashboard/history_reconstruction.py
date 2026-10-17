@@ -97,6 +97,10 @@ def _forecast_plan_metadata_by_date(
         if isinstance(hourly_soc, dict):
             valid_soc = {str(hour): to_float(hourly_soc.get(str(hour))) for hour in range(7, 24)}
             if all(value is not None and 0.0 <= value <= 100.0 for value in valid_soc.values()):
+                for hour in range(7):
+                    night_soc = to_float(hourly_soc.get(str(hour)))
+                    if night_soc is not None and 0.0 <= night_soc <= 100.0:
+                        valid_soc[str(hour)] = night_soc
                 metadata["_forecast_hourly_soc_percent"] = valid_soc
         if not metadata:
             continue
@@ -154,8 +158,8 @@ def _with_forecast_plan_metadata(
                     item.setdefault(key, metadata[key])
             hourly_soc = metadata.get("_forecast_hourly_soc_percent", {})
             soc = hourly_soc.get(str(item.get("hour")))
-            if soc is not None:
-                item.setdefault("forecast_soc_percent", soc)
+            if soc is not None and item.get("forecast_soc_percent") is None:
+                item["forecast_soc_percent"] = soc
         enriched.append(item)
     return enriched
 

@@ -15,6 +15,8 @@ from app.energy_plan.optimization import OptimizationDecision, apply_uncertainty
 from app.energy_plan.plan_quality import _build_plan_quality, _candidate_reason_summary, _decision_cost_breakdown, _to_optional_float
 from app.energy_plan.soc_constraints import SocConstraintSet, active_constraint_names as _active_constraint_names
 from app.energy_plan.soc_cost import to_plain_dict
+from app.energy_plan.night_soc_projection import build_night_soc_projection
+from app.runtime.forced_charge_monitor import estimate_forced_charge_rate_percent_per_hour
 
 if TYPE_CHECKING:
     from app.energy_plan.workflow import ConsumptionForecastBundle, EnergyModelContext, NightChargePreparation, PvForecastBundle
@@ -133,6 +135,14 @@ def _build_energy_model_output(
         result=result_payload,
         daytime_soc_optimization=optimization_payload,
         decision_rationale={
+            "night_soc_projection": build_night_soc_projection(
+                target_date=context.target_date, timezone_name=context.config.timezone,
+                generated_at=datetime.now(ZoneInfo(context.config.timezone)),
+                rows=context.billing_rows if context.billing_rows is not None else context.rows,
+                target_soc=result_payload.get("target_soc_7_percent"),
+                soc_per_kwh_charge=context.coefficients.soc_per_kwh_charge,
+                rate_info=estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
+            ),
             **({"pv_clear_ghi": _clear_ghi_trace(pv_forecast.clear_ghi_forecast, timezone=context.config.timezone,
                                                hourly_load_kwh=pv_forecast.hourly_load_kwh)}
                if pv_forecast.clear_ghi_forecast is not None else {}),

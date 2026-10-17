@@ -24,6 +24,8 @@ _SNAPSHOT_COLUMNS = (
     "forecast_pv_kwh",
     "forecast_load_kwh",
     "forecast_charge_kwh",
+    "forecast_soc_percent",
+    "forecast_grid_charge_kwh",
     "forecast_weather_code",
     "forecast_precipitation_mm",
     "forecast_precipitation_probability",
@@ -331,6 +333,8 @@ def _ensure_sqlite_schema(conn: Any) -> None:
     )
     existing = {str(row[1]) for row in conn.execute("PRAGMA table_info(forecast_hourly_snapshots)").fetchall()}
     additions = {
+        "forecast_soc_percent": "forecast_soc_percent REAL",
+        "forecast_grid_charge_kwh": "forecast_grid_charge_kwh REAL",
         "pv_provider": "pv_provider TEXT",
         "physical_pv_kwh": "physical_pv_kwh REAL",
         "pv_forecast_detail_json": "pv_forecast_detail_json TEXT NOT NULL DEFAULT '{}'",
@@ -346,7 +350,7 @@ def _persist_sqlite(conn: Any, rows: list[dict[str, Any]]) -> int:
     placeholders = ", ".join(f":{column}" for column in _SNAPSHOT_COLUMNS)
     conn.executemany(
         f"INSERT OR IGNORE INTO forecast_hourly_snapshots ({', '.join(_SNAPSHOT_COLUMNS)}) VALUES ({placeholders})",
-        rows,
+        [{column: row.get(column) for column in _SNAPSHOT_COLUMNS} for row in rows],
     )
     conn.commit()
     return int(conn.total_changes - before)
@@ -393,6 +397,8 @@ def _ensure_postgres_schema(conn: Any) -> None:
             """
         )
         cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS pv_provider TEXT")
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS forecast_soc_percent DOUBLE PRECISION")
+        cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS forecast_grid_charge_kwh DOUBLE PRECISION")
         cur.execute("ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS physical_pv_kwh DOUBLE PRECISION")
         cur.execute(
             "ALTER TABLE forecast_hourly_snapshots ADD COLUMN IF NOT EXISTS "
@@ -416,7 +422,7 @@ def _persist_postgres(conn: Any, rows: list[dict[str, Any]]) -> int:
         cur.executemany(
             f"INSERT INTO forecast_hourly_snapshots ({', '.join(_SNAPSHOT_COLUMNS)}) VALUES ({placeholders}) "
             "ON CONFLICT(snapshot_id) DO NOTHING",
-            rows,
+            [{column: row.get(column) for column in _SNAPSHOT_COLUMNS} for row in rows],
         )
         inserted = max(0, int(cur.rowcount or 0))
     conn.commit()
