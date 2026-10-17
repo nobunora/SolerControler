@@ -40,6 +40,19 @@
 
 `app/runtime/cloud_job.py::_monitor_partial_forced_and_stop` は、03制御結果の監査用として、単独のJSON stdout行（`message="03-terminal-audit"`）を最大1件出力してよい。この出力はbest-effortで、失敗しても制御・exit code・07へ影響してはならない。Firestore、DB、lease、owner、cross-slot hand-off、terminal-state保存は引き続き禁止する。
 
+## 2026-10-17 夜間SOC表示契約の承認済み置換
+
+利用者が原因調査と修正案を承認し、修正・マージ・本番反映を指示したため、上表の
+`forecastNightSocAtHourStart` による07時からの逆算と実測による計画線上書きは退役する。
+開始時刻欠損で04〜07時へ置換した結果、04時の表示0%と実機39%が乖離したことが根拠である。
+新契約は [夜間SOC表示計画](../architecture/NIGHT_SOC_DISPLAY_PLAN_JA.md) に従う。
+保存夜間計画は計画線、実測SOCは独立線とし、実測0を含め計画欠損時も実測を表示する。
+保存夜間計画が欠けた区間は未確定とし、架空の時間帯・均等配分で補わない。
+07〜23時の保存値・日中ピーク、異なる計画版の結合拒否、実機制御時刻と停止条件は保持する。
+`tests/test_dashboard_hourly_display.js` の実測0・独立系列・保存夜間計画・欠損回帰と
+`tests/test_dashboard_forecast_soc_contract.py` の保存出典契約で旧障害の保護を継続する。
+時間別表示テストを正式gateから外さない。
+
 ## 履歴の扱い
 
 ### 予測履歴7日と請求期間の分離（2026-10-08障害）

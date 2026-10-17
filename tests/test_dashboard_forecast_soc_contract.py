@@ -386,12 +386,34 @@ def test_frontend_predicted_soc_path_uses_restored_schedule_target() -> None:
 def test_night_soc_display_protection_and_release_gate_are_registered() -> None:
     root = Path(__file__).parents[1]
     lock = "HISTORICAL_FAILURE_LOCK (2026-10-14)"
-    for relative_path in ("static/dashboard.js", "static/dashboard_calculations.js",
-                          "tests/test_dashboard_hourly_display.js", "scripts/pre_release_local.ps1"):
-        assert lock in (root / relative_path).read_text(encoding="utf-8"), relative_path
+    assert lock in (root / "scripts/pre_release_local.ps1").read_text(encoding="utf-8")
+    assert "HISTORICAL_FAILURE_LOCK (2026-10-17)" in (root / "tests/test_dashboard_hourly_display.js").read_text(encoding="utf-8")
+    assert "HISTORICAL_FAILURE_LOCK (2026-10-17)" in (root / "static/dashboard.js").read_text(encoding="utf-8")
     protected = (root / "docs/current/agent/PROTECTED_HISTORICAL_FAILURE_REGIONS_JA.md").read_text(encoding="utf-8")
-    assert "forecastNightSocAtHourStart" in protected
+    assert "2026-10-17 夜間SOC表示契約の承認済み置換" in protected
+    assert "forecastNightSocAtHourStart" not in (root / "static/dashboard.js").read_text(encoding="utf-8")
     assert "test_dashboard_hourly_display.js" in protected
     gate = (root / "scripts/pre_release_local.ps1").read_text(encoding="utf-8")
     assert gate.count("node .\\tests\\test_dashboard_hourly_display.js") == 1
     assert 'if ($LASTEXITCODE -ne 0) { throw "dashboard hourly SOC display regression failed" }' in gate
+
+
+def test_saved_night_soc_metadata_is_same_vintage_and_keeps_daytime_trace() -> None:
+    day = "2026-10-17"
+    trace = {str(hour): 39.0 for hour in range(7, 24)}
+    trace.update({"3": 0.0, "4": 39.0, "5": 39.0, "6": 39.0})
+    client = _Client({"forecast_plans": [{
+        "date": day, "forecast_run_id": "night-plan", "planned_target_soc_percent": 39.0,
+        "planned_capacity_kwh": 8.67, "planned_hourly_soc_percent": trace,
+    }]})
+    metadata = history_reconstruction._forecast_plan_metadata_by_date(client, start_date=day, end_date_iso=day)
+    rows = [{"date": day, "hour": hour, "forecast_run_id": "night-plan"} for hour in range(24)]
+    enriched = history_reconstruction._with_forecast_plan_metadata(rows, metadata)
+    assert "forecast_soc_percent" not in enriched[2]
+    assert enriched[3]["forecast_soc_percent"] == 0.0
+    assert enriched[4]["forecast_soc_percent"] == 39.0
+    assert [row["forecast_soc_percent"] for row in enriched[7:]] == [39.0] * 17
+    mismatched = history_reconstruction._with_forecast_plan_metadata(
+        [{"date": day, "hour": 4, "forecast_run_id": "older-plan"}], metadata,
+    )
+    assert "forecast_soc_percent" not in mismatched[0]

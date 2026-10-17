@@ -180,6 +180,10 @@ def _forecast_projection_values(
         }
 
     snapshot_rows = build_forecast_snapshot_rows(data, ingested_at=now, timezone=timezone_name)
+    planned_hourly_soc_percent.update({
+        str(row["hour"]): float(row["forecast_soc_percent"]) for row in hourly_rows
+        if int(row["hour"]) < 7 and row.get("forecast_soc_percent") is not None
+    })
     if not _complete_hourly_rows(snapshot_rows, target_date=target_date):
         raise ValueError("forecast snapshot rows must contain exactly hours 0 through 23")
     forecast_run_id = str(snapshot_rows[0].get("forecast_run_id") or "").strip()
@@ -237,6 +241,7 @@ def _forecast_projection_values(
             "planned_night_charge_kwh": planned_night_charge_kwh,
             "planned_capacity_kwh": planned_capacity_kwh,
             "planned_hourly_soc_percent": planned_hourly_soc_percent,
+            "night_soc_projection": (data.get("decision_rationale") or {}).get("night_soc_projection"),
             "forecast_json": json.dumps(forecast, ensure_ascii=False, separators=(",", ":")),
             "updated_at": now,
         },

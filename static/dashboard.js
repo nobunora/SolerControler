@@ -3,7 +3,7 @@
     const CHUNK_DAYS = 120;
     // バックエンドと同じ既定締め日を使い、集計月の境界が画面ごとにずれないようにする。
     const DEFAULT_AGGREGATION_CLOSE_DAY = 14;
-    const { allocateNightGridCharge, plannedBatteryValues, forecastSocFromLatestActual, forecastNightSocAtHourStart } = window.DashboardCalculations;
+    const { plannedBatteryValues, forecastSocFromLatestActual } = window.DashboardCalculations;
     const dashboardDates = window.DashboardDates;
     const dashboardApi = window.DashboardApi;
 
@@ -951,7 +951,8 @@
             { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
             { label: "家の消費 実績/予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
             { type: "bar", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1 },
-            { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: true },
+            { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: false },
+            { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#1675a9", backgroundColor: "#1675a9", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
           ],
         },
         options: {
@@ -962,7 +963,7 @@
               min: 0,
               max: 100,
               position: "right",
-              title: { display: true, text: "予想SOC(%)", color: "#9a7a00" },
+              title: { display: true, text: "SOC(%)", color: "#9a7a00" },
               ticks: { color: "#9a7a00", callback: (v) => `${v}%` },
               grid: { drawOnChartArea: false },
               border: { color: "#9a7a00" },
@@ -1185,7 +1186,7 @@
       const knownRuns = new Set(rows.filter(isForecastRow).map((row) => row.forecast_run_id)
         .filter((run) => typeof run === "string" && run.trim()));
       const mixedRuns = knownRuns.size > 1;
-      const saved = rows.map((row) => row.date === date && Number.isInteger(row.hour) && row.hour >= 7 && row.hour <= 23
+      const saved = rows.map((row) => row.date === date && Number.isInteger(row.hour) && row.hour >= 0 && row.hour <= 23
         && displayFinite(row.forecast_soc_percent) !== null && row.forecast_soc_percent >= 0
         && row.forecast_soc_percent <= 100 ? row.forecast_soc_percent : null);
       const hasSaved = saved.some((point) => point !== null);
@@ -1220,6 +1221,7 @@
         chart.data.datasets[2].data = [];
         chart.data.datasets[3].data = [];
         chart.data.datasets[4].data = [];
+        chart.data.datasets[5].data = [];
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
         ensureVisibleChartRanges(chart);
         chart.update("none");
@@ -1237,8 +1239,8 @@
       const batteryRow = store.battery.get(date);
       const scheduleNight = energy(state.boundSchedule?.planned_night_charge_kwh);
       const nightAmount = scheduleNight !== null ? scheduleNight : energy(batteryRow?.night_charge_kwh);
-      const nightGridCharge = state.boundSchedule && nightAmount !== null
-        ? estimateHourlyNightGridCharge(rows, date) : rows.map(() => null);
+      const nightGridCharge = rows.map((row) => !state.mixedRuns && row.date === date
+        && isForecastRow(row) ? energy(row.forecast_grid_charge_kwh) : null);
       let soc = state.points;
       let socKind = state.hasSaved && !state.mixedRuns ? "計画SOC" : "SOC未連携";
       let estimated = null;
@@ -1277,30 +1279,17 @@
           return value;
         });
       }
-      // HISTORICAL_FAILURE_LOCK (2026-10-14): 1dd21ae restored pre-07 SOC;
-      // 848c3cf restored it again after the saved 07-23 plan suppressed it.
-      // Always compose 00-06 SOC, even when a daytime optimizer trace exists.
-      // Valid observations (including 0) take priority independently of plan availability.
-      // Missing observations use only a valid bound night plan; preserve every 07-23 point.
-      // Change only with explicit user approval and test_dashboard_hourly_display.js regression coverage.
-      const capacities = new Set(rows.filter((row) => row.date === date)
-        .map((row) => displayFinite(row.forecast_capacity_kwh)).filter((value) => value !== null && value > 0));
-      const morningIndex = rows.findIndex((row) => row.date === date && row.hour === 7);
-      const nightTarget = state.hasSaved ? state.points[morningIndex]
-        : plannedBatteryValues(batteryRow, state.boundSchedule).targetSocPercent;
-      const chargeEfficiency = Math.sqrt(Math.max(0.5, Math.min(1.0, modelParam("battery_round_trip_efficiency", 0.9))));
-      const nightEstimate = !state.invalidSaved && !state.mixedRuns && state.boundSchedule && capacities.size === 1
-        ? forecastNightSocAtHourStart(rows, nightGridCharge, nightTarget, [...capacities][0], chargeEfficiency) : null;
-      soc = soc.map((point, index) => {
-        const row = rows[index];
-        if (row.date !== date || !Number.isInteger(row.hour) || row.hour < 0 || row.hour >= 7) return point;
-        const actual = displayFinite(row.actual_soc_percent);
-        if (actual !== null && actual >= 0 && actual <= 100) return actual;
-        const reference = nightEstimate?.[index];
-        return !state.invalidSaved && !state.mixedRuns && state.boundSchedule && isForecastRow(row)
-          && displayFinite(reference) !== null && reference >= 0 && reference <= 100 ? reference : null;
+      // HISTORICAL_FAILURE_LOCK (2026-10-17): user-approved replacement of
+      // 1dd21ae/848c3cf night composition: saved plans and observations stay separate.
+      // Preserve observed zero without capacity or a plan. Never invent missing night plans.
+      // Preserve saved 07-23 values and their peak. See test_dashboard_hourly_display.js.
+      soc = soc.map((point, index) => rows[index].hour < 7 ? state.points[index] : point);
+      const actualSoc = rows.map((row) => {
+        const value = displayFinite(row.actual_soc_percent);
+        return row.date === date && Number.isInteger(row.hour) && row.hour >= 0 && row.hour <= 23
+          && value !== null && value >= 0 && value <= 100 ? value : null;
       });
-      // End of protected 00-06 SOC composition.
+      // End of protected 00-06 SOC separation.
       const latestActual = rows
         .map((row) => row.latest_sample_at || "")
         .filter(Boolean)
@@ -1312,7 +1301,8 @@
       chart.data.datasets[2].data = load;
       chart.data.datasets[3].data = nightGridCharge;
       chart.data.datasets[4].data = soc;
-      chart.data.datasets[4].label = `${socKind === "SOC未連携" ? "計画SOC（未連携）" : socKind} / 夜間SOC（実測・参考）(%)`;
+      chart.data.datasets[4].label = `${socKind === "SOC未連携" ? "計画SOC（未連携）" : socKind}(%)`;
+      chart.data.datasets[5].data = actualSoc;
       chart.data.datasets[4].spanGaps = false;
       chart.options.scales.y = {
         min: 0,
@@ -1326,35 +1316,29 @@
         max: 100,
         position: "right",
         ticks: { count: 6, stepSize: 20, color: "#9a7a00", callback: (v) => `${v}%` },
-        title: { display: true, text: "予想SOC(%)", color: "#9a7a00" },
+        title: { display: true, text: "SOC(%)", color: "#9a7a00" },
         grid: { drawOnChartArea: false },
         border: { color: "#9a7a00" },
       };
       if (note) {
         const sch = state.boundSchedule || {};
-        const socPeak = maxForecastSocPoint(labels, socKind === "計画SOC" ? state.points
+        const daytimeSaved = state.points.map((point, index) => rows[index].hour >= 7 ? point : null);
+        const daytimeSavedCount = daytimeSaved.filter((point) => point !== null).length;
+        const socPeak = maxForecastSocPoint(labels, socKind === "計画SOC" ? daytimeSaved
           : soc.map((point, index) => state.pointSources[index] === "observed" ? null : point));
         const actualText = `実績取得済み分 PV ${state.actualPvSubtotal === null ? "-" : state.actualPvSubtotal.toFixed(2)}kWh（${state.actualPvCount}/24） / 消費 ${state.actualLoadSubtotal === null ? "-" : state.actualLoadSubtotal.toFixed(2)}kWh（${state.actualCount}/24）`;
-        const latestText = latestActual ? ` / 最新実績 ${latestActual.slice(11, 16)}` : "";
+        const latestText = latestActual ? ` / 最新実績 ${latestActual.replace("T", " ")}` : " / 実績観測時刻未連携";
         const planUpdated = sch.plan_updated_at ? new Date(sch.plan_updated_at) : null;
         const planUpdatedText = planUpdated && !Number.isNaN(planUpdated.getTime())
           ? ` / 計画更新 ${planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })}`
           : "";
-        const socText = socPeak ? ` / ${socKind === "計画SOC" ? state.savedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${state.savedCount}/17` : "参考SOC最大"} ${socPeak.label} ${socPeak.value.toFixed(0)}%` : ` / ${socKind}`;
+        const socText = socPeak ? ` / ${socKind === "計画SOC" ? daytimeSavedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${daytimeSavedCount}/17` : "参考SOC最大"} ${socPeak.label} ${socPeak.value.toFixed(0)}%` : ` / ${socKind}`;
         const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)}kWh` : `未完 ${count}/24`;
-        const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh` : " / 夜間系統充電 時間帯未連携";
-        note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、計画SOCは07開始〜23終了の17点（23時は22区間終了）。00〜06時のSOCは実測優先、未取得分は夜間充電計画からの参考値です。夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
+        const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh${nightGridCharge.every((value) => value === null) ? "（時間別計画未確定）" : ""}` : " / 夜間系統充電 時間帯未連携";
+        note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");
-    }
-
-    function estimateHourlyNightGridCharge(rows, date) {
-      const batteryRow = date ? store.battery.get(date) : null;
-      const sch = store.latestSchedule || {};
-      const planned = plannedBatteryValues(batteryRow, sch);
-      const totalKwh = Math.max(0, planned.nightChargeKwh);
-      return allocateNightGridCharge(rows, totalKwh, sch.charge_start_time, sch.charge_end_time);
     }
 
     function estimateHourlyForecastSoc(rows, date) {
@@ -1377,20 +1361,14 @@
       }
       const targetSoc = Math.max(0, Math.min(100, targetSocRaw));
       const targetEnergyKwh = targetSoc / 100 * capacityKwh;
-      const hourlyNightGridCharge = estimateHourlyNightGridCharge(rows, date);
-      const nightChargeKwh = hourlyNightGridCharge.reduce((total, value) => total + n(value), 0);
-      // setting_soc_target_percent is the 07:00 target, so estimate the pre-charge SOC by backing out night charging.
-      const startEnergyKwh = Math.max(0, Math.min(capacityKwh, targetEnergyKwh - nightChargeKwh * chargeEff));
-      let energyKwh = startEnergyKwh;
-      return rows.map((row, index) => {
+      let energyKwh = targetEnergyKwh;
+      return rows.map((row) => {
         const hour = Number(row.hour);
         const pvKwh = row.forecast_pv_kwh == null ? null : n(row.forecast_pv_kwh);
         const loadKwh = row.forecast_load_kwh == null ? null : n(row.forecast_load_kwh);
         const chargeKwh = row.forecast_charge_kwh == null ? null : n(row.forecast_charge_kwh);
-        if (!Number.isFinite(hour)) return null;
-        if (hourlyNightGridCharge[index] > 0) {
-          energyKwh += hourlyNightGridCharge[index] * chargeEff;
-        } else if (hour >= 7) {
+        if (!Number.isFinite(hour) || hour < 7) return null;
+        if (hour >= 7) {
           const socAtHourStart = Math.max(0, Math.min(capacityKwh, energyKwh));
           if (chargeKwh != null && chargeKwh > 0) {
             energyKwh += chargeKwh * chargeEff;
@@ -1408,12 +1386,7 @@
           }
           return Math.round((socAtHourStart / capacityKwh) * 1000) / 10;
         }
-        if (hour < 7 && row.actual_soc_percent != null) {
-          const actualSoc = Number(row.actual_soc_percent);
-          if (Number.isFinite(actualSoc) && actualSoc >= 0 && actualSoc <= 100) return actualSoc;
-        }
-        energyKwh = Math.max(0, Math.min(capacityKwh, energyKwh));
-        return Math.round((energyKwh / capacityKwh) * 1000) / 10;
+        return null;
       });
     }
 

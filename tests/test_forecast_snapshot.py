@@ -110,6 +110,39 @@ def test_snapshot_builder_records_issue_lead_provenance_and_physical_evidence() 
     assert json.loads(row["quality_flags_json"]) == []
 
 
+def test_night_projection_survives_append_only_sqlite_snapshot(tmp_path: Path) -> None:
+    from app.operations.forecast_snapshot import _persist_sqlite
+
+    plan = _plan()
+    plan["daytime_soc_optimization"]["hourly_pv_forecast_kwh"]["3"] = 0.0
+    plan["daytime_soc_optimization"]["hourly_load_forecast_kwh"]["3"] = 0.4
+    plan["decision_rationale"] = {"night_soc_projection": {
+        "status": "ready", "target_date": "2026-08-27",
+        "hourly_soc_percent": {"3": 0.0}, "hourly_grid_charge_kwh": {"3": 3.58},
+    }}
+    rows = build_forecast_snapshot_rows(plan, ingested_at="2026-08-26T17:30:00Z", timezone="Asia/Tokyo")
+    conn = sqlite_ops.open_db(tmp_path / "night-snapshot.db")
+    try:
+        assert _persist_sqlite(conn, rows) == 2
+        saved = conn.execute("SELECT forecast_soc_percent, forecast_grid_charge_kwh FROM forecast_hourly_snapshots WHERE hour=3").fetchone()
+        assert tuple(saved) == (0.0, 3.58)
+        rows[0]["forecast_soc_percent"] = 99.0
+        assert _persist_sqlite(conn, rows) == 0
+        assert conn.execute("SELECT forecast_soc_percent FROM forecast_hourly_snapshots WHERE hour=3").fetchone()[0] == 0.0
+    finally:
+        conn.close()
+
+
+def test_legacy_night_rows_keep_their_original_identity_shape() -> None:
+    plan = _plan()
+    plan["daytime_soc_optimization"]["hourly_pv_forecast_kwh"]["3"] = 0.0
+    plan["daytime_soc_optimization"]["hourly_load_forecast_kwh"]["3"] = 0.4
+    rows = build_forecast_snapshot_rows(plan, ingested_at="2026-08-26T17:30:00Z", timezone="Asia/Tokyo")
+    night = next(row for row in rows if row["hour"] == 3)
+    assert "forecast_soc_percent" not in night
+    assert "forecast_grid_charge_kwh" not in night
+
+
 def test_snapshot_builder_marks_fallback_issue_time_and_invalid_shortwave() -> None:
     plan = _plan(issued_at=None)
     plan["forecast"]["hourly_weather"][0]["shortwave_radiation_w_m2"] = 0

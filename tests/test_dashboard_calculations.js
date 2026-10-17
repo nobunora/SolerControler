@@ -4,7 +4,6 @@ const {
   allocateNightGridCharge,
   plannedBatteryValues,
   forecastSocFromLatestActual,
-  forecastNightSocAtHourStart,
 } = require("../static/dashboard_calculations.js");
 
 assert.equal(minuteOf("02:43"), 163);
@@ -26,7 +25,8 @@ assert.equal(crossing.reduce((sum, value) => sum + value, 0), 2);
 assert.equal(allocateNightGridCharge(rows, 2, "04:00", "04:00").reduce((a, b) => a + b, 0), 0);
 
 const fallback = allocateNightGridCharge(rows, 3, "", "");
-assert.deepEqual(fallback.slice(4, 7), [1, 1, 1]);
+assert.deepEqual(fallback, Array(24).fill(null));
+assert.deepEqual(allocateNightGridCharge(rows, 3, null, "06:45"), Array(24).fill(null));
 
 assert.deepEqual(
   plannedBatteryValues(
@@ -66,23 +66,3 @@ assert.deepEqual(
   forecastSocFromLatestActual([{ hour: 18, forecast_pv_kwh: 1, forecast_load_kwh: 1 }], 10, 1, 1),
   [null],
 );
-
-const nightRows = Array.from({ length: 24 }, (_, hour) => ({ hour }));
-const nightGrid = nightRows.map(({ hour }) => hour >= 4 && hour < 7 ? 1 : 0);
-assert.deepEqual(forecastNightSocAtHourStart(nightRows, nightGrid, 80, 10, 1),
-  [50, 50, 50, 50, 50, 60, 70, ...Array(17).fill(null)]);
-assert.deepEqual(forecastNightSocAtHourStart(nightRows, nightGrid, 80, 10, 0.9).slice(0, 7),
-  [53, 53, 53, 53, 53, 62, 71]);
-assert.deepEqual(forecastNightSocAtHourStart(nightRows, nightGrid.map(() => 0), 0, 10, 1).slice(0, 7), Array(7).fill(0));
-assert.deepEqual(forecastNightSocAtHourStart(nightRows, allocateNightGridCharge(nightRows, 3, "04:30", "06:30"), 80, 10, 1).slice(4, 7),
-  [50, 57.5, 72.5]);
-assert.equal(forecastNightSocAtHourStart(nightRows, allocateNightGridCharge(nightRows, 3, "00:00", "03:00"), 80, 10, 1)[0], 50);
-assert.deepEqual(forecastNightSocAtHourStart([...nightRows].reverse(), [...nightGrid].reverse(), 80, 10, 1),
-  [...forecastNightSocAtHourStart(nightRows, nightGrid, 80, 10, 1)].reverse());
-for (const invalid of [null, true, "80", NaN, -1, 101]) {
-  assert.ok(forecastNightSocAtHourStart(nightRows, nightGrid, invalid, 10, 1).every((point) => point === null));
-}
-assert.ok(forecastNightSocAtHourStart(nightRows, nightGrid, 80, 0, 1).every((point) => point === null));
-assert.ok(forecastNightSocAtHourStart(nightRows, nightGrid.slice(1), 80, 10, 1).every((point) => point === null));
-assert.ok(forecastNightSocAtHourStart(nightRows.slice(1), nightGrid.slice(1), 80, 10, 1).every((point) => point === null));
-assert.ok(forecastNightSocAtHourStart([{ hour: 1 }, ...nightRows.slice(1)], nightGrid, 80, 10, 1).every((point) => point === null));
