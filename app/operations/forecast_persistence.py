@@ -135,7 +135,9 @@ def persist_forecast_only_plan(
             for collection, key, payload in writes:
                 # A standalone forecast is not adopted control evidence. An
                 # existing adopted identity must not survive a different run.
-                transaction.set(client.collection(collection).document(key), {**payload, **incoming}, merge=True)
+                values = {**payload, **incoming}
+                transaction.set(client.collection(collection).document(key), values,
+                                merge=list(values) if collection == "forecast_plans" else True)
 
         update(client.transaction(max_attempts=3))
         return snapshot_count
@@ -144,7 +146,8 @@ def persist_forecast_only_plan(
     for document in existing:
         batch.delete(document.reference)
     for collection, key, payload in writes:
-        batch.set(client.collection(collection).document(key), payload, merge=True)
+        batch.set(client.collection(collection).document(key), payload,
+                  merge=list(payload) if collection == "forecast_plans" else True)
     batch.commit()
     return snapshot_count
 
@@ -196,6 +199,8 @@ def _forecast_projection_values(
         writes.append((
             "forecast_hourly", f"{target_date}-{int(row['hour']):02d}",
             {
+                "forecast_soc_percent": None,
+                "forecast_grid_charge_kwh": None,
                 **row,
                 "source": "forecast-only-hourly",
                 "forecast_run_id": forecast_run_id,
@@ -326,7 +331,9 @@ def project_forecast_plan(
                 and previous.get("forecast_run_id") and previous["forecast_run_id"] != forecast_value["forecast_run_id"]):
             raise ValueError("legacy projection forecast generation conflict")
         for collection, key, payload in writes:
-            transaction.set(client.collection(collection).document(key), {**payload, **identity}, merge=True)
+            values = {**payload, **identity}
+            transaction.set(client.collection(collection).document(key), values,
+                            merge=list(values) if collection == "forecast_plans" else True)
 
     if deadline is None:
         transactional(update)(client.transaction(max_attempts=3))

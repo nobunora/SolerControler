@@ -97,6 +97,40 @@ def test_real_sdk_projection_transaction_binds_24_values_and_same_capacity(tmp_p
     assert all("control_plan_current" not in write.update.name for write in transaction_commits[0]["writes"])
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_night_projection_replacement_uses_whole_map_mask_and_clears_missing_hour_values(tmp_path, sdk_client, legacy):
+    client, transport = sdk_client
+
+    def publish(generated, values):
+        data = json.loads(original(generated=generated))
+        data["decision_rationale"] = {"night_soc_projection": {"target_date": "2026-10-11",
+            "status": "ready" if values else "unavailable", "hourly_soc_percent": values,
+            "hourly_grid_charge_kwh": {hour: 1.0 for hour in values}}}
+        raw = json.dumps(data, sort_keys=True).encode()
+        plan, path = bind(raw), private_file(tmp_path, raw)
+        if legacy:
+            persist_forecast_only_plan(client, plan_path=path, target_date=plan.target_date, timezone_name="Asia/Tokyo")
+        else:
+            project_forecast_plan(client, raw=raw, plan=plan, private_plan_path=path, timezone_name="Asia/Tokyo")
+
+    publish("2026-10-11T02:00:00Z", {"3": 0.0, "4": 40.0})
+    metadata_ref = client.collection("forecast_plans").document("2026-10-11")._document_path
+    transport.documents[metadata_ref]["unrelated_existing_field"] = "preserve"
+    publish("2026-10-11T12:00:00Z", {})
+    transaction = [request for kind, request in transport.requests if kind == "commit" and request.get("transaction")][-1]
+    metadata = next(write for write in transaction["writes"] if write.update.name == metadata_ref)
+    assert "planned_hourly_soc_percent" in metadata.update_mask.field_paths
+    assert "night_soc_projection" in metadata.update_mask.field_paths
+    assert not any(path.startswith("planned_hourly_soc_percent.") for path in metadata.update_mask.field_paths)
+    hourly_ref = client.collection("forecast_hourly").document("2026-10-11-03")._document_path
+    hourly = next(write for write in transaction["writes"] if write.update.name == hourly_ref)
+    payload = _helpers.decode_dict(hourly.update.fields, None)
+    assert payload["forecast_soc_percent"] is None and payload["forecast_grid_charge_kwh"] is None
+    assert {"forecast_soc_percent", "forecast_grid_charge_kwh"} <= set(hourly.update_mask.field_paths)
+    assert transport.documents[metadata_ref]["unrelated_existing_field"] == "preserve"
+    assert set(transport.documents[metadata_ref]["planned_hourly_soc_percent"]) == {str(hour) for hour in range(7, 24)}
+
+
 def test_real_sdk_same_projection_is_idempotent_and_older_conflicting_generation_is_rejected(tmp_path, sdk_client):
     client, transport = sdk_client
     raw = original()
@@ -110,6 +144,71 @@ def test_real_sdk_same_projection_is_idempotent_and_older_conflicting_generation
         with pytest.raises(ValueError, match="older|conflicting"):
             project_forecast_plan(client, raw=candidate, plan=bind(candidate), private_plan_path=private_file(tmp_path, candidate), timezone_name="Asia/Tokyo")
         assert transport.documents[client.collection("forecast_plans").document(plan.target_date)._document_path] == before[client.collection("forecast_plans").document(plan.target_date)._document_path]
+
+
+@pytest.mark.parametrize("fault", [None, "review_sha", "source_drift", "energy_mismatch", "ack_loss"])
+def test_reviewed_night_repair_preserves_original_and_energy_and_never_retries_a_write(tmp_path, sdk_client, fault, monkeypatch):
+    from scripts.repair_forecast_night_projection import prepare_repair, apply_repair, verify_repair
+    client, transport = sdk_client
+    data = json.loads(original())
+    data["decision_rationale"] = {"night_soc_projection": {"target_date": "2026-10-11", "status": "unavailable",
+        "hourly_soc_percent": {}, "hourly_grid_charge_kwh": {}}}
+    raw = json.dumps(data, sort_keys=True).encode()
+    plan = bind(raw)
+    project_forecast_plan(client, raw=raw, plan=plan, private_plan_path=private_file(tmp_path, raw), timezone_name="Asia/Tokyo")
+    for collection, key in (("control_plan_versions", plan.version_id), ("control_plan_current", plan.target_date)):
+        transport.documents[client.collection(collection).document(key)._document_path] = {"payload": json.dumps(plan.to_document())}
+    meta = client.collection("forecast_plans").document(plan.target_date)._document_path
+    hour = client.collection("forecast_hourly").document(f"{plan.target_date}-03")._document_path
+    transport.documents[meta]["planned_hourly_soc_percent"]["3"] = 55.0
+    transport.documents[meta]["night_soc_projection"]["hourly_soc_percent"] = {"3": 55.0}
+    transport.documents[meta]["unrelated_existing_field"] = "preserve"
+    transport.documents[hour].update(forecast_soc_percent=55.0, forecast_grid_charge_kwh=1.0)
+    if fault == "energy_mismatch":
+        transport.documents[hour]["forecast_pv_kwh"] += 0.1
+        with pytest.raises(ValueError, match="energy"):
+            prepare_repair(client, tmp_path/"state.json", plan.target_date, as_of=datetime(2026, 10, 31, tzinfo=timezone.utc))
+        return
+    state_path = tmp_path/"state.json"
+    prepared = prepare_repair(client, state_path, plan.target_date, as_of=datetime(2026, 10, 31, tzinfo=timezone.utc))
+    assert prepared["patch_documents"] == 2
+    sha = prepared["state_sha256"]
+    before = copy.deepcopy(transport.documents)
+    if fault == "review_sha":
+        with pytest.raises(ValueError, match="SHA"):
+            apply_repair(client, state_path, "0"*64)
+        assert transport.documents == before
+        return
+    if fault == "source_drift":
+        transport.documents[meta]["unrelated_existing_field"] = "concurrent change"
+        before = copy.deepcopy(transport.documents)
+        with pytest.raises(ValueError, match="changed after review"):
+            apply_repair(client, state_path, sha)
+        assert transport.documents == before
+        assert json.loads(state_path.with_suffix(".receipt.json").read_text())["status"] == "rejected_before_write"
+        return
+    if fault == "ack_loss":
+        commit = transport.commit
+        def lose_ack(request, **kwargs):
+            commit(request, **kwargs)
+            raise TimeoutError("simulated after commit")
+        monkeypatch.setattr(transport, "commit", lose_ack)
+        with pytest.raises(TimeoutError):
+            apply_repair(client, state_path, sha)
+        assert json.loads(state_path.with_suffix(".receipt.json").read_text())["status"] == "unknown_commit"
+        assert verify_repair(client, state_path, sha)["status"] == "VERIFIED"
+    else:
+        assert apply_repair(client, state_path, sha)["status"] == "VERIFIED"
+    with pytest.raises(FileExistsError):
+        apply_repair(client, state_path, sha)
+    assert "3" not in transport.documents[meta]["planned_hourly_soc_percent"]
+    assert transport.documents[meta]["night_soc_projection"]["hourly_soc_percent"] == {}
+    assert transport.documents[hour]["forecast_soc_percent"] is None
+    assert transport.documents[hour]["forecast_grid_charge_kwh"] is None
+    assert transport.documents[meta]["unrelated_existing_field"] == "preserve"
+    for path, payload in before.items():
+        if path not in {meta, hour}:
+            assert transport.documents[path] == payload
 
 
 def test_parameters_legacy_migration_then_retry_never_adds_a_second_sample(sdk_client):
