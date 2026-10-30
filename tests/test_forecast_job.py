@@ -10,8 +10,11 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
     monkeypatch.setattr(forecast_job, "_target_date", lambda: "2026-09-03")
     monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
     monkeypatch.setenv("KP_NIGHT_PLAN_PATH", str(tmp_path / "legacy-plan.json"))
+    monkeypatch.setattr(forecast_job, "ideal_max_archive_prefix", lambda: "gs://unit-test/maximum")
     def run(command, env, **_kwargs):
         calls.append((command, env))
+        if command[1] == "kpnet_main.py":
+            assert recovered, "saved forecast recovery must precede actual ingestion"
         if command[1] == "energy_model_main.py":
             Path(env["KP_NIGHT_PLAN_PATH"]).write_bytes(b"{}")
     monkeypatch.setattr(forecast_job, "_run", run)
@@ -40,6 +43,7 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
                 "DATA_PIPELINE_INCLUDE_NIGHT_PLAN": "false",
                 "DASHBOARD_SNAPSHOT_GCS_PREFIX": "",
                 "NIGHT_PLAN_ARCHIVE_GCS_PREFIX": "",
+                "PV_IDEAL_MAX_GCS_PREFIX": "gs://unit-test/maximum",
             },
         ),
         ([forecast_job.sys.executable, "energy_model_main.py"], {"FORECAST_DATE_OVERRIDE": "2026-09-03", "KP_NIGHT_PLAN_PATH": str(private_path)}),
@@ -47,6 +51,11 @@ def test_forecast_job_ingests_csv_actuals_before_plan_and_forecast_persistence(m
     assert persisted[0]["target_date"] == "2026-09-03"
     assert recovered[0]["target_date"] == "2026-09-03"
     assert len(snapshot_calls) == 1
+    from app.operations.pv_ideal_max import ideal_max_archive_prefix
+    with monkeypatch.context() as child:
+        for key, value in calls[1][1].items():
+            child.setenv(key, value)
+        assert ideal_max_archive_prefix() == "gs://unit-test/maximum"
 
 
 def test_forecast_job_source_has_no_control_or_settings_write_path() -> None:

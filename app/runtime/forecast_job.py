@@ -12,6 +12,7 @@ from app.operations.firestore import open_firestore
 from app.dashboard.snapshots import dashboard_snapshot_prefix, write_dashboard_snapshots
 from app.operations.forecast_persistence import persist_forecast_only_plan
 from app.operations.forecast_recovery import recover_missing_forecast_snapshots
+from app.operations.pv_ideal_max import ideal_max_archive_prefix
 from app.runtime.command_adapter import _run
 
 
@@ -41,6 +42,7 @@ def generate_forecast_plan() -> Path:
             "DATA_PIPELINE_INCLUDE_NIGHT_PLAN": "false",
             "DASHBOARD_SNAPSHOT_GCS_PREFIX": "",
             "NIGHT_PLAN_ARCHIVE_GCS_PREFIX": "",
+            "PV_IDEAL_MAX_GCS_PREFIX": ideal_max_archive_prefix(),
         },
         timeout_seconds=240,
     )

@@ -10,6 +10,7 @@ from app.operations import sqlite as sqlite_ops
 from app.backup.weekly import create_weekly_diff_backup
 from app.operations.forecast_snapshot import persist_forecast_snapshots
 from app.operations.monitoring_sync import earliest_changed_month_start, prepare_monitoring_csvs, window_from_ingested_at
+from app.operations.pv_ideal_max import update_ideal_max_after_import
 
 _SUCCESSFUL_SETTING_STATUSES = {"applied", "skipped-no-change"}
 
@@ -24,6 +25,14 @@ def _env_bool(name: str, default: bool = True) -> bool:
 
 def _monitoring_full_backfill_requested() -> bool:
     return _env_bool("DATA_MONITORING_FULL_BACKFILL", False)
+
+
+def _update_ideal_max_after_csv(cfg: sqlite_ops.PipelineConfig, csv_run_dir: Path | None, now: datetime) -> None:
+    if csv_run_dir is None:
+        return
+    result = update_ideal_max_after_import(_collect_csv_paths(csv_run_dir), artifacts_dir=cfg.artifacts_dir, as_of=now)
+    print(json.dumps({"event": "pv_ideal_max_import", **{key: value for key, value in result.items() if key != "hourly"}},
+                     sort_keys=True, allow_nan=False))
 
 
 def _log_monitoring_sync(changes: Any) -> None:
@@ -548,6 +557,7 @@ def main() -> int:
             now_utc=now_utc,
             include_night_plan=include_night_plan,
         )
+        _update_ideal_max_after_csv(cfg, csv_run_dir, now_utc)
         return 0
     if cfg.data_backend == "postgres":
         _ingest_postgres(
@@ -558,6 +568,7 @@ def main() -> int:
             now_utc=now_utc,
             include_night_plan=include_night_plan,
         )
+        _update_ideal_max_after_csv(cfg, csv_run_dir, now_utc)
         return 0
     if cfg.data_backend == "firestore":
         _ingest_firestore(
@@ -567,6 +578,7 @@ def main() -> int:
             now_iso=now_iso,
             include_night_plan=include_night_plan,
         )
+        _update_ideal_max_after_csv(cfg, csv_run_dir, now_utc)
         return 0
 
     raise RuntimeError(f"unsupported DATA_BACKEND: {cfg.data_backend}")
