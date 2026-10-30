@@ -10,6 +10,7 @@ import json
 import math
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -513,12 +514,8 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
         state["read_bytes"] += count
         return value
 
-    for day, selected in grouped.items():
-        state: dict[str, Any] = {"revisions_before": {}, "read_count": 0, "read_bytes": 0}
-        meta_snapshot = metadata_docs.get(day) or fetched[f"forecast_plans/{day}"]
-        metadata = record(state, "forecast_plans", meta_snapshot)
-        daily_snapshot = fetched[f"battery_daily_metrics/{day}"]
-        daily = record(state, "battery_daily_metrics", daily_snapshot)
+    def read_hourly(item: tuple[str, list[dict[str, Any]]]) -> tuple[str, tuple[str, list[Any]]]:
+        day, selected = item
         forecast_rows = [row for row in selected if has_forecast_evidence(row)]
         sources = {str(row.get("source") or "") for row in forecast_rows}
         collection = "forecast_hourly_snapshots" if "forecast_hourly_snapshot" in sources else (
@@ -536,6 +533,21 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
         raw_snapshots = list(query.limit(25).stream(timeout=_timeout(deadline), retry=None)) if forecast_rows else []
         if len(raw_snapshots) > 24:
             raise ValueError("hourly_limit")
+        return day, (collection, raw_snapshots)
+
+    # Keep the same selected-vintage queries and shared deadline; overlap only
+    # independent read RPCs, not the before/original/after verification phases.
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        hourly_documents = dict(executor.map(read_hourly, grouped.items()))
+
+    for day, selected in grouped.items():
+        state: dict[str, Any] = {"revisions_before": {}, "read_count": 0, "read_bytes": 0}
+        meta_snapshot = metadata_docs.get(day) or fetched[f"forecast_plans/{day}"]
+        metadata = record(state, "forecast_plans", meta_snapshot)
+        daily_snapshot = fetched[f"battery_daily_metrics/{day}"]
+        daily = record(state, "battery_daily_metrics", daily_snapshot)
+        forecast_rows = [row for row in selected if has_forecast_evidence(row)]
+        collection, raw_snapshots = hourly_documents[day]
         stored = [record(state, collection, snapshot) for snapshot in raw_snapshots]
         new = bool(metadata.get("control_version_id")) or _new_marker(forecast_rows + stored)
         state.update(target_date=day, metadata_exists=bool(meta_snapshot.exists), metadata=metadata,

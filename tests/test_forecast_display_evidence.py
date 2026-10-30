@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import time
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from app.separated_runtime.plan import PublishedPlan
 from scripts.validate_forecast_display_evidence import (
     _original_hourly,
     _native,
+    _read_state,
     load_forecast_evidence_for_window,
     validate_forecast_day_evidence,
     validate_forecast_window_evidence,
@@ -405,6 +407,43 @@ class Client:
             result.append(snapshot)
         # BatchGet does not promise caller ordering.
         return reversed(result)
+
+
+def test_hourly_reads_overlap_at_most_four_without_changing_query_bounds(monkeypatch):
+    _, evidence, rows, _ = fixture()
+    client = Client(evidence)
+    client.values = {}
+    days = [f"2026-10-{day:02d}" for day in range(1, 9)]
+    grouped = {day: [{**rows[0], "date": day}] for day in days}
+    barrier, lock = Barrier(4), Lock()
+    active = peak = 0
+    queried = []
+    stream = Query.stream
+
+    def overlapping(query, **kwargs):
+        nonlocal active, peak
+        if query.name != "forecast_hourly_snapshots":
+            return stream(query, **kwargs)
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            queried.append((query.filters, query.maximum))
+        try:
+            barrier.wait(timeout=5)
+            return stream(query, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(Query, "stream", overlapping)
+    result = _read_state(client, start_date=days[0], end_date=days[-1],
+                         grouped=grouped, deadline=time.monotonic() + 60)
+    assert peak == 4
+    assert set(result) == set(days)
+    assert sorted(filters[0][2] for filters, _ in queried) == days
+    assert all(maximum == 25 and filters[1] == ("forecast_run_id", "==", rows[0]["forecast_run_id"])
+               for filters, maximum in queried)
+    assert all(call[0] in {"stream", "get_all"} for call in client.calls)
 
 
 class Blob:
