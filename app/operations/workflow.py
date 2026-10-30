@@ -30,9 +30,15 @@ def _monitoring_full_backfill_requested() -> bool:
 def _update_ideal_max_after_csv(cfg: sqlite_ops.PipelineConfig, csv_run_dir: Path | None, now: datetime) -> None:
     if csv_run_dir is None:
         return
-    result = update_ideal_max_after_import(_collect_csv_paths(csv_run_dir), artifacts_dir=cfg.artifacts_dir, as_of=now)
-    print(json.dumps({"event": "pv_ideal_max_import", **{key: value for key, value in result.items() if key != "hourly"}},
-                     sort_keys=True, allow_nan=False))
+    try:
+        result = update_ideal_max_after_import(_collect_csv_paths(csv_run_dir), artifacts_dir=cfg.artifacts_dir, as_of=now)
+        print(json.dumps({"event": "pv_ideal_max_import", **{key: value for key, value in result.items() if key != "hourly"}},
+                         sort_keys=True, allow_nan=False))
+    except Exception as exc:
+        # This independent ledger must not gate the completed raw import or
+        # the following forecast. Its own CAS/checksum failures remain errors.
+        print(json.dumps({"event": "pv_ideal_max_import", "severity": "ERROR", "status": "failed",
+                          "error_type": type(exc).__name__}, sort_keys=True))
 
 
 def _log_monitoring_sync(changes: Any) -> None:

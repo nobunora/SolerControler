@@ -12,6 +12,8 @@
 
 既存の予測専用Jobは、保存済み予測の回復、CSV取得、実績DB取込、従来の予測計算の順に実行する。DB取込成功後、新台帳を更新する。rawの重複取込が冪等終了しても新台帳処理へ到達する。settings-only回・raw失敗時は呼ばない。
 
+新台帳は通常forecastの成功条件に追加しない。台帳の通信・整合性・保存失敗は `pv_ideal_max_import` の `severity=ERROR/status=failed/error_type` として記録し、完了済みの実績取込と後続forecastは継続する。例外messageや保存先識別子は出さない。台帳自身のCAS・checksum検査は維持し、その実行での再書込み・古いcopyへのfallback・自動初期化は行わない。次の通常実行では空directoryへ本番currentを新規checkoutしてから処理する。実績取込本体の失敗は従来どおり伝播する。
+
 予測Jobの子は旧計画アーカイブを無効化しているため、新台帳のprefixを `PV_IDEAL_MAX_GCS_PREFIX` で明示的に引き継ぐ。この値は既存prefixから実行時に導出する。通常は追加の `.env` 設定は不要。直接実行の既定は従来の `night_plan_archive_prefix()`。旧計画保存・予報PV・SOC制御へ新最大量を代入しない。
 
 ## 保存と復元

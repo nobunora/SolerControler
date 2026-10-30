@@ -18,6 +18,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 | 同日: 全体pytest実行中に契約設定とテストを編集し、読み込み済み旧テストと新設定が混在 | gate開始後はsource/config/testsを編集しない。変更が入った実行は受入証拠に使わず、固定commitから正規gateを再実行する |
 | 2026-10-31: 理想最大台帳の日付跨ぎ本番試験で、初期化後の区間に対応する初期化前の発行値を運用評価1件と誤認 | 区間開始だけでなく保存原本のissued_atもinitialized_at以降であることを必須にする。前・同時刻・後の境界を`test_post_initialization_hour_requires_a_post_initialization_issue`で回帰し、事前発行証拠なしはUNVERIFIED_ISSUE_TIMEで停止する。原本・係数・学習結果の改変や、評価件数0を精度成功へ読み替えることは禁止 |
 | 同日: 遅い時刻の同日予測再保存で、原本にない古い夜間SOCがFirestoreの再帰mergeで残った | forecast_plansの所有mapは親field maskで置換し、欠損の時間別SOC/充電量はnullにする。実SDKのwhole-map-mask回帰と履歴保護回帰を必須とする。既存派生値は保存原本・対象世代を固定した専用repair wrapperでだけ修復し、結果不明時は再書込せずverifyする。本番実行後は当日を含むbounded原本照合を行い、未確定点の補間や原本書換えで通さない |
+| 同日: 故障注入で独立した理想最大台帳の保存失敗が完了済み実績取込を異常終了させ、通常forecastを止めることを再現 | 台帳境界だけで例外を構造化ERRORとして記録し、通常forecastへ伝播させない。全3backendで通信・整合性・I/O故障を回帰し、実績取込本体の失敗は従来どおり停止する。台帳自身のCAS/checksum/古いcopy拒否を緩和しない。新しいrelease gate・Scheduler・自動retryは追加しない |
 
 ## 毎回の順序
 
