@@ -498,6 +498,7 @@ def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tm
 
     monkeypatch.setattr("app.energy_plan.workflow._load_execution_context", stage("context", context))
     monkeypatch.setattr("app.energy_plan.workflow._build_consumption_forecasts", stage("consumption", consumption))
+    monkeypatch.setattr("app.energy_plan.workflow.build_ideal_max_forecast_bundle", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.energy_plan.workflow.load_calibration_for_context", stage("calibration", (object(), datetime.now().astimezone())))
     monkeypatch.setattr("app.energy_plan.workflow._prepare_night_charge_from_hourly", stage("night", night_charge))
     monkeypatch.setattr("app.energy_plan.workflow._build_clear_ghi_forecast_bundle", stage("pv", pv))
