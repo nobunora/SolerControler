@@ -30,3 +30,20 @@ GETで原本アーカイブ取得やDB履歴走査を追加せず、既存の事
 
 対象回帰は実測0、入力欠損、保存夜間計画、計画/実績分離、早期目標到達、監視期限、
 日中計画不変、初期要求数と履歴遅延取得。実機設定を変更しないforecast/dashboard scopeで反映する。
+
+## 同日再発行と保存済み派生値の修復
+
+夜間計画が未確定になった再発行では、前の版の夜間SOCを残さない。Firestoreの
+`forecast_plans`の所有mapは親field maskで置換し、時間別SOC・充電量の欠損はnullとして保存する。
+未知のtop-level field、日中計画、PV・消費量、保存原本とそのSHA/発行時刻は保持する。
+
+既存の不一致は `scripts/repair_forecast_night_projection_from_env.ps1` の
+`-Stage prepare -TargetDate <日付> -StatePath <artifacts内の新規JSON>` で対象と原本を固定する。
+prepareは読取りのみ。原本、世代、PV/消費量、日中SOCの一致と、最大8文書の夜間派生値だけのpatchを確認する。
+利用者の承認範囲で、返されたSHAを `-ReviewedStateSha256` に指定して同stateの`-Stage apply`を1回実行する。
+書込は1回のbounded transactionで、所有mapを置換する。原本・非対象文書を含む27文書のnative読返しを必須とする。
+結果不明時は同stateの`-Stage verify`だけを行い、applyを繰り返さない。旧監視source repairは別用途であり流用しない。
+
+この修復は直近31日だけを許可する。修復後の通常forecast実行でrecent履歴・bootstrapを再生成し、
+修復日と当日を含むbounded backend/original照合、browser受入を行う。31日外はこの入口で変更せず、
+履歴の全面再生成手順を別途固定する。GETで追加のDB/原本走査を発生させない。
