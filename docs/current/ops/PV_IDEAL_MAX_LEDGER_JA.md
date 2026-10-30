@@ -22,7 +22,7 @@
 - `current.json` を読んだ世代条件で更新し、競合時は終了。blind retryや古いcopyでの上書きはしない。
 - 毎回空の一時directoryへ指定世代を復元し、snapshot SHA、model/geometry、C/revision、SQLite quick_checkを確認。
 - pointerなしは `uninitialized`。自動初期化・暗黙リセットをしない。破損・snapshot欠落はエラー。
-- cloud初期化実時刻を評価境界として保持し、研究用seedの過去時刻を本番成績に読み替えない。
+- cloud初期化実時刻を評価境界として保持し、区間開始と保存された発行時刻の両方がその境界以降の場合だけ運用評価する。研究用seedの過去時刻を本番成績に読み替えない。
 - 共有deadline60秒、各SDK操作は最大4秒、SDK retryなし。圧縮snapshot bytesと更新結果を記録。
 
 履歴増加に伴うsnapshot転送量は運用で測定する。通常状態は1行、明示的な時間別reportは31日以内の索引範囲だけを読む。HTTP/dashboard経路は追加しない。

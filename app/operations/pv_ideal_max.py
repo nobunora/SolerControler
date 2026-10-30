@@ -53,7 +53,8 @@ def ingest_ideal_max_csvs(store: IdealMaxStore, csv_paths: list[Path], *, as_of:
         store.predict_day(target, as_of=issued_at)
     issued_records = [r for r in records if r is not None and r["issued_prediction"] is not None]
     evaluated = [r for r in issued_records if issued_not_before is None
-                 or datetime.fromisoformat(r["interval_start"]) >= issued_not_before]
+                 or (datetime.fromisoformat(r["interval_start"]) >= issued_not_before
+                     and datetime.fromisoformat(r["issued_prediction"]["issued_at"]) >= issued_not_before)]
     exceeded = [r for r in evaluated if r["issued_exceeded"]]
     state = store.read_current()
     return {"status": "updated", "received_at": as_of.isoformat(), "issued_at": issued_at.isoformat(), "new_hours": len(records),
