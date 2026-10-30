@@ -17,6 +17,7 @@ import requests
 from app.forecasting.pv_clear_ghi import ClearGhiCalibration, ClearGhiForecast
 from app.energy_plan.clear_ghi_adapter import _build_clear_ghi_forecast_bundle, _prepare_night_charge_from_hourly
 from app.energy_plan.clear_ghi_update import load_calibration_for_context
+from app.energy_plan.ideal_max_adapter import build_ideal_max_forecast_bundle
 
 from app.forecasting.consumption import ConsumptionForecast, forecast_daily_consumption
 from app.energy_plan import (
@@ -260,6 +261,7 @@ class PvForecastBundle:
     uncertainty: PvForecastUncertainty
     sunset_hour: int
     clear_ghi_forecast: ClearGhiForecast | None = None
+    ideal_max_provenance: dict[str, Any] | None = None
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -1137,14 +1139,19 @@ def build_energy_plan(
         if weather_history_port is None
         else _build_consumption_forecasts(context, weather_history_port=weather_history_port)
     )
-    if calibration is None:
+    pv_bundle = None
+    if calibration is None and as_of is None:
+        pv_bundle = build_ideal_max_forecast_bundle(context, consumption_bundle, as_of=datetime.now(utc_timezone.utc))
+    if pv_bundle is None and calibration is None:
         if as_of is not None:
             raise ValueError("as_of requires an explicitly supplied calibration")
         calibration, as_of = load_calibration_for_context(context)
-    elif as_of is None:
+    elif pv_bundle is None and as_of is None:
         raise ValueError("explicit calibration requires an aware as_of")
     try:
-        pv_bundle = _build_clear_ghi_forecast_bundle(context, consumption_bundle, calibration, as_of=as_of)
+        if pv_bundle is None:
+            assert calibration is not None and as_of is not None
+            pv_bundle = _build_clear_ghi_forecast_bundle(context, consumption_bundle, calibration, as_of=as_of)
     except ValueError:
         print(json.dumps({"event": "energy_plan_failed", "stage": "pv_forecast_bundle", "target_date": context.target_date,
                           "reason_code": "invalid_forecast_or_calibration"}), flush=True)

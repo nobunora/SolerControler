@@ -143,6 +143,8 @@ def _build_energy_model_output(
                 soc_per_kwh_charge=context.coefficients.soc_per_kwh_charge,
                 rate_info=estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
             ),
+            **({"pv_ideal_max": pv_forecast.ideal_max_provenance}
+               if pv_forecast.ideal_max_provenance is not None else {}),
             **({"pv_clear_ghi": _clear_ghi_trace(pv_forecast.clear_ghi_forecast, timezone=context.config.timezone,
                                                hourly_load_kwh=pv_forecast.hourly_load_kwh)}
                if pv_forecast.clear_ghi_forecast is not None else {}),

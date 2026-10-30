@@ -15,7 +15,7 @@ from app.separated_runtime.plan import PublishedPlan
 def _provenance(plan: PublishedPlan) -> dict[str, Any]:
     data = json.loads(plan.raw_json)
     rationale = data.get("decision_rationale")
-    trace = rationale.get("pv_clear_ghi") if isinstance(rationale, dict) else None
+    trace = (rationale.get("pv_ideal_max") or rationale.get("pv_clear_ghi")) if isinstance(rationale, dict) else None
     return trace if isinstance(trace, dict) else {}
 
 
@@ -32,6 +32,13 @@ def _check_provenance(incoming: PublishedPlan, adopted: PublishedPlan) -> None:
     new, old = _provenance(incoming), _provenance(adopted)
     if not old:
         return  # Preserve legacy plans without inventing provider evidence.
+    # The approved planner can select the clear ledger or its existing weather
+    # fallback. Provider vintages and calibration bases differ across models.
+    models = {new.get("model_id"), old.get("model_id")}
+    if models == {"physical_clear_ghi_annual1", "physical_pv_ideal_max_global_v1"}:
+        if not old.get("site_fingerprint") or new.get("site_fingerprint") != old["site_fingerprint"]:
+            raise ValueError("plan publication provenance site mismatch")
+        return
     identity = ("model_id", "basis_version", "site_fingerprint")
     if not new or any(not old.get(key) or new.get(key) != old[key] for key in identity):
         raise ValueError("plan publication provenance model/site/basis mismatch")

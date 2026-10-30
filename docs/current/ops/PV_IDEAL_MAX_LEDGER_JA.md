@@ -14,7 +14,17 @@
 
 新台帳は通常forecastの成功条件に追加しない。台帳の通信・整合性・保存失敗は `pv_ideal_max_import` の `severity=ERROR/status=failed/error_type` として記録し、完了済みの実績取込と後続forecastは継続する。例外messageや保存先識別子は出さない。台帳自身のCAS・checksum検査は維持し、その実行での再書込み・古いcopyへのfallback・自動初期化は行わない。次の通常実行では空directoryへ本番currentを新規checkoutしてから処理する。実績取込本体の失敗は従来どおり伝播する。
 
-予測Jobの子は旧計画アーカイブを無効化しているため、新台帳のprefixを `PV_IDEAL_MAX_GCS_PREFIX` で明示的に引き継ぐ。この値は既存prefixから実行時に導出する。通常は追加の `.env` 設定は不要。直接実行の既定は従来の `night_plan_archive_prefix()`。旧計画保存・予報PV・SOC制御へ新最大量を代入しない。
+予測Jobの子は旧計画アーカイブを無効化しているため、新台帳のprefixを `PV_IDEAL_MAX_GCS_PREFIX` で明示的に引き継ぐ。この値は既存prefixから実行時に導出する。通常は追加の `.env` 設定は不要。直接実行の既定は従来の `night_plan_archive_prefix()`。旧計画保存namespaceは変更しない。
+
+## 10/31承認の計画への適用
+
+利用者の明示指示により、初期化済み台帳を読める通常forecastでは、24時間のB×CをSOC計算と保存予測の基準発電量へ直接使用する。天気・温度・旧PV残差による減算は行わない。消費予測・料金・SOC候補探索・誤差シナリオは維持する。誤差シナリオは将来の推定誤差を表し、保存台帳そのものの上限や係数を変更するものではない。
+
+sourceは `physical_pv_ideal_max_global_v1`。原本の `decision_rationale.pv_ideal_max` に設備fingerprint、取得/状態時刻、snapshot SHA、C/revision、時間別発電量を記録する。forecastの読取りで台帳の発行値追加・係数更新・cloud publishを行わない。明示calibrationを渡す過去再計算は従来の計算を維持する。
+
+台帳未初期化・読取り失敗時は従来予測へ戻り、失敗は構造化ERRORへ記録する。新しいgateやretryを追加しない。公開処理は同じ設備に限り新モデルと従来 `physical_clear_ghi_annual1` の切替を認め、未知モデル・設備変更の拒否と同一モデル内の時刻後退拒否は維持する。制御imageや機器設定を変更せず、以後の通常制御は公開された計画を従来契約で読む。
+
+データ経路は台帳GCS→計算Job→計画原本/forecast_hourly→既存bootstrap/history→API→browser。HTTP handler・要求数・cache方針を変更しない。新sourceの時間別PVとSOCが同じ原本から生成されること、台帳失敗時の従来予測継続、既存の初期history要求0/遷移後1/再利用を検証する。
 
 ## 保存と復元
 

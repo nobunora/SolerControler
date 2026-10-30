@@ -7,7 +7,8 @@ import json
 import os
 import tempfile
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from dataclasses import asdict
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -15,7 +16,8 @@ from zoneinfo import ZoneInfo
 from app.backup.night_plan_archive import night_plan_archive_prefix
 from app.energy_plan.workflow import EnergyModelConfig, _read_rows
 from app.forecasting.pv_array import load_pv_array_configs
-from app.forecasting.pv_ideal_max import IdealMaxArray, IdealMaxGeometry
+from app.forecasting.pv_ideal_max import BASIS_VERSION, MODEL_ID, IdealMaxArray, IdealMaxGeometry, calculate_ideal_max
+from app.forecasting.clear_ghi_observations import site_fingerprint
 from app.forecasting.pv_ideal_max_cloud import IdealMaxCloudArchive
 from app.forecasting.pv_ideal_max_store import IdealMaxStore
 from app.operations.pv_ideal_max_csv import hourly_observations
@@ -31,6 +33,47 @@ def configured_ideal_max_geometry() -> IdealMaxGeometry:
     return IdealMaxGeometry(cfg.latitude, cfg.longitude, cfg.timezone, tuple(
         IdealMaxArray(a.azimuth_deg, a.tilt_deg, a.capacity_kw, a.performance_ratio, a.shading_factor)
         for a in load_pv_array_configs()))
+
+
+def load_ideal_max_for_forecast(target_date: date, *, as_of: datetime,
+                                artifacts_dir: Path) -> tuple[dict[int, float], dict[str, Any]] | None:
+    """Read the current ledger without issuing predictions or publishing state."""
+    prefix = ideal_max_archive_prefix()
+    if not prefix and not (artifacts_dir / "pv_ideal_max").exists():
+        return None
+    geometry = configured_ideal_max_geometry()
+
+    def read(store: IdealMaxStore, snapshot_sha: str | None) -> tuple[dict[int, float], dict[str, Any]]:
+        state = store.read_current()
+        pv = dict(enumerate(calculate_ideal_max(target_date, geometry, state, as_of=as_of)))
+        pack = {"model_id": MODEL_ID, "basis_version": BASIS_VERSION, "geometry_fingerprint": geometry.fingerprint,
+                "coefficient": state.coefficient, "revision": state.revision,
+                "training_as_of": state.updated_at.isoformat(), "snapshot_sha256": snapshot_sha}
+        raw = json.dumps(pack, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        trace = {"schema_version": 1, "model_id": "physical_pv_ideal_max_global_v1", "basis_version": BASIS_VERSION,
+                 "site_fingerprint": site_fingerprint(latitude=geometry.latitude, longitude=geometry.longitude,
+                    timezone_name=geometry.timezone_name, arrays=[asdict(a) for a in load_pv_array_configs()]),
+                 "target_date": target_date.isoformat(), "as_of": as_of.isoformat(),
+                 "retrieved_at": datetime.now(timezone.utc).isoformat(), "provider_issued_at": None,
+                 "calibration_sha256": hashlib.sha256(raw).hexdigest(), "calibration_pack": pack,
+                 "coefficient": state.coefficient, "revision": state.revision,
+                 "hourly_pv_kwh": {str(h): value for h, value in pv.items()},
+                 "weather_adjustment_applied": False}
+        return pv, trace
+
+    if prefix:
+        from google.cloud.storage import Client
+        archive = IdealMaxCloudArchive(Client(), prefix, geometry)
+        with tempfile.TemporaryDirectory(prefix="ideal-max-forecast-") as temporary:
+            store = archive.checkout(Path(temporary))
+            if store is None:
+                return None
+            with store:
+                return read(store, archive.original["sha256"] if archive.original is not None else None)
+    if not (artifacts_dir / "pv_ideal_max" / geometry.fingerprint / "ledger.sqlite3").exists():
+        return None
+    with IdealMaxStore(artifacts_dir, geometry) as store:
+        return read(store, None)
 
 
 def ingest_ideal_max_csvs(store: IdealMaxStore, csv_paths: list[Path], *, as_of: datetime,
