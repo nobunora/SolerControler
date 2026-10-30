@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import time
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,7 @@ from app.separated_runtime.plan import PublishedPlan
 from scripts.validate_forecast_display_evidence import (
     _original_hourly,
     _native,
+    _read_state,
     load_forecast_evidence_for_window,
     validate_forecast_day_evidence,
     validate_forecast_window_evidence,
@@ -24,18 +26,22 @@ from scripts.validate_forecast_display_evidence import (
 DAY = "2026-10-11"
 
 
-def fixture(*, new=False):
+def fixture(*, new=False, night=None):
     plan = {"generated_at": "2026-10-10T21:00:00+09:00", "forecast": {"date": DAY,
             "hourly_weather": [{"hour": hour} for hour in range(24)]},
         "result": {"target_soc_7_percent": 50.0, "required_night_charge_kwh": 0.0,
                    "effective_capacity_kwh": 10.0, "final_pv_forecast_source": "fixture-selected"},
         "daytime_soc_optimization": {"hourly_pv_forecast_kwh": {str(hour): 0.4 if 8 <= hour <= 15 else 0.0 for hour in range(24)},
                                       "hourly_load_forecast_kwh": {str(hour): 0.1 for hour in range(24)}}}
+    if night is not None:
+        plan["decision_rationale"] = {"night_soc_projection": night}
     raw = json.dumps(plan, separators=(",", ":"), allow_nan=False).encode()
     stored = build_forecast_snapshot_rows(plan, ingested_at=plan["generated_at"], timezone="UTC")
     soc = simulate_daytime_soc_percent(target_soc_percent=50.0, capacity_kwh=10.0,
         hourly_pv_kwh={hour: 0.4 if 8 <= hour <= 15 else 0.0 for hour in range(24)},
         hourly_load_kwh={hour: 0.1 for hour in range(24)})
+    if night is not None:
+        soc.update({int(hour): value for hour, value in night["hourly_soc_percent"].items()})
     metadata = {"date": DAY, "forecast_run_id": stored[0]["forecast_run_id"],
                 "forecast_issued_at": plan["generated_at"], "planned_target_soc_percent": 50.0,
                 "planned_night_charge_kwh": 0.0, "planned_capacity_kwh": 10.0,
@@ -66,6 +72,36 @@ def fixture(*, new=False):
 def check(evidence, rows, daily):
     return validate_forecast_day_evidence(target_date=DAY, evidence=evidence,
                                          displayed_hourly=rows, displayed_battery_daily=daily)
+
+
+@pytest.mark.parametrize("mutation", [None, "metadata", "stored", "display", "missing", "invented",
+                                     "wrong_date", "not_ready", "missing_charge_map"])
+def test_saved_night_soc_matches_same_vintage_original_without_filling_gaps(mutation):
+    night = {"target_date": DAY, "status": "ready", "hourly_soc_percent": {"3": 0.0, "5": 35.0, "6": 50.0},
+             "hourly_grid_charge_kwh": {"3": 2.0, "5": 1.0, "6": 0.0}}
+    if mutation == "wrong_date":
+        night["target_date"] = "2026-10-10"
+    elif mutation == "not_ready":
+        night["status"] = "unavailable"
+    elif mutation == "missing_charge_map":
+        night["hourly_grid_charge_kwh"] = None
+    _, evidence, rows, daily = fixture(new=True, night=night)
+    if mutation == "metadata":
+        evidence["metadata"]["planned_hourly_soc_percent"]["3"] = 1.0
+    elif mutation == "stored":
+        evidence["stored_hourly"][3]["forecast_soc_percent"] = 1.0
+    elif mutation == "display":
+        rows[3]["forecast_soc_percent"] = 1.0
+    elif mutation == "missing":
+        del evidence["metadata"]["planned_hourly_soc_percent"]["5"]
+    elif mutation == "invented":
+        evidence["metadata"]["planned_hourly_soc_percent"]["4"] = 20.0
+        rows[4]["forecast_soc_percent"] = 20.0
+    result = check(evidence, rows, daily)
+    assert result["status"] == ("PASS" if mutation is None else "FAIL")
+    if mutation is None:
+        assert result["soc_points_verified"] == result["required_soc_points"] == 20
+        assert rows[4].get("forecast_soc_percent") is None
 
 
 def old_shape_fixture():
@@ -405,6 +441,43 @@ class Client:
             result.append(snapshot)
         # BatchGet does not promise caller ordering.
         return reversed(result)
+
+
+def test_hourly_reads_overlap_at_most_four_without_changing_query_bounds(monkeypatch):
+    _, evidence, rows, _ = fixture()
+    client = Client(evidence)
+    client.values = {}
+    days = [f"2026-10-{day:02d}" for day in range(1, 9)]
+    grouped = {day: [{**rows[0], "date": day}] for day in days}
+    barrier, lock = Barrier(4), Lock()
+    active = peak = 0
+    queried = []
+    stream = Query.stream
+
+    def overlapping(query, **kwargs):
+        nonlocal active, peak
+        if query.name != "forecast_hourly_snapshots":
+            return stream(query, **kwargs)
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            queried.append((query.filters, query.maximum))
+        try:
+            barrier.wait(timeout=5)
+            return stream(query, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(Query, "stream", overlapping)
+    result = _read_state(client, start_date=days[0], end_date=days[-1],
+                         grouped=grouped, deadline=time.monotonic() + 60)
+    assert peak == 4
+    assert set(result) == set(days)
+    assert sorted(filters[0][2] for filters, _ in queried) == days
+    assert all(maximum == 25 and filters[1] == ("forecast_run_id", "==", rows[0]["forecast_run_id"])
+               for filters, maximum in queried)
+    assert all(call[0] in {"stream", "get_all"} for call in client.calls)
 
 
 class Blob:

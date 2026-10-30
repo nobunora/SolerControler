@@ -10,6 +10,7 @@ import json
 import math
 import time
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,18 @@ def _original_hourly(plan: dict[str, Any], target_date: str) -> dict[int, dict[s
     return result
 
 
+def _original_night_soc(original: dict[str, Any], target_date: str) -> dict[int, float]:
+    """Read only saved, same-date night points; never reconstruct missing hours."""
+    rationale = original.get("decision_rationale")
+    night = rationale.get("night_soc_projection") if isinstance(rationale, dict) else None
+    if not isinstance(night, dict) or night.get("target_date") != target_date or night.get("status") != "ready":
+        return {}
+    soc = night.get("hourly_soc_percent")
+    if not isinstance(soc, dict) or not isinstance(night.get("hourly_grid_charge_kwh", {}), dict):
+        return {}
+    return {hour: float(soc[str(hour)]) for hour in range(7) if _number(soc.get(str(hour)), maximum=100)}
+
+
 def _day_result(target_date: str, evidence: dict[str, Any]) -> dict[str, Any]:
     return {"status": "PASS", "target_date": target_date,
             "evidence_required": True,
@@ -270,7 +283,8 @@ def validate_forecast_day_evidence(
                     raise ValueError(f"{field}:invalid_numeric")
             soc = metadata.get("planned_hourly_soc_percent")
             if not legacy_old_shape:
-                if not isinstance(soc, dict) or set(soc) != {str(hour) for hour in range(7, 24)}:
+                if (not isinstance(soc, dict) or not {str(hour) for hour in range(7, 24)} <= set(soc)
+                        or not set(soc) <= {str(hour) for hour in range(24)}):
                     raise ValueError("planned_hourly_soc_percent:incomplete_17")
                 if any(not _number(value, maximum=100) for value in soc.values()):
                     raise ValueError("planned_hourly_soc_percent:invalid_numeric")
@@ -283,6 +297,12 @@ def validate_forecast_day_evidence(
             if sha != evidence.get("original_sha256") or (new and sha != metadata.get("raw_plan_sha256")):
                 raise ValueError("original:sha_mismatch")
             expected = _original_hourly(original, target_date)
+            night_soc = _original_night_soc(original, target_date)
+            if not legacy_old_shape:
+                assert isinstance(soc, dict)
+                if set(soc) != {str(hour) for hour in (*night_soc, *range(7, 24))}:
+                    raise ValueError("planned_hourly_soc_percent:night_points_mismatch")
+                result["required_soc_points"] = 17 + len(night_soc)
             generated = _timestamp(original.get("generated_at"))
             if metadata.get("forecast_issued_at") and generated != _timestamp(metadata["forecast_issued_at"]):
                 raise ValueError("original:issued_mismatch")
@@ -323,8 +343,16 @@ def validate_forecast_day_evidence(
                                                      ("forecast_night_charge_kwh", "planned_night_charge_kwh")):
                     if not _close(displayed[hour].get(display_field), metadata[metadata_field]):
                         raise ValueError(f"{display_field}:display_mismatch")
-                if hour < 7 and displayed[hour].get("forecast_soc_percent") is not None:
-                    raise ValueError("forecast_soc_percent:unexpected_early_point")
+                if hour < 7:
+                    saved_soc = night_soc.get(hour)
+                    if saved_soc is None:
+                        if any(row.get("forecast_soc_percent") is not None for row in (stored[hour], displayed[hour])):
+                            raise ValueError("forecast_soc_percent:unexpected_early_point")
+                    elif (legacy_old_shape or not isinstance(soc, dict)
+                          or not _close(soc[str(hour)], saved_soc, tolerance=1e-7)
+                          or any(not _close(row.get("forecast_soc_percent"), saved_soc, tolerance=1e-7)
+                                 for row in (stored[hour], displayed[hour]))):
+                        raise ValueError("forecast_soc_percent:night_original_mismatch")
             if not legacy_old_shape:
                 assert isinstance(soc, dict)
                 expected_soc = simulate_daytime_soc_percent(
@@ -351,7 +379,7 @@ def validate_forecast_day_evidence(
                     raise ValueError(f"{display_field}:daily_mismatch")
                 result["daily_metadata_fields_verified"] += int(before is None)
             result.update(original_verified=True, capacity_verified=not legacy_old_shape,
-                          soc_points_verified=0 if legacy_old_shape else 17,
+                          soc_points_verified=0 if legacy_old_shape else 17 + len(night_soc),
                           daily_metadata_verified=True)
         except (ValueError, TypeError, KeyError, IndexError, UnicodeError) as exc:
             reason = str(exc) if isinstance(exc, ValueError) and ":" in str(exc) else "original:invalid_evidence"
@@ -513,12 +541,8 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
         state["read_bytes"] += count
         return value
 
-    for day, selected in grouped.items():
-        state: dict[str, Any] = {"revisions_before": {}, "read_count": 0, "read_bytes": 0}
-        meta_snapshot = metadata_docs.get(day) or fetched[f"forecast_plans/{day}"]
-        metadata = record(state, "forecast_plans", meta_snapshot)
-        daily_snapshot = fetched[f"battery_daily_metrics/{day}"]
-        daily = record(state, "battery_daily_metrics", daily_snapshot)
+    def read_hourly(item: tuple[str, list[dict[str, Any]]]) -> tuple[str, tuple[str, list[Any]]]:
+        day, selected = item
         forecast_rows = [row for row in selected if has_forecast_evidence(row)]
         sources = {str(row.get("source") or "") for row in forecast_rows}
         collection = "forecast_hourly_snapshots" if "forecast_hourly_snapshot" in sources else (
@@ -536,6 +560,21 @@ def _read_state(client: Any, *, start_date: str, end_date: str, grouped: dict[st
         raw_snapshots = list(query.limit(25).stream(timeout=_timeout(deadline), retry=None)) if forecast_rows else []
         if len(raw_snapshots) > 24:
             raise ValueError("hourly_limit")
+        return day, (collection, raw_snapshots)
+
+    # Keep the same selected-vintage queries and shared deadline; overlap only
+    # independent read RPCs, not the before/original/after verification phases.
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        hourly_documents = dict(executor.map(read_hourly, grouped.items()))
+
+    for day, selected in grouped.items():
+        state: dict[str, Any] = {"revisions_before": {}, "read_count": 0, "read_bytes": 0}
+        meta_snapshot = metadata_docs.get(day) or fetched[f"forecast_plans/{day}"]
+        metadata = record(state, "forecast_plans", meta_snapshot)
+        daily_snapshot = fetched[f"battery_daily_metrics/{day}"]
+        daily = record(state, "battery_daily_metrics", daily_snapshot)
+        forecast_rows = [row for row in selected if has_forecast_evidence(row)]
+        collection, raw_snapshots = hourly_documents[day]
         stored = [record(state, collection, snapshot) for snapshot in raw_snapshots]
         new = bool(metadata.get("control_version_id")) or _new_marker(forecast_rows + stored)
         state.update(target_date=day, metadata_exists=bool(meta_snapshot.exists), metadata=metadata,
