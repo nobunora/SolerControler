@@ -32,9 +32,10 @@ def evaluate_ideal_max_hours(store: IdealMaxStore, start: datetime, end: datetim
             issued = record["issued_prediction"]
             if issued is None:
                 row["status"] = "NO_PREISSUED_MAXIMUM"
-            elif issued_not_before is not None and cursor < issued_not_before:
+            elif issued_not_before is not None and (cursor < issued_not_before
+                    or datetime.fromisoformat(issued["issued_at"]) < issued_not_before):
                 # Retrospective/replay ledgers can carry an assumed as_of. Do
-                # not rewrite them or certify hours before independent evidence.
+                # not rewrite them or certify predictions issued before evidence.
                 row["status"] = "UNVERIFIED_ISSUE_TIME"
             else:
                 row["issued_maximum_kwh"] = issued["maximum_kwh"]

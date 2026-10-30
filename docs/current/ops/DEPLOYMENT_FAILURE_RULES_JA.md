@@ -16,6 +16,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 | 同日: 期限テストの偽時計初期値がhost稼働時間由来で、丸めにより60秒を僅かに超過 | 偽時計は正確に表現できる固定値から開始する。実時間を混ぜず、期限後の再要求拒否のassertionを維持する |
 | 同日: 売電契約開始後も保存計画がneutral/収入0で、残量価値も費用比較から欠落 | `SOC_NET_COST_CONTRACT_JA.md`と契約設定を確認。`test_soc_financial_contract.py`とCSV金融入力回帰を通常gateで実行し、原CSVの請求期間買電累積と計画値、対象日単価、残量控除、費用内訳合計を照合。不一致・契約切替日の未確認は停止する |
 | 同日: 全体pytest実行中に契約設定とテストを編集し、読み込み済み旧テストと新設定が混在 | gate開始後はsource/config/testsを編集しない。変更が入った実行は受入証拠に使わず、固定commitから正規gateを再実行する |
+| 2026-10-31: 理想最大台帳の日付跨ぎ本番試験で、初期化後の区間に対応する初期化前の発行値を運用評価1件と誤認 | 区間開始だけでなく保存原本のissued_atもinitialized_at以降であることを必須にする。前・同時刻・後の境界を`test_post_initialization_hour_requires_a_post_initialization_issue`で回帰し、事前発行証拠なしはUNVERIFIED_ISSUE_TIMEで停止する。原本・係数・学習結果の改変や、評価件数0を精度成功へ読み替えることは禁止 |
 
 ## 毎回の順序
 

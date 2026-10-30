@@ -76,6 +76,30 @@ def test_seed_predictions_before_initialization_are_not_certified(tmp_path, geom
         assert result["coefficient"] == 1.2
 
 
+@pytest.mark.parametrize("issue_minutes,verified", [(-20, False), (-10, True), (-5, True)])
+def test_post_initialization_hour_requires_a_post_initialization_issue(tmp_path, geometry, issue_minutes, verified):
+    path = write_csv(tmp_path)
+    boundary = START - timedelta(minutes=10)
+    issued_at = START + timedelta(minutes=issue_minutes)
+    with IdealMaxStore(tmp_path / "state", geometry, initialize_at=START - timedelta(hours=1)) as store:
+        store.predict_hour(START, as_of=issued_at)
+        result = ingestion.ingest_ideal_max_csvs(store, [path], as_of=START + timedelta(hours=1),
+            issue_clock=lambda: START + timedelta(hours=1), issued_not_before=boundary)
+        assert result["new_hours"] == 1
+        assert result["evaluated_issued_hours"] == int(verified)
+        assert result["unverified_issue_hours"] == int(not verified)
+        assert result["issued_exceedances"] == int(verified)
+        assert result["coefficient"] == 1.2
+        record = store.observation_record(START)
+        assert record["exceeded"] is True
+        assert record["issued_prediction"]["issued_at"] == issued_at.isoformat()
+        report = evaluate_ideal_max_hours(store, START, START + timedelta(hours=1),
+            as_of=START + timedelta(hours=1), issued_not_before=boundary)
+        assert report["evaluated_hours"] == int(verified)
+        assert report["unverified_issue_hours"] == int(not verified)
+        assert report["hourly"][0]["status"] == ("EXCEEDED" if verified else "UNVERIFIED_ISSUE_TIME")
+
+
 @pytest.mark.parametrize("backend", ["sqlite", "postgres", "firestore"])
 def test_pipeline_calls_maximum_update_after_backend_success_including_duplicate_import(monkeypatch, tmp_path, backend):
     from app.operations import workflow
