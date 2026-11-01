@@ -109,13 +109,24 @@ if ($SocCycleProbe) {
     }
     $failedCount = if ($execution.status.PSObject.Properties.Name -contains 'failedCount') { [int]$execution.status.failedCount } else { 0 }
     if ($failedCount -gt 0) { throw 'SOC cycle execution has failed tasks.' }
-    $filter = "resource.type=cloud_run_job AND resource.labels.job_name=$jobName AND jsonPayload.message=soc-cycle-probe"
-    $logText = (& $gcloud logging read $filter --project $projectId --limit 20 --freshness 1h --format json) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw 'SOC cycle audit retrieval failed.' }
-    $logText | Set-Content -LiteralPath (Join-Path $SocCycleEvidenceDirectory 'logs.private.json') -Encoding utf8
-    $exact = @($logText | ConvertFrom-Json) | Where-Object {
-        $_.labels.'run.googleapis.com/execution_name' -eq $execution.metadata.name
-    }
+    $executionName = ([string]$execution.metadata.name -split '/')[-1]
+    if (-not $executionName) { throw 'SOC cycle execution identity is missing.' }
+    $filter = ('resource.type=cloud_run_job AND resource.labels.job_name="' + $jobName +
+        '" AND labels."run.googleapis.com/execution_name"="' + $executionName +
+        '" AND jsonPayload.message="soc-cycle-probe"').Replace('"', '\"')
+    $auditDeadline = [DateTime]::UtcNow.AddSeconds(60)
+    do {
+        $logText = (& $gcloud logging read $filter --project $projectId --limit 20 --freshness 1h --format json) -join "`n"
+        if ($LASTEXITCODE -ne 0) { throw 'SOC cycle audit retrieval failed.' }
+        $logText | Set-Content -LiteralPath (Join-Path $SocCycleEvidenceDirectory 'logs.private.json') -Encoding utf8
+        $exact = @(@($logText | ConvertFrom-Json) | Where-Object {
+            $_.labels -and $_.labels.'run.googleapis.com/execution_name' -eq $executionName -and
+                $_.jsonPayload.message -eq 'soc-cycle-probe'
+        })
+        if ($exact.Count -gt 1) { throw 'SOC cycle returned ambiguous exact-execution audits.' }
+        if ($exact.Count -eq 1 -or [DateTime]::UtcNow -ge $auditDeadline) { break }
+        Start-Sleep -Milliseconds 1500
+    } while ($true)
     if (@($exact).Count -ne 1) { throw 'SOC cycle requires exactly one audit from the executed task.' }
     $proof = $exact[0].jsonPayload
     if ($proof.status -ne 'passed' -or -not $proof.forced_readback_verified -or
