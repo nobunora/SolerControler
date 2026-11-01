@@ -188,6 +188,20 @@ runner／dashboardのCloud Buildは直前のArtifact Registryイメージをキ�
 - forecast-onlyではsettings round-tripを起動せず、23/03/07 Job revisionが不変、23/03/07 Schedulerの実効設定が前後一致することをread-onlyで確認する。legacyでは専用検証Job revisionも不変。分離構成の必須SDK proofでは専用検証Jobの設定spec復元を確認する。
 - `failed`または`running`の工程を手動で成功へ書き換えない。実機設定が復元済みであることをログから確認した後にのみ、同じ状態ファイルの`-Resume`で未成功工程を再実行する。
 
+### 明示承認された充電・停止・復元の追加受入試験
+
+通常のforecast反映と分けて利用者が実機試験を明示承認した場合は、既存の
+`run_cloud_job_from_env.ps1 -Slot settings-roundtrip -TestExecution -SocCycleProbe`
+を使う。同commitの成功済み`-PreflightStatePath`と新規`-SocCycleEvidenceDirectory`を渡す。
+予報の朝SOCと、試験の現在SOC+1ポイント目標は別々に報告する。
+既定は07:15以降、監視600秒+復元240秒を含め22:30より前の完了を要求する。
+利用者が今回の時間外実施を明示承認した場合だけ`-SocCycleEarlyNightAuthorized`を渡せる。
+この例外も同日00:00以降、全840秒を含め02:30より前の完了だけを認める。
+03/07の所有時間、23時処理、02:30予報実行へ広げない。flagはexecutionだけへ渡し、Job設定へ保存しない。
+必要かつ承認済みなら既存`-SocCycleTemporaryWindow`を使い、充電時間帯を含め初期設定へ完全復元する。
+実SOC増加1ポイント以上、forced/standby read-back、復元一致、exact executionの唯一auditが揃うまでPASSにしない。
+ログ取得失敗で実機試験を再実行しない。登録スキル`solar-production-acceptance`はこの正規ツールへ案内する。
+
 ### 2.3 再現可能な準備・実server検証・復旧の判定
 
 役割分離版のfixtureは、最終merged commitへ固定し、local/remote HEAD一致・clean worktreeを確認した後に
