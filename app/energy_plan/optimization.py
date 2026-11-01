@@ -361,6 +361,7 @@ def run_current_optimizer(
             decision_prior_regret_yen_by_soc=prior_regret_curve,
             decision_prior_weight=prior_weight,
             decision_prior_max_penalty_yen=prior_max_penalty,
+            hourly_pv_max_kwh=pv_forecast.hourly_pv_max_kwh,
         ))
         if optimized is not None:
             cost_payload = {
@@ -447,6 +448,8 @@ def run_current_optimizer(
                     str(k): round(v, 4)
                     for k, v in sorted(pv_forecast.hourly_pv_kwh.items())
                 },
+                **({"hourly_pv_max_kwh": {str(k): v for k, v in sorted(pv_forecast.hourly_pv_max_kwh.items())}}
+                   if pv_forecast.hourly_pv_max_kwh is not None else {}),
                 "legacy_peak_objective": legacy.payload,
             }
             result_payload["target_soc_7_percent_base"] = result_payload.get(

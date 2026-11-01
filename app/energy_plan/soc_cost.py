@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
@@ -255,6 +256,7 @@ class SocOptimizationRequest:
     decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None
     decision_prior_weight: float = 0.0
     decision_prior_max_penalty_yen: float = 0.0
+    hourly_pv_max_kwh: dict[int, float] | None = None
 
 
 def to_plain_dict(obj: Any) -> dict[str, Any]:
@@ -292,6 +294,19 @@ def _build_forecast_scenarios(
     weather_upside_probability: float,
     weather_upside_z: float,
 ) -> tuple[ForecastScenario, ...]:
+    parameters = (uncertainty.mean_multiplier, uncertainty.std_multiplier, uncertainty.variance_multiplier,
+                  min_pv_multiplier, max_pv_multiplier, weather_upside_probability, weather_upside_z)
+    if (any(not math.isfinite(value) for value in parameters)
+            or uncertainty.std_multiplier < 0 or uncertainty.variance_multiplier < 0
+            or min_pv_multiplier < 0 or max_pv_multiplier < min_pv_multiplier):
+        raise ValueError("invalid finite PV scenario parameters")
+    for bucket in sigma_buckets:
+        if not math.isfinite(bucket.probability) or bucket.probability < 0 or not math.isfinite(bucket.z_value):
+            raise ValueError("invalid PV scenario bucket")
+    for scenario in (*(joint_scenarios or ()), *(load_scenarios or ())):
+        if (any(not math.isfinite(value) or value < 0
+                for value in (scenario.probability, scenario.pv_multiplier, scenario.load_multiplier))):
+            raise ValueError("invalid forecast scenario weight or multiplier")
     if joint_scenarios:
         valid_joint = tuple(
             ForecastScenario(
@@ -304,6 +319,8 @@ def _build_forecast_scenarios(
             if scenario.label and scenario.probability > 0.0
         )
         total_joint_probability = sum(scenario.probability for scenario in valid_joint)
+        if not math.isfinite(total_joint_probability):
+            raise ValueError("scenario probability sum is not finite")
         if total_joint_probability > 0.0:
             return tuple(
                 ForecastScenario(
@@ -371,6 +388,8 @@ def _build_forecast_scenarios(
                 )
             )
     total_probability = sum(s.probability for s in joint)
+    if not math.isfinite(total_probability):
+        raise ValueError("scenario probability sum is not finite")
     if total_probability <= 0.0:
         return (ForecastScenario("fallback", 1.0, 1.0, 1.0),)
     return tuple(
@@ -393,9 +412,12 @@ def _simulate_day(
     pv_multiplier: float,
     load_multiplier: float,
     hourly_soc_percent: dict[int, float] | None = None,
+    hourly_pv_max_kwh: dict[int, float] | None = None,
 ) -> tuple[float, float, float, int | None, float]:
     """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
 
+    if any(not math.isfinite(value) for value in (start_energy_kwh, capacity_kwh, pv_multiplier, load_multiplier)):
+        raise ValueError("daytime replay requires finite state and multipliers")
     energy = max(0.0, min(capacity_kwh, start_energy_kwh))
     buy_kwh = 0.0
     sell_kwh = 0.0
@@ -405,8 +427,18 @@ def _simulate_day(
     for hour in range(7, 23):
         if hourly_soc_percent is not None:
             hourly_soc_percent[hour] = _bounded_soc(100.0 * energy / capacity_kwh) if capacity_kwh > 0 else 0.0
-        load = max(0.0, hourly_load_kwh.get(hour, 0.0)) * max(0.0, load_multiplier)
-        pv = max(0.0, hourly_pv_kwh.get(hour, 0.0)) * max(0.0, pv_multiplier)
+        raw_load, raw_pv = hourly_load_kwh.get(hour, 0.0), hourly_pv_kwh.get(hour, 0.0)
+        if not math.isfinite(raw_load) or not math.isfinite(raw_pv):
+            raise ValueError("daytime replay requires finite hourly energy")
+        load = max(0.0, raw_load) * max(0.0, load_multiplier)
+        pv = max(0.0, raw_pv) * max(0.0, pv_multiplier)
+        if hourly_pv_max_kwh is not None:
+            limit = hourly_pv_max_kwh.get(hour)
+            if (limit is None or isinstance(limit, bool) or not math.isfinite(limit) or limit < 0):
+                raise ValueError("scenario requires a valid hourly PV capability")
+            pv = min(pv, limit)
+        if not math.isfinite(load) or not math.isfinite(pv):
+            raise ValueError("daytime scenario energy overflow")
         net = pv - load
         if net >= 0:
             charge = min(capacity_kwh - energy, net)
@@ -541,13 +573,19 @@ def evaluate_soc_candidate(
     decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None,
     decision_prior_weight: float = 0.0,
     decision_prior_max_penalty_yen: float = 0.0,
+    hourly_pv_max_kwh: dict[int, float] | None = None,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
-    target_soc = _bounded_soc(target_soc_percent)
-    target_energy = capacity_kwh * target_soc / 100.0
+    if any(not math.isfinite(value) for value in
+           (capacity_kwh, soc_now_percent, target_soc_percent, expected_overnight_discharge_kwh)):
+        raise ValueError("SOC candidate requires finite state")
     current_energy = capacity_kwh * _bounded_soc(soc_now_percent) / 100.0
     projected_morning_energy = max(0.0, current_energy - max(0.0, expected_overnight_discharge_kwh))
+    # A charging target cannot discharge inventory that is already present.
+    projected_soc = 100.0 * projected_morning_energy / capacity_kwh if capacity_kwh > 0 else 0.0
+    target_soc = max(_bounded_soc(target_soc_percent), projected_soc)
+    target_energy = capacity_kwh * target_soc / 100.0
     charge_efficiency = max(0.01, cost_model.charge_efficiency)
     required_night_charge_kwh = max(0.0, (target_energy - projected_morning_energy) / charge_efficiency)
     night_cost = required_night_charge_kwh * cost_model.night_buy_rate_yen_per_kwh
@@ -583,6 +621,7 @@ def evaluate_soc_candidate(
             hourly_pv_kwh=hourly_pv_kwh,
             pv_multiplier=scenario.pv_multiplier,
             load_multiplier=scenario.load_multiplier,
+            hourly_pv_max_kwh=hourly_pv_max_kwh,
         )
         day_buy_cost = cost_model.day_buy_cost_yen(buy_kwh)
         sell_cost = sell_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
@@ -638,6 +677,8 @@ def evaluate_soc_candidate(
         + decision_prior_cost
         - expected_terminal_credit
     )
+    if not math.isfinite(total):
+        raise ValueError("SOC candidate cost is not finite")
     return SocCandidate(
         target_soc_percent=target_soc,
         target_energy_kwh=target_energy,
@@ -683,15 +724,21 @@ def optimize_soc_by_expected_cost(
     decision_prior_regret_yen_by_soc: dict[float | str, float] | None = None,
     decision_prior_weight: float = 0.0,
     decision_prior_max_penalty_yen: float = 0.0,
+    hourly_pv_max_kwh: dict[int, float] | None = None,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
+    if any(not math.isfinite(value) for value in (capacity_kwh, soc_now_percent, reserve_soc_percent,
+           max_target_soc_percent, soc_step_percent, expected_overnight_discharge_kwh)):
+        raise ValueError("SOC search requires finite bounds and state")
     if capacity_kwh <= 0:
         return None
     if not hourly_load_kwh and not hourly_pv_kwh:
         return None
 
-    start_soc = _bounded_soc(reserve_soc_percent)
+    projected_soc = max(0.0, _bounded_soc(soc_now_percent)
+                        - 100.0 * max(0.0, expected_overnight_discharge_kwh) / capacity_kwh)
+    start_soc = max(_bounded_soc(reserve_soc_percent), projected_soc)
     stop_soc = max(start_soc, _bounded_soc(max_target_soc_percent))
     step = max(0.1, min(10.0, soc_step_percent))
     scenarios = _build_forecast_scenarios(
@@ -708,8 +755,9 @@ def optimize_soc_by_expected_cost(
     best: SocCandidate | None = None
     candidates: list[SocCandidate] = []
     count = 0
-    cursor = start_soc
-    while cursor <= stop_soc + 1e-9:
+    intervals = math.ceil((stop_soc - start_soc) / step)
+    for index in range(intervals + 1):
+        cursor = min(start_soc + index * step, stop_soc)
         candidate = evaluate_soc_candidate(
             target_soc_percent=min(cursor, stop_soc),
             soc_now_percent=soc_now_percent,
@@ -732,22 +780,18 @@ def optimize_soc_by_expected_cost(
             decision_prior_regret_yen_by_soc=decision_prior_regret_yen_by_soc,
             decision_prior_weight=decision_prior_weight,
             decision_prior_max_penalty_yen=decision_prior_max_penalty_yen,
+            hourly_pv_max_kwh=hourly_pv_max_kwh,
         )
         candidates.append(candidate)
         count += 1
         if best is None or (
             candidate.total_expected_cost_yen,
-            candidate.expected_day_buy_kwh,
-            candidate.expected_sell_kwh,
             candidate.target_soc_percent,
         ) < (
             best.total_expected_cost_yen,
-            best.expected_day_buy_kwh,
-            best.expected_sell_kwh,
             best.target_soc_percent,
         ):
             best = candidate
-        cursor += step
 
     if best is None:
         return None
@@ -759,8 +803,6 @@ def optimize_soc_by_expected_cost(
         candidates,
         key=lambda candidate: (
             candidate.total_expected_cost_yen,
-            candidate.expected_day_buy_kwh,
-            candidate.expected_sell_kwh,
             candidate.target_soc_percent,
         ),
     )
@@ -829,4 +871,5 @@ def optimize_soc_request(request: SocOptimizationRequest) -> SocCostOptimization
         decision_prior_regret_yen_by_soc=request.decision_prior_regret_yen_by_soc,
         decision_prior_weight=request.decision_prior_weight,
         decision_prior_max_penalty_yen=request.decision_prior_max_penalty_yen,
+        hourly_pv_max_kwh=request.hourly_pv_max_kwh,
     )

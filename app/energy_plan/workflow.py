@@ -262,6 +262,7 @@ class PvForecastBundle:
     sunset_hour: int
     clear_ghi_forecast: ClearGhiForecast | None = None
     ideal_max_provenance: dict[str, Any] | None = None
+    hourly_pv_max_kwh: dict[int, float] | None = None
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -1140,8 +1141,9 @@ def build_energy_plan(
         else _build_consumption_forecasts(context, weather_history_port=weather_history_port)
     )
     pv_bundle = None
-    if calibration is None and as_of is None:
-        pv_bundle = build_ideal_max_forecast_bundle(context, consumption_bundle, as_of=datetime.now(utc_timezone.utc))
+    if calibration is None:
+        pv_bundle = build_ideal_max_forecast_bundle(
+            context, consumption_bundle, as_of=as_of or datetime.now(utc_timezone.utc))
     if pv_bundle is None and calibration is None:
         if as_of is not None:
             raise ValueError("as_of requires an explicitly supplied calibration")

@@ -13,6 +13,101 @@ from app.energy_plan.soc_cost import (
 )
 
 
+@pytest.mark.parametrize("current,target,discharge,expected", [(80,20,0,80), (80,20,1,70), (20,80,0,80)])
+def test_charging_target_cannot_discard_existing_inventory(current, target, discharge, expected):
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=target, soc_now_percent=current, capacity_kwh=10,
+        hourly_load_kwh={}, hourly_pv_kwh={}, expected_overnight_discharge_kwh=discharge,
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"),
+        cost_model=SocCostModel(39.1,28.85,1,0),
+        joint_scenarios=(ForecastScenario("exact",1,1,1),))
+    assert candidate.target_soc_percent == pytest.approx(expected)
+    assert candidate.scenario_replays[0].end_soc_percent == pytest.approx(expected)
+    assert candidate.required_night_charge_kwh == pytest.approx(max(0, (expected-current)/10+discharge))
+
+
+def test_cheaper_daytime_purchase_wins_over_zero_daytime_purchase():
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=1, soc_now_percent=0, reserve_soc_percent=0,
+        hourly_load_kwh={18:1}, hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"),
+        cost_model=SocCostModel(10,30,1,0),
+        joint_scenarios=(ForecastScenario("exact",1,1,1),))
+    assert result.target_soc_7_percent == 0
+    assert result.expected_day_buy_kwh == 1
+    assert result.total_expected_cost_yen == 10
+
+
+def test_equal_cost_does_not_promote_zero_daytime_purchase():
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=1, soc_now_percent=0, reserve_soc_percent=0,
+        hourly_load_kwh={18:1}, hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"),
+        cost_model=SocCostModel(1,1,1,0),
+        joint_scenarios=(ForecastScenario("exact",1,1,1),))
+    assert result.target_soc_7_percent == 0
+    assert result.expected_day_buy_kwh == 1
+    assert result.total_expected_cost_yen == 1
+
+
+@pytest.mark.parametrize("step", [0.0, 0.1, 1.0, 10.0])
+def test_soc_search_has_a_finite_candidate_bound(step):
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=1, soc_now_percent=0, reserve_soc_percent=0, soc_step_percent=step,
+        hourly_load_kwh={18:1}, hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"),
+        cost_model=SocCostModel(39.1,28.85,1,0),
+        joint_scenarios=(ForecastScenario("exact",1,1,1),))
+    assert 1 <= result.evaluated_candidate_count <= 1001
+    assert result.target_soc_7_percent == pytest.approx(100)
+
+
+def test_existing_soc_above_forecast_guard_remains_one_feasible_candidate():
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10, soc_now_percent=80.3, reserve_soc_percent=0, max_target_soc_percent=60,
+        hourly_load_kwh={7:0}, hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"),
+        cost_model=SocCostModel(39.1,28.85,1,0),
+        joint_scenarios=(ForecastScenario("exact",1,1,1),))
+    assert result.evaluated_candidate_count == 1
+    assert result.target_soc_7_percent == pytest.approx(80.3)
+    assert result.required_night_charge_kwh == 0
+    assert result.selected_candidate.scenario_replays[0].end_soc_percent == pytest.approx(80.3)
+
+
+@pytest.mark.parametrize("field", ["capacity_kwh", "soc_step_percent", "soc_now_percent"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_nonfinite_search_inputs_are_rejected(field, value):
+    args = dict(capacity_kwh=1, soc_now_percent=0, reserve_soc_percent=0, soc_step_percent=1,
+        hourly_load_kwh={18:1}, hourly_pv_kwh={},
+        uncertainty=PvForecastUncertainty(1,0,0,0,"exact"), cost_model=SocCostModel(39.1,28.85,1,0))
+    args[field] = value
+    with pytest.raises(ValueError, match="finite"):
+        optimize_soc_by_expected_cost(**args)
+
+
+def test_nonfinite_probability_is_not_normalized_into_a_plan():
+    with pytest.raises(ValueError, match="scenario"):
+        evaluate_soc_candidate(target_soc_percent=0, soc_now_percent=0, capacity_kwh=1,
+            hourly_load_kwh={}, hourly_pv_kwh={},
+            uncertainty=PvForecastUncertainty(1,0,0,0,"exact"), cost_model=SocCostModel(39.1,28.85,1,0),
+            joint_scenarios=(ForecastScenario("invalid",float("inf"),1,1),))
+
+
+@pytest.mark.parametrize("multiplier", [1.0, 1.6, 2.05])
+def test_scenario_pv_cannot_exceed_saved_hourly_capability(multiplier):
+    maximum = {h:0.0 for h in range(24)}
+    maximum[12] = 1.0
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=0, soc_now_percent=0, capacity_kwh=1,
+        hourly_load_kwh={}, hourly_pv_kwh={12:1.0}, hourly_pv_max_kwh=maximum,
+        uncertainty=PvForecastUncertainty(1,.3,.09,0,"initial"),
+        cost_model=SocCostModel(39.1,28.85,1,0),
+        joint_scenarios=(ForecastScenario("upside",1,multiplier,1),))
+    assert candidate.expected_sell_kwh == 0
+    assert candidate.scenario_replays[0].end_soc_percent == 100
+
+
 def test_dashboard_soc_curve_matches_optimizer_peak_and_end() -> None:
     load = {hour: 0.5 for hour in range(7, 23)}
     pv = {hour: 1.0 for hour in range(8, 15)}
