@@ -9,6 +9,7 @@ param(
     [switch]$TestExecution,
     [switch]$SocCycleProbe,
     [switch]$SocCycleTemporaryWindow,
+    [switch]$SocCycleEarlyNightAuthorized,
     [string]$PreflightStatePath = '',
     [string]$SocCycleEvidenceDirectory = 'artifacts/deployment_state/soc-cycle',
     [string]$ExecutionReceiptPath = ''
@@ -30,6 +31,9 @@ $gcloud = Join-Path $PSScriptRoot 'gcloud.ps1'
 if ($SocCycleTemporaryWindow -and -not $SocCycleProbe) {
     throw 'A temporary device charge window is only permitted for the explicit SOC cycle probe.'
 }
+if ($SocCycleEarlyNightAuthorized -and -not $SocCycleProbe) {
+    throw 'Early-night authorization is only valid for the explicit SOC cycle probe.'
+}
 
 if ($SocCycleProbe) {
     if ($Slot -ne 'settings-roundtrip' -or -not $TestExecution -or $DryRun -or $PlanRefreshOnly) {
@@ -44,8 +48,12 @@ if ($SocCycleProbe) {
     if ((git status --porcelain)) { throw 'SOC cycle probe requires a clean committed source tree.' }
     $tokyo = [System.TimeZoneInfo]::FindSystemTimeZoneById('Tokyo Standard Time')
     $nowJst = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tokyo)
-    if (($nowJst.Hour * 60 + $nowJst.Minute) -lt 435 -or ($nowJst.Hour * 60 + $nowJst.Minute) -ge 1335) {
-        throw 'SOC cycle probe and restoration must fit between 07:15 and 22:30 JST.'
+    $probeFinishJst = $nowJst.AddSeconds(840)
+    $sameDay = $probeFinishJst.Date -eq $nowJst.Date
+    $daytime = ($nowJst.Hour * 60 + $nowJst.Minute) -ge 435 -and ($probeFinishJst.Hour * 60 + $probeFinishJst.Minute) -lt 1350
+    $earlyNight = $SocCycleEarlyNightAuthorized -and ($nowJst.Hour * 60 + $nowJst.Minute) -lt 150 -and ($probeFinishJst.Hour * 60 + $probeFinishJst.Minute) -lt 150
+    if (-not $sameDay -or -not ($daytime -or $earlyNight)) {
+        throw 'SOC cycle and restoration must fit daytime or the explicitly authorized pre-02:30 window.'
     }
     $described = @{}
     foreach ($name in @('solar-battery-23', 'solar-battery-03', 'solar-battery-07', $jobName)) {
@@ -84,6 +92,7 @@ if ($SocCycleProbe) {
     # JSON flags-file path so both Python arguments survive without shell escaping.
     $flagsPath = Join-Path $SocCycleEvidenceDirectory 'execution-flags.private.json'
     $probeEnv = @{ DRY_RUN = 'false'; SOC_CYCLE_PROBE_AUTHORIZED = 'true'; SOC_CYCLE_PROBE_TEMPORARY_WINDOW = 'false' }
+    $probeEnv['SOC_CYCLE_PROBE_EARLY_NIGHT_AUTHORIZED'] = if ($SocCycleEarlyNightAuthorized) { 'true' } else { 'false' }
     if ($SocCycleTemporaryWindow) { $probeEnv['SOC_CYCLE_PROBE_TEMPORARY_WINDOW'] = 'true' }
     @{ '--args' = @('-c', $code); '--update-env-vars' = $probeEnv } |
         ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $flagsPath -Encoding utf8

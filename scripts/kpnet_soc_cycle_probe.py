@@ -1,4 +1,4 @@
-"""Explicit daytime SOC +1 point acceptance probe for the deployed control image.
+"""Explicit SOC +1 point acceptance probe for the deployed control image.
 
 Run through run_cloud_job_from_env.ps1 -Slot settings-roundtrip -TestExecution
 -SocCycleProbe. This diagnostic does not replace the protected 03 controller or
@@ -50,13 +50,23 @@ def _valid_soc(value: object) -> float | None:
     return numeric if math.isfinite(numeric) and 0 <= numeric <= 100 else None
 
 
+def probe_window_allowed(now: datetime, *, early_night_authorized: bool = False) -> bool:
+    finish = now + timedelta(seconds=MAX_MONITOR_SECONDS + RESTORE_RESERVE_SECONDS)
+    start_minute = now.hour * 60 + now.minute
+    finish_minute = finish.hour * 60 + finish.minute
+    if finish.date() != now.date():
+        return False
+    return (7 * 60 + 15 <= start_minute and finish_minute < 22 * 60 + 30) or (
+        early_night_authorized and start_minute < 2 * 60 + 30 and finish_minute < 2 * 60 + 30)
+
+
 def run_soc_cycle_probe() -> dict[str, object]:
     if os.getenv("SOC_CYCLE_PROBE_AUTHORIZED") != "true":
         raise RuntimeError("SOC cycle probe requires explicit one-shot authorization")
     now = datetime.now(ZoneInfo("Asia/Tokyo"))
-    finish = now + timedelta(seconds=MAX_MONITOR_SECONDS + RESTORE_RESERVE_SECONDS)
-    if not (7 * 60 + 15 <= now.hour * 60 + now.minute and finish.hour * 60 + finish.minute < 22 * 60 + 30):
-        raise RuntimeError("SOC probe and restoration must fit the daytime probe window")
+    early_night_authorized = os.getenv("SOC_CYCLE_PROBE_EARLY_NIGHT_AUTHORIZED") == "true"
+    if not probe_window_allowed(now, early_night_authorized=early_night_authorized):
+        raise RuntimeError("SOC probe and restoration must fit the daytime or explicitly authorized pre-02:30 window")
     cfg = KpNetConfig.from_env()
     if cfg.dry_run:
         raise RuntimeError("SOC cycle acceptance requires a live execution")
@@ -65,10 +75,12 @@ def run_soc_cycle_probe() -> dict[str, object]:
     plan = _validate_current_plan(FirestorePlanStore().fetch(now.date().isoformat()), now, require_evidence=True)
     client = KpNetClient(cfg, deadline_monotonic=cutoff + RESTORE_RESERVE_SECONDS)
     summary: dict[str, object] = {
-        "message": "soc-cycle-probe", "status": "failed", "scope": "daytime_physical_cycle",
+        "message": "soc-cycle-probe", "status": "failed",
+        "scope": "early_night_physical_cycle" if early_night_authorized else "daytime_physical_cycle",
         "producer_source_revision": plan.producer_source_revision,
         "canonical_plan_sha256": hashlib.sha256(plan.raw_json.encode("utf-8")).hexdigest(),
         "max_monitor_seconds": MAX_MONITOR_SECONDS, "restore_verified": False,
+        "early_night_authorized": early_night_authorized,
         "forced_readback_verified": False, "standby_readback_verified": False,
         "soc_target_settings_changed": False, "samples": [],
     }

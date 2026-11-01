@@ -13,6 +13,7 @@ from scripts import kpnet_soc_cycle_probe as probe
 def harness(monkeypatch: pytest.MonkeyPatch):
     now_seconds = [0.0]
     monkeypatch.setenv("SOC_CYCLE_PROBE_AUTHORIZED", "true")
+    monkeypatch.delenv("SOC_CYCLE_PROBE_EARLY_NIGHT_AUTHORIZED", raising=False)
     monkeypatch.setattr(probe.time, "monotonic", lambda: now_seconds[0])
     monkeypatch.setattr(probe.time, "sleep", lambda delay: now_seconds.__setitem__(0, now_seconds[0] + delay))
 
@@ -167,3 +168,46 @@ def test_real_zero_soc_is_valid_and_stops_after_one_point(harness):
     assert summary["initial_soc_percent"] == 0
     assert summary["target_soc_percent"] == 1
     assert writes == ["3", "5", "1"]
+
+
+@pytest.mark.parametrize("hour,minute,authorized,allowed", [
+    (0, 0, False, False), (0, 0, True, True),
+    (2, 15, True, True), (2, 16, True, False),
+    (3, 0, True, False), (7, 14, True, False),
+    (7, 15, False, True), (22, 15, False, True),
+    (22, 16, False, False), (23, 59, True, False),
+])
+def test_probe_window_preserves_03_and_07_ownership(hour, minute, authorized, allowed):
+    now = datetime(2026, 11, 2, hour, minute, tzinfo=ZoneInfo("Asia/Tokyo"))
+    assert probe.probe_window_allowed(now, early_night_authorized=authorized) is allowed
+
+
+def test_authorized_early_night_cycle_stops_and_restores(harness, monkeypatch):
+    class EarlyNight:
+        @staticmethod
+        def now(zone):
+            return datetime(2026, 11, 2, 0, 30, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    monkeypatch.setattr(probe, "datetime", EarlyNight)
+    monkeypatch.setenv("SOC_CYCLE_PROBE_EARLY_NIGHT_AUTHORIZED", "true")
+    _, writes, current, _ = harness
+    before = dict(current)
+    summary = probe.run_soc_cycle_probe()
+    assert summary["status"] == "passed"
+    assert summary["early_night_authorized"] is True
+    assert summary["restore_verified"] is True
+    assert current == before
+    assert writes == ["3", "5", "1"]
+
+
+def test_early_night_without_exception_is_rejected_before_network(harness, monkeypatch):
+    class EarlyNight:
+        @staticmethod
+        def now(zone):
+            return datetime(2026, 11, 2, 0, 30, tzinfo=ZoneInfo("Asia/Tokyo"))
+
+    monkeypatch.setattr(probe, "datetime", EarlyNight)
+    _, writes, _, _ = harness
+    with pytest.raises(RuntimeError, match="explicitly authorized"):
+        probe.run_soc_cycle_probe()
+    assert writes == []
