@@ -10,6 +10,7 @@ import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from google.protobuf.timestamp_pb2 import Timestamp
 
+from app.energy_plan.battery_response import BatterySocResponse
 from app.energy_plan.soc_cost import simulate_daytime_soc_percent
 from app.operations.forecast_snapshot import build_forecast_snapshot_rows
 from app.separated_runtime.plan import PublishedPlan
@@ -26,7 +27,7 @@ from scripts.validate_forecast_display_evidence import (
 DAY = "2026-10-11"
 
 
-def fixture(*, new=False, night=None):
+def fixture(*, new=False, night=None, response=None):
     plan = {"generated_at": "2026-10-10T21:00:00+09:00", "forecast": {"date": DAY,
             "hourly_weather": [{"hour": hour} for hour in range(24)]},
         "result": {"target_soc_7_percent": 50.0, "required_night_charge_kwh": 0.0,
@@ -35,11 +36,13 @@ def fixture(*, new=False, night=None):
                                       "hourly_load_forecast_kwh": {str(hour): 0.1 for hour in range(24)}}}
     if night is not None:
         plan["decision_rationale"] = {"night_soc_projection": night}
+    if response is not None:
+        plan.setdefault("decision_rationale", {})["battery_response"] = response.to_payload()
     raw = json.dumps(plan, separators=(",", ":"), allow_nan=False).encode()
     stored = build_forecast_snapshot_rows(plan, ingested_at=plan["generated_at"], timezone="UTC")
     soc = simulate_daytime_soc_percent(target_soc_percent=50.0, capacity_kwh=10.0,
         hourly_pv_kwh={hour: 0.4 if 8 <= hour <= 15 else 0.0 for hour in range(24)},
-        hourly_load_kwh={hour: 0.1 for hour in range(24)})
+        hourly_load_kwh={hour: 0.1 for hour in range(24)}, battery_response=response)
     if night is not None:
         soc.update({int(hour): value for hour, value in night["hourly_soc_percent"].items()})
     metadata = {"date": DAY, "forecast_run_id": stored[0]["forecast_run_id"],
@@ -72,6 +75,28 @@ def fixture(*, new=False, night=None):
 def check(evidence, rows, daily):
     return validate_forecast_day_evidence(target_date=DAY, evidence=evidence,
                                          displayed_hourly=rows, displayed_battery_daily=daily)
+
+
+@pytest.mark.parametrize("response, expected8, expected9", [
+    (BatterySocResponse(charge_soc_per_kwh=8.0, discharge_soc_per_kwh=12.0), 48.8, 51.2),
+    (BatterySocResponse(charge_soc_per_kwh=8.0, discharge_soc_per_kwh=12.0,
+                        drift_soc_per_hour=0.2, hourly_discharge_soc_per_kwh={7: 13.0},
+                        hourly_charge_soc_per_kwh={8: 9.0}), 48.5, 51.0),
+])
+@pytest.mark.parametrize("mutation", [None, "metadata", "display"])
+def test_frozen_empirical_response_controls_soc_evidence(response, expected8, expected9, mutation):
+    _, evidence, rows, daily = fixture(new=True, response=response)
+    saved = evidence["metadata"]["planned_hourly_soc_percent"]
+    assert saved["8"] == pytest.approx(expected8)
+    assert saved["9"] == pytest.approx(expected9)
+    if mutation == "metadata":
+        saved["8"] += 0.1
+    elif mutation == "display":
+        rows[8]["forecast_soc_percent"] += 0.1
+    result = check(evidence, rows, daily)
+    assert result["status"] == ("PASS" if mutation is None else "FAIL")
+    if mutation is None:
+        assert result["soc_points_verified"] == 17
 
 
 @pytest.mark.parametrize("mutation", [None, "metadata", "stored", "display", "missing", "invented",

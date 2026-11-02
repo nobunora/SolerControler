@@ -17,6 +17,7 @@ from typing import Any
 
 from google.api_core.exceptions import GoogleAPICallError
 
+from app.energy_plan.battery_response import BatterySocResponse
 from app.energy_plan.soc_cost import simulate_daytime_soc_percent
 from app.operations.forecast_snapshot import build_forecast_snapshot_rows
 from app.separated_runtime.plan import PublishedPlan
@@ -355,10 +356,17 @@ def validate_forecast_day_evidence(
                         raise ValueError("forecast_soc_percent:night_original_mismatch")
             if not legacy_old_shape:
                 assert isinstance(soc, dict)
+                rationale = original.get("decision_rationale")
+                response_payload = rationale.get("battery_response") if isinstance(rationale, dict) else None
+                if response_payload is not None and not isinstance(response_payload, dict):
+                    raise ValueError("battery_response:invalid_payload")
+                battery_response = (BatterySocResponse.from_payload(response_payload)
+                                    if isinstance(response_payload, dict) else None)
                 expected_soc = simulate_daytime_soc_percent(
                     target_soc_percent=values["target_soc_7_percent"], capacity_kwh=values["effective_capacity_kwh"],
                     hourly_load_kwh={hour: row["forecast_load_kwh"] for hour, row in expected.items()},
                     hourly_pv_kwh={hour: row["forecast_pv_kwh"] for hour, row in expected.items()},
+                    battery_response=battery_response,
                 )
                 for hour, expected_value in expected_soc.items():
                     if not _close(soc[str(hour)], expected_value, tolerance=1e-7):

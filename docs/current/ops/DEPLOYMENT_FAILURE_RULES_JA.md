@@ -6,6 +6,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-03: 実績充放電係数で保存したSOCを、予報照合器が旧容量換算で再計算し最大10.04ポイントの不一致として拒否 | 同じ保存原本のbattery_response（時間別係数・driftを含む）を照合再計算にも渡す。原本に応答がない旧計画は旧計算を維持。`test_frozen_empirical_response_controls_soc_evidence`で数値例とmetadata/display改変の拒否を回帰する。原本SHA・17点・表示一致の検証を緩めず、不一致はFAILで停止する |
 | 2026-10-15: テストfakeに消費学習入力がなくAttributeError | fixtureを実際の境界契約へ合わせ、関連テストと全体gateを再実行。テストをskipしない |
 | 同日: 通常Pythonで使えるtzdataが `python -I` では見えず、image import試験が失敗 | 最初に同じ分離モードでAsia/Tokyoをロード。失敗したら使用interpreterの環境を修復。自動のglobal pip installはしない |
 | 同日: pytestのfd capture下でgit子プロセスがWinError 6 | 正規local/integration入口は `--capture=sys` を明示。テスト選択や件数は削らない。ログredirect方法だけの変更では解消しなかった |
