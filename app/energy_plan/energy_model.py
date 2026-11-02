@@ -9,6 +9,8 @@ from typing import Iterable
 import numpy as np
 
 from app.domain.constants import SOCBounds
+from app.energy_plan.battery_response import BatterySocResponse
+from app.energy_plan.battery_dispatch import night_charge_ac_kwh
 
 
 @dataclass(frozen=True)
@@ -182,7 +184,9 @@ def fit_coefficients_from_rows(rows: list[dict[str, float | str | datetime]]) ->
         pv_kwh_per_sunhour=pv_kwh_per_sunhour,
         # 温度係数は初期値(将来フィッティング前提)
         pv_temp_coeff_per_deg=-0.0035,
-        battery_temp_coeff_per_deg=-0.0050,
+        # Temperature response is fitted and gated separately from measured AC
+        # charge/discharge response; an unlearned temperature effect is neutral.
+        battery_temp_coeff_per_deg=0.0,
         battery_cycle_capacity_fade_per_cycle=0.00030,
     )
 
@@ -370,6 +374,8 @@ def optimize_target_soc_for_daytime(
 def compute_night_charge_target(
     coeff: EnergyModelCoefficients,
     inp: NightChargeInputs,
+    *, battery_response: BatterySocResponse | None = None,
+    night_charge_rate_percent_per_hour: float | None = None,
 ) -> NightChargeResult:
     cap_eff = effective_capacity_kwh(
         coeff=coeff,
@@ -419,6 +425,15 @@ def compute_night_charge_target(
     e_night_charge = max(0.0, (e_target - e_projected_at_7) / eta_ch)
 
     target_soc = SOCBounds.clamp(100.0 * e_target / cap_eff if cap_eff > 0 else 0.0)
+    if battery_response is not None:
+        deficit_soc = max(e_morning_def * battery_response.discharge_coefficient(7),
+                          e_daytime_def * battery_response.discharge_coefficient(18))
+        target_soc = SOCBounds.clamp(inp.reserve_soc_percent + deficit_soc)
+        projected_soc = max(0.0, inp.soc_now_percent
+            - max(0.0, inp.expected_overnight_discharge_kwh) * battery_response.discharge_coefficient(23))
+        target_soc = max(target_soc, projected_soc)
+        e_night_charge = night_charge_ac_kwh(initial_soc=projected_soc, target_soc=target_soc,
+            response=battery_response, percent_per_hour=night_charge_rate_percent_per_hour)
     return NightChargeResult(
         predicted_pv_kwh=e_pv,
         predicted_morning_pv_kwh=e_morning_pv,

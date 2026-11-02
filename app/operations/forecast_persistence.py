@@ -14,6 +14,7 @@ from google.cloud.firestore import transactional
 
 from app.backup.night_plan_archive import read_plan_file
 from app.energy_plan.soc_cost import simulate_daytime_soc_percent
+from app.energy_plan.battery_response import BatterySocResponse
 from app.operations.domain import (
     extract_final_pv_source_from_plan,
     extract_final_pv_totals_from_plan,
@@ -171,6 +172,9 @@ def _forecast_projection_values(
     planned_night_charge_kwh = to_float(plan_result.get("required_night_charge_kwh"))
     planned_capacity_kwh = to_float(plan_result.get("effective_capacity_kwh"))
     planned_hourly_soc_percent: dict[str, float] = {}
+    rationale = data.get("decision_rationale")
+    response_payload = rationale.get("battery_response") if isinstance(rationale, dict) else None
+    battery_response = BatterySocResponse.from_payload(response_payload) if isinstance(response_payload, dict) else None
     if (planned_target_soc_percent is not None and 0.0 <= planned_target_soc_percent <= 100.0
             and planned_capacity_kwh is not None and math.isfinite(planned_capacity_kwh)
             and planned_capacity_kwh > 0.0):
@@ -179,6 +183,7 @@ def _forecast_projection_values(
                 target_soc_percent=planned_target_soc_percent, capacity_kwh=planned_capacity_kwh,
                 hourly_load_kwh={int(row["hour"]): float(row["forecast_load_kwh"]) for row in hourly_rows},
                 hourly_pv_kwh={int(row["hour"]): float(row["forecast_pv_kwh"]) for row in hourly_rows},
+                battery_response=battery_response,
             ).items()
         }
 

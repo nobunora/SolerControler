@@ -141,8 +141,14 @@ def _build_energy_model_output(
                 rows=context.billing_rows if context.billing_rows is not None else context.rows,
                 target_soc=result_payload.get("target_soc_7_percent"),
                 soc_per_kwh_charge=context.coefficients.soc_per_kwh_charge,
-                rate_info=estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
+                rate_info=night_charge.charge_rate_info or estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
+                battery_response=context.battery_response,
             ),
+            **({"battery_response": context.battery_response.to_payload(),
+                "battery_calibration": context.battery_calibration}
+               if context.battery_response is not None else {}),
+            **({"hourly_pv_bias_model": pv_forecast.ideal_max_provenance.get("hourly_pv_bias_model")}
+               if pv_forecast.ideal_max_provenance is not None else {}),
             **({"pv_ideal_max": pv_forecast.ideal_max_provenance}
                if pv_forecast.ideal_max_provenance is not None else {}),
             **({"pv_clear_ghi": _clear_ghi_trace(pv_forecast.clear_ghi_forecast, timezone=context.config.timezone,
