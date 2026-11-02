@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 from app.energy_plan import estimate_sunset_hour
 from app.energy_plan.clear_ghi_adapter import _valid_hourly
 from app.energy_plan.forecast_inputs import build_hourly_load_forecast
+from app.energy_plan.hourly_pv_bias import collect_pv_bias_days, forecast_weather_by_hour
 from app.energy_plan.plan_quality import _selected_pv_uncertainty
 from app.forecasting.correction import ForecastCorrectionPolicy, build_load_forecast_correction
 from app.forecasting.pv_clear_ghi import clear_ghi_hour, normalize_radiation_intervals, _repair_short_gaps
@@ -67,12 +68,18 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
     maximum, trace = loaded
     maximum = _valid_hourly(maximum)
     hourly_pv, weather = _weather_adjusted_pv(context, maximum, as_of=as_of)
+    bias_days, bias_coverage = collect_pv_bias_days(target_date=context.target_date, as_of=as_of,
+        timezone_name=context.config.timezone,
+        actual_rows=context.consumption_rows)
     trace = {**trace, "weather_adjustment_applied": True,
              "capability_retrieved_at": trace.get("retrieved_at"),
              "retrieved_at": weather["retrieved_at"], "provider_issued_at": weather["provider_issued_at"],
              "forecast_sha256": weather["forecast_sha256"],
              "hourly_maximum_kwh": {str(h): v for h, v in maximum.items()},
-             "hourly_pv_kwh": {str(h): v for h, v in hourly_pv.items()}, "weather_forecast": weather}
+             "hourly_pv_kwh": {str(h): v for h, v in hourly_pv.items()}, "weather_forecast": weather,
+             "hourly_uncorrected_pv_kwh": {str(h): v for h, v in hourly_pv.items()},
+             "hourly_weather_class": {str(h): v for h, v in forecast_weather_by_hour(context.forecast).items()},
+             "hourly_pv_bias": {"status": "pending_replay", "enabled": False, "coverage": bias_coverage}}
     raw_load = build_hourly_load_forecast(context.rows, daytime_load_kwh=consumption.daily.daytime_load_kwh,
         morning_load_kwh=consumption.daily.morning_load_kwh, overnight_load_by_hour=None)
     correction = build_load_forecast_correction(rows=context.consumption_rows, hourly_load_forecast=raw_load,
@@ -91,4 +98,5 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
         physical_diagnostics=diagnostics, correction=correction, selected_method=str(trace["model_id"]),
         source=str(trace["model_id"]), uncertainty=_selected_pv_uncertainty(physical_pv_selected=True,
             physical_pv_diagnostics=diagnostics, pv_array_forecast=None),
-        sunset_hour=estimate_sunset_hour(hourly_pv), ideal_max_provenance=trace, hourly_pv_max_kwh=maximum)
+        sunset_hour=estimate_sunset_hour(hourly_pv), ideal_max_provenance=trace, hourly_pv_max_kwh=maximum,
+        hourly_pv_bias_days=bias_days)

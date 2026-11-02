@@ -6,6 +6,8 @@ from typing import Any
 
 from app.domain.constants import SOCBounds
 from app.domain.tariff import tiered_day_increment_cost
+from app.energy_plan.battery_response import BatterySocResponse
+from app.energy_plan.battery_dispatch import dispatch_soc, night_charge_ac_kwh
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,8 @@ class SocOptimizationRequest:
     decision_prior_weight: float = 0.0
     decision_prior_max_penalty_yen: float = 0.0
     hourly_pv_max_kwh: dict[int, float] | None = None
+    battery_response: BatterySocResponse | None = None
+    night_charge_rate_percent_per_hour: float | None = None
 
 
 def to_plain_dict(obj: Any) -> dict[str, Any]:
@@ -413,6 +417,7 @@ def _simulate_day(
     load_multiplier: float,
     hourly_soc_percent: dict[int, float] | None = None,
     hourly_pv_max_kwh: dict[int, float] | None = None,
+    battery_response: BatterySocResponse | None = None,
 ) -> tuple[float, float, float, int | None, float]:
     """Replay 07:00-23:00 for one PV scenario and one starting SOC."""
 
@@ -440,7 +445,15 @@ def _simulate_day(
         if not math.isfinite(load) or not math.isfinite(pv):
             raise ValueError("daytime scenario energy overflow")
         net = pv - load
-        if net >= 0:
+        if battery_response is not None:
+            if capacity_kwh <= 0:
+                raise ValueError("empirical battery replay requires positive capacity")
+            bought, sold, state = dispatch_soc(soc=100.0 * energy / capacity_kwh,
+                pv_kwh=pv, load_kwh=load, response=battery_response, hour=hour)
+            energy = capacity_kwh * state / 100.0
+            buy_kwh += bought
+            sell_kwh += sold
+        elif net >= 0:
             charge = min(capacity_kwh - energy, net)
             energy += charge
             sell_kwh += max(0.0, net - charge)
@@ -464,6 +477,7 @@ def _simulate_day(
 def simulate_daytime_soc_percent(
     *, target_soc_percent: float, capacity_kwh: float,
     hourly_load_kwh: dict[int, float], hourly_pv_kwh: dict[int, float],
+    battery_response: BatterySocResponse | None = None,
 ) -> dict[int, float]:
     """Expose hour-start SOC from the optimizer's unscaled baseline replay."""
     hourly_soc: dict[int, float] = {}
@@ -472,6 +486,7 @@ def simulate_daytime_soc_percent(
         capacity_kwh=capacity_kwh, hourly_load_kwh=hourly_load_kwh,
         hourly_pv_kwh=hourly_pv_kwh, pv_multiplier=1.0, load_multiplier=1.0,
         hourly_soc_percent=hourly_soc,
+        battery_response=battery_response,
     )
     return hourly_soc
 
@@ -574,6 +589,8 @@ def evaluate_soc_candidate(
     decision_prior_weight: float = 0.0,
     decision_prior_max_penalty_yen: float = 0.0,
     hourly_pv_max_kwh: dict[int, float] | None = None,
+    battery_response: BatterySocResponse | None = None,
+    night_charge_rate_percent_per_hour: float | None = None,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
@@ -581,13 +598,20 @@ def evaluate_soc_candidate(
            (capacity_kwh, soc_now_percent, target_soc_percent, expected_overnight_discharge_kwh)):
         raise ValueError("SOC candidate requires finite state")
     current_energy = capacity_kwh * _bounded_soc(soc_now_percent) / 100.0
-    projected_morning_energy = max(0.0, current_energy - max(0.0, expected_overnight_discharge_kwh))
+    overnight_internal = max(0.0, expected_overnight_discharge_kwh)
+    if battery_response is not None:
+        overnight_internal *= capacity_kwh * battery_response.discharge_coefficient(23) / 100.0
+    projected_morning_energy = max(0.0, current_energy - overnight_internal)
     # A charging target cannot discharge inventory that is already present.
     projected_soc = 100.0 * projected_morning_energy / capacity_kwh if capacity_kwh > 0 else 0.0
     target_soc = max(_bounded_soc(target_soc_percent), projected_soc)
     target_energy = capacity_kwh * target_soc / 100.0
     charge_efficiency = max(0.01, cost_model.charge_efficiency)
     required_night_charge_kwh = max(0.0, (target_energy - projected_morning_energy) / charge_efficiency)
+    if battery_response is not None:
+        required_night_charge_kwh = night_charge_ac_kwh(initial_soc=projected_soc,
+            target_soc=target_soc, response=battery_response,
+            percent_per_hour=night_charge_rate_percent_per_hour)
     night_cost = required_night_charge_kwh * cost_model.night_buy_rate_yen_per_kwh
 
     expected_buy = 0.0
@@ -622,6 +646,7 @@ def evaluate_soc_candidate(
             pv_multiplier=scenario.pv_multiplier,
             load_multiplier=scenario.load_multiplier,
             hourly_pv_max_kwh=hourly_pv_max_kwh,
+            battery_response=battery_response,
         )
         day_buy_cost = cost_model.day_buy_cost_yen(buy_kwh)
         sell_cost = sell_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
@@ -629,7 +654,9 @@ def evaluate_soc_candidate(
         # assumed overnight discharge or an additional export revenue stream.
         terminal_rate = min(max(0.0, cost_model.terminal_energy_value_yen_per_kwh),
                             max(0.0, cost_model.night_buy_rate_yen_per_kwh))
-        terminal_credit = end_soc * capacity_kwh / 100.0 * terminal_rate
+        terminal_ac_kwh = (end_soc / battery_response.discharge_coefficient(23)
+                           if battery_response is not None else end_soc * capacity_kwh / 100.0)
+        terminal_credit = terminal_ac_kwh * terminal_rate
         expected_terminal_credit += probability * terminal_credit
         peak_unmet_kwh = 0.0
         peak_unmet_cost = 0.0
@@ -725,6 +752,8 @@ def optimize_soc_by_expected_cost(
     decision_prior_weight: float = 0.0,
     decision_prior_max_penalty_yen: float = 0.0,
     hourly_pv_max_kwh: dict[int, float] | None = None,
+    battery_response: BatterySocResponse | None = None,
+    night_charge_rate_percent_per_hour: float | None = None,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -736,8 +765,9 @@ def optimize_soc_by_expected_cost(
     if not hourly_load_kwh and not hourly_pv_kwh:
         return None
 
-    projected_soc = max(0.0, _bounded_soc(soc_now_percent)
-                        - 100.0 * max(0.0, expected_overnight_discharge_kwh) / capacity_kwh)
+    overnight_soc = (max(0.0, expected_overnight_discharge_kwh) * battery_response.discharge_coefficient(23)
+                     if battery_response is not None else 100.0 * max(0.0, expected_overnight_discharge_kwh) / capacity_kwh)
+    projected_soc = max(0.0, _bounded_soc(soc_now_percent) - overnight_soc)
     start_soc = max(_bounded_soc(reserve_soc_percent), projected_soc)
     stop_soc = max(start_soc, _bounded_soc(max_target_soc_percent))
     step = max(0.1, min(10.0, soc_step_percent))
@@ -781,6 +811,8 @@ def optimize_soc_by_expected_cost(
             decision_prior_weight=decision_prior_weight,
             decision_prior_max_penalty_yen=decision_prior_max_penalty_yen,
             hourly_pv_max_kwh=hourly_pv_max_kwh,
+            battery_response=battery_response,
+            night_charge_rate_percent_per_hour=night_charge_rate_percent_per_hour,
         )
         candidates.append(candidate)
         count += 1
@@ -872,4 +904,6 @@ def optimize_soc_request(request: SocOptimizationRequest) -> SocCostOptimization
         decision_prior_weight=request.decision_prior_weight,
         decision_prior_max_penalty_yen=request.decision_prior_max_penalty_yen,
         hourly_pv_max_kwh=request.hourly_pv_max_kwh,
+        battery_response=request.battery_response,
+        night_charge_rate_percent_per_hour=request.night_charge_rate_percent_per_hour,
     )

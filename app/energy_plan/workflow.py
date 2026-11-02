@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from app.forecasting.pv_clear_ghi import ClearGhiCalibration, ClearGhiForecast
+from app.energy_plan.battery_response import BatterySocResponse
 from app.energy_plan.clear_ghi_adapter import _build_clear_ghi_forecast_bundle, _prepare_night_charge_from_hourly
 from app.energy_plan.clear_ghi_update import load_calibration_for_context
 from app.energy_plan.ideal_max_adapter import build_ideal_max_forecast_bundle
@@ -189,6 +190,10 @@ class EnergyModelContext:
     history_selection: dict[str, object] = field(default_factory=dict)
     load_training_rows: list[dict[str, Any]] | None = None
     load_training_selection: dict[str, object] = field(default_factory=dict)
+    battery_training_rows: list[dict[str, Any]] | None = None
+    battery_response: BatterySocResponse | None = None
+    battery_calibration: dict[str, Any] = field(default_factory=dict)
+    previous_calibration_state: dict[str, Any] = field(default_factory=dict)
 
     @property
     def consumption_rows(self) -> list[dict[str, Any]]:
@@ -246,6 +251,7 @@ class NightChargePreparation:
     monthly_day_buy_before_target: dict[str, object]
     expected_rest_of_month_day_buy: dict[str, object]
     expected_overnight_discharge_kwh: float
+    charge_rate_info: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -263,6 +269,7 @@ class PvForecastBundle:
     clear_ghi_forecast: ClearGhiForecast | None = None
     ideal_max_provenance: dict[str, Any] | None = None
     hourly_pv_max_kwh: dict[int, float] | None = None
+    hourly_pv_bias_days: tuple[Any, ...] = ()
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:
@@ -807,7 +814,7 @@ def _load_execution_context(
         if training_days > 180:
             raise ValueError("load training requirements exceed the bounded 180-day history")
         billing_rows = merge_monitoring_rows(load_monitoring_history(
-            target_date=target_date, minimum_complete_days=training_days), rows)
+            target_date=target_date, minimum_complete_days=max(90, training_days)), rows)
         load_training_rows = recent_forecast_rows(billing_rows, target_date=target_date, day_count=training_days)
         load_training_selection = {
             "policy": "latest_complete_observed_load_training_days",
@@ -845,6 +852,8 @@ def _load_execution_context(
         history_selection=selection,
         load_training_rows=load_training_rows,
         load_training_selection=load_training_selection,
+        battery_training_rows=recent_forecast_rows(billing_rows, target_date=target_date, day_count=90)
+            if billing_rows is not None else rows,
     )
 
 
@@ -1159,6 +1168,13 @@ def build_energy_plan(
                           "reason_code": "invalid_forecast_or_calibration"}), flush=True)
         raise
     night_charge = _prepare_night_charge_from_hourly(context, consumption_bundle, pv_bundle)
+    from app.energy_plan.empirical_planning import prepare_empirical_planning
+
+    context, pv_bundle, night_charge = prepare_empirical_planning(
+        context, consumption_bundle, pv_bundle, night_charge,
+        as_of=as_of or datetime.now(utc_timezone.utc),
+        load_previous=historical_input is None,
+    )
     constraints = _build_soc_constraints(context, pv_bundle, night_charge)
     legacy_decision = _run_legacy_soc_optimization(
         context,

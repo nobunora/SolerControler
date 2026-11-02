@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as utc_timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -262,7 +262,9 @@ def archive_weather_history(
             for weather_row in fetched_rows:
                 weather_date = str(weather_row["date"])
                 if weather_date in allowed_dates:
-                    rows_by_date[weather_date] = weather_row
+                    rows_by_date[weather_date] = {**weather_row,
+                        "available_at": datetime.now(utc_timezone.utc).isoformat(),
+                        "temperature_source": "observed_outdoor", "temperature_resolution": "daily_mean"}
             period["received_day_count"] = sum(1 for day in allowed_dates if day in rows_by_date)
         except Exception as exc:
             period["received_day_count"] = 0

@@ -133,21 +133,22 @@ def _apply_settings_profile(
             field: str(current.get(field, ""))
             for field in readback_fields
         }
+        no_change_mismatches = [
+            field for field in readback_fields
+            if not requested_values[field] or not observed_values[field]
+            or requested_values[field] != observed_values[field]
+        ]
         setting_result = {
             "profile": profile.name,
             "changed_fields": [],
             "status": "skipped-no-change",
             "readback_fields": list(readback_fields),
-            "readback_match": all(
-                requested_values[field] == observed_values[field]
-                for field in readback_fields
-            ),
-            "readback_mismatch_fields": [
-                field
-                for field in readback_fields
-                if requested_values[field] != observed_values[field]
-            ],
-            "readback_mismatch_values": {},
+            "readback_match": not no_change_mismatches,
+            "readback_mismatch_fields": no_change_mismatches,
+            "readback_mismatch_values": {
+                field: {"requested": requested_values[field], "observed": observed_values[field]}
+                for field in no_change_mismatches
+            },
             "requested": requested_values,
             "observed": observed_values,
             "candidate_maps_fetched": list(candidate_maps_fetched or ()),
@@ -165,6 +166,8 @@ def _apply_settings_profile(
             ),
             flush=True,
         )
+        if required_readback_fields and no_change_mismatches:
+            raise RuntimeError(f"KP-NET settings read-back mismatch for profile={profile.name}: {', '.join(no_change_mismatches)}")
         return current
 
     ok, title, err, confirm_html = client.confirm_setting(payload)
@@ -217,7 +220,7 @@ def _apply_settings_profile(
                 readback = {}
             finally:
                 fresh_client.close()
-    readback_required = os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
+    readback_required = bool(required_readback_fields) or os.getenv("NIGHT_SOC_READBACK_REQUIRED", "true").strip().lower() in {
         "1", "true", "yes", "on"
     }
     # Control success normally follows the fields this operation actually changed.
@@ -698,7 +701,7 @@ def run_kpnet_mode_only_profile(*, profile: str, deadline_monotonic: float | Non
         required_readback_fields = (
             ("batteryOperatingMode", "socEconomyMode")
             if profile == "economy"
-            else None
+            else ("batteryOperatingMode",)
         )
         candidate_maps_fetched = (
             ("BatteryOperatingMode", "SocEconomyMode")

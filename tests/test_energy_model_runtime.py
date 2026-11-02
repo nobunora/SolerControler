@@ -501,6 +501,8 @@ def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tm
     monkeypatch.setattr("app.energy_plan.workflow.build_ideal_max_forecast_bundle", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.energy_plan.workflow.load_calibration_for_context", stage("calibration", (object(), datetime.now().astimezone())))
     monkeypatch.setattr("app.energy_plan.workflow._prepare_night_charge_from_hourly", stage("night", night_charge))
+    monkeypatch.setattr("app.energy_plan.empirical_planning.prepare_empirical_planning",
+                        stage("empirical", (context, pv, night_charge)))
     monkeypatch.setattr("app.energy_plan.workflow._build_clear_ghi_forecast_bundle", stage("pv", pv))
     monkeypatch.setattr("app.energy_plan.workflow._build_soc_constraints", stage("constraints", constraints))
     monkeypatch.setattr("app.energy_plan.workflow._run_legacy_soc_optimization", stage("legacy", legacy))
@@ -515,6 +517,7 @@ def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tm
         ("calibration", (context,)),
         ("pv", (context, consumption, acquired_calibration)),
         ("night", (context, consumption, pv)),
+        ("empirical", (context, consumption, pv, night_charge)),
         ("constraints", (context, pv, night_charge)),
         ("legacy", (context, pv, constraints, night_charge)),
         ("decision", (context, night_charge, pv, constraints, legacy)),

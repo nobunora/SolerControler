@@ -132,6 +132,7 @@ def test_model_switch_cannot_change_site_or_accept_unknown_model():
 @pytest.mark.parametrize("as_of", [None, NOW])
 def test_ready_ledger_uses_same_route_for_live_and_frozen_as_of(monkeypatch, as_of):
     from app.energy_plan import workflow
+    from app.energy_plan import empirical_planning
     selected, expected = object(), object()
     monkeypatch.setattr(workflow, "_load_execution_context", lambda *_args, **_kw: object())
     monkeypatch.setattr(workflow, "_build_consumption_forecasts", lambda *_args: object())
@@ -139,6 +140,8 @@ def test_ready_ledger_uses_same_route_for_live_and_frozen_as_of(monkeypatch, as_
     monkeypatch.setattr(workflow, "load_calibration_for_context", lambda *_args: pytest.fail("weather PV calibration must not gate the ready ledger"))
     for name in ("_prepare_night_charge_from_hourly", "_build_soc_constraints", "_run_legacy_soc_optimization", "_run_soc_optimization"):
         monkeypatch.setattr(workflow, name, lambda *_args: object())
+    monkeypatch.setattr(empirical_planning, "prepare_empirical_planning",
+                        lambda context, consumption, pv, night, **kwargs: (context, pv, night))
     def output(*args):
         assert args[3] is selected
         return expected

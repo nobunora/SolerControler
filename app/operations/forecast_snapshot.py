@@ -248,6 +248,29 @@ def build_forecast_snapshot_rows(
             target_date=target_date,
             hour=hour,
         )
+        # Keep immutable raw prediction/capability evidence for forward residual
+        # learning. A corrected prediction must not become its own baseline.
+        rationale = _dict_section(data, "decision_rationale")
+        ideal = rationale.get("pv_ideal_max")
+        if isinstance(ideal, dict):
+            raw_pv = ideal.get("hourly_uncorrected_pv_kwh")
+            maximum = ideal.get("hourly_maximum_kwh")
+            weather_classes = ideal.get("hourly_weather_class")
+            if isinstance(raw_pv, dict) and isinstance(maximum, dict) and isinstance(weather_classes, dict):
+                pv_evidence["hourly_pv_bias"] = {
+                    "uncorrected_pv_kwh": raw_pv.get(str(hour)),
+                    "maximum_kwh": maximum.get(str(hour)),
+                    "weather_class": weather_classes.get(str(hour)),
+                    "model_id": ideal.get("model_id"),
+                    "basis_version": ideal.get("basis_version"),
+                    "capability_revision": ideal.get("revision"),
+                }
+                # One frozen response per day, not tomorrow's refit during replay.
+                if hour == 7:
+                    pv_evidence["hourly_pv_bias"]["battery_response"] = rationale.get("battery_response")
+                    calibration = rationale.get("battery_calibration")
+                    if isinstance(calibration, dict):
+                        pv_evidence["hourly_pv_bias"]["battery_response_as_of"] = calibration.get("as_of")
         selected_pv = pv_evidence.get("selected")
         physical_pv_kwh = to_float(selected_pv.get("total_kwh")) if isinstance(selected_pv, dict) else None
         if physical_pv_kwh is None and isinstance(selected_pv, dict):

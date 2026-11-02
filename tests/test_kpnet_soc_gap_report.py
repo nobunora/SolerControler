@@ -66,6 +66,20 @@ def test_collect_csv_paths_prefers_summary_entries(tmp_path: Path) -> None:
     assert mod._collect_csv_paths(run_dir) == [selected]
 
 
+def test_blank_actual_energy_is_unavailable_instead_of_zero(tmp_path: Path) -> None:
+    mod = _load_module()
+    csv_path = tmp_path / "partial.csv"
+    csv_path.write_text(
+        "年月日,時刻,発電電力量[kWh],消費電力量[kWh],売電電力量[kWh],買電電力量[kWh],充電電力量[kWh],放電電力量[kWh]\n"
+        "2026/11/02,07:00,0,0,0,0,0,0\n"
+        "2026/11/02,07:30,,0,0,0,0,0\n", encoding="utf-8",
+    )
+    rows = mod.read_monitoring_rows([csv_path])
+    assert len(rows) == 1
+    assert rows[0].pv_kwh == 0.0
+    assert mod._complete_hours(rows) == {}
+
+
 def test_hourly_forecast_reads_result_hourly_maps() -> None:
     mod = _load_module()
     plan_doc = {
@@ -148,4 +162,40 @@ def test_report_prefers_applied_battery_settings_over_stale_plan(
     report = output.read_text(encoding="utf-8")
     assert "設定SOC: **100.0%**" in report
     assert "夜間充電予測量: **9.573 kWh**" in report
-    assert "日中PV発電量: 予測 0.500 kWh / 実績 0.500 kWh" in report
+    assert "日中PV発電量（完全区間）: 予測 n/a / 実績 n/a" in report
+    assert "判定: **INCONCLUSIVE**" in report
+    assert "target_soc_under_3pt" not in report
+
+
+def test_hourly_comparison_requires_complete_pairs_and_preserves_missing_forecast() -> None:
+    mod = _load_module()
+    rows = [mod.MonitorRow(date(2026, 11, 2), label, 0.5, 1.0, 0.0, 0.2, 0.0, 0.0, 94.0)
+            for label in ("07:00", "07:30", "08:00")]
+    plan = {"result": {"hourly_pv_forecast_kwh": {"7": 1.5, "8": 2.0},
+                       "hourly_load_forecast_kwh": {"7": 2.5, "8": 2.0}}}
+    table = mod._build_hourly_table(rows, plan)
+    assert "| 7 | 1.500 | 1.000 | 2.500 | 2.000 | 0.000 | 0.400 | 0.000 |" in table
+    assert "| 8 | 2.000 | n/a | 2.000 | n/a | n/a | n/a | n/a |" in table
+    assert "| 9 | n/a | n/a | n/a | n/a | n/a | n/a | n/a |" in table
+    assert mod._matched_forecast(rows, plan, "pv") == 1.5
+    assert mod._hourly_forecast({}, 7, "pv") is None
+
+
+def test_csv_soc_cannot_falsely_fail_target_or_manufacture_pass() -> None:
+    mod = _load_module()
+    rows = [mod.MonitorRow(date(2026, 11, 2), "07:00", 0, 0, 0, 0, 0, 0, 94)]
+    daytime = mod.summarize(rows)
+    execution = {"plan_id": "plan", "readback_match": True,
+                 "standby_confirmed_at_utc": "2026-11-01T20:40:41Z", "competing_writes": 0}
+    status, reasons, error = mod._night_soc_audit(
+        target_soc=100, night=mod.summarize([]), daytime=daytime, execution=execution,
+    )
+    assert status == "INCONCLUSIVE"
+    assert reasons == ["instantaneous_soc_evidence_not_loaded"]
+    assert error is None
+    status, reasons, _ = mod._night_soc_audit(
+        target_soc=100, night=mod.summarize([]), daytime=daytime, execution={},
+    )
+    assert status == "INCONCLUSIVE"
+    assert "execution_record_missing" in reasons
+    assert "target_soc_under_3pt" not in reasons

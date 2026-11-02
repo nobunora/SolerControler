@@ -362,13 +362,15 @@ def run_current_optimizer(
             decision_prior_weight=prior_weight,
             decision_prior_max_penalty_yen=prior_max_penalty,
             hourly_pv_max_kwh=pv_forecast.hourly_pv_max_kwh,
+            battery_response=context.battery_response,
+            night_charge_rate_percent_per_hour=_to_optional_float(night_charge.charge_rate_info.get("percent_per_hour")),
         ))
         if optimized is not None:
             cost_payload = {
                 **to_plain_dict(optimized),
                 "objective": cost_model.financial_objective if cost_model.financial_objective != "legacy" else "minimize_night_charge_cost_plus_expected_day_buy_cost_plus_expected_sell_opportunity_loss",
                 "terminal_energy_valuation": {
-                    "basis": "carried_inventory_at_night_purchase_rate",
+                    "basis": "deliverable_ac_inventory_at_night_purchase_rate" if context.battery_response is not None else "carried_inventory_at_night_purchase_rate",
                     "overnight_discharge_assumed": False,
                     "rate_yen_per_kwh": cost_model.terminal_energy_value_yen_per_kwh,
                     "expected_credit_yen": optimized.expected_terminal_energy_credit_yen,

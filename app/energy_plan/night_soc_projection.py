@@ -8,12 +8,14 @@ from zoneinfo import ZoneInfo
 
 from app.parsing.numbers import to_float
 from app.runtime.night_soc_time_contract import FORCED_MONITOR_CUTOFF
+from app.energy_plan.battery_response import BatterySocResponse
 
 
 def build_night_soc_projection(
     *, target_date: str, timezone_name: str, generated_at: datetime,
     rows: list[dict[str, Any]], target_soc: Any, soc_per_kwh_charge: Any,
     rate_info: dict[str, Any],
+    battery_response: BatterySocResponse | None = None,
 ) -> dict[str, Any]:
     """Use the same forced-charge rate and cutoff as the 03 monitor.
 
@@ -74,7 +76,8 @@ def build_night_soc_projection(
             if interval_start < forecast_start:
                 continue
             gain = soc_at(interval_start + timedelta(hours=1)) - soc_at(interval_start)
-            hourly_charge[str(hour)] = round(gain / charge_coefficient, 4)
+            coefficient = battery_response.charge_coefficient(hour) if battery_response is not None else charge_coefficient
+            hourly_charge[str(hour)] = round(gain / coefficient, 4)
     return {
         **projection, "status": "ready", "reason": None,
         "initial_soc_percent": initial_soc, "initial_soc_observed_at": observed_at.isoformat(),

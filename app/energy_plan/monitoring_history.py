@@ -23,6 +23,10 @@ MONITORING_FIELDS = {
     "pv": "pv_kwh", "load": "load_kwh", "buy": "buy_kwh", "sell": "sell_kwh",
     "charge": "charge_kwh", "discharge": "discharge_kwh", "soc": "soc_percent",
 }
+MONITORING_METADATA_FIELDS = (
+    "available_at", "ingested_at", "updated_at", "temperature_c", "temperature_source",
+    "battery_temperature_c",
+)
 
 
 def recent_forecast_rows(
@@ -55,12 +59,30 @@ def recent_forecast_rows(
 
 def _monitoring_row(raw: dict[str, Any]) -> dict[str, Any]:
     timestamp = datetime.fromisoformat(str(raw["ts"]))
-    return {"dt": timestamp, **{key: to_float(raw.get(field)) for key, field in MONITORING_FIELDS.items()}}
+    return {
+        "dt": timestamp,
+        **{key: to_float(raw.get(field)) for key, field in MONITORING_FIELDS.items()},
+        **{key: raw[key] for key in MONITORING_METADATA_FIELDS if raw.get(key) is not None},
+    }
 
 
 def merge_monitoring_rows(stored: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_timestamp = {row["dt"]: row for row in stored}
-    by_timestamp.update({row["dt"]: row for row in fresh})
+    for row in fresh:
+        previous = by_timestamp.get(row["dt"], {})
+        merged = dict(row)
+        if previous and all(previous.get(key) == row.get(key) for key in MONITORING_FIELDS):
+            for key in MONITORING_METADATA_FIELDS:
+                if key in ("temperature_c", "temperature_source", "battery_temperature_c") and any(
+                    row.get(field) not in (None, "")
+                    for field in ("temperature_c", "temperature_source", "battery_temperature_c")
+                ):
+                    continue
+                if merged.get(key) in (None, "") and previous.get(key) is not None:
+                    merged[key] = previous[key]
+        # Changed AC/SOC values require a new receipt and temperature provenance.
+        # Starting from the fresh row prevents retaining obsolete stored metadata.
+        by_timestamp[row["dt"]] = merged
     return [by_timestamp[timestamp] for timestamp in sorted(by_timestamp)]
 
 

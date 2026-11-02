@@ -80,7 +80,10 @@ def _parse_day(raw: str) -> date | None:
 
 
 def _float(row: dict[str, str], column: str) -> float:
-    return float(parse_csv_float(row.get(column, ""), default=0.0) or 0.0)
+    value = parse_csv_float(row.get(column, ""), default=None)
+    if value is None or not math.isfinite(float(value)):
+        raise ValueError(f"Missing or invalid monitoring energy: {column}")
+    return float(value)
 
 
 def read_monitoring_rows(csv_paths: Iterable[Path]) -> list[MonitorRow]:
@@ -98,16 +101,28 @@ def read_monitoring_rows(csv_paths: Iterable[Path]) -> list[MonitorRow]:
                 continue
             soc_raw = row.get("蓄電残量(SOC)[%]", "")
             soc = parse_csv_float(soc_raw, default=None) if soc_raw is not None else None
+            try:
+                energy = {
+                    field: _float(row, column)
+                    for field, column in (
+                        ("pv_kwh", "発電電力量[kWh]"), ("load_kwh", "消費電力量[kWh]"),
+                        ("sell_kwh", "売電電力量[kWh]"), ("buy_kwh", "買電電力量[kWh]"),
+                        ("charge_kwh", "充電電力量[kWh]"), ("discharge_kwh", "放電電力量[kWh]"),
+                    )
+                }
+            except ValueError:
+                # A present row with blank energy is unavailable, not zero.
+                continue
             rows.append(
                 MonitorRow(
                     day=day,
                     hhmm=hhmm,
-                    pv_kwh=_float(row, "発電電力量[kWh]"),
-                    load_kwh=_float(row, "消費電力量[kWh]"),
-                    sell_kwh=_float(row, "売電電力量[kWh]"),
-                    buy_kwh=_float(row, "買電電力量[kWh]"),
-                    charge_kwh=_float(row, "充電電力量[kWh]"),
-                    discharge_kwh=_float(row, "放電電力量[kWh]"),
+                    pv_kwh=energy["pv_kwh"],
+                    load_kwh=energy["load_kwh"],
+                    sell_kwh=energy["sell_kwh"],
+                    buy_kwh=energy["buy_kwh"],
+                    charge_kwh=energy["charge_kwh"],
+                    discharge_kwh=energy["discharge_kwh"],
                     soc_percent=float(soc) if soc is not None else None,
                 )
             )
@@ -202,7 +217,7 @@ def _money(value: float | int | None) -> str:
     return f"{float(value):.1f}円"
 
 
-def _hourly_forecast(plan_doc: dict[str, Any], hour: int, kind: str) -> float:
+def _hourly_forecast(plan_doc: dict[str, Any], hour: int, kind: str) -> float | None:
     result_key = "hourly_pv_forecast_kwh" if kind == "pv" else "hourly_load_forecast_kwh"
     hourly = _nested(plan_doc, f"_plan.result.{result_key}.{hour}", None)
     if hourly is None:
@@ -216,39 +231,56 @@ def _hourly_forecast(plan_doc: dict[str, Any], hour: int, kind: str) -> float:
         hourly = _nested(plan_doc, f"_plan.forecast.hourly.{hour}.{forecast_key}", None)
     if hourly is None:
         forecast_key = "pv_kwh" if kind == "pv" else "consumption_kwh"
-        hourly = _nested(plan_doc, f"forecast.hourly.{hour}.{forecast_key}", 0.0)
+        hourly = _nested(plan_doc, f"forecast.hourly.{hour}.{forecast_key}", None)
     try:
-        return float(hourly or 0.0)
+        value = float(hourly)
+        return value if math.isfinite(value) else None
     except (TypeError, ValueError):
-        return 0.0
+        return None
 
 
-def _build_hourly_table(rows: list[MonitorRow], plan_doc: dict[str, Any]) -> list[str]:
+def _complete_hours(rows: list[MonitorRow]) -> dict[int, list[MonitorRow]]:
+    """KP-NET energy labels are interval starts; require both half-hours."""
     by_hour: dict[int, list[MonitorRow]] = {}
     for row in rows:
         by_hour.setdefault(row.timestamp.hour, []).append(row)
+    return {
+        hour: values for hour, values in by_hour.items()
+        if len(values) == 2 and sorted(row.timestamp.minute for row in values) == [0, 30]
+    }
+
+
+def _matched_forecast(rows: list[MonitorRow], plan_doc: dict[str, Any], kind: str) -> float | None:
+    values = [_hourly_forecast(plan_doc, hour, kind) for hour in _complete_hours(rows)]
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
+
+
+def _table_value(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
+def _build_hourly_table(rows: list[MonitorRow], plan_doc: dict[str, Any]) -> list[str]:
+    by_hour = _complete_hours(rows)
 
     lines = [
         "| 時 | PV予測 | PV実績 | 消費予測 | 消費実績 | 充電実績 | 買電実績 | 売電実績 |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for hour in range(7, 23):
-        actual = by_hour.get(hour, [])
-        pv_actual = sum(row.pv_kwh for row in actual)
-        load_actual = sum(row.load_kwh for row in actual)
-        charge_actual = sum(row.charge_kwh for row in actual)
-        buy_actual = sum(row.buy_kwh for row in actual)
-        sell_actual = sum(row.sell_kwh for row in actual)
+        actual = by_hour.get(hour)
+        values = [
+            sum(getattr(row, field) for row in actual) if actual else None
+            for field in ("pv_kwh", "load_kwh", "charge_kwh", "buy_kwh", "sell_kwh")
+        ]
         lines.append(
             "| "
             f"{hour} | "
-            f"{_hourly_forecast(plan_doc, hour, 'pv'):.3f} | "
-            f"{pv_actual:.3f} | "
-            f"{_hourly_forecast(plan_doc, hour, 'load'):.3f} | "
-            f"{load_actual:.3f} | "
-            f"{charge_actual:.3f} | "
-            f"{buy_actual:.3f} | "
-            f"{sell_actual:.3f} |"
+            f"{_table_value(_hourly_forecast(plan_doc, hour, 'pv'))} | "
+            f"{_table_value(values[0])} | "
+            f"{_table_value(_hourly_forecast(plan_doc, hour, 'load'))} | "
+            + " | ".join(_table_value(value) for value in values[1:]) + " |"
         )
     return lines
 
@@ -260,6 +292,8 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         raise FileNotFoundError(f"No CSV files were found in {run_dir}")
 
     all_rows = read_monitoring_rows(csv_paths)
+    cutoff = datetime.now(JST)
+    all_rows = [row for row in all_rows if row.timestamp + timedelta(minutes=30) <= cutoff]
     today_rows = [row for row in all_rows if row.day == target_date]
     prev_day = target_date - timedelta(days=1)
     night_rows = [
@@ -278,6 +312,16 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
     whole = summarize(today_rows)
     night = summarize(night_rows)
     daytime = summarize(day_rows)
+    matched_day_rows = [row for values in _complete_hours(day_rows).values() for row in values]
+    matched_daytime = summarize(sorted(matched_day_rows, key=lambda row: row.timestamp))
+    matched_pv = _matched_forecast(day_rows, plan_doc, "pv")
+    matched_load = _matched_forecast(day_rows, plan_doc, "load")
+    complete_day = len(_complete_hours(day_rows)) == 16
+    expected_night_starts = {
+        datetime.combine(prev_day, time(23), tzinfo=JST) + timedelta(minutes=30 * index)
+        for index in range(16)
+    }
+    complete_night = len(night_rows) == 16 and {row.timestamp for row in night_rows} == expected_night_starts
 
     result = _nested(plan_doc, "_plan.result", {})
     if not result:
@@ -291,16 +335,14 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         predicted_night_charge = result.get("required_night_charge_kwh")
     expected_day_buy = result.get("soc_expected_day_buy_kwh")
     expected_sell = result.get("soc_expected_sell_kwh")
-    peak_unmet = result.get("soc_expected_peak_unmet_kwh")
-    peak_unmet_cost = result.get("soc_expected_peak_unmet_cost_yen")
     forecast_source = result.get("final_pv_forecast_source")
     pv_array_total = _nested(plan_doc, "pv_array_forecast_summary.totals.total_kwh")
 
-    pv_gap = float(final_pv or 0.0) - daytime.pv_kwh
-    charge_gap = night.charge_kwh - float(predicted_night_charge or 0.0)
+    pv_gap = matched_daytime.pv_kwh - matched_pv if matched_pv is not None else None
+    charge_gap = night.charge_kwh - float(predicted_night_charge) if complete_night and predicted_night_charge is not None else None
 
     execution = _nested(plan_doc, "night_soc_execution", {})
-    if not isinstance(execution, dict):
+    if not isinstance(execution, dict) or not execution:
         execution = metrics.get("night_soc_execution", {})
     if not isinstance(execution, dict):
         execution = {}
@@ -329,13 +371,12 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         f"- PV配列予測サマリ合計: {_fmt_kwh(pv_array_total)}",
         f"- 期待日中買電量: {_fmt_kwh(expected_day_buy)}",
         f"- 期待売電量: {_fmt_kwh(expected_sell)}",
-        f"- 95%ピークSOC未達想定: {_fmt_kwh(peak_unmet)}",
-        f"- 95%ピークSOC未達ペナルティ: {_money(peak_unmet_cost)}",
         "",
         "## 夜間SOC監査",
         "",
         f"- 判定: **{audit_status}**",
-        f"- 07:00 SOC誤差: {_fmt_percent(target_error)}",
+        f"- 瞬時SOCの誤差（時刻検証済み証拠のみ）: {_fmt_percent(target_error)}",
+        "- CSVの区間SOCを07:00の瞬時SOCとは扱いません。監査資料の欠損は制御失敗を意味しません。",
         f"- read-back一致: {execution.get('readback_match', '未記録')}",
         f"- 停止確認: {execution.get('standby_confirmed_at_utc', '未記録')}",
         f"- 競合書込み数: {execution.get('competing_writes', '未記録')}",
@@ -355,11 +396,12 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
         "",
         "## 主要な乖離",
         "",
-        f"- 夜間充電量: 予測 {_fmt_kwh(predicted_night_charge)} / 実績 {_fmt_kwh(night.charge_kwh)} / 差分 {_fmt_kwh(charge_gap)}",
-        f"- 日中PV発電量: 予測 {_fmt_kwh(final_pv)} / 実績 {_fmt_kwh(daytime.pv_kwh)} / 差分 {_fmt_kwh(-pv_gap)}",
-        f"- 日中買電量: 予測 {_fmt_kwh(expected_day_buy)} / 実績 {_fmt_kwh(daytime.buy_kwh)}",
-        f"- 売電量: 予測 {_fmt_kwh(expected_sell)} / 実績 {_fmt_kwh(whole.sell_kwh)}",
-        f"- 日中最大SOC: {_fmt_percent(daytime.soc_max[0] if daytime.soc_max else None)}",
+        "- 時間別の比較は:00/:30の両区間が揃った時間のみ。欠損・未完了はn/aです。",
+        f"- 夜間充電量: 予測 {_fmt_kwh(predicted_night_charge if complete_night else None)} / 実績 {_fmt_kwh(night.charge_kwh if complete_night else None)} / 差分 {_fmt_kwh(charge_gap)}",
+        f"- 日中PV発電量（完全区間）: 予測 {_fmt_kwh(matched_pv)} / 実績 {_fmt_kwh(matched_daytime.pv_kwh if matched_day_rows else None)} / 差分 {_fmt_kwh(pv_gap)}",
+        f"- 日中消費量（完全区間）: 予測 {_fmt_kwh(matched_load)} / 実績 {_fmt_kwh(matched_daytime.load_kwh if matched_day_rows else None)}",
+        f"- 全日中買電量（全区間取得時のみ）: 予測 {_fmt_kwh(expected_day_buy if complete_day else None)} / 実績 {_fmt_kwh(daytime.buy_kwh if complete_day else None)}",
+        f"- 全日中売電量（全区間取得時のみ）: 予測 {_fmt_kwh(expected_sell if complete_day else None)} / 実績 {_fmt_kwh(daytime.sell_kwh if complete_day else None)}",
         "",
         "## 時間別比較",
         "",
@@ -371,8 +413,8 @@ def build_report(*, run_dir: Path, target_date: date, output_path: Path) -> Path
             target_soc,
             predicted_night_charge,
             night,
-            daytime,
-            final_pv,
+            matched_daytime,
+            matched_pv,
             pv_array_total,
         ),
         "",
@@ -397,16 +439,12 @@ def _night_soc_audit(
         return "INCONCLUSIVE", ["target_soc_missing"], None
     if not math.isfinite(target) or not 0.0 <= target <= 100.0:
         return "INCONCLUSIVE", ["target_soc_invalid"], None
-    actual_0700 = daytime.soc_first
-    if actual_0700 is None:
-        reasons.append("soc_at_0700_missing")
-        target_error = None
-    else:
-        target_error = actual_0700 - target
-        if target_error < -3.0:
-            reasons.append("target_soc_under_3pt")
-        if target_error > 2.0:
-            reasons.append("target_soc_over_2pt")
+    # CSV energy labels identify interval starts; its SOC sample endpoint is
+    # not a verified instantaneous 07:00 observation. Do not infer a missed
+    # charging target from the first daytime CSV row. Exact realtime terminal
+    # receipts require their own evidence path and are not loaded here.
+    target_error = None
+    reasons.append("instantaneous_soc_evidence_not_loaded")
     if execution.get("plan_id") is None:
         reasons.append("execution_record_missing")
     if execution.get("readback_match") is not True:
@@ -422,10 +460,7 @@ def _night_soc_audit(
                 reasons.append("competing_writes_detected")
         except (TypeError, ValueError):
             reasons.append("competing_write_count_invalid")
-    if target_error is not None and any(
-        reason in {"target_soc_under_3pt", "target_soc_over_2pt", "competing_writes_detected"}
-        for reason in reasons
-    ):
+    if "competing_writes_detected" in reasons:
         return "FAIL", reasons, target_error
     return ("PASS" if not reasons else "INCONCLUSIVE"), reasons, target_error
 
@@ -450,37 +485,15 @@ def _interpretation(
     final_pv: Any,
     pv_array_total: Any,
 ) -> str:
-    target = float(target_soc or 0.0)
-    predicted_charge = float(predicted_night_charge or 0.0)
-    final_pv_value = float(final_pv or 0.0)
-    bullets: list[str] = []
-    if target <= 5.0 and predicted_charge < 0.5:
-        bullets.append(
-            "設定SOCと夜間充電予測量はいずれも低く、計画時点で「夜間はほぼ充電しない」判断になっています。"
-        )
-    if night.soc_min and night.soc_min[0] <= 1.0:
-        bullets.append(
-            "夜間から早朝にSOCがほぼ0%まで低下しており、低SOC目標では早朝負荷に対する余裕が不足します。"
-        )
-    if final_pv_value > 0 and daytime.pv_kwh < final_pv_value * 0.85:
-        bullets.append(
-            "当日取得分のPV実績が最終PV予測を大きく下回っており、低SOC判断の前提だった日中回復力が不足しています。"
-        )
-    if pv_array_total is not None:
-        try:
-            pv_array = float(pv_array_total)
-            if pv_array > 0 and final_pv_value / pv_array >= 1.5:
-                bullets.append(
-                    "最終PV予測がPV配列予測サマリより大きく上振れており、物理PV予測の信頼度ガードやブレンド条件の検討余地があります。"
-                )
-        except (TypeError, ValueError):
-            pass
-    if daytime.soc_max and daytime.soc_max[0] < 95.0:
-        bullets.append(
-            "日中最大SOCが95%に届いていないため、ピークSOC未達は計画上の想定より大きかった可能性があります。"
-        )
-    if not bullets:
-        bullets.append("大きな構造的乖離は検出されませんでした。")
+    bullets = [
+        "評価目的は電気料金の削減です。最大SOC・買電ゼロ・売電ゼロを成功条件にしません。",
+        "予測誤差と制御結果は別に評価します。CSVの区間SOCだけから充電停止の成否を判定しません。",
+    ]
+    if final_pv is not None and daytime.rows:
+        error = daytime.pv_kwh - float(final_pv)
+        bullets.append(f"一致する完全区間でのPV実績−予測は{error:+.3f} kWhです。原因の特定には保存予報・負荷・充放電を別々に検証します。")
+    else:
+        bullets.append("PV予測と完全区間の比較資料が不足しているため、発電誤差の判定はINCONCLUSIVEです。")
     return "\n".join(f"- {item}" for item in bullets)
 
 
