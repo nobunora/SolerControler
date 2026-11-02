@@ -19,6 +19,7 @@ from google.cloud.storage import Client as StorageClient
 from app.dashboard import snapshots
 from app.dashboard.history_reconstruction import _forecast_plan_metadata_by_date, _with_forecast_plan_metadata
 from app.dashboard.slice_assembler import read_latest_pv_forecast_diagnostics
+from app.energy_plan.battery_response import BatterySocResponse
 from app.operations.forecast_persistence import _forecast_projection_values
 from app.separated_runtime.plan import PublishedPlan
 from test_dashboard_new100_diagnostics import MODEL, model_document
@@ -282,11 +283,13 @@ def test_producer_clears_cache_before_materializing_and_reports_compressed_bytes
     assert result["bootstrap"]["raw_bytes"] > 0
 
 
-def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z"):
+def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z", response=None):
     original = {"generated_at": generated, "forecast": {"date": day},
                 "result": {"target_soc_7_percent": 40, "required_night_charge_kwh": 2, "effective_capacity_kwh": 10},
                 "daytime_soc_optimization": {"hourly_pv_forecast_kwh": {str(hour): 0.1 for hour in range(24)},
                                              "hourly_load_forecast_kwh": {str(hour): 0.2 for hour in range(24)}}}
+    if response is not None:
+        original["decision_rationale"] = {"battery_response": response.to_payload()}
     raw = json.dumps(original).encode()
     plan = PublishedPlan.from_bytes(raw, target_date=day, charge_rate_info={"percent_per_hour": 20})
     writes = _forecast_projection_values(original, target_date=plan.target_date, timezone_name="Asia/Tokyo", now=original["generated_at"])
@@ -298,6 +301,23 @@ def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z"):
     payload = {"forecast_hourly": rows,
                "latest_schedule": {"plan_date": plan.target_date, "planned_target_soc_percent": 40}}
     return plan, payload
+
+
+@pytest.mark.parametrize("response, expected8", [
+    (BatterySocResponse(charge_soc_per_kwh=8.0, discharge_soc_per_kwh=12.0), 38.8),
+    (BatterySocResponse(charge_soc_per_kwh=8.0, discharge_soc_per_kwh=12.0,
+                        drift_soc_per_hour=0.2, hourly_discharge_soc_per_kwh={7: 13.0}), 38.5),
+])
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_bootstrap_publication_uses_frozen_empirical_response(response, expected8, corrupt):
+    plan, payload = adopted_payload(response=response)
+    assert payload["forecast_hourly"][8]["forecast_soc_percent"] == pytest.approx(expected8)
+    if corrupt:
+        payload["forecast_hourly"][8]["forecast_soc_percent"] += 0.1
+        with pytest.raises(ValueError, match="dashboard SOC series generation mismatch"):
+            snapshots._validate_publication_payload(payload, plan)
+    else:
+        snapshots._validate_publication_payload(payload, plan)
 
 
 @pytest.mark.parametrize("field", ["forecast_pv_kwh", "forecast_load_kwh", "forecast_run_id", "forecast_target_soc_percent", "forecast_capacity_kwh", "forecast_soc_percent"])

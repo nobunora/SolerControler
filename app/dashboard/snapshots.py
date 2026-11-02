@@ -887,10 +887,18 @@ def _validate_publication_payload(payload: dict[str, Any], plan: PublishedPlan) 
         if row.get("forecast_target_soc_percent") != target or row.get("forecast_capacity_kwh") != capacity:
             raise ValueError("dashboard SOC/capacity generation mismatch")
     from app.energy_plan.soc_cost import simulate_daytime_soc_percent
+    from app.energy_plan.battery_response import BatterySocResponse
+    rationale = original.get("decision_rationale")
+    response_payload = rationale.get("battery_response") if isinstance(rationale, dict) else None
+    if response_payload is not None and not isinstance(response_payload, dict):
+        raise ValueError("battery_response:invalid_payload")
+    battery_response = (BatterySocResponse.from_payload(response_payload)
+                        if isinstance(response_payload, dict) else None)
     expected_soc = simulate_daytime_soc_percent(
         target_soc_percent=target, capacity_kwh=capacity,
         hourly_load_kwh={int(row["hour"]): row["forecast_load_kwh"] for row in expected},
         hourly_pv_kwh={int(row["hour"]): row["forecast_pv_kwh"] for row in expected},
+        battery_response=battery_response,
     )
     for hour, soc in expected_soc.items():
         if values.get(hour, {}).get("forecast_soc_percent") != soc:
