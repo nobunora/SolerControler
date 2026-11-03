@@ -18,8 +18,19 @@ ROOT = Path(__file__).resolve().parents[1]
 ])
 def test_browser_rejects_observed_failures(text: str, width: int, expected: bool) -> None:
     checks = assess_snapshot({"text": text, "document_width": width,
-                              "viewport_width": 390, "rendered_charts": 8})
+                              "viewport_width": 390, "rendered_charts": 8,
+                              "hourly_legend": {"top": 0, "bottom": 100, "boxes": [{"top": 10, "height": 12}]}})
     assert all(checks.values()) is expected
+
+
+@pytest.mark.parametrize("bottom,last_top,expected", [(120, 120, False), (210, 186, True)])
+def test_browser_rejects_clipped_hourly_legend(bottom: int, last_top: int, expected: bool) -> None:
+    # The production 390px capture had a 120px legend and its last row at 120+12.
+    checks = assess_snapshot({"text": "2026-10-15〜2026-11-03", "document_width": 390,
+                              "viewport_width": 390, "rendered_charts": 8,
+                              "hourly_legend": {"top": 0, "bottom": bottom,
+                                                "boxes": [{"top": last_top, "height": 12}]}})
+    assert checks["hourly_legend_fits"] is expected
 
 
 def run_pwsh(script: str, cwd: Path) -> subprocess.CompletedProcess[str]:
