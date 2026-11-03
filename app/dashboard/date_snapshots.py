@@ -27,8 +27,10 @@ from app.separated_runtime.plan import PublishedPlan
 
 def _outside_epoch(client: Any, target_date: str) -> dict[str, str]:
     epoch = _read_dashboard_source_epoch(client, history_scope=True, excluded_dates=frozenset({target_date}))
+    # The full battery_daily_metrics group above proves every unselected row.
+    # A latest-row selector changes naturally when a new target day is inserted.
     return {key: value for key, value in epoch.items()
-            if not key.startswith(("bounds_", "scope/", "history_", "retained/", "compare_retained/"))}
+            if key != "latest_battery" and not key.startswith(("bounds_", "scope/", "history_", "retained/", "compare_retained/"))}
 
 
 def _assert_current_plan(client: Any, identity: dict[str, str]) -> None:
@@ -36,6 +38,28 @@ def _assert_current_plan(client: Any, identity: dict[str, str]) -> None:
     plan = PublishedPlan.from_document(json.loads(saved["payload"]), target_date=identity["target_date"])
     if plan.version_id != identity["control_version_id"] or plan.sha256 != identity["raw_plan_sha256"]:
         raise ValueError("adopted plan changed; no publication from an obsolete import baseline")
+
+
+def _target_plan_version(client: Any, target_date: str) -> str | None:
+    snapshot = client.collection("control_plan_current").document(target_date).get(timeout=4, retry=None)
+    if not snapshot.exists:
+        return None
+    saved = snapshot.to_dict() or {}
+    return PublishedPlan.from_document(json.loads(saved["payload"]), target_date=target_date).version_id
+
+
+def _capture_refresh_plans(client: Any, target_date: str, identity: dict[str, str]) -> str | None:
+    _assert_current_plan(client, identity)
+    version = identity["control_version_id"] if target_date == identity["target_date"] else _target_plan_version(client, target_date)
+    if target_date > identity["target_date"] and version is not None:
+        raise ValueError("new-day plan was adopted before its display; wait for its publication")
+    return version
+
+
+def _assert_refresh_plans(client: Any, target_date: str, captured: dict[str, Any]) -> None:
+    _assert_current_plan(client, captured["identity"])
+    if target_date != captured["identity"]["target_date"] and _target_plan_version(client, target_date) != captured["target_plan_version"]:
+        raise ValueError("target-day plan changed during import; no mixed plan publication")
 
 
 def capture_date_refresh(client: Any, target_date: str) -> dict[str, Any]:
@@ -55,7 +79,7 @@ def capture_date_refresh(client: Any, target_date: str) -> dict[str, Any]:
         epochs[kind] = json.loads(gzip.decompress(base64.b64decode(metadata["source_epoch"])))
         if kind == BOOTSTRAP_KIND:
             identity = {key: metadata[key] for key in ("target_date", "generated_at", "control_version_id", "raw_plan_sha256")}
-    _assert_current_plan(client, identity)
+    target_plan_version = _capture_refresh_plans(client, target_date, identity)
     baseline = epochs[BOOTSTRAP_KIND]
     observed = _read_dashboard_source_epoch(client, history_scope=bool(baseline.get("history_retained_before")),
                                             history_compare_before=baseline.get("history_compare_before"))
@@ -74,6 +98,7 @@ def capture_date_refresh(client: Any, target_date: str) -> dict[str, Any]:
     # bootstrap copy). Retained older source revisions above must still match.
     # Never rebuild those unselected recent rows as a side effect of this import.
     return {"storage": remote, "payloads": payloads, "identity": identity,
+            "target_plan_version": target_plan_version,
             "outside_epoch": _outside_epoch(client, target_date)}
 
 
@@ -106,7 +131,7 @@ def merge_date_payload(previous: dict[str, Any], fresh: dict[str, Any], target_d
 
 
 def publish_date_refresh(client: Any, target_date: str, captured: dict[str, Any]) -> None:
-    _assert_current_plan(client, captured["identity"])
+    _assert_refresh_plans(client, target_date, captured)
     if _outside_epoch(client, target_date) != captured["outside_epoch"]:
         raise ValueError("another source date changed; no automatic multi-date regeneration")
     clear_dashboard_cache()
@@ -116,7 +141,11 @@ def publish_date_refresh(client: Any, target_date: str, captured: dict[str, Any]
                 for kind, previous in captured["payloads"].items()}
     # Keep every unselected history row byte-for-byte equivalent to its prior value.
     history = payloads[HISTORY_KIND]
-    payloads[BOOTSTRAP_KIND]["cost_monthly"] = _build_cost_monthly(history.get("cost_daily", []))
+    costs = {row["date"]: row for row in history.get("cost_daily", [])}
+    # Match the browser's recent-bootstrap precedence. Older history must not
+    # roll back monthly totals after the scheduled job refreshed recent days.
+    costs.update({row["date"]: row for row in payloads[BOOTSTRAP_KIND].get("cost_daily", [])})
+    payloads[BOOTSTRAP_KIND]["cost_monthly"] = _build_cost_monthly([costs[day] for day in sorted(costs)])
     identity = captured["identity"]
     saved = client.collection("control_plan_versions").document(identity["control_version_id"]).get(timeout=4, retry=None).to_dict() or {}
     plan = PublishedPlan.from_document(json.loads(saved["payload"]), target_date=identity["target_date"])
@@ -127,7 +156,7 @@ def publish_date_refresh(client: Any, target_date: str, captured: dict[str, Any]
     if _outside_epoch(client, target_date) != captured["outside_epoch"]:
         raise ValueError("another source date changed during date materialization")
     for kind, payload in payloads.items():
-        _assert_current_plan(client, identity)
+        _assert_refresh_plans(client, target_date, captured)
         _upload_artifact(artifact_from_payload(kind, payload), storage_client=captured["storage"],
                          publication_identity=identity, source_epoch=epoch, source_client=client, history_scope=True)
-        _assert_current_plan(client, identity)
+        _assert_refresh_plans(client, target_date, captured)
