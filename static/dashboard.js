@@ -952,7 +952,7 @@
             { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
             { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1 },
             { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: false },
-            { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#1675a9", backgroundColor: "#1675a9", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
+            { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
             { label: "保存済み夜間予測SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
             { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
             { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
