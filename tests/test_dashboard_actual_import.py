@@ -350,7 +350,7 @@ def test_batch_display_repair_cannot_repeat_an_unknown_write(tmp_path, monkeypat
     from scripts import repair_dashboard_views as repair
 
     path = tmp_path / "repair.json"
-    prepared = {"identity": {}, "epoch": {}, "before": {}, "payloads": {"bootstrap": {}}}
+    prepared = {"identity": {}, "epoch": {}, "epochs": {"bootstrap": {}}, "before": {}, "payloads": {"bootstrap": {}}}
     path.write_text(json.dumps({"status": "prepared", "prepared": prepared}), encoding="utf-8")
     monkeypatch.setattr(repair.snapshots, "_read_dashboard_source_epoch", lambda *_, **__: {})
     monkeypatch.setattr(repair, "_assert_current_plan", lambda *_: None)
@@ -380,3 +380,48 @@ def test_batch_display_repair_rejects_source_drift_before_any_write(tmp_path, mo
     with pytest.raises(ValueError, match="source changed before write"):
         repair.apply(object(), object(), path, repair._prepared_sha(prepared))
     assert json.loads(path.read_bytes())["status"] == "prepared"
+
+
+def test_batch_display_repair_preserves_each_artifact_native_scope(tmp_path, monkeypatch):
+    import base64
+    import gzip
+    from types import SimpleNamespace
+    from scripts import repair_dashboard_views as repair
+
+    stamp = "2026-11-03T03:00:00+00:00"
+    recent = {"forecast_hourly": f"{stamp}|24|recent", "scope/forecast_hourly": "2026-10-04"}
+    full = {"forecast_hourly": f"{stamp}|744|full", "scope/forecast_hourly": "2026-04-17"}
+    identity = {"target_date": "2026-11-03", "generated_at": stamp,
+                "control_version_id": "version", "raw_plan_sha256": "sha"}
+    def metadata(epoch):
+        encoded = base64.b64encode(gzip.compress(json.dumps(epoch, sort_keys=True, separators=(",", ":")).encode(), mtime=0)).decode()
+        return {**identity, "source_epoch": encoded}
+
+    stored = {"bootstrap": (b'{}', metadata(recent), "1"), "history": (b'{}', metadata(full), "2")}
+    monkeypatch.setattr(repair, "_read", lambda _, kind: stored[kind])
+    monkeypatch.setattr(repair, "_assert_current_plan", lambda *_: None)
+    monkeypatch.setattr(repair, "clear_dashboard_cache", lambda: None)
+    monkeypatch.setattr(repair.PublishedPlan, "from_document", lambda *_, **__: SimpleNamespace(version_id="version", sha256="sha"))
+    monkeypatch.setattr(repair.snapshots, "_validate_publication_payload", lambda *_: None)
+    monkeypatch.setattr(repair.snapshots, "build_dashboard_snapshot_payloads", lambda *_, **__: {"bootstrap": {}, "history": {}})
+    monkeypatch.setattr(repair.snapshots, "_read_dashboard_source_epoch", lambda *_, history_scope, **__: full if history_scope else recent)
+    client = SimpleNamespace(collection=lambda _: SimpleNamespace(document=lambda _: SimpleNamespace(
+        get=lambda **_: SimpleNamespace(to_dict=lambda: {"payload": "{}"}))))
+    path = tmp_path / "repair.json"
+    prepared = repair.prepare(client, object(), path)
+    assert prepared["epochs"] == {"bootstrap": recent, "history": full}
+    calls = []
+
+    def upload(artifact, *, source_epoch, history_scope, **_):
+        previous = json.loads(gzip.decompress(base64.b64decode(stored[artifact.kind][1]["source_epoch"])))
+        # Exercise the real monotonicity guard that rejected the production
+        # full-history epoch on a recent bootstrap with the same max revision.
+        repair.snapshots._check_source_epoch_order(previous, source_epoch)
+        assert history_scope == (artifact.kind == "history")
+        stored[artifact.kind] = (artifact.raw, metadata(source_epoch), "3")
+        calls.append(artifact.kind)
+
+    monkeypatch.setattr(repair.snapshots, "_upload_artifact", upload)
+    repair.apply(client, object(), path, repair._prepared_sha(prepared))
+    assert calls == ["bootstrap", "history"]
+    assert json.loads(path.read_bytes())["status"] == "verified"
