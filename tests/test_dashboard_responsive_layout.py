@@ -36,6 +36,8 @@ def test_dashboard_content_fits_mobile_without_clipping_gantt() -> None:
                 for selector in ("#pvModelProvenance", ".equation", ".battery-life-kpi", ".diag-kpi"):
                     assert page.locator(selector).evaluate_all("els => els.every(e => e.scrollWidth <= e.clientWidth + 1)"), (width, selector)
                 assert page.locator("#pvModelProvenance").inner_text().endswith("a" * 64)
+                if width <= 900:
+                    assert page.locator(".hourly-forecast-chart").evaluate("e => e.clientHeight >= 420"), width
                 if width < 980:
                     assert page.locator(".gantt-wrap").evaluate("e => e.scrollWidth > e.clientWidth")
                     assert page.locator(".gantt-wrap").evaluate("e => { e.scrollLeft = 100; return e.scrollLeft > 0; }")

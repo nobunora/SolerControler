@@ -239,6 +239,7 @@
       .grid { grid-template-columns: 1fr; }
       .full { grid-column: auto; }
       .chart-box { height: 240px; }
+      .hourly-forecast-chart { height: 420px; }
       .battery-life-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .diag-grid { align-items: stretch; }
       .battery-life-chart { height: 220px; }

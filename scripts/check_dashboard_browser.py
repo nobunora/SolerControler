@@ -17,10 +17,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def assess_snapshot(snapshot: dict[str, Any]) -> dict[str, bool]:
     ranges = re.findall(r"(\d{4}-\d{2}-\d{2})\s*[〜～~]\s*(\d{4}-\d{2}-\d{2})", snapshot["text"])
+    legend = snapshot["hourly_legend"]
     return {
         "period_order": bool(ranges) and all(start <= end for start, end in ranges),
         "charts_rendered": snapshot["rendered_charts"] >= 8,
         "no_page_overflow": snapshot["document_width"] <= snapshot["viewport_width"] + 1,
+        "hourly_legend_fits": bool(legend["boxes"]) and all(
+            box["top"] >= legend["top"] and box["top"] + box["height"] <= legend["bottom"] + 1
+            for box in legend["boxes"]
+        ),
     }
 
 
@@ -67,7 +72,9 @@ def run_browser(url: str, output: Path) -> dict[str, Any]:
             def capture(name: str) -> None:
                 page.wait_for_load_state("networkidle", timeout=30000)
                 page.screenshot(path=str(output / f"{name}.png"), full_page=True)
-                snapshot = page.evaluate("""() => ({
+                snapshot = page.evaluate("""() => {
+                    const legend = Chart.getChart(document.getElementById('hourlyForecastChart')).legend;
+                    return ({
                     text: document.body.innerText,
                     rendered_charts: [...document.querySelectorAll('canvas')].filter(e => {
                         const chart = window.Chart?.getChart(e);
@@ -75,8 +82,10 @@ def run_browser(url: str, output: Path) -> dict[str, Any]:
                             d => d.data.some(v => v !== null && Number.isFinite(typeof v === 'object' ? v?.y : v)));
                     }).length,
                     document_width: document.documentElement.scrollWidth,
-                    viewport_width: innerWidth
-                })""")
+                    viewport_width: innerWidth,
+                    hourly_legend: {top: legend.top, bottom: legend.bottom,
+                        boxes: legend.legendHitBoxes.map(({top, height}) => ({top, height}))}
+                }); }""")
                 checks.update({f"{name}.{key}": value for key, value in assess_snapshot(snapshot).items()})
 
             capture("initial")
@@ -90,6 +99,10 @@ def run_browser(url: str, output: Path) -> dict[str, Any]:
             page.reload(wait_until="domcontentloaded")
             page.set_viewport_size({"width": 390, "height": 844})
             capture("mobile")
+            page.set_viewport_size({"width": 320, "height": 844})
+            capture("mobile_narrow")
+            page.set_viewport_size({"width": 768, "height": 1000})
+            capture("tablet")
             checks["no_browser_errors"] = error_count == 0
         finally:
             browser.close()
