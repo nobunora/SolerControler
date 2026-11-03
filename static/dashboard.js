@@ -957,6 +957,7 @@
             { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
             { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
             { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
+            { label: "6→7時の予測接続（別計画）", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, borderWidth: 2.5, spanGaps: false },
           ],
         },
         options: {
@@ -1318,6 +1319,15 @@
         ? energy(row.retained_forecast_grid_charge_kwh) : null);
       chart.data.datasets[8].data = rows.map((row) => energy(row.actual_pv_kwh));
       chart.data.datasets[9].data = rows.map((row) => energy(row.actual_load_kwh));
+      const six = rows.findIndex((row) => row.hour === 6);
+      const seven = rows.findIndex((row) => row.hour === 7);
+      // Display-only boundary segment: retain both originals and never use an
+      // observation or interpolate a missing forecast to connect plan versions.
+      const connectNight = six >= 0 && seven === six + 1 && soc[six] === null
+        && chart.data.datasets[6].data[six] !== null && socKind === "計画SOC"
+        && state.pointSources[seven] === "saved_plan" && soc[seven] !== null;
+      chart.data.datasets[10].data = rows.map((_, index) => connectNight && index === six
+        ? chart.data.datasets[6].data[six] : connectNight && index === seven ? soc[seven] : null);
       chart.data.datasets[4].spanGaps = false;
       chart.options.scales.y = {
         min: 0,
@@ -1355,7 +1365,8 @@
         const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)}kWh` : `未完 ${count}/24`;
         const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh${nightGridCharge.every((value) => value === null) ? "（時間別計画未確定）" : ""}` : " / 夜間系統充電 時間帯未連携";
         note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
-        note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText;
+        note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText
+          + (connectNight ? " 6→7時の点線は保存夜間予測と最新日中計画の既存点を接続しています（別計画）。" : "");
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");
