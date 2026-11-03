@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -177,6 +178,13 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 for name in identity_fields:
                     if row.get(name) is None:
                         row.pop(name, None)
+            if _sqlite_table_exists(conn, "dashboard_retained_night_forecasts"):
+                retained_rows = conn.execute("""SELECT date, hour, detail_json FROM dashboard_retained_night_forecasts
+                    WHERE date >= ? AND date <= ?""", (start_date, end_date_iso)).fetchall()
+                retained_by_hour = {(row["date"], row["hour"]): json.loads(row["detail_json"]) for row in retained_rows}
+                for row in forecast_hourly:
+                    retained = retained_by_hour.get((row["date"], row["hour"]), {})
+                    row.update({key: value for key, value in retained.items() if key.startswith("retained_forecast_")})
         history_start = _monitoring_history_start(start_obj, include_static=request.include_static)
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []

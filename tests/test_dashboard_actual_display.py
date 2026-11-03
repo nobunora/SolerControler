@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -145,3 +146,32 @@ def test_sqlite_hour_start_soc_matches_common_reader_and_keeps_forecast_identity
     assert sql["forecast_run_id"] == "original-run"
     assert sql["forecast_issued_at"] == f"{DAY}T03:00:00"
     assert path.read_bytes() == before
+
+
+def test_validation_sync_keeps_retained_night_forecasts_out_of_primary_storage(tmp_path, monkeypatch):
+    from app.operations import sync
+
+    retained = {"retained_forecast_soc_percent": 0, "retained_forecast_grid_charge_kwh": 1.2,
+                "retained_forecast_soc_run_id": "old-night", "retained_forecast_soc_issued_at": f"{DAY}T02:30:00+09:00"}
+    rows = [{"date": DAY, "hour": 3, "forecast_pv_kwh": 0, "forecast_load_kwh": 0.2,
+             "forecast_run_id": "current-plan", "forecast_issued_at": f"{DAY}T08:00:00+09:00", **retained}]
+    query = SimpleNamespace(stream=lambda: [])
+    query.order_by = lambda *_: query
+    monkeypatch.setattr(sync, "_open_firestore_client", lambda **_: SimpleNamespace(collection=lambda _: query))
+    monkeypatch.setattr(history_reconstruction, "firestore_forecast_hourly_with_reconstruction", lambda *_, **__: rows)
+    path = tmp_path / "replica.db"
+    sync.sync_firestore_to_sqlite(sqlite_path=path)
+    before = path.read_bytes()
+    loaded = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
+    assert all(loaded[key] == value for key, value in retained.items())
+    assert loaded["forecast_run_id"] == "current-plan"
+    assert path.read_bytes() == before
+    assert "dashboard_retained_night_forecasts" not in sync.TABLE_SPECS
+    conn = open_db(path)
+    assert "retained_forecast_soc_percent" not in dict(conn.execute("SELECT * FROM forecast_hourly").fetchone())
+    conn.close()
+    rows.clear()
+    sync.sync_firestore_to_sqlite(sqlite_path=path)
+    conn = open_db(path)
+    assert conn.execute("SELECT COUNT(*) FROM dashboard_retained_night_forecasts").fetchone()[0] == 0
+    conn.close()
