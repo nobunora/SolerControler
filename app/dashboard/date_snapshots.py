@@ -152,11 +152,15 @@ def publish_date_refresh(client: Any, target_date: str, captured: dict[str, Any]
     if plan.sha256 != identity["raw_plan_sha256"]:
         raise ValueError("date refresh original mismatch")
     _validate_publication_payload(payloads[BOOTSTRAP_KIND], plan)
-    epoch = _read_dashboard_source_epoch(client, history_scope=True)
+    # Bootstrap and history have different native query scopes. Keep each one
+    # stable so unchanged forecast revisions are not mistaken for a rollback.
+    epochs = {kind: _read_dashboard_source_epoch(client, history_scope=kind == HISTORY_KIND)
+              for kind in payloads}
     if _outside_epoch(client, target_date) != captured["outside_epoch"]:
         raise ValueError("another source date changed during date materialization")
     for kind, payload in payloads.items():
         _assert_refresh_plans(client, target_date, captured)
         _upload_artifact(artifact_from_payload(kind, payload), storage_client=captured["storage"],
-                         publication_identity=identity, source_epoch=epoch, source_client=client, history_scope=True)
+                         publication_identity=identity, source_epoch=epochs[kind], source_client=client,
+                         history_scope=kind == HISTORY_KIND)
         _assert_refresh_plans(client, target_date, captured)

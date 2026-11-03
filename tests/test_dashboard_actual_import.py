@@ -272,6 +272,7 @@ def test_explicit_older_date_keeps_its_plan_binding(monkeypatch):
 
 def test_date_publication_does_not_roll_back_monthly_totals_to_stale_history(monkeypatch):
     from app.dashboard import date_snapshots
+    from app.dashboard.snapshots import _check_source_epoch_order
 
     monkeypatch.setattr(date_snapshots, "_assert_refresh_plans", lambda *_: None)
     monkeypatch.setattr(date_snapshots, "_outside_epoch", lambda *_: {})
@@ -281,9 +282,20 @@ def test_date_publication_does_not_roll_back_monthly_totals_to_stale_history(mon
         {"date": "2026-11-03", "savings_yen": 30, "self_consumption_kwh": 2}]})
     monkeypatch.setattr(date_snapshots.PublishedPlan, "from_document", lambda *_, **__: SimpleNamespace(sha256="original"))
     monkeypatch.setattr(date_snapshots, "_validate_publication_payload", lambda *_: None)
-    monkeypatch.setattr(date_snapshots, "_read_dashboard_source_epoch", lambda *_, **__: {"source": "native-revision"})
+    stamp = "2026-11-03T03:00:00+00:00"
+    recent = {"forecast_hourly": f"{stamp}|24|recent", "scope/forecast_hourly": "2026-10-04"}
+    full = {"forecast_hourly": f"{stamp}|744|full", "scope/forecast_hourly": "2026-04-17"}
+    monkeypatch.setattr(date_snapshots, "_read_dashboard_source_epoch", lambda *_, history_scope, **__: full if history_scope else recent)
     published = {}
-    monkeypatch.setattr(date_snapshots, "_upload_artifact", lambda artifact, **_: published.update({artifact.kind: json.loads(artifact.raw)}))
+
+    def upload(artifact, *, source_epoch, history_scope, **_):
+        assert history_scope == (artifact.kind == "history")
+        previous = full if artifact.kind == "history" else recent
+        _check_source_epoch_order(previous, source_epoch)
+        assert source_epoch == previous
+        published[artifact.kind] = json.loads(artifact.raw)
+
+    monkeypatch.setattr(date_snapshots, "_upload_artifact", upload)
     client = SimpleNamespace(collection=lambda _: SimpleNamespace(document=lambda _: SimpleNamespace(
         get=lambda **_: SimpleNamespace(to_dict=lambda: {"payload": "{}"}))))
     captured = {"outside_epoch": {}, "storage": object(), "identity": {
