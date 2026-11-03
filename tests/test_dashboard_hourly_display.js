@@ -5,7 +5,9 @@ async function tests() {
   const h = await harness();
   const chart = h.chart("hourlyForecastChart");
   const soc = chart.data.datasets[4];
-  assert.equal(chart.data.datasets.length, 6);
+  assert.equal(chart.data.datasets.length, 10);
+  chart.data.datasets.slice(0, 5).forEach((dataset) => assert.deepEqual(Array.from(dataset.borderDash), [2, 4]));
+  assert.equal(chart.data.datasets[5].borderDash, undefined);
   assert.equal(chart.data.labels.length, 24);
   assert.deepEqual(Array.from(soc.data.slice(0, 7)), Array(7).fill(null));
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));
@@ -14,6 +16,27 @@ async function tests() {
   assert.equal(soc.spanGaps, false);
   assert.match(h.elements.get("hourlyForecastNote").textContent, /計画SOC最大 23:00 99%/);
   assert.match(h.elements.get("hourlyForecastNote").textContent, /夜間SOC計画未確定/);
+  const retained = fixture();
+  retained.forecast_hourly.forEach((row) => {
+    if (row.hour < 7) {
+      row.retained_forecast_soc_percent = row.hour === 0 ? 0 : 35;
+      row.retained_forecast_grid_charge_kwh = row.hour === 3 ? 1.2 : 0;
+      row.retained_forecast_issued_at = "2026-07-19T23:00:00+09:00";
+    }
+  });
+  await h.replace(retained);
+  assert.equal(chart.data.datasets[6].data[0], 0);
+  assert.equal(chart.data.datasets[7].data[3], 1.2);
+  assert.deepEqual(Array.from(chart.data.datasets[6].borderDash), [2, 4]);
+  assert.deepEqual(Array.from(soc.data.slice(7)), retained.forecast_hourly.slice(7).map((row) => row.forecast_soc_percent));
+  retained.forecast_hourly[3].actual_soc_percent = 80;
+  retained.forecast_hourly[3].actual_load_kwh = 0.7;
+  await h.replace(retained);
+  assert.equal(chart.data.datasets[6].data[3], 35, "imported actuals must not hide saved night SOC");
+  assert.equal(chart.data.datasets[7].data[3], 1.2, "imported actuals must not hide saved night grid charging");
+  assert.equal(chart.data.datasets[2].data[3], 0.1, "load forecast remains visible beside actual load");
+  assert.equal(chart.data.datasets[9].data[3], 0.7);
+  assert.match(h.elements.get("hourlyForecastNote").textContent, /保存済み夜間予測の発行時刻/);
 
   // HISTORICAL_FAILURE_LOCK (2026-10-17): preserve night observations separately
   // from immutable saved plans, including zero and successive snapshots.
@@ -142,7 +165,7 @@ async function tests() {
   await h.replace(empty);
   assert.match(h.elements.get("hourlyForecastNote").textContent, /全日発電予測 未完 0\/24/);
   assert.ok(chart.data.datasets[0].data.every((value) => value === null));
-  assert.equal(chart.data.datasets[2].data[0], 0, "valid observed zero is preserved");
+  assert.equal(chart.data.datasets[9].data[0], 0, "valid observed zero is preserved on the actual series");
 
   const review = fixture();
   review.daily_review = { date: "2026-07-20", complete_day: false, forecast_available_hour_count: 0,
@@ -153,6 +176,12 @@ async function tests() {
   assert.match(h.elements.get("dailyReviewNote").textContent, /完全日は未確認/);
   assert.equal(h.elements.get("dailyReviewNote").textContent.includes("48件が揃った"), false);
   assert.match(h.elements.get("dailyReviewGrid").innerHTML, /実績 0.00 kWh/);
+  const midnight = fixture();
+  midnight.meta = { ...midnight.meta, snapshot_updated_dates: ["2026-07-21"] };
+  midnight.forecast_hourly.push({ date: "2026-07-21", hour: 0, actual_soc_at_hour_start_percent: 55 });
+  await h.replace(midnight);
+  assert.equal(chart.data.datasets[5].data[0], 55, "after midnight show the explicitly imported date");
+  assert.ok(chart.data.datasets[4].data.every((value) => value === null), "never reuse yesterday's forecast on the new day");
   assert.equal(h.requests.length, 0);
   console.log("dashboard hourly display: PASS");
 }

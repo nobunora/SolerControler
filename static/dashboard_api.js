@@ -19,11 +19,17 @@
   }
 
   async function fetchBootstrap(fetchImpl = fetch) {
-    return await fetchJson("/api/dashboard/bootstrap", fetchImpl);
+    return await fetchJson(afterImport("/api/dashboard/bootstrap"), fetchImpl);
   }
 
   async function fetchHistory(fetchImpl = fetch) {
-    return await fetchJson("/api/dashboard/history", fetchImpl);
+    return await fetchJson(afterImport("/api/dashboard/history"), fetchImpl);
+  }
+
+  function afterImport(path) {
+    const search = typeof window !== "undefined" && window.location ? window.location.search : "";
+    const execution = new URLSearchParams(search).get("actual_import");
+    return execution ? `${path}?${queryString({ actual_import: execution })}` : path;
   }
 
   async function fetchSlice(options = {}, fetchImpl = fetch) {

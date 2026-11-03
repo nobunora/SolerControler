@@ -37,7 +37,7 @@ from app.separated_runtime.plan_store import FirestorePlanStore
 
 MAX_MONITOR_SECONDS = 600
 RESTORE_RESERVE_SECONDS = 240
-POLL_SECONDS = 20
+POLL_SECONDS = 30
 
 
 def _valid_soc(value: object) -> float | None:

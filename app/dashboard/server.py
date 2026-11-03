@@ -12,10 +12,12 @@ import traceback
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import ParseResult, parse_qs, urlparse
 
 from app.dashboard.data import load_dashboard_slice
 from app.dashboard.models import DashboardSlice
+from app.dashboard.actual_import import actual_import_status, resolve_target_date, start_actual_import
 from app.dashboard.snapshots import (
     BOOTSTRAP_KIND,
     HISTORY_KIND,
@@ -23,6 +25,7 @@ from app.dashboard.snapshots import (
     artifact_from_payload,
     build_bootstrap_payload,
     load_precomputed_snapshot,
+    clear_snapshot_cache,
 )
 
 
@@ -332,6 +335,53 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return raw
 
+    def do_POST(self) -> None:  # noqa: N802
+        self._new_session_cookie = None
+        parsed = urlparse(self.path)
+        if not self._is_authorized(urlparse(parsed.path)):
+            self._import_response(401, {"error": "unauthorized"})
+            return
+        # Browser-only same-origin JSON action; query-string credentials and
+        # cross-site form submissions cannot trigger an import.
+        if (self.headers.get("X-Dashboard-Action") != "import-actuals"
+                or self.headers.get("Sec-Fetch-Site", "same-origin") != "same-origin"
+                or self.headers.get("Content-Type") != "application/json"
+                or not self.headers.get("Content-Length", "").isdigit()
+                or not 2 <= int(self.headers["Content-Length"]) <= 128):
+            self._import_response(403, {"error": "invalid_action"})
+            return
+        if parsed.path != "/api/dashboard/actual-import":
+            self._import_response(400, {"error": "invalid_action"})
+            return
+        try:
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if not isinstance(request, dict) or set(request) - {"target_date"}:
+                raise ValueError("invalid request")
+            target_date = resolve_target_date(request.get("target_date"))
+        except (ValueError, TypeError):
+            self._import_response(400, {"error": "invalid_date"})
+            return
+        try:
+            self._import_response(202, start_actual_import(target_date))
+        except ValueError:
+            self._import_response(503, {"error": "import_unavailable"})
+        except Exception:
+            self._import_response(502, {"error": "submission_unknown_do_not_retry"})
+
+    def _import_response(self, status: int, value: dict[str, Any]) -> None:
+        body = json.dumps(value).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _refresh_import_cache(self, parsed: ParseResult) -> None:
+        execution = (parse_qs(parsed.query).get("actual_import") or [""])[0]
+        if execution and actual_import_status(execution).get("status") in {"succeeded", "partial"}:
+            clear_snapshot_cache()
+
     # readable-code-audit: skip STRUCT-04 — route dispatch and HTTP response serialization share one request lifecycle and error boundary
     def do_GET(self) -> None:  # noqa: N802
         self._new_session_cookie = None
@@ -345,6 +395,15 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = parsed.path
+        if path == "/api/dashboard/actual-import":
+            execution = (parse_qs(parsed.query).get("execution") or [""])[0]
+            try:
+                self._import_response(200, actual_import_status(execution))
+            except ValueError:
+                self._import_response(400, {"error": "invalid_import"})
+            except Exception:
+                self._import_response(503, {"error": "status_unavailable"})
+            return
         static_asset = _static_asset(path)
         if static_asset is not None:
             content_type, content, gzip_content, etag = static_asset
@@ -397,6 +456,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/dashboard/bootstrap":
             try:
+                self._refresh_import_cache(parsed)
                 self._serve_snapshot(BOOTSTRAP_KIND)
             except Exception:
                 print("dashboard bootstrap snapshot error")
@@ -409,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/dashboard/history":
             try:
+                self._refresh_import_cache(parsed)
                 self._serve_snapshot(HISTORY_KIND)
             except Exception:
                 print("dashboard history snapshot error")

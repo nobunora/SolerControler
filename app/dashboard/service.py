@@ -32,6 +32,7 @@ def merge_forecast_hourly_actuals(
                 "actual_pv_kwh": None,
                 "energy_slots": {"actual_pv_kwh": {}, "actual_load_kwh": {}},
                 "actual_soc_percent": None,
+                "actual_soc_at_hour_start_percent": None,
                 "latest_sample_at": None,
                 "first_sample_at": None,
                 "opening_soc_percent": None,
@@ -58,6 +59,8 @@ def merge_forecast_hourly_actuals(
         soc_value = row.get("soc_percent")
         soc = float(soc_value) if not isinstance(soc_value, bool) and isinstance(soc_value, (int, float)) else None
         if soc is not None and math.isfinite(soc) and 0.0 <= soc <= 100.0:
+            if stamp.minute == 0:
+                acc["actual_soc_at_hour_start_percent"] = soc
             opening_soc_at = acc.get("opening_soc_at")
             if opening_soc_at is None or ts < opening_soc_at:
                 acc["opening_soc_percent"] = soc
@@ -83,7 +86,7 @@ def merge_forecast_hourly_actuals(
             key = ("", -1)
         actual = actuals.get(key)
         for field in ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
-                      "opening_soc_percent", "latest_sample_at"):
+                      "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent"):
             if item.get(field) is None:
                 item[field] = actual.get(field) if actual else None
         seen.add(key)
@@ -94,7 +97,7 @@ def merge_forecast_hourly_actuals(
                            "forecast_load_kwh": None, "forecast_charge_kwh": None,
                            "forecast_run_id": None, **{field: actual.get(field) for field in
                            ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
-                            "opening_soc_percent", "latest_sample_at")}})
+                            "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent")}})
     merged.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
     return merged
 
