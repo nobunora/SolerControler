@@ -19,6 +19,7 @@ from app.forecasting.correction_calculations import (
 from app.forecasting.correction_history_io import _load_forecast_hourly_history
 from app.forecasting.correction_result import assemble_forecast_correction_result
 from app.forecasting.correction_weather import fetch_hourly_weather
+from app.forecasting.hourly_load_template import apply_hourly_load_template, complete_hourly_load_history
 from app.configuration.environment import env_bool, env_float
 from app.parsing.numbers import to_float, to_int
 
@@ -771,6 +772,7 @@ def _finalize_load_correction(
     load_ratio_min: float,
     load_ratio_max: float,
     comfort_predictor: Callable[..., dict[str, object]],
+    template_history: dict[str, dict[int, float]],
 ) -> tuple[dict[int, float], list[dict[str, float | str]], dict[str, Any]]:
     """Apply hourly temperature weights, then replace with comfort when valid."""
     actual_history = preparation.actual_history
@@ -808,7 +810,11 @@ def _finalize_load_correction(
     residual_multipliers = comfort_model.pop("_residual_multipliers", [])
     comfort_hourly = coerce_hourly_values(comfort_model.get("hourly_load_kwh"))
     if comfort_model.get("applied") is True and len(comfort_hourly) == 24:
-        corrected_load = comfort_hourly
+        corrected_load, template_proof = apply_hourly_load_template(
+            comfort_hourly, history=template_history, target_date=target_date,
+        )
+        comfort_model["hourly_actual_template"] = template_proof
+        # Preserve the original HGB output below as provenance, not the final input.
         load_scenarios = _adaptive_load_scenarios(
             residual_multipliers if isinstance(residual_multipliers, list) else [],
             confidence=to_float(comfort_model.get("confidence")) or 0.0,
@@ -861,6 +867,7 @@ def calculate_load_forecast_correction(
         preparation, hourly_load_forecast=hourly_load_forecast, target_date=target_date,
         load_ewma_alpha=load_ewma_alpha, load_ratio_min=load_ratio_min, load_ratio_max=load_ratio_max,
         comfort_predictor=comfort_predictor,
+        template_history=complete_hourly_load_history(rows, target_date=target_date),
     )
     rationale["raw_hourly_load_forecast_kwh"] = {str(k): round(v, 4) for k, v in sorted(hourly_load_forecast.items())}
     rationale["corrected_hourly_load_forecast_kwh"] = {str(k): round(v, 4) for k, v in sorted(corrected_load.items())}
@@ -925,6 +932,9 @@ def calculate_forecast_correction(
         preparation, hourly_load_forecast=hourly_load_forecast, target_date=target_date,
         load_ewma_alpha=load_ewma_alpha, load_ratio_min=load_ratio_min, load_ratio_max=load_ratio_max,
         comfort_predictor=comfort_predictor,
+        template_history=complete_hourly_load_history(
+            load_training_rows if load_training_rows is not None else rows, target_date=target_date,
+        ),
     )
     raw_pv_total = sum(max(0.0, value) for value in hourly_pv_forecast.values())
     raw_load_total = sum(max(0.0, value) for value in hourly_load_forecast.values())
