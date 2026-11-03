@@ -1829,7 +1829,17 @@
         if (notice) { status.textContent = notice; window.sessionStorage.removeItem(noticeKey); }
       }
       const dateInput = document.getElementById("importActualsDate");
-      if (dateInput) { dateInput.value = todayIsoJst(); dateInput.max = todayIsoJst(); }
+      let dateExplicit = false;
+      function refreshDateDefault() {
+        if (!dateInput) return;
+        dateInput.max = todayIsoJst();
+        if (!dateExplicit) dateInput.value = todayIsoJst();
+      }
+      if (dateInput) {
+        refreshDateDefault();
+        dateInput.addEventListener("change", () => { dateExplicit = true; });
+        dateInput.addEventListener("focus", refreshDateDefault);
+      }
       async function monitor(execution) {
         const deadline = Date.now() + 720000;
         while (Date.now() < deadline) {
@@ -1864,10 +1874,11 @@
         try {
           if (!execution) {
             window.sessionStorage.setItem(storageKey, "unknown");
+            refreshDateDefault();
             const response = await fetch("/api/dashboard/actual-import", {
               method: "POST", credentials: "same-origin",
               headers: { "Content-Type": "application/json", "X-Dashboard-Action": "import-actuals" },
-              body: JSON.stringify({ target_date: dateInput ? dateInput.value : todayIsoJst() }),
+              body: JSON.stringify(dateExplicit && dateInput ? { target_date: dateInput.value } : {}),
             });
             if (!response.ok) throw new Error("import_submission_unknown");
             execution = (await response.json()).execution;

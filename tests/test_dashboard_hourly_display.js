@@ -183,6 +183,27 @@ async function tests() {
   assert.equal(chart.data.datasets[5].data[0], 55, "after midnight show the explicitly imported date");
   assert.ok(chart.data.datasets[4].data.every((value) => value === null), "never reuse yesterday's forecast on the new day");
   assert.equal(h.requests.length, 0);
+  for (const explicit of [false, true]) {
+    const importView = await harness();
+    const posts = [];
+    importView.context.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+    importView.context.fetch = async (url, options) => {
+      posts.push({ url, body: JSON.parse(options.body) });
+      return { ok: false }; // Stop after the one submission; never run a real job.
+    };
+    const input = importView.elements.get("importActualsDate");
+    if (explicit) { input.value = "2026-07-19"; input.listeners.change(); }
+    importView.run("todayIsoJst = () => '2026-07-21'"); // Page remained open across JST midnight.
+    const button = importView.elements.get("importActualsBtn");
+    button.listeners.click();
+    await new Promise(setImmediate);
+    button.listeners.click();
+    assert.equal(posts.length, 1);
+    assert.deepEqual(posts[0].body, explicit ? { target_date: "2026-07-19" } : {},
+      "default date must be chosen by the server at submission; only a deliberate past selection is sent");
+    assert.equal(input.value, explicit ? "2026-07-19" : "2026-07-21");
+    assert.equal(input.max, "2026-07-21");
+  }
   console.log("dashboard hourly display: PASS");
 }
 tests().catch((error) => { console.error(error); process.exitCode = 1; });
