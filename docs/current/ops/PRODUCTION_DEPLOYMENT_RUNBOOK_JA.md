@@ -129,6 +129,8 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 `-EnableDashboardActualImport`を追加できる。通常のimage-only契約の限定例外である。
 canonical wrapper内の`configure_dashboard_actual_import.ps1`が既存planner設定から専用の
 `solar-actual-import`を作成し、固定digest、retry 0、CSV/実績DB/表示生成だけのcommandを確認する。
+先に同commitの明示forecastを正規SDK検証経路で反映し、その稼働中planner digestを専用Jobへ再利用する。
+別imageの再buildや古いplannerへのfallbackは行わない。
 Web identityへ付ける権限はその専用Jobの`roles/run.jobsExecutorWithOverrides`のみで、機器資格情報やDB書込権限は追加しない。
 overrideはサーバーが検証した絶対JST日付の`ACTUAL_IMPORT_TARGET_DATE`だけで、command/argsは受け付けない。
 Webの環境変更は`DASHBOARD_ACTUAL_IMPORT_JOB`だけとし、通常forecast、23/03/07、Schedulerを変更しない。

@@ -76,15 +76,16 @@ if (@($existing | Where-Object { $_.metadata.name -eq $job }).Count) {
     $executions = Invoke-Cloud @('run', 'jobs', 'executions', 'list', '--job', $job, '--project', $project, '--region', $region, '--format', 'json') | ConvertFrom-Json -AsHashtable
     if (@($executions | Where-Object { -not $_.status.ContainsKey('completionTime') }).Count) { throw 'An import execution is unresolved.' }
 }
-$base = "$region-docker.pkg.dev/$project/$(Get-RequiredProductionEnv 'GCP_RUNNER_REPOSITORY')/$(Get-RequiredProductionEnv 'GCP_RUNNER_IMAGE_NAME')-actual-import"
-$tag = "${base}:git-$RepositoryCommit"
-$state.stage = 'build'; Save-State
-$cache = [string]$planner.spec.template.spec.template.spec.containers[0].image
-Invoke-Cloud @('builds', 'submit', '--config', 'cloudbuild.planner.yaml', '--ignore-file', '.gcloudignore-separated',
-    '--region', $region, '--project', $project, '--substitutions', "_PLANNER_IMAGE=$tag,_PLANNER_CACHE_IMAGE=$cache", '.') | Out-Null
-$digest = (Invoke-Cloud @('artifacts', 'docker', 'images', 'describe', $tag, '--project', $project, '--format', 'value(image_summary.digest)')).Trim()
-if ($digest -notmatch '^sha256:[a-f0-9]{64}$') { throw 'Import image digest is missing.' }
-$state.image = "$base@$digest"; $state.stage = 'job'; Save-State
+$plannerContainer = $planner.spec.template.spec.template.spec.containers[0]
+$plannerRevision = @($plannerContainer.env | Where-Object { $_.name -eq 'PLAN_SOURCE_REVISION' })
+$plannerDigest = @($plannerContainer.env | Where-Object { $_.name -eq 'PLAN_IMAGE_DIGEST' })
+if ($plannerRevision.Count -ne 1 -or $plannerRevision[0].value -ne $RepositoryCommit -or
+    $plannerDigest.Count -ne 1 -or $plannerDigest[0].value -notmatch '^sha256:[a-f0-9]{64}$' -or
+    -not ([string]$plannerContainer.image).EndsWith("@$($plannerDigest[0].value)")) {
+    throw 'Deploy the same-commit forecast through its canonical SDK-verified wrapper first.'
+}
+# Reuse the already SDK-verified immutable planner image; never build it twice.
+$state.image = [string]$plannerContainer.image; $state.stage = 'job'; Save-State
 $spec = $planner.spec.template.spec
 $spec.taskCount = 1
 $spec.parallelism = 1
