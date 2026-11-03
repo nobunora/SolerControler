@@ -39,6 +39,7 @@ from app.operations.domain import (
     tiered_increment_cost as _tiered_day_increment_cost,  # noqa: F401
 )
 from app.operations.monitoring_sync import (
+    MonitoringSyncWindow,
     MonitoringChangeSet,
     classify_monitoring_rows,
     prepare_monitoring_csvs,
@@ -126,8 +127,10 @@ def sync_monitoring_csvs(
     csv_paths: list[Path],
     ingested_at: str,
     full_backfill: bool = False,
+    window: MonitoringSyncWindow | None = None,
 ) -> MonitoringChangeSet:
-    window = None if full_backfill else window_from_ingested_at(ingested_at)
+    if window is None:
+        window = None if full_backfill else window_from_ingested_at(ingested_at)
     prepared = prepare_monitoring_csvs(csv_paths, window=window)
     existing_by_ts: dict[str, dict[str, Any]] = {}
     collection = client.collection("monitoring_samples")
@@ -517,6 +520,7 @@ def recalc_cost_daily_from(
     night8_night_rate_yen: float = 28.85,
     deadline: float | None = None,
     on_progress: Callable[[dict[str, Any]], None] | None = None,
+    write_dates: set[str] | None = None,
 ) -> int:
     started = time.monotonic()
     start_ts = f"{start_date}T00:00:00"
@@ -586,6 +590,8 @@ def recalc_cost_daily_from(
     unit_index = 0
     documents: list[dict[str, Any]] = []
     for result in results:
+        if write_dates is not None and result.date not in write_dates:
+            continue
         payload = {
                 "date": result.date,
                 "self_consumption_kwh": result.self_consumption_kwh,

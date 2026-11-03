@@ -651,7 +651,8 @@ def _check_source_epoch_order(previous: dict[str, str], incoming: dict[str, str]
 
 
 def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: float | None = None,
-                                history_compare_before: str | None = None) -> dict[str, str]:
+                                history_compare_before: str | None = None,
+                                excluded_dates: frozenset[str] = frozenset()) -> dict[str, str]:
     """Producer-only bounded revision map of every Firestore payload source.
 
     Native update_time owns ordering; stored ingestion timestamps are not
@@ -740,6 +741,8 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             # Every document participates in the digest, including corrected
             # old dates. Grouping by source scope keeps full SHA256 evidence
             # within GCS metadata; no row or digest is silently truncated.
+            if day in excluded_dates:
+                continue
             groups[collection].append((f"{day}/{snapshot.id}", revision))
             if retained_before and collection in retained_sources:
                 if day < retained_before:

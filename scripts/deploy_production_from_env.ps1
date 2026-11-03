@@ -1,6 +1,7 @@
 param(
     [switch]$ValidateOnly,
     [switch]$SeparatedRuntime,
+    [switch]$EnableDashboardActualImport,
     [string]$ApprovedCalculationPatchSha256 = '',
     [switch]$AllowOutOfWindowLiveProbe,
     [switch]$SkipPreRelease,
@@ -116,6 +117,9 @@ if ($ValidateOnly) {
 }
 
 $useSeparatedRuntime = $SeparatedRuntime -or (Get-ProductionEnv 'SOLAR_RUNTIME_LAYOUT' 'legacy') -eq 'separated'
+if ($EnableDashboardActualImport -and (-not $useSeparatedRuntime -or $DeploymentScope -ne 'dashboard')) {
+    throw 'Actual import provisioning requires the explicit separated dashboard scope.'
+}
 if ($useSeparatedRuntime -and $DeploymentScope -eq 'forecast') {
     if (-not $StatePath -or -not $AdapterProofFixturePath) {
         throw 'Separated forecast release requires StatePath and AdapterProofFixturePath.'
@@ -194,6 +198,10 @@ if ($Resume) {
     if ($state.kind -ne 'production_deployment') {
         throw 'Resume state kind is not production_deployment.'
     }
+    $previousImportOption = $state.PSObject.Properties['enable_dashboard_actual_import']
+    if ([bool]($previousImportOption -and $previousImportOption.Value) -ne [bool]$EnableDashboardActualImport) {
+        throw 'Resume requires the same explicit dashboard import option.'
+    }
     if ($state.stages.pre_release.status -eq 'success') { $SkipPreRelease = $true }
     if ($state.stages.jobs.status -eq 'success') {
         $SkipJobBuild = $true
@@ -208,6 +216,7 @@ if ($Resume) {
         kind = 'production_deployment'
         repository_commit = ((git rev-parse HEAD).Trim())
         repository_branch = ((git branch --show-current).Trim())
+        enable_dashboard_actual_import = [bool]$EnableDashboardActualImport
         started_at = (Get-Date).ToUniversalTime().ToString('o')
         updated_at = $null
         status = 'running'
@@ -379,7 +388,14 @@ Invoke-DeploymentStage -Name 'dashboard' -Skip:$SkipDashboardBuild -Action {
         $webDigest = (& $gcloud artifacts docker images describe $webImage --project $projectId --format 'value(image_summary.digest)').Trim()
         if ($LASTEXITCODE -ne 0 -or $webDigest -notmatch '^sha256:[0-9a-f]{64}$') { throw 'Separated web image digest could not be resolved.' }
         $immutableWebImage = "$webImageBase@$webDigest"
-        & $gcloud run services update $dashboardService --region $region --project $projectId --image $immutableWebImage
+        if ($EnableDashboardActualImport) {
+            & (Join-Path $PSScriptRoot 'configure_dashboard_actual_import.ps1') -StateDirectory "$StatePath.d" -RepositoryCommit $state.repository_commit
+            if ($LASTEXITCODE -ne 0) { throw 'Actual import provisioning failed.' }
+            & $gcloud run services update $dashboardService --region $region --project $projectId --image $immutableWebImage `
+                --update-env-vars "DASHBOARD_ACTUAL_IMPORT_JOB=projects/$projectId/locations/$region/jobs/solar-actual-import"
+        } else {
+            & $gcloud run services update $dashboardService --region $region --project $projectId --image $immutableWebImage
+        }
         if ($LASTEXITCODE -ne 0) { throw 'Separated web service update failed.' }
         $webServiceState = (& $gcloud run services describe $dashboardService --region $region --project $projectId --format json) | ConvertFrom-Json
         if ($LASTEXITCODE -ne 0 -or $webServiceState.spec.template.spec.containers[0].image -ne $immutableWebImage -or

@@ -269,13 +269,14 @@ def _snapshot_cutoff(target_date: str) -> datetime:
     return datetime.combine(date.fromisoformat(target_date), time(7, 0), tzinfo=ZoneInfo("Asia/Tokyo"))
 
 
-def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_iso: str, mutable_dates: set[str]) -> list[dict[str, Any]]:
+def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_iso: str, mutable_dates: set[str],
+                                    retained_night: dict[tuple[str, int], dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     runs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for doc in client.collection("forecast_hourly_snapshots").where("date", ">=", start_date).where("date", "<=", end_date_iso).stream():
         row = doc.to_dict() or {}
         target_date = str(row.get("date") or "")
         run_id = str(row.get("forecast_run_id") or "")
-        if target_date and run_id and target_date not in mutable_dates:
+        if target_date and run_id:
             runs.setdefault((target_date, run_id), []).append(row)
     selected: list[dict[str, Any]] = []
     for target_date in sorted({day for day, _ in runs}):
@@ -288,6 +289,32 @@ def _snapshot_forecast_rows_between(client: Any, *, start_date: str, end_date_is
             values_complete = all(to_float(row.get("forecast_pv_kwh")) is not None and to_float(row.get("forecast_load_kwh")) is not None for row in rows)
             if issued_at is not None and len(rows) == 24 and hours == set(range(24)) and values_complete and issued_at <= _snapshot_cutoff(target_date):
                 candidates.append((issued_at, run_id, rows))
+        if retained_night is not None:
+            for issued, run, saved_rows in sorted(candidates, key=lambda item: (item[0], item[1])):
+                for saved in saved_rows:
+                    hour = int(saved["hour"])
+                    point_at = datetime.combine(date.fromisoformat(target_date), time(hour), tzinfo=ZoneInfo("Asia/Tokyo"))
+                    if hour >= 7 or issued > point_at:
+                        continue
+                    soc = to_float(saved.get("forecast_soc_percent"))
+                    charge = to_float(saved.get("forecast_grid_charge_kwh"))
+                    values: dict[str, Any] = {}
+                    if soc is not None and math.isfinite(soc) and 0 <= soc <= 100:
+                        values["retained_forecast_soc_percent"] = soc
+                        values["retained_forecast_soc_issued_at"] = issued.isoformat()
+                        values["retained_forecast_soc_run_id"] = run
+                    if charge is not None and math.isfinite(charge) and charge >= 0:
+                        values["retained_forecast_grid_charge_kwh"] = charge
+                        values["retained_forecast_grid_charge_issued_at"] = issued.isoformat()
+                        values["retained_forecast_grid_charge_run_id"] = run
+                    if values:
+                        retained_night[(target_date, hour)] = {
+                            **retained_night.get((target_date, hour), {}),
+                            **values, "retained_forecast_run_id": run,
+                            "retained_forecast_issued_at": issued.isoformat(),
+                        }
+        if target_date in mutable_dates:
+            continue
         if candidates:
             issued_at, run_id, rows = max(candidates, key=lambda item: (item[0], item[1]))
             selected.extend({
@@ -673,12 +700,14 @@ def _firestore_forecast_hourly_between(
     # A partial mutable day is not a usable daily forecast. Discard it entirely
     # so a selected immutable run can replace it without mixing vintages.
     rows = [row for row in rows if str(row.get("date")) in mutable_dates]
+    retained_night: dict[tuple[str, int], dict[str, Any]] = {}
     rows.extend(
         _snapshot_forecast_rows_between(
             client,
             start_date=start_date,
             end_date_iso=end_date_iso,
             mutable_dates=mutable_dates,
+            retained_night=retained_night,
         )
     )
     end_next = _date_add_iso(end_date_iso, 1) or end_date_iso
@@ -699,7 +728,12 @@ def _firestore_forecast_hourly_between(
                 "soc_percent": row.get("soc_percent"),
             }
         )
-    return merge_forecast_hourly_actuals(rows, monitoring_rows)
+    merged = merge_forecast_hourly_actuals(rows, monitoring_rows)
+    for row in merged:
+        saved_night = retained_night.get((str(row.get("date")), int(row.get("hour") or 0)))
+        if saved_night:
+            row.update(saved_night)
+    return merged
 
 
 # readable-code-audit: skip STRUCT-04 — Firestore requires separate document reads and aggregation, so splitting every stage would hide the snapshot contract

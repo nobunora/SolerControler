@@ -55,6 +55,14 @@
 
 ## 履歴の扱い
 
+### 2026-11-03 実績SOCの時点整合
+
+利用者が時間境界の厳密な整合を指示したため、夜間SOCの独立実績系列は新artifactで毎正時の
+`actual_soc_at_hour_start_percent`を使う。旧`actual_soc_percent`は時間内最終値として保存契約を維持し、
+旧artifactを読む場合はラベルで区別する。07:30を07:00へずらさず、正時の0%を有効値として保持し、
+正時欠測を30分値で補わない。計画の独立表示・保存17点・ピーク・03/07制御時刻は変更しない。
+`test_soc_actual_compares_exact_hour_and_does_not_substitute_half_hour`と既存時間別表示回帰を必須とする。
+
 ### 予測履歴7日と請求期間の分離（2026-10-08障害）
 
 `app/energy_plan/monitoring_history.py` の `HISTORICAL_FAILURE_LOCK` は、予測に

@@ -12,6 +12,10 @@
       <h1>おうち発電ダッシュボード</h1>
       <p>期間ボタンで、日次・月次・蓄電池グラフの表示範囲をまとめて切り替えます。</p>
       <p id="statusMsg" class="desc"></p>
+      <label>取込み・表示更新日 <input id="importActualsDate" type="date"></label>
+      <button id="importActualsBtn" class="period-button" type="button">最新値を取り込み</button>
+      <p class="desc">既定は当日だけ。過去分は日付を指定した場合だけ更新します。予測は点線、実績は実線で表示します。</p>
+      <p id="importActualsStatus" class="desc" role="status" aria-live="polite"></p>
     </section>
 
     <section id="dashboardWarnings" class="warning-panel" aria-live="polite"></section>

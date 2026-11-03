@@ -125,6 +125,44 @@ pwsh -NoProfile -File scripts/deploy_production_from_env.ps1 `
 
 ### 2.0 非制御scope: dashboard-only / forecast-only
 
+ダッシュボード実績取込み機能を明示承認された場合に限り、分離構成の明示`dashboard`へ
+`-EnableDashboardActualImport`を追加できる。通常のimage-only契約の限定例外である。
+canonical wrapper内の`configure_dashboard_actual_import.ps1`が既存planner設定から専用の
+`solar-actual-import`を作成し、固定digest、retry 0、CSV/実績DB/表示生成だけのcommandを確認する。
+Web identityへ付ける権限はその専用Jobの`roles/run.jobsExecutorWithOverrides`のみで、機器資格情報やDB書込権限は追加しない。
+overrideはサーバーが検証した絶対JST日付の`ACTUAL_IMPORT_TARGET_DATE`だけで、command/argsは受け付けない。
+Webの環境変更は`DASHBOARD_ACTUAL_IMPORT_JOB`だけとし、通常forecast、23/03/07、Schedulerを変更しない。
+状態は親StatePathの`.d/actual-import.json`へ保存する。running/unknown時はbuild/Jobを再実行せず
+exact executionをread-only照合する。成功済みbuildは再buildしない。
+画面操作でPOSTは1回だけ送信し、同じexecutionをGETで確認する。受付成功だけを取込み成功にしない。
+保存DB更新後、bootstrap/historyの指定日部分の公開成功まで確認して完了とする。保存済み予測は削除・再計算しない。
+対象日は受付時に固定する。未指定は当日、過去日は利用者が明示した場合だけ。未来と1095日超は拒否する。
+CSVの保存は指定日00:00以上・翌日00:00未満かつ取得時点以前だけ。元時刻を変更しない。
+対象外の表示行は保存済みcopyを保持し、全履歴再生成へ自動拡大しない。既存表示が既に別日のsourceと不一致なら停止する。
+過去実績の訂正で後日の夜間集計・累計が影響する場合は`partial`と対象外の関連日を報告し、暗黙に再生成しない。
+本番受入では予測の原本SHA/発行時刻/値の前後一致、実績の最新観測時刻、夜間保存予測、点線/実線、
+初期history 0回と明示遷移後1回、Web/専用Jobの固定digest、他Job/Scheduler不変を確認する。
+この限定経路ではcontrol probeの30秒待機のsource差分は本番control imageへ反映されない。
+
+表示用bootstrap/historyの既存不整合を一括修復する場合は、利用者の明示承認を受けた一回限りの
+`repair_dashboard_views_from_env.ps1 -Stage prepare -StatePath artifacts/deployment_state/<unique>.json`を使う。
+既存2artifactのgeneration/metadata/本文をprivate stateへ保存し、保存DBから全履歴を明示生成する。
+prepareの差分とSHAをレビュー後、同commitの全必須preflight成功を指定して`-Stage apply`
+`-ReviewedStateSha256 ... -PreflightStatePath ...`を一度だけ実行する。保存DB・予測原本・制御計画は書き換えない。
+両artifactの本文、原本identity、source epochをnative readbackして初めてverifiedとする。
+running/unknownでは`-Stage verify`の読み取りだけを行い、applyを再実行しない。
+通常ボタンからこの全履歴修復経路を呼ばない。
+
+時刻はすべてJST。23:00はstandby、02:30はCSV保存→予測生成→計画採用→表示公開、
+03:00は採用済み計画を取得して固定した制御、07:00は日中モード復帰を所有する。
+23/07の分離制御は実績DB取込みを行わない。03の監視は06:45以上で打切り、最終standby開始は
+06:50未満、外部I/Oは06:55で終了する。手動実績取込みはこの所有権と03開始時の計画を変更しない。
+受付日付は日跨ぎでも不変。翌日02:30前に当日計画がない場合は当日実績だけを表示し、前日の予測を転用しない。
+02:30等の計画採用と重なった取込みは公開前後のcurrent-plan identity/source epoch不一致で停止する。
+DB保存後に停止した場合はactuals_savedと公開失敗を区別し、再取込みを自動実行しない。
+bootstrapとhistoryの近日日付は生成時刻が異なり得る。画面の既存bootstrap優先を維持し、
+指定外の履歴行を暗黙に再生成しない。古い保持範囲のsource revision不一致は明示修復まで停止する。
+
 `-DeploymentScope control-readonly` は control Job を更新できない（即時エラー）。23/03/07 の image-only 反映は `scripts/deploy_control_jobs_image_only.ps1` を使い、clean worktree と immutable digest を確認した上で、CSV/plan/実機 settings round-trip（60秒保持・read-back 復元）を含む必須 live probe が成功する場合だけ完了とする。probe が失敗したら既存 image へ rollback し、完了扱いにしない。
 
 `-DeploymentScope dashboard` は dashboard Cloud Run service だけを更新する正式な非制御経路です。このscopeではrunner、23/03/07、02:30 forecast job、Scheduler、KP-NET import、Drive backup、機器settingsを変更しません。
