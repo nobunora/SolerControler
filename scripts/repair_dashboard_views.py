@@ -58,13 +58,17 @@ def prepare(client: Any, remote: Any, path: Path) -> dict[str, Any]:
     epoch = snapshots._read_dashboard_source_epoch(client, history_scope=True)
     payloads = snapshots.build_dashboard_snapshot_payloads(Path("artifacts/solar_monitor.db"), existing_history=None)
     snapshots._validate_publication_payload(payloads[snapshots.BOOTSTRAP_KIND], plan)
+    # Each artifact retains its native query scope. A full-history epoch cannot
+    # replace the recent bootstrap epoch without appearing to rewrite revisions.
+    epochs = {snapshots.BOOTSTRAP_KIND: snapshots._read_dashboard_source_epoch(client, history_scope=False),
+              snapshots.HISTORY_KIND: epoch}
     if snapshots._read_dashboard_source_epoch(client, history_scope=True) != epoch:
         raise ValueError("repair source changed during preparation")
     _assert_current_plan(client, identity)
     # Keep existing original-bound diagnostics; this repair changes display data only.
     payloads[snapshots.BOOTSTRAP_KIND]["pv_forecast_diagnostics"] = json.loads(before[snapshots.BOOTSTRAP_KIND]["raw"]).get("pv_forecast_diagnostics", {})
     prepared = {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                "identity": identity, "epoch": epoch, "before": before, "payloads": payloads}
+                "identity": identity, "epoch": epoch, "epochs": epochs, "before": before, "payloads": payloads}
     _save(path, {"status": "prepared", "prepared": prepared})
     return prepared
 
@@ -77,8 +81,8 @@ def verify(client: Any, remote: Any, prepared: dict[str, Any]) -> None:
     _assert_current_plan(client, prepared["identity"])
     if snapshots._read_dashboard_source_epoch(client, history_scope=True) != prepared["epoch"]:
         raise ValueError("repair source no longer matches the prepared generation")
-    encoded = base64.b64encode(gzip.compress(json.dumps(prepared["epoch"], sort_keys=True, separators=(",", ":")).encode(), mtime=0)).decode()
     for kind, payload in prepared["payloads"].items():
+        encoded = base64.b64encode(gzip.compress(json.dumps(prepared["epochs"][kind], sort_keys=True, separators=(",", ":")).encode(), mtime=0)).decode()
         raw, metadata, _ = _read(remote, kind)
         expected = snapshots.artifact_from_payload(kind, payload)
         if raw != expected.raw or metadata.get("source_epoch") != encoded or any(metadata.get(key) != value for key, value in prepared["identity"].items()):
@@ -103,8 +107,8 @@ def apply(client: Any, remote: Any, path: Path, reviewed_sha: str) -> None:
     for kind, payload in prepared["payloads"].items():
         _assert_current_plan(client, prepared["identity"])
         snapshots._upload_artifact(snapshots.artifact_from_payload(kind, payload), storage_client=remote,
-                                   publication_identity=prepared["identity"], source_epoch=prepared["epoch"],
-                                   source_client=client, history_scope=True)
+                                   publication_identity=prepared["identity"], source_epoch=prepared["epochs"][kind],
+                                   source_client=client, history_scope=kind == snapshots.HISTORY_KIND)
     verify(client, remote, prepared)
     state["status"] = "verified"
     _save(path, state)

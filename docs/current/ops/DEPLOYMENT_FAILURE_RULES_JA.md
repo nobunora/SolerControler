@@ -6,6 +6,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-03: 一括表示修復で全履歴source epochを近日期間bootstrapにも渡し、同じ最大revisionで範囲が拡大したことを巻戻りと判定して書込前に停止 | prepareでbootstrapはrecent、historyはfullのnative query scopeを別々に固定し、公開・readbackも各scopeで照合する。`test_batch_display_repair_preserves_each_artifact_native_scope`で実際の順序guardを通す。guardを緩和せず、旧running stateと両artifactのgeneration/本文不変のreadbackを保持する。再適用せず、修正版commitの必須gate・新規prepare・レビュー済みSHAで一回だけ公開する |
 | 2026-11-03: 専用実績JobのYAMLにnamespaceを明記し、gcloudが無効なCloud Resource Manager APIへ番号解決を行ってJob作成前に失敗。Web buildは成功済み | Job入力のnamespaceは省略し、正規CLIの明示--projectへ束縛する。既存plannerのnative namespaceと作成後Jobを照合する。`test_import_provisioning_uses_explicit_project_without_namespace_resolution`で番号解決APIを使わず、同commit planner imageの再利用・Job一回書込・成功状態再確認を回帰する。private cloud応答を保存し、失敗時にAPI有効化・同commit成功build再実行・state成功化を行わない。source修正は新commitのgate/fixture/Stateで進め、旧失敗証跡を保持する |
 | 2026-11-03: source確認で、新日初回保存によるlatest battery選択行の移動を他日更新と誤認し得る条件と、古いhistoryで月次金額を巻き戻す経路を発見 | 未指定日全体のnative revisionは維持して照合し、派生latest selectorだけを除く。新日のcurrent-plan有無/版も固定し、採用競合時は公開しない。`test_new_day_latest_battery_selection_is_not_an_unselected_source_change`、`test_new_day_adoption_is_detected_even_while_yesterday_pointer_stays_unchanged`、`test_date_publication_does_not_roll_back_monthly_totals_to_stale_history`で境界と金額50円の保持を回帰する。未指定日の再生成や競合の成功扱いで回避しない |
 | 2026-11-03: source確認で、開きっぱなしの画面の日付初期値が日跨ぎ後に過去日指定として送信される経路を発見 | 日付欄を明示変更していないrequestは日付を省略し、サーバー受付時のJST当日を固定する。`test_dashboard_hourly_display.js`で日跨ぎ未指定・明示過去日保持・二重POST防止を回帰する。旧初期値を自動で過去日明示へ読み替えない |
