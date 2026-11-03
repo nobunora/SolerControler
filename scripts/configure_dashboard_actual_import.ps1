@@ -26,6 +26,7 @@ $path = Join-Path $directory 'actual-import.json'
 
 function Invoke-Cloud([string[]]$Arguments) {
     $output = (& $gcloud @Arguments 2>&1) -join "`n"
+    $output | Set-Content -LiteralPath (Join-Path $directory 'last-cloud-response.private.txt') -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw 'Import provisioning failed; retain the private deployment state.' }
     return $output
 }
@@ -38,6 +39,7 @@ function Assert-ImportJob($Current, $Expected) {
     $container = $task.containers[0]
     $revision = @($container.env | Where-Object { $_.name -eq 'ACTUAL_IMPORT_SOURCE_REVISION' })
     if ($container.image -ne $Expected.image -or ($container.command -join ' ') -ne 'python' -or
+        $Current.metadata.name -ne $job -or $Current.metadata.namespace -ne $Expected.namespace -or
         ($container.args -join ' ') -ne '-m app.operations.actual_import' -or
         [int]$task.maxRetries -ne 0 -or [int]$task.timeoutSeconds -ne 600 -or
         [int]$Current.spec.template.spec.taskCount -ne 1 -or [int]$Current.spec.template.spec.parallelism -ne 1 -or
@@ -68,6 +70,8 @@ $web = Invoke-Cloud @('run', 'services', 'describe', $service, '--project', $pro
 $webAccount = [string]$web.spec.template.spec.serviceAccountName
 if (-not $webAccount) { throw 'Explicit dashboard runtime identity is required.' }
 $state.web_account = $webAccount
+$state.namespace = [string]$planner.metadata.namespace
+if (-not $state.namespace) { throw 'The existing planner namespace is unproven.' }
 $state.runtime_account = [string]$planner.spec.template.spec.template.spec.serviceAccountName
 if (-not $state.runtime_account) { throw 'Explicit import runtime identity is required.' }
 Save-State
@@ -97,7 +101,9 @@ $task.containers[0].command = @('python')
 $task.containers[0].args = @('-m', 'app.operations.actual_import')
 $task.containers[0].env = @($task.containers[0].env | Where-Object { $_.name -ne 'ACTUAL_IMPORT_SOURCE_REVISION' }) +
     @(@{name = 'ACTUAL_IMPORT_SOURCE_REVISION'; value = $RepositoryCommit})
-$resource = @{ apiVersion = 'run.googleapis.com/v1'; kind = 'Job'; metadata = @{name = $job; namespace = $project};
+# Let --project bind the namespace. An explicit YAML namespace makes gcloud
+# query Cloud Resource Manager even for numeric namespaces; it is unnecessary.
+$resource = @{ apiVersion = 'run.googleapis.com/v1'; kind = 'Job'; metadata = @{name = $job};
     spec = @{template = @{spec = $spec}} }
 $resourcePath = Join-Path $directory 'actual-import-job.private.json'
 $resource | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath $resourcePath -Encoding utf8
