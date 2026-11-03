@@ -234,6 +234,67 @@ def test_adopted_plan_change_stops_import_publication(monkeypatch):
         date_snapshots._assert_current_plan(client, {"target_date": "2026-11-03", "control_version_id": "old", "raw_plan_sha256": "old-sha"})
 
 
+def test_new_day_latest_battery_selection_is_not_an_unselected_source_change(monkeypatch):
+    from app.dashboard import date_snapshots
+
+    epochs = [{"battery_daily_metrics": "unchanged", "latest_battery": "previous-day"},
+              {"battery_daily_metrics": "unchanged"}, {"battery_daily_metrics": "changed"}]
+    monkeypatch.setattr(date_snapshots, "_read_dashboard_source_epoch", lambda *_, **__: epochs.pop(0))
+    before = date_snapshots._outside_epoch(object(), "2026-11-03")
+    assert date_snapshots._outside_epoch(object(), "2026-11-03") == before
+    assert date_snapshots._outside_epoch(object(), "2026-11-03") != before
+
+
+def test_new_day_adoption_is_detected_even_while_yesterday_pointer_stays_unchanged(monkeypatch):
+    from app.dashboard import date_snapshots
+
+    identity = {"target_date": "2026-11-02", "control_version_id": "yesterday"}
+    monkeypatch.setattr(date_snapshots, "_assert_current_plan", lambda *_: None)
+    monkeypatch.setattr(date_snapshots, "_target_plan_version", lambda *_: None)
+    captured = {"identity": identity, "target_plan_version": date_snapshots._capture_refresh_plans(object(), "2026-11-03", identity)}
+    date_snapshots._assert_refresh_plans(object(), "2026-11-03", captured)
+    monkeypatch.setattr(date_snapshots, "_target_plan_version", lambda *_: "new-day-plan")
+    with pytest.raises(ValueError, match="target-day plan changed"):
+        date_snapshots.publish_date_refresh(object(), "2026-11-03", captured)
+    with pytest.raises(ValueError, match="before its display"):
+        date_snapshots._capture_refresh_plans(object(), "2026-11-03", identity)
+
+
+def test_explicit_older_date_keeps_its_plan_binding(monkeypatch):
+    from app.dashboard import date_snapshots
+
+    identity = {"target_date": "2026-11-03", "control_version_id": "today"}
+    monkeypatch.setattr(date_snapshots, "_assert_current_plan", lambda *_: None)
+    monkeypatch.setattr(date_snapshots, "_target_plan_version", lambda *_: "past-plan")
+    captured = {"identity": identity, "target_plan_version": date_snapshots._capture_refresh_plans(object(), "2026-11-02", identity)}
+    date_snapshots._assert_refresh_plans(object(), "2026-11-02", captured)
+
+
+def test_date_publication_does_not_roll_back_monthly_totals_to_stale_history(monkeypatch):
+    from app.dashboard import date_snapshots
+
+    monkeypatch.setattr(date_snapshots, "_assert_refresh_plans", lambda *_: None)
+    monkeypatch.setattr(date_snapshots, "_outside_epoch", lambda *_: {})
+    monkeypatch.setattr(date_snapshots, "clear_dashboard_cache", lambda: None)
+    monkeypatch.setattr(date_snapshots, "load_dashboard_slice", lambda *_, **__: object())
+    monkeypatch.setattr(date_snapshots, "_payload_from_slice", lambda _: {"cost_daily": [
+        {"date": "2026-11-03", "savings_yen": 30, "self_consumption_kwh": 2}]})
+    monkeypatch.setattr(date_snapshots.PublishedPlan, "from_document", lambda *_, **__: SimpleNamespace(sha256="original"))
+    monkeypatch.setattr(date_snapshots, "_validate_publication_payload", lambda *_: None)
+    monkeypatch.setattr(date_snapshots, "_read_dashboard_source_epoch", lambda *_, **__: {"source": "native-revision"})
+    published = {}
+    monkeypatch.setattr(date_snapshots, "_upload_artifact", lambda artifact, **_: published.update({artifact.kind: json.loads(artifact.raw)}))
+    client = SimpleNamespace(collection=lambda _: SimpleNamespace(document=lambda _: SimpleNamespace(
+        get=lambda **_: SimpleNamespace(to_dict=lambda: {"payload": "{}"}))))
+    captured = {"outside_epoch": {}, "storage": object(), "identity": {
+        "target_date": "2026-11-03", "control_version_id": "current", "raw_plan_sha256": "original"}, "payloads": {
+        "bootstrap": {"cost_daily": [{"date": "2026-11-02", "savings_yen": 20, "self_consumption_kwh": 1}]},
+        "history": {"cost_daily": [{"date": "2026-11-02", "savings_yen": 2, "self_consumption_kwh": 0.1}]}}}
+    date_snapshots.publish_date_refresh(client, "2026-11-03", captured)
+    assert sum(row["savings_yen"] for row in published["bootstrap"]["cost_monthly"]) == 50
+    assert published["history"]["cost_daily"][0]["savings_yen"] == 2  # Unselected date was not regenerated.
+
+
 def test_requested_date_is_fixed_and_future_dates_are_rejected():
     assert actual_import.resolve_target_date() == "2026-11-03"
     assert actual_import.resolve_target_date("2026-11-02") == "2026-11-02"

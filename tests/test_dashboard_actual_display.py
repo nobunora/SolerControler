@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -128,3 +129,49 @@ def test_sqlite_null_pair_is_unknown_with_original_forecast_unchanged(tmp_path, 
     result = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
     assert result["actual_pv_kwh"] is None and result["actual_load_kwh"] is None
     assert result["forecast_pv_kwh"] == 0.2 and result["forecast_run_id"] == "original-run"
+
+
+@pytest.mark.parametrize("opening", [0.0, None])
+def test_sqlite_hour_start_soc_matches_common_reader_and_keeps_forecast_identity(tmp_path, monkeypatch, opening):
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+    samples = [sample(7, 30, soc=80)]
+    if opening is not None:
+        samples.insert(0, sample(7, 0, soc=opening))
+    path = database(tmp_path, samples)
+    before = path.read_bytes()
+    sql = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
+    common = merge_forecast_hourly_actuals([], samples)[0]
+    assert sql["actual_soc_at_hour_start_percent"] == common["actual_soc_at_hour_start_percent"] == opening
+    assert sql["actual_soc_percent"] == 80
+    assert sql["forecast_run_id"] == "original-run"
+    assert sql["forecast_issued_at"] == f"{DAY}T03:00:00"
+    assert path.read_bytes() == before
+
+
+def test_validation_sync_keeps_retained_night_forecasts_out_of_primary_storage(tmp_path, monkeypatch):
+    from app.operations import sync
+
+    retained = {"retained_forecast_soc_percent": 0, "retained_forecast_grid_charge_kwh": 1.2,
+                "retained_forecast_soc_run_id": "old-night", "retained_forecast_soc_issued_at": f"{DAY}T02:30:00+09:00"}
+    rows = [{"date": DAY, "hour": 3, "forecast_pv_kwh": 0, "forecast_load_kwh": 0.2,
+             "forecast_run_id": "current-plan", "forecast_issued_at": f"{DAY}T08:00:00+09:00", **retained}]
+    query = SimpleNamespace(stream=lambda: [])
+    query.order_by = lambda *_: query
+    monkeypatch.setattr(sync, "_open_firestore_client", lambda **_: SimpleNamespace(collection=lambda _: query))
+    monkeypatch.setattr(history_reconstruction, "firestore_forecast_hourly_with_reconstruction", lambda *_, **__: rows)
+    path = tmp_path / "replica.db"
+    sync.sync_firestore_to_sqlite(sqlite_path=path)
+    before = path.read_bytes()
+    loaded = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
+    assert all(loaded[key] == value for key, value in retained.items())
+    assert loaded["forecast_run_id"] == "current-plan"
+    assert path.read_bytes() == before
+    assert "dashboard_retained_night_forecasts" not in sync.TABLE_SPECS
+    conn = open_db(path)
+    assert "retained_forecast_soc_percent" not in dict(conn.execute("SELECT * FROM forecast_hourly").fetchone())
+    conn.close()
+    rows.clear()
+    sync.sync_firestore_to_sqlite(sqlite_path=path)
+    conn = open_db(path)
+    assert conn.execute("SELECT COUNT(*) FROM dashboard_retained_night_forecasts").fetchone()[0] == 0
+    conn.close()

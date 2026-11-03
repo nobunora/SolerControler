@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -135,10 +136,12 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 ), hourly_soc AS (
                     SELECT date, hour,
                            MAX(CASE WHEN opening_row_number = 1 THEN soc_percent END) AS opening_soc_percent,
+                           MAX(CASE WHEN minute = 0 THEN soc_percent END) AS actual_soc_at_hour_start_percent,
                            MAX(CASE WHEN latest_row_number = 1 THEN soc_percent END) AS actual_soc_percent
                     FROM (
                         SELECT substr(ts,1,10) AS date,
                                CAST(strftime('%H', ts) AS INTEGER) AS hour,
+                               CAST(strftime('%M', ts) AS INTEGER) AS minute,
                                soc_percent,
                                ROW_NUMBER() OVER (
                                    PARTITION BY substr(ts,1,10), CAST(strftime('%H', ts) AS INTEGER)
@@ -160,7 +163,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 )
                 SELECT dh.date, dh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, ah.actual_pv_kwh, hs.actual_soc_percent,
-                       hs.opening_soc_percent,
+                       hs.opening_soc_percent, hs.actual_soc_at_hour_start_percent,
                        ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql}{plan_sql},
                        fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
                        fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis
@@ -175,6 +178,13 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 for name in identity_fields:
                     if row.get(name) is None:
                         row.pop(name, None)
+            if _sqlite_table_exists(conn, "dashboard_retained_night_forecasts"):
+                retained_rows = conn.execute("""SELECT date, hour, detail_json FROM dashboard_retained_night_forecasts
+                    WHERE date >= ? AND date <= ?""", (start_date, end_date_iso)).fetchall()
+                retained_by_hour = {(row["date"], row["hour"]): json.loads(row["detail_json"]) for row in retained_rows}
+                for row in forecast_hourly:
+                    retained = retained_by_hour.get((row["date"], row["hour"]), {})
+                    row.update({key: value for key, value in retained.items() if key.startswith("retained_forecast_")})
         history_start = _monitoring_history_start(start_obj, include_static=request.include_static)
         monitoring_daily: list[dict[str, Any]] = []
         battery_flow_daily: list[dict[str, Any]] = []

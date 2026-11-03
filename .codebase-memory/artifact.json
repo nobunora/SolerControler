@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "47dffa57bd136f46bf6a0961d8c49f031d00c24f",
-    "indexed_at": "2026-11-03T01:35:01Z",
+    "commit": "1f1c01a0f33125f8378487f6f51fc1446a9adad2",
+    "indexed_at": "2026-11-03T02:23:51Z",
     "project": "C-VSC-SolerControler-acceptance-fix",
-    "nodes": 4868,
-    "edges": 28271,
+    "nodes": 4881,
+    "edges": 28356,
     "original_size": 19791872,
-    "compressed_size": 3778834,
+    "compressed_size": 3784016,
     "compression_level": 9
 }

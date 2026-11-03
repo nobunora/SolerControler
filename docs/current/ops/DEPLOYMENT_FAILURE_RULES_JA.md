@@ -6,6 +6,9 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-03: source確認で、新日初回保存によるlatest battery選択行の移動を他日更新と誤認し得る条件と、古いhistoryで月次金額を巻き戻す経路を発見 | 未指定日全体のnative revisionは維持して照合し、派生latest selectorだけを除く。新日のcurrent-plan有無/版も固定し、採用競合時は公開しない。`test_new_day_latest_battery_selection_is_not_an_unselected_source_change`、`test_new_day_adoption_is_detected_even_while_yesterday_pointer_stays_unchanged`、`test_date_publication_does_not_roll_back_monthly_totals_to_stale_history`で境界と金額50円の保持を回帰する。未指定日の再生成や競合の成功扱いで回避しない |
+| 2026-11-03: source確認で、開きっぱなしの画面の日付初期値が日跨ぎ後に過去日指定として送信される経路を発見 | 日付欄を明示変更していないrequestは日付を省略し、サーバー受付時のJST当日を固定する。`test_dashboard_hourly_display.js`で日跨ぎ未指定・明示過去日保持・二重POST防止を回帰する。旧初期値を自動で過去日明示へ読み替えない |
+| 2026-11-03: 正時SOC表示fieldをFirestoreだけに追加し、SQLiteとの実データ照合744行が不一致。正時修正後も保存夜間予測の68行で出典が欠落 | 両backendで同じ元timestampの正時SOCを付加し、夜間予測はSQLiteの専用read modelへ値と出典を保存する。`test_sqlite_hour_start_soc_matches_common_reader_and_keeps_forecast_identity`と`test_validation_sync_keeps_retained_night_forecasts_out_of_primary_storage`で0・半時代用禁止・run/issued-at保持・読取DB不変・逆同期除外を回帰する。native backend parityを再実行し、fieldの除外やgateのskipで通さない。本番反映・表示データ修復は照合成功まで停止する |
 | 2026-11-03: 実績充放電係数で保存したSOCを旧容量換算の照合器が拒否し、bootstrap書出し前検証も同じ誤判定で停止。期間指定APIは新原本、初期表示APIは旧原本となった | 予報照合とbootstrap書出し前検証の両方へ同じ保存原本のbattery_response（時間別係数・driftを含む）を渡す。旧原本は旧計算を維持。`test_frozen_empirical_response_controls_soc_evidence`と`test_bootstrap_publication_uses_frozen_empirical_response`で数値例・改変拒否を回帰する。原本SHA・17点・表示一致・公開世代の保護を緩めない。本番はbootstrap APIと期間指定APIの発行時刻/SOCを同じ原本と照合し、Job成功や描画PASSだけで合格にしない |
 | 2026-10-15: テストfakeに消費学習入力がなくAttributeError | fixtureを実際の境界契約へ合わせ、関連テストと全体gateを再実行。テストをskipしない |
 | 同日: 通常Pythonで使えるtzdataが `python -I` では見えず、image import試験が失敗 | 最初に同じ分離モードでAsia/Tokyoをロード。失敗したら使用interpreterの環境を修復。自動のglobal pip installはしない |

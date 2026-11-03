@@ -211,6 +211,23 @@ def test_old_cost_correction_participates_in_source_epoch_and_cannot_regress():
         snapshots._check_source_epoch_order(after, before)
 
 
+def test_actual_import_exclusion_keeps_same_day_forecast_revisions_binding():
+    client = RevisionClient()
+    stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)
+    client.rows["monitoring_samples"] = [RevisionDocument("sample", {"ts": "2026-10-11T00:00:00"}, stamp)]
+    client.rows["cost_daily"].append(RevisionDocument("2026-10-11", {"date": "2026-10-11"}, stamp))
+    options = {"history_scope": True, "excluded_dates": frozenset({"2026-10-11"})}
+    before = snapshots._read_dashboard_source_epoch(client, **options)
+    client.rows["monitoring_samples"][0].update_time += timedelta(seconds=1)
+    client.rows["cost_daily"][1].update_time += timedelta(seconds=1)
+    actuals_changed = snapshots._read_dashboard_source_epoch(client, **options)
+    assert before.get("monitoring_samples") == actuals_changed.get("monitoring_samples")
+    assert before["cost_daily"] == actuals_changed["cost_daily"]
+    client.rows["forecast_hourly"][0].update_time += timedelta(seconds=1)
+    forecast_changed = snapshots._read_dashboard_source_epoch(client, **options)
+    assert before["forecast_hourly"] != forecast_changed["forecast_hourly"]
+
+
 def test_cost_revision_sentinel_never_silently_truncates():
     client = RevisionClient()
     stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)

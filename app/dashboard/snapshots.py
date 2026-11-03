@@ -657,6 +657,8 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
 
     Native update_time owns ordering; stored ingestion timestamps are not
     promoted to a new source epoch when an older producer finishes late.
+    excluded_dates omits only actual-import-owned sources. Forecast/settings/
+    model revisions remain binding even on the date whose actuals are saved.
     """
     stop_event = Event()
     groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
@@ -741,7 +743,9 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             # Every document participates in the digest, including corrected
             # old dates. Grouping by source scope keeps full SHA256 evidence
             # within GCS metadata; no row or digest is silently truncated.
-            if day in excluded_dates:
+            if day in excluded_dates and collection in (
+                "monitoring_samples", "cost_daily", "battery_daily_metrics", "dashboard_daily_metrics", "latest_battery",
+            ):
                 continue
             groups[collection].append((f"{day}/{snapshot.id}", revision))
             if retained_before and collection in retained_sources:

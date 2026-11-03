@@ -459,6 +459,12 @@ def sync_firestore_to_sqlite(*, sqlite_path: Path | None = None, project_id: str
     counts: dict[str, int] = {}
     try:
         with conn:
+            # Local validation read model only; deliberately absent from
+            # TABLE_SPECS so it can never be written back as a primary forecast.
+            conn.execute("""CREATE TABLE IF NOT EXISTS dashboard_retained_night_forecasts (
+                date TEXT NOT NULL, hour INTEGER NOT NULL, detail_json TEXT NOT NULL,
+                PRIMARY KEY(date, hour))""")
+            conn.execute("DELETE FROM dashboard_retained_night_forecasts")
             _clear_tables(conn, list(TABLE_SPECS.keys()))
             for table_name in TABLE_SPECS:
                 if table_name == "settings_events":
@@ -501,6 +507,11 @@ def sync_firestore_to_sqlite(*, sqlite_path: Path | None = None, project_id: str
                         if len(key_cols) == 1:
                             row.setdefault(key_cols[0], doc.id)
                     _insert_sqlite_row(conn, table_name, row)
+                    if table_name == "forecast_hourly":
+                        retained = {key: value for key, value in row.items() if key.startswith("retained_forecast_")}
+                        if retained:
+                            conn.execute("INSERT INTO dashboard_retained_night_forecasts VALUES (?, ?, ?)",
+                                         (row["date"], row["hour"], json.dumps(retained, allow_nan=False)))
                     count += 1
                 counts[table_name] = count
     finally:
