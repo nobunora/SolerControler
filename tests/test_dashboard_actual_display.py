@@ -128,3 +128,20 @@ def test_sqlite_null_pair_is_unknown_with_original_forecast_unchanged(tmp_path, 
     result = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
     assert result["actual_pv_kwh"] is None and result["actual_load_kwh"] is None
     assert result["forecast_pv_kwh"] == 0.2 and result["forecast_run_id"] == "original-run"
+
+
+@pytest.mark.parametrize("opening", [0.0, None])
+def test_sqlite_hour_start_soc_matches_common_reader_and_keeps_forecast_identity(tmp_path, monkeypatch, opening):
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+    samples = [sample(7, 30, soc=80)]
+    if opening is not None:
+        samples.insert(0, sample(7, 0, soc=opening))
+    path = database(tmp_path, samples)
+    before = path.read_bytes()
+    sql = load_sqlite_query_snapshot(path, DashboardLoadRequest(DAY, 1, False)).forecast_hourly[0]
+    common = merge_forecast_hourly_actuals([], samples)[0]
+    assert sql["actual_soc_at_hour_start_percent"] == common["actual_soc_at_hour_start_percent"] == opening
+    assert sql["actual_soc_percent"] == 80
+    assert sql["forecast_run_id"] == "original-run"
+    assert sql["forecast_issued_at"] == f"{DAY}T03:00:00"
+    assert path.read_bytes() == before
