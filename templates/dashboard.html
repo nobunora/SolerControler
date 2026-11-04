@@ -53,43 +53,43 @@
       </article>
 
       <article class="card">
-        <h2>3.1 発電量（予測と実績）</h2>
+        <h2>3. 発電量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="pvChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>3.2 消費量（予測と実績）</h2>
+        <h2>4. 消費量（予測と実績）</h2>
         <p class="desc">青: 予測、緑: 実績、橙: 差分。差分は実績 - 予測です。</p>
         <div class="chart-box"><canvas id="loadChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="dailyKwhTitle">4. 自家消費kWh（日）</h2>
+        <h2 id="dailyKwhTitle">5. 自家消費kWh（日）</h2>
         <p id="dailyKwhDesc" class="desc">青の棒: 日次自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyKwhChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="dailyYenTitle">5. 節約額（日）</h2>
+        <h2 id="dailyYenTitle">6. 節約額（日）</h2>
         <p id="dailyYenDesc" class="desc">橙の棒: 日次節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。</p>
         <div class="chart-box"><canvas id="dailyYenChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>6. 自家消費と節約額（月）</h2>
+        <h2>7. 自家消費と節約額（月）</h2>
         <p class="desc">月単位の合計。左軸(kWh)、右軸(円)。</p>
         <div class="chart-box"><canvas id="monthlyCostChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2 id="batteryTitle">7. 蓄電池計画値と実績（日次）</h2>
+        <h2 id="batteryTitle">8. 蓄電池計画値と実績（日次）</h2>
         <p id="batteryDesc" class="desc">左軸は夜間充電量(kWh/日)、右軸はSOC(%)です。瞬時充電電力(kW)ではありません。</p>
         <div class="chart-box"><canvas id="batteryChart"></canvas></div>
       </article>
 
       <article class="card">
-        <h2>8. 蓄電池容量推定（実績）</h2>
+        <h2>9. 蓄電池容量推定（実績）</h2>
         <p class="desc">表示期間の実測充放電量と実績気温から、月別の推定容量内訳を表示します。未来予測ではなく、制御には使わない可視化用の推定です。</p>
         <div class="battery-life-card">
           <div class="battery-life-kpis" aria-label="蓄電池容量予測サマリー">
@@ -105,13 +105,13 @@
       </article>
 
       <article class="card full">
-        <h2>9. 制約管理ガントチャート（最新設定）</h2>
+        <h2>10. 制約管理ガントチャート（最新設定）</h2>
         <p class="desc">固定制約と最新設定の時間帯を重ねて表示します。時間別の日中予測は上の折れ線グラフに分離しています。</p>
         <div class="gantt-wrap"><div id="constraintGantt" class="gantt-board"></div></div>
       </article>
 
       <article class="card full">
-        <h2>10. 蓄電池方程式とパラメータ</h2>
+        <h2>11. 蓄電池方程式とパラメータ</h2>
         <p id="pvModelName" class="desc">PVモデルを確認しています。</p>
         <p id="pvModelProvenance" class="desc"></p>
         <p id="pvModelLearningPeriod" class="desc"></p>

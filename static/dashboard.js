@@ -1675,7 +1675,7 @@
 
       const dailyKwhTitle = document.getElementById("dailyKwhTitle");
       const dailyKwhDesc = document.getElementById("dailyKwhDesc");
-      if (dailyKwhTitle) dailyKwhTitle.textContent = `2. 自家消費kWh（${isWeekly ? "週" : "日"}）`;
+      if (dailyKwhTitle) dailyKwhTitle.textContent = `5. 自家消費kWh（${isWeekly ? "週" : "日"}）`;
       if (dailyKwhDesc) dailyKwhDesc.textContent = `青の棒: ${bucketLabel}自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。`;
 
       charts.dailyKwh.data.labels = labels;
@@ -1708,7 +1708,7 @@
 
       const dailyYenTitle = document.getElementById("dailyYenTitle");
       const dailyYenDesc = document.getElementById("dailyYenDesc");
-      if (dailyYenTitle) dailyYenTitle.textContent = `3. 節約額（${isWeekly ? "週" : "日"}）`;
+      if (dailyYenTitle) dailyYenTitle.textContent = `6. 節約額（${isWeekly ? "週" : "日"}）`;
       if (dailyYenDesc) dailyYenDesc.textContent = `橙の棒: ${bucketLabel}節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。`;
 
       charts.dailyYen.data.labels = labels;
@@ -1745,7 +1745,7 @@
 
       const batteryTitle = document.getElementById("batteryTitle");
       const batteryDesc = document.getElementById("batteryDesc");
-      if (batteryTitle) batteryTitle.textContent = `7. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
+      if (batteryTitle) batteryTitle.textContent = `8. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
       if (batteryDesc) {
         batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。太陽光充電終了時SOCは、その日にPV発電中の充電が最後に発生した時点のSOCです。`;
       }

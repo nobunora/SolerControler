@@ -117,7 +117,19 @@ async function tests() {
   assert.equal(h.requests.length, 0);
   assert.equal((h.template.match(/<canvas\b/g) || []).length, 8);
   assert.equal((h.template.match(/<table\b/g) || []).length, 1);
-  assert.equal((h.template.match(/\bid="/g) || []).length, 43);
+  assert.equal((h.template.match(/\bid="/g) || []).length, 46);
+  assert.deepEqual(Array.from(h.template.matchAll(/<h2\b[^>]*>(\d+)\./g), (match) => Number(match[1])),
+    Array.from({ length: 11 }, (_, index) => index + 1));
+  for (const [id, number] of [["dailyKwhTitle", 5], ["dailyYenTitle", 6], ["batteryTitle", 8]]) {
+    assert.ok(h.elements.get(id).textContent.startsWith(`${number}. `));
+  }
+  h.run("periodState.mode = 'year'");
+  await h.run("refreshDashboard()");
+  for (const [id, number] of [["dailyKwhTitle", 5], ["dailyYenTitle", 6], ["batteryTitle", 8]]) {
+    assert.ok(h.elements.get(id).textContent.startsWith(`${number}. `));
+  }
+  h.run("periodState.mode = 'month'");
+  await h.run("refreshDashboard()");
 
   const changed = fixture();
   changed.forecast_hourly[8].forecast_run_id = "run-2";
