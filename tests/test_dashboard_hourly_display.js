@@ -9,6 +9,30 @@ async function tests() {
   assert.ok(chart.data.datasets[10].data.every((value) => value === null));
   chart.data.datasets.slice(0, 5).forEach((dataset) => assert.deepEqual(Array.from(dataset.borderDash), [2, 4]));
   assert.equal(chart.data.datasets[5].borderDash, undefined);
+  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+    assert.equal(chart.data.datasets[index].pointRadius, 0);
+    assert.equal(chart.data.datasets[index].pointHoverRadius, 0);
+  }
+  assert.equal(chart.data.datasets[5].pointRadius, 3, "instantaneous SOC keeps its observation points");
+  const visible = Array(11).fill(true);
+  chart.isDatasetVisible = (index) => visible[index];
+  chart.setDatasetVisibility = (index, value) => { visible[index] = value; };
+  const legend = chart.options.plugins.legend;
+  const items = legend.labels.generateLabels(chart);
+  assert.deepEqual(Array.from(items, (item) => item.text), [
+    "発電 予測(kWh/h)", "発電 実績(kWh/h)", "家の消費 予測(kWh/h)", "家の消費 実績(kWh/h)",
+    "SOC（計画・実績）(%)", "PV余剰充電予測(kWh/h)", "夜間系統充電予測(kWh/h)",
+  ]);
+  assert.deepEqual(Array.from(items[0].lineDash), [2, 4]);
+  assert.deepEqual(Array.from(items[1].lineDash), []);
+  legend.onClick(null, items[4], { chart });
+  assert.deepEqual(visible, [true, true, true, true, false, false, false, true, true, true, false]);
+  legend.onClick(null, legend.labels.generateLabels(chart)[4], { chart });
+  assert.ok(visible.every(Boolean), "one SOC legend toggles plan, actual, retained night and connector together");
+  legend.onClick(null, items[6], { chart });
+  assert.equal(visible[3], false);
+  assert.equal(visible[7], false);
+  legend.onClick(null, legend.labels.generateLabels(chart)[6], { chart });
   assert.equal(chart.data.labels.length, 24);
   assert.deepEqual(Array.from(soc.data.slice(0, 7)), Array(7).fill(null));
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));

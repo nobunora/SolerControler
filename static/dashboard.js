@@ -947,16 +947,16 @@
         data: {
           labels: [],
           datasets: [
-            { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
-            { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
-            { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
-            { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1 },
+            { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1, pointRadius: 0, pointHoverRadius: 0 },
             { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: false },
             { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
             { label: "保存済み夜間予測SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
+            { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
+            { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
+            { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
             { label: "6→7時の予測接続（別計画）", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, borderWidth: 2.5, spanGaps: false },
           ],
         },
@@ -977,6 +977,31 @@
         },
       });
       charts.hourlyForecast.data.datasets.slice(0, 5).forEach((dataset) => { dataset.borderDash = [2, 4]; });
+      const hourlyLegendGroups = [
+        { text: "発電 予測(kWh/h)", indices: [0] },
+        { text: "発電 実績(kWh/h)", indices: [8] },
+        { text: "家の消費 予測(kWh/h)", indices: [2] },
+        { text: "家の消費 実績(kWh/h)", indices: [9] },
+        { text: "SOC（計画・実績）(%)", indices: [4, 5, 6, 10] },
+        { text: "PV余剰充電予測(kWh/h)", indices: [1] },
+        { text: "夜間系統充電予測(kWh/h)", indices: [3, 7] },
+      ];
+      charts.hourlyForecast.options.plugins.legend = {
+        labels: {
+          usePointStyle: false, boxWidth: 28, boxHeight: 2,
+          generateLabels: (chart) => hourlyLegendGroups.map((group) => {
+            const dataset = chart.data.datasets[group.indices[0]];
+            return { text: group.text, datasetIndex: group.indices[0], datasetIndices: group.indices,
+              strokeStyle: dataset.borderColor, fillStyle: "transparent", lineWidth: 2,
+              lineDash: dataset.borderDash || [],
+              hidden: group.indices.every((index) => !chart.isDatasetVisible(index)) };
+          }),
+        },
+        onClick: (_event, item, legend) => {
+          for (const index of item.datasetIndices) legend.chart.setDatasetVisibility(index, item.hidden);
+          legend.chart.update();
+        },
+      };
 
       charts.pv = new Chart(document.getElementById("pvChart"), {
         data: {
