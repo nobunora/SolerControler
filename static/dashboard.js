@@ -933,7 +933,9 @@
                 const number = displayFinite(ctx.parsed && ctx.parsed.y);
                 const value = number === null ? "未確認" : formatChartValue(number);
                 const coverage = ctx.chart?.forecastCoverage?.[ctx.dataIndex];
-                return `${label ? `${label}: ` : ""}${value}${coverage ? ` / ${coverage}` : ""}`;
+                const hour = ctx.dataset?.hourlyIntervals ? Math.floor(ctx.dataIndex / 2) : null;
+                const interval = hour === null ? "" : ` / ${String(hour).padStart(2, "0")}:00〜${String(hour + 1).padStart(2, "0")}:00`;
+                return `${label ? `${label}: ` : ""}${value}${coverage ? ` / ${coverage}` : ""}${interval}`;
               },
             },
           },
@@ -962,6 +964,8 @@
         },
         options: {
           ...commonOptions(),
+          // Adjacent intervals share an x boundary; their indices are not unique.
+          normalized: false,
           scales: {
             y: { min: 0, max: 1, title: { display: true, text: "kWh/h" }, grid: { color: "#d8e6f2" } },
             y2: {
@@ -982,7 +986,8 @@
         { text: "発電 実績(kWh/h)", indices: [8] },
         { text: "家の消費 予測(kWh/h)", indices: [2] },
         { text: "家の消費 実績(kWh/h)", indices: [9] },
-        { text: "SOC（計画・実績）(%)", indices: [4, 5, 6, 10] },
+        { text: "SOC 計画(%)", indices: [4, 6, 10] },
+        { text: "SOC 実績(%)", indices: [5] },
         { text: "PV余剰充電予測(kWh/h)", indices: [1] },
         { text: "夜間系統充電予測(kWh/h)", indices: [3, 7] },
       ];
@@ -1369,12 +1374,15 @@
       chart.data.datasets[8].data = rows.map((row) => energy(row.actual_pv_kwh));
       chart.data.datasets[9].data = rows.map((row) => energy(row.actual_load_kwh));
       // Apply interval rendering after all energy series have been populated.
-      if (timeAligned) {
-        for (const index of [0, 1, 2, 3, 7, 8, 9]) {
-          const dataset = chart.data.datasets[index];
-          dataset.data = [...dataset.data, dataset.data[dataset.data.length - 1]];
-          dataset.stepped = "after";
-          dataset.tension = 0;
+      for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+        const dataset = chart.data.datasets[index];
+        const hidden = chart.isDatasetVisible ? !chart.isDatasetVisible(index) : Boolean(dataset.hidden);
+        if (timeAligned) {
+          // Both edges belong to this interval, even if the next one is missing.
+          chart.data.datasets[index] = { ...dataset, hidden, parsing: false, hourlyIntervals: true, stepped: "after", tension: 0, spanGaps: false,
+            data: dataset.data.flatMap((value, hour) => [{ x: hour, y: value }, { x: hour + 1, y: value }]) };
+        } else if (dataset.parsing === false) {
+          chart.data.datasets[index] = { ...dataset, hidden, parsing: true, hourlyIntervals: false };
         }
       }
       const six = rows.findIndex((row) => row.hour === 6);
