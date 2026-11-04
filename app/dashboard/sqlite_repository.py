@@ -137,6 +137,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                     SELECT date, hour,
                            MAX(CASE WHEN opening_row_number = 1 THEN soc_percent END) AS opening_soc_percent,
                            MAX(CASE WHEN minute = 0 THEN soc_percent END) AS actual_soc_at_hour_start_percent,
+                           MAX(CASE WHEN minute = 30 THEN soc_percent END) AS actual_soc_at_half_hour_percent,
                            MAX(CASE WHEN latest_row_number = 1 THEN soc_percent END) AS actual_soc_percent
                     FROM (
                         SELECT substr(ts,1,10) AS date,
@@ -163,7 +164,7 @@ def load_sqlite_query_snapshot(db_path: Path, request: DashboardLoadRequest) -> 
                 )
                 SELECT dh.date, dh.hour, fh.forecast_pv_kwh, fh.forecast_load_kwh,
                        fh.forecast_charge_kwh, ah.actual_load_kwh, ah.actual_pv_kwh, hs.actual_soc_percent,
-                       hs.opening_soc_percent, hs.actual_soc_at_hour_start_percent,
+                       hs.opening_soc_percent, hs.actual_soc_at_hour_start_percent, hs.actual_soc_at_half_hour_percent,
                        ah.first_sample_at, ah.latest_sample_at, fh.source, fh.updated_at{identity_sql}{plan_sql},
                        fh.forecast_reconstruction_id, fh.forecast_reconstructed_at,
                        fh.forecast_reconstruction_model_version, fh.forecast_reconstruction_basis

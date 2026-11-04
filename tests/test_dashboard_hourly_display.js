@@ -203,6 +203,28 @@ async function tests() {
   assert.equal(chart.data.datasets[5].data[0], 55, "after midnight show the explicitly imported date");
   assert.ok(chart.data.datasets[4].data.every((value) => value === null), "never reuse yesterday's forecast on the new day");
   assert.equal(h.requests.length, 0);
+  const aligned = fixture();
+  aligned.forecast_hourly.forEach((row) => {
+    const next = String(row.hour + 1).padStart(2, "0");
+    row.actual_soc_points = [
+      { at: `${row.date}T${String(row.hour).padStart(2, "0")}:30:00+09:00`, percent: row.hour === 2 ? 0 : row.hour === 3 ? 20 : null },
+      { at: `${row.date}T${next}:00:00+09:00`, percent: row.hour === 2 ? 0 : row.hour === 3 ? 42 : null },
+    ];
+  });
+  const alignedView = await harness(aligned);
+  const alignedChart = alignedView.chart("hourlyForecastChart");
+  assert.equal(alignedChart.data.labels.length, 25);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 3).y, 0);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 3.5).y, 20);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 4).y, 42);
+  assert.equal(alignedChart.data.datasets[5].parsing, false);
+  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+    assert.equal(alignedChart.data.datasets[index].stepped, "after");
+    assert.equal(alignedChart.data.datasets[index].data.length, 25);
+  }
+  assert.match(alignedView.elements.get("hourlyForecastNote").textContent, /正時・半時の合計/);
+  await alignedView.replace(fixture());
+  assert.equal(alignedChart.data.datasets[5].parsing, true);
   for (const explicit of [false, true]) {
     const importView = await harness();
     const posts = [];

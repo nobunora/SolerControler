@@ -502,6 +502,9 @@ def test_hourly_forecast_rows_from_plan_adds_persistence_metadata() -> None:
             "forecast_wind_speed_10m": None,
             "source": "night-charge-plan-hourly",
             "updated_at": "2026-05-02T23:00:00Z",
+            "interval_start": "2026-05-03T07:00:00+09:00",
+            "interval_end": "2026-05-03T08:00:00+09:00",
+            "forecast_soc_at": "2026-05-03T07:00:00+09:00",
         }
     ]
 

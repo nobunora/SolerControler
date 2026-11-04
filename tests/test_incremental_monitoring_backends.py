@@ -205,6 +205,7 @@ def test_firestore_bounded_daily_materialization_includes_previous_day_23_hour()
     rows = {
         "2026-07-15T23:00:00": _monitoring_payload("2026-07-15T23:00:00", charge=1.0),
         "2026-07-16T00:00:00": _monitoring_payload("2026-07-16T00:00:00", charge=2.0),
+        "2026-07-16T06:30:00": _monitoring_payload("2026-07-16T06:30:00", soc=75.0, charge=0.0),
         "2026-07-16T07:00:00": _monitoring_payload("2026-07-16T07:00:00", soc=80.0, charge=0.0),
         "2026-07-16T12:30:00": _monitoring_payload("2026-07-16T12:30:00", soc=63.0, charge=0.2),
     }
@@ -221,7 +222,8 @@ def test_firestore_bounded_daily_materialization_includes_previous_day_23_hour()
     battery = client.data["battery_daily_metrics"]["2026-07-16"]
     assert result == {"dashboard": 1, "pv_charge_end": 1}
     assert dashboard["review_night_charge_kwh"] == pytest.approx(3.0)
-    assert dashboard["morning_soc_percent"] == pytest.approx(80.0)
+    assert dashboard["morning_soc_percent"] == pytest.approx(75.0)
+    assert dashboard["morning_soc_at"] == "2026-07-16T07:00:00+09:00"
     assert battery["pv_charge_end_soc_percent"] == pytest.approx(63.0)
     assert client.query_calls[0] == (
         "monitoring_samples",

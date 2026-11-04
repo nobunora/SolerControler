@@ -1303,7 +1303,8 @@
         .filter(Boolean)
         .sort()
         .pop();
-      chart.data.labels = labels;
+      const timeAligned = rows.some((row) => Array.isArray(row.actual_soc_points));
+      chart.data.labels = timeAligned ? [...labels, "24:00"] : labels;
       chart.data.datasets[0].data = pv;
       chart.data.datasets[1].data = charge;
       chart.data.datasets[2].data = load;
@@ -1313,12 +1314,44 @@
       chart.data.datasets[5].data = actualSoc;
       chart.data.datasets[5].label = rows.some((row) => Object.prototype.hasOwnProperty.call(row, "actual_soc_at_hour_start_percent"))
         ? "実績SOC（時間開始）(%)" : "実績SOC（時間内最終値）(%)";
+      if (timeAligned) {
+        const measuredPoints = rows.flatMap((row) => (row.actual_soc_points || []).map((point) => {
+          const at = String(point.at || "");
+          const hour = Number(at.slice(11, 13));
+          const minute = Number(at.slice(14, 16));
+          const nextMidnight = at.slice(0, 10) !== date && hour === 0 && minute === 0;
+          return { x: nextMidnight ? 24 : hour + minute / 60,
+            y: displayFinite(point.percent), csv_label_at: point.csv_label_at };
+        }));
+        // Recreate the controller when changing from indexed to timestamped data.
+        chart.data.datasets[5] = { ...chart.data.datasets[5], data: measuredPoints, parsing: false };
+        chart.data.datasets[5].label = "実績SOC（CSV区間末換算・暫定）(%)";
+        chart.data.datasets[5].showLine = true;
+        chart.options.interaction = { mode: "nearest", axis: "x", intersect: false };
+        chart.options.plugins.tooltip.callbacks.title = (items) => {
+          const minute = Math.round(Number(items[0]?.parsed?.x) * 60);
+          return Number.isFinite(minute) ? `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")} JST` : "";
+        };
+      } else {
+        chart.data.datasets[5].parsing = true;
+        chart.data.datasets[5].showLine = false;
+        chart.data.datasets[5].label = "実績SOC（元CSVラベル・測定時刻未連携）(%)";
+      }
       chart.data.datasets[6].data = rows.map((row) => row.hour < 7 && energy(row.forecast_soc_percent) === null
         && energy(row.retained_forecast_soc_percent) <= 100 ? energy(row.retained_forecast_soc_percent) : null);
       chart.data.datasets[7].data = rows.map((row) => row.hour < 7 && energy(row.forecast_grid_charge_kwh) === null
         ? energy(row.retained_forecast_grid_charge_kwh) : null);
       chart.data.datasets[8].data = rows.map((row) => energy(row.actual_pv_kwh));
       chart.data.datasets[9].data = rows.map((row) => energy(row.actual_load_kwh));
+      // Apply interval rendering after all energy series have been populated.
+      if (timeAligned) {
+        for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+          const dataset = chart.data.datasets[index];
+          dataset.data = [...dataset.data, dataset.data[dataset.data.length - 1]];
+          dataset.stepped = "after";
+          dataset.tension = 0;
+        }
+      }
       const six = rows.findIndex((row) => row.hour === 6);
       const seven = rows.findIndex((row) => row.hour === 7);
       // Display-only boundary segment: retain both originals and never use an
@@ -1367,6 +1400,7 @@
         note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
         note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText
           + (connectNight ? " 6→7時の点線は保存夜間予測と最新日中計画の既存点を接続しています（別計画）。" : "");
+        if (timeAligned) note.textContent += " 電力量は正時・半時の合計を各1時間区間に表示。SOCはサーバー共通時刻契約による瞬時値です。CSV SOCは区間末とのAPI照合に基づく暫定換算で、メーカー仕様は未確定です。";
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");

@@ -7,6 +7,7 @@ from datetime import datetime
 import math
 import os
 from typing import Any
+from app.domain.measurement_time import csv_soc_effective_at
 
 
 @dataclass(frozen=True)
@@ -221,16 +222,17 @@ def historical_daytime_soc_gain_guard(
         if total_pv < min_pv_kwh:
             excluded["low_pv"] += 1
             continue
-        morning_rows = [row for row in day_rows if isinstance(row.get("dt"), datetime) and 6 <= row["dt"].hour <= 8]
+        morning_rows = [row for row in day_rows if isinstance(row.get("dt"), datetime)
+                        and csv_soc_effective_at(row["dt"]).strftime("%H:%M") == "07:00"]
         if not morning_rows:
             excluded["missing_morning_soc"] += 1
             continue
-        morning = min(morning_rows, key=lambda row: abs(((row["dt"].hour * 60 + row["dt"].minute) - 420) if isinstance(row.get("dt"), datetime) else 10_000))
+        morning = morning_rows[0]
         morning_soc = _optional_float(morning.get("soc"))
         if morning_soc is None or morning_soc != morning_soc:
             excluded["missing_morning_soc"] += 1
             continue
-        day_soc_values = [_optional_float(row.get("soc")) for row in day_rows if isinstance(row.get("dt"), datetime) and 5 <= row["dt"].hour <= 18]
+        day_soc_values = [_optional_float(row.get("soc")) for row in day_rows if isinstance(row.get("dt"), datetime) and 5 <= csv_soc_effective_at(row["dt"]).hour <= 18]
         valid_day_soc_values = [value for value in day_soc_values if value is not None and value == value]
         if not valid_day_soc_values:
             excluded["incomplete"] += 1

@@ -41,7 +41,7 @@ class PvBiasDay:
     hourly_actual_load_kwh: dict[int, float]
     hourly_actual_buy_kwh: dict[int, float]
     hourly_actual_sell_kwh: dict[int, float]
-    # Raw h:00 readings, not an inferred interval-start SOC contract.
+    # Boundary h uses the previous CSV half-hour end state, as in prediction.
     hourly_actual_soc_percent: dict[int, float]
     actual_rows: tuple[dict[str, Any], ...]
     source_sha256: str
@@ -231,7 +231,7 @@ def _collect_day(day: date, forecasts: list[dict[str, Any]], actuals: list[dict[
         return None
     return PvBiasDay(day, next(iter(issuance)), max(available), next(iter(run_ids)), pv, cap, load, weather,
                      totals["pv"], totals["load"], totals["buy"], totals["sell"],
-                     {h: float(by_slot[(h, 0)]["soc"]) for h in range(24)}, ordered_actuals,
+                     {h + 1: float(by_slot[(h, 30)]["soc"]) for h in range(24)}, ordered_actuals,
                      hashlib.sha256(source.encode()).hexdigest(), response)
 
 

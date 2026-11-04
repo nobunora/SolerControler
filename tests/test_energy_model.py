@@ -849,7 +849,7 @@ def test_historical_daytime_soc_gain_guard_uses_lower_quartile(monkeypatch) -> N
         day = f"2026-05-{index:02d}"
         rows.extend(
             [
-                {"dt": datetime.fromisoformat(f"{day}T07:00:00"), "pv": 0.2, "soc": 20.0},
+                {"dt": datetime.fromisoformat(f"{day}T06:30:00"), "pv": 0.2, "soc": 20.0},
                 {"dt": datetime.fromisoformat(f"{day}T12:00:00"), "pv": 0.4, "soc": 20.0 + gain},
                 {"dt": datetime.fromisoformat(f"{day}T18:30:00"), "pv": 0.1, "soc": 20.0 + gain - 1.0},
             ]

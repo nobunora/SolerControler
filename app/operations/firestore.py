@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from google.cloud.firestore import transactional
+from app.domain.measurement_time import CSV_TIME_BASIS, csv_soc_effective_at
 
 from app.operations.forecast_persistence import (
     _projection_timeout, _run_bounded_projection_transaction, projection_identity, projection_may_advance,
@@ -761,6 +762,7 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
                 "charge_kwh": 0.0,
                 "discharge_kwh": 0.0,
                 "morning_soc_percent": None,
+                "morning_soc_at": None,
                 "soc_min_percent": None,
                 "soc_max_percent": None,
                 "day_soc_max_percent": None,
@@ -788,12 +790,16 @@ def recalc_dashboard_daily_metrics(client: Any, *, updated_at: str) -> int:
             )
         soc = to_float(row.get("soc_percent"))
         if soc is not None:
+            soc_at = csv_soc_effective_at(datetime.fromisoformat(ts))
+            soc_minute = soc_at.strftime("%H:%M")
+            acc["measurement_time_basis"] = CSV_TIME_BASIS
             acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
             acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
-            if "07:00" <= minute < "23:00":
+            if "07:00" <= soc_minute < "23:00":
                 acc["day_soc_max_percent"] = soc if acc["day_soc_max_percent"] is None else max(float(acc["day_soc_max_percent"]), soc)
-            if minute == "07:00":
+            if soc_minute == "07:00":
                 acc["morning_soc_percent"] = soc
+                acc["morning_soc_at"] = soc_at.isoformat()
         acc["sample_count"] = float(acc["sample_count"] or 0.0) + 1.0
         if ts < str(acc["first_sample_at"] or ""):
             acc["first_sample_at"] = ts
@@ -883,6 +889,7 @@ def recalc_monitoring_daily_metrics(
                     "charge_kwh": 0.0,
                     "discharge_kwh": 0.0,
                     "morning_soc_percent": None,
+                    "morning_soc_at": None,
                     "soc_min_percent": None,
                     "soc_max_percent": None,
                     "day_soc_max_percent": None,
@@ -900,12 +907,16 @@ def recalc_monitoring_daily_metrics(
                 _add_monitoring_energy(acc, "night_buy_kwh", row.get("buy_kwh"))
             soc = to_float(row.get("soc_percent"))
             if soc is not None:
+                soc_at = csv_soc_effective_at(datetime.fromisoformat(ts))
+                soc_minute = soc_at.strftime("%H:%M")
+                acc["measurement_time_basis"] = CSV_TIME_BASIS
                 acc["soc_min_percent"] = soc if acc["soc_min_percent"] is None else min(float(acc["soc_min_percent"]), soc)
                 acc["soc_max_percent"] = soc if acc["soc_max_percent"] is None else max(float(acc["soc_max_percent"]), soc)
-                if "07:00" <= minute < "23:00":
+                if "07:00" <= soc_minute < "23:00":
                     acc["day_soc_max_percent"] = soc if acc["day_soc_max_percent"] is None else max(float(acc["day_soc_max_percent"]), soc)
-                if minute == "07:00":
+                if soc_minute == "07:00":
                     acc["morning_soc_percent"] = soc
+                    acc["morning_soc_at"] = soc_at.isoformat()
             acc["sample_count"] = float(acc["sample_count"] or 0.0) + 1.0
             if ts < str(acc["first_sample_at"] or ""):
                 acc["first_sample_at"] = ts
