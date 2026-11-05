@@ -1920,9 +1920,18 @@
       }
       async function monitor(execution) {
         const deadline = Date.now() + 720000;
+        let firstCheck = true;
         while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          const result = await dashboardApi.fetchJson(`/api/dashboard/actual-import?execution=${encodeURIComponent(execution)}`);
+          if (!firstCheck) await new Promise((resolve) => setTimeout(resolve, 5000));
+          firstCheck = false;
+          if (Date.now() >= deadline) break;
+          let result;
+          try {
+            result = await dashboardApi.fetchJson(`/api/dashboard/actual-import?execution=${encodeURIComponent(execution)}`);
+          } catch {
+            status.textContent = "取込み状態の通信確認を待っています。新しい取込みは開始せず、同じ実行を確認します。";
+            continue;
+          }
           if (result.status === "succeeded") {
             window.sessionStorage.removeItem(storageKey);
             status.textContent = "取込み完了。最新データを表示します。";
@@ -1937,18 +1946,29 @@
             return;
           }
           if (["failed", "busy"].includes(result.status)) {
+            const savedOutcomeKnown = result.actuals_saved === true || result.actuals_saved === false;
+            const finished = typeof result.completed_at === "string" && Number.isFinite(Date.parse(result.completed_at));
             status.textContent = result.status === "busy" ? "別の取込みが実行中または結果未確認です。"
-              : result.actuals_saved === null ? "実績の保存結果が未確認です。再取込みせず保存状態の確認が必要です。"
+              : !savedOutcomeKnown || !finished ? "実績の保存結果または終了が未確認です。再取込みせず状態の確認が必要です。"
                 : result.actuals_saved ? "実績は保存済みですが、表示用データの更新に失敗しました。再取込みは行っていません。"
                 : "取込みに失敗しました。予測は保持されています。";
+            // A terminal receipt with a known save outcome allows another explicit
+            // user action. Unknown/busy receipts must never unlock or resubmit.
+            if (result.status === "failed" && savedOutcomeKnown && finished) {
+              window.sessionStorage.removeItem(storageKey);
+              button.disabled = false;
+            }
             return;
           }
+          status.textContent = "取込みは実行中です。新しい取込みは開始せず、現在の実行結果を待っています。";
         }
         throw new Error("import_outcome_unknown");
       }
       async function run(execution) {
         button.disabled = true;
-        status.textContent = "最新実績を取り込んでいます。予測は保存したまま更新します。";
+        status.textContent = execution
+          ? "前回の取込み結果を確認しています。新しい取込みは開始しません。"
+          : "最新実績を取り込んでいます。予測は保存したまま更新します。";
         try {
           if (!execution) {
             window.sessionStorage.setItem(storageKey, "unknown");

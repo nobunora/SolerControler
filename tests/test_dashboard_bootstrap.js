@@ -287,4 +287,5 @@ setImmediate(async () => {
   elements.get("dailyReviewPrevBtn").listeners.click();
   assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
   assert.equal(fetchCount, countBeforeNavigation);
+  await require("./test_dashboard_actual_import.js")();
 });
