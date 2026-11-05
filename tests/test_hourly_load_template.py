@@ -75,11 +75,12 @@ def test_missing_hour_excludes_whole_day_and_zero_day_is_valid():
 
 
 @pytest.mark.parametrize("comfort_applied", [True, False])
-def test_integration_final_input_and_original_model_provenance(monkeypatch, comfort_applied):
+def test_integration_preserves_hgb_instead_of_replacing_with_actual_median(monkeypatch, comfort_applied):
     monkeypatch.setenv("LOAD_COMFORT_MODEL_ENABLED", "true")
     rows = [{"dt": datetime.fromisoformat(day).replace(hour=h, minute=m), "load": value / 2, "pv": 0.0}
             for day, values in history().items() for h, value in values.items() for m in (0, 30)]
     baseline = dict.fromkeys(range(24), 1.0)
+    hgb = {**baseline, 12: 1.75}
     result = calculate_load_forecast_correction(
         rows=rows, hourly_load_forecast=baseline, target_date="2026-11-03",
         latitude=35.0, longitude=139.0, timezone="Asia/Tokyo", forecast={},
@@ -87,10 +88,11 @@ def test_integration_final_input_and_original_model_provenance(monkeypatch, comf
         weather_fetch=lambda **kwargs: {}, history_loader=lambda **kwargs: ({}, "test"),
         temperature_corrector=lambda **kwargs: {"multiplier": 1.0},
         comfort_predictor=lambda **kwargs: {
-            "applied": comfort_applied, "hourly_load_kwh": baseline, "confidence": 0.5,
+            "applied": comfort_applied, "hourly_load_kwh": hgb, "confidence": 0.5,
         },
     )
-    assert result["hourly_load_kwh"][12] == (6.0 if comfort_applied else 1.0)
+    assert result["hourly_load_kwh"][12] == (1.75 if comfort_applied else 1.0)
     assert result["hourly_load_kwh"][0] == 1.0
-    assert result["rationale"]["corrected_hourly_load_forecast_kwh"]["12"] == (6.0 if comfort_applied else 1.0)
-    assert result["rationale"]["comfort_load_model"]["hourly_load_kwh"]["12"] == 1.0
+    assert result["rationale"]["corrected_hourly_load_forecast_kwh"]["12"] == (1.75 if comfort_applied else 1.0)
+    assert result["rationale"]["comfort_load_model"]["hourly_load_kwh"]["12"] == 1.75
+    assert "hourly_actual_template" not in result["rationale"]["comfort_load_model"]
