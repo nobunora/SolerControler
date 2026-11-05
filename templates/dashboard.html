@@ -14,7 +14,7 @@
       <p id="statusMsg" class="desc"></p>
       <label>取込み・表示更新日 <input id="importActualsDate" type="date"></label>
       <button id="importActualsBtn" class="period-button" type="button">最新値を取り込み</button>
-      <p class="desc">既定は当日だけ。過去分は日付を指定した場合だけ更新します。予測は点線、実績は実線で表示します。</p>
+      <p class="desc">既定は当日だけ。過去分は日付を指定した場合だけ更新します。</p>
       <p id="importActualsStatus" class="desc" role="status" aria-live="polite"></p>
     </section>
 
@@ -35,7 +35,8 @@
 
       <article class="card full">
         <h2>2. 時間別予測（最新計画）</h2>
-        <p id="hourlyForecastNote" class="desc">1時間ごとの予想発電量・予想充電量・消費電力量を表示します。消費は実績がある時間帯を実績、未到達時間帯を予測で表示します。</p>
+        <p id="hourlyForecastNote" class="desc">時間別予測を読み込んでいます。</p>
+        <div id="hourlyForecastGrid" class="diag-grid" aria-label="時間別予測の集計"></div>
         <div class="chart-box hourly-forecast-chart"><canvas id="hourlyForecastChart"></canvas></div>
       </article>
 

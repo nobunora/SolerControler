@@ -165,9 +165,11 @@ setImmediate(async () => {
   assert.deepEqual(fetchRequests, ["/api/dashboard/bootstrap"]);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard/history")), false);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
-  assert.match(elements.get("hourlyForecastNote").textContent, /夜間系統充電 3\.14kWh/);
-  assert.match(elements.get("hourlyForecastNote").textContent, /取得済み計画SOC最大 3\/17 07:00 77%/);
-  assert.match(elements.get("hourlyForecastNote").textContent, /計画更新/);
+  const hourlySummary = elements.get("hourlyForecastGrid").innerHTML.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+  assert.match(hourlySummary, /夜間系統充電予測 3\.14 kWh 時間別計画未確定/);
+  assert.match(hourlySummary, /取得済み計画SOC最大 3\/17 77% 07:00/);
+  assert.match(hourlySummary, /計画更新/);
+  assert.equal(elements.get("hourlyForecastNote").textContent, "2026-07-20 の時間別表示。");
   const hourlyChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label === "計画SOC(%)"));
   assert.deepEqual(Array.from(hourlyChart.data.datasets[4].data), [null, null, 77, 63.2, 70.4]);
   assert.deepEqual(Array.from(hourlyChart.data.datasets[5].data), [42, 48, null, null, null]);

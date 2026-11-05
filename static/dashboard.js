@@ -1251,6 +1251,7 @@
       const chart = charts.hourlyForecast;
       if (!chart) return;
       const note = document.getElementById("hourlyForecastNote");
+      const grid = document.getElementById("hourlyForecastGrid");
       const date = hourlyForecastDate();
       const rows = date ? (store.hourly.get(date) || []) : [];
       if (!rows.length) {
@@ -1263,6 +1264,7 @@
         chart.data.datasets[5].data = [];
         chart.data.datasets.slice(6).forEach((dataset) => { dataset.data = []; });
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
+        if (grid) grid.innerHTML = "";
         ensureVisibleChartRanges(chart);
         chart.update("none");
         return;
@@ -1411,29 +1413,33 @@
         grid: { drawOnChartArea: false },
         border: { color: "#9a7a00" },
       };
-      if (note) {
+      if (note || grid) {
         const sch = state.boundSchedule || {};
-        const retainedIssues = [...new Set(rows.filter((row) => row.hour < 7
-          && (row.retained_forecast_soc_percent != null || row.retained_forecast_grid_charge_kwh != null))
-          .flatMap((row) => [row.retained_forecast_soc_issued_at, row.retained_forecast_grid_charge_issued_at, row.retained_forecast_issued_at]).filter(Boolean))].sort();
-        const retainedText = retainedIssues.length ? ` 保存済み夜間予測の発行時刻: ${retainedIssues.join(" / ")}。` : "";
         const daytimeSaved = state.points.map((point, index) => rows[index].hour >= 7 ? point : null);
         const daytimeSavedCount = daytimeSaved.filter((point) => point !== null).length;
         const socPeak = maxForecastSocPoint(labels, socKind === "計画SOC" ? daytimeSaved
           : soc.map((point, index) => state.pointSources[index] === "observed" ? null : point));
-        const actualText = `実績取得済み分 PV ${state.actualPvSubtotal === null ? "-" : state.actualPvSubtotal.toFixed(2)}kWh（${state.actualPvCount}/24） / 消費 ${state.actualLoadSubtotal === null ? "-" : state.actualLoadSubtotal.toFixed(2)}kWh（${state.actualCount}/24）`;
-        const latestText = latestActual ? ` / 最新実績 ${latestActual.replace("T", " ")}` : " / 実績観測時刻未連携";
         const planUpdated = sch.plan_updated_at ? new Date(sch.plan_updated_at) : null;
-        const planUpdatedText = planUpdated && !Number.isNaN(planUpdated.getTime())
-          ? ` / 計画更新 ${planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })}`
-          : "";
-        const socText = socPeak ? ` / ${socKind === "計画SOC" ? daytimeSavedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${daytimeSavedCount}/17` : "参考SOC最大"} ${socPeak.label} ${socPeak.value.toFixed(0)}%` : ` / ${socKind}`;
-        const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)}kWh` : `未完 ${count}/24`;
-        const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh${nightGridCharge.every((value) => value === null) ? "（時間別計画未確定）" : ""}` : " / 夜間系統充電 時間帯未連携";
-        note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
-        note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText
-          + (connectNight ? " 6→7時の点線は保存夜間予測と最新日中計画の既存点を接続しています（別計画）。" : "");
-        if (timeAligned) note.textContent += " 電力量は正時・半時の合計を各1時間区間に表示。SOCはサーバー共通時刻契約による瞬時値です。CSV SOCは区間末とのAPI照合に基づく暫定換算で、メーカー仕様は未確定です。";
+        const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)} kWh` : `未完 ${count}/24`;
+        const socLabel = socPeak ? socKind === "計画SOC"
+          ? daytimeSavedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${daytimeSavedCount}/17`
+          : "参考SOC最大" : "SOC";
+        const nightKnown = state.boundSchedule && nightAmount !== null;
+        const items = [
+          { label: "全日発電予測", value: totalText(state.forecastPvTotal, state.pvCount) },
+          { label: "PV余剰充電予測", value: totalText(state.forecastChargeTotal, state.chargeCount) },
+          { label: "夜間系統充電予測", value: nightKnown ? `${nightAmount.toFixed(2)} kWh` : "時間帯未連携",
+            sub: nightKnown && nightGridCharge.every((value) => value === null) ? "時間別計画未確定" : "" },
+          { label: "全日消費予測", value: totalText(state.forecastLoadTotal, state.loadCount) },
+          { label: socLabel, value: socPeak ? `${socPeak.value.toFixed(0)}%` : socKind, sub: socPeak ? socPeak.label : "" },
+          { label: "発電実績（取得分）", value: state.actualPvSubtotal === null ? "-" : `${state.actualPvSubtotal.toFixed(2)} kWh`, sub: `${state.actualPvCount}/24区間` },
+          { label: "消費実績（取得分）", value: state.actualLoadSubtotal === null ? "-" : `${state.actualLoadSubtotal.toFixed(2)} kWh`, sub: `${state.actualCount}/24区間` },
+          { label: "最新実績", value: latestActual ? latestActual.replace("T", " ") : "観測時刻未連携" },
+          { label: "計画更新", value: planUpdated && !Number.isNaN(planUpdated.getTime())
+            ? planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false }) : "-" },
+        ];
+        if (grid) grid.innerHTML = items.map((item) => `<div class="diag-kpi"><span class="diag-label">${escapeHtml(item.label)}</span><span class="diag-value">${escapeHtml(item.value)}</span>${item.sub ? `<small class="diag-subvalue">${escapeHtml(item.sub)}</small>` : ""}</div>`).join("");
+        if (note) note.textContent = `${date} の時間別表示。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");
