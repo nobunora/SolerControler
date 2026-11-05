@@ -82,6 +82,22 @@ def _write_plan(path: Path, plan: dict) -> None:
     path.write_text(json.dumps(plan), encoding="utf-8")
 
 
+def test_derived_time_metadata_preserves_legacy_forecast_identity() -> None:
+    from app.operations.domain import extract_hourly_forecast_from_plan
+
+    plan = _plan()
+    hourly = extract_hourly_forecast_from_plan(plan)
+    assert hourly[0]["interval_start"] == "2026-08-27T10:00:00+09:00"
+    assert hourly[0]["interval_end"] == "2026-08-27T11:00:00+09:00"
+    assert hourly[0]["forecast_soc_at"] == "2026-08-27T10:00:00+09:00"
+    rows = build_forecast_snapshot_rows(plan, ingested_at="2026-08-25T15:05:00Z", timezone="Asia/Tokyo")
+    # Frozen using ef903e2 before interval metadata was introduced, not recomputed
+    # with the current implementation: old stored IDs must remain verifiable.
+    assert rows[0]["forecast_run_id"] == "f8702fa798892354f6b6bfc7"
+    changed = build_forecast_snapshot_rows(_plan(pv_kwh=1.3), ingested_at="2026-08-25T15:05:00Z", timezone="Asia/Tokyo")
+    assert changed[0]["forecast_run_id"] != rows[0]["forecast_run_id"]
+
+
 def test_snapshot_builder_records_issue_lead_provenance_and_physical_evidence() -> None:
     rows = build_forecast_snapshot_rows(
         _plan(),
