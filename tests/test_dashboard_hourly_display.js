@@ -9,11 +9,14 @@ async function tests() {
   assert.ok(chart.data.datasets[10].data.every((value) => value === null));
   chart.data.datasets.slice(0, 5).forEach((dataset) => assert.deepEqual(Array.from(dataset.borderDash), [2, 4]));
   assert.equal(chart.data.datasets[5].borderDash, undefined);
-  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+  for (const index of [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]) {
     assert.equal(chart.data.datasets[index].pointRadius, 0);
     assert.equal(chart.data.datasets[index].pointHoverRadius, 0);
   }
   assert.equal(chart.data.datasets[5].pointRadius, 3, "instantaneous SOC keeps its observation points");
+  for (const index of [4, 6, 10]) {
+    assert.deepEqual(Array.from(chart.data.datasets[index].borderDash), [2, 4], "SOC forecasts remain dotted without markers");
+  }
   const visible = Array(11).fill(true);
   chart.isDatasetVisible = (index) => visible[index];
   chart.setDatasetVisibility = (index, value) => { visible[index] = value; };
