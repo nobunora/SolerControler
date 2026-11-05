@@ -182,11 +182,16 @@ def _forecast_run_id(
     issued_at_source: str,
     forecast_source: str,
 ) -> str:
+    # HISTORICAL_FAILURE_LOCK (2026-11-05): derived time metadata must not change
+    # immutable IDs of saved originals. Retain all original identity fields.
+    identity_rows = [{key: value for key, value in row.items()
+                      if key not in {"interval_start", "interval_end", "forecast_soc_at"}}
+                     for row in hourly_rows]
     identity = {
         "issued_at": issued_at if issued_at_source == "plan" else None,
         "forecast_date": hourly_rows[0]["date"],
         "source": forecast_source,
-        "rows": hourly_rows,
+        "rows": identity_rows,
         "pv_array_forecast": data.get("pv_array_forecast"),
         "plan_quality": data.get("plan_quality"),
     }

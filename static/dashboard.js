@@ -1958,6 +1958,16 @@
               headers: { "Content-Type": "application/json", "X-Dashboard-Action": "import-actuals" },
               body: JSON.stringify(dateExplicit && dateInput ? { target_date: dateInput.value } : {}),
             });
+            // These server responses are returned before a job is submitted.
+            // Let the user correct the request; an unknown submission stays locked.
+            if ([400, 401, 403].includes(response.status)) {
+              window.sessionStorage.removeItem(storageKey);
+              button.disabled = false;
+              status.textContent = response.status === 401
+                ? "認証が必要です。画面を再読込みしてログインしてください。取込みは開始されていません。"
+                : "取込みは開始されていません。日付と画面の認証状態を確認してください。";
+              return;
+            }
             if (!response.ok) throw new Error("import_submission_unknown");
             execution = (await response.json()).execution;
             if (typeof execution !== "string") throw new Error("import_submission_unknown");

@@ -309,6 +309,26 @@ async function tests() {
     assert.equal(input.value, explicit ? "2026-07-19" : "2026-07-21");
     assert.equal(input.max, "2026-07-21");
   }
+  for (const responseStatus of [400, 401, 403, 502, 503]) {
+    const importView = await harness();
+    const stored = new Map();
+    importView.context.sessionStorage = {
+      getItem: (key) => stored.get(key) || null,
+      setItem: (key, value) => stored.set(key, value),
+      removeItem: (key) => stored.delete(key),
+    };
+    let posts = 0;
+    importView.context.fetch = async () => { posts += 1; return { ok: false, status: responseStatus }; };
+    const button = importView.elements.get("importActualsBtn");
+    button.listeners.click();
+    await new Promise(setImmediate);
+    assert.equal(posts, 1, "rejection must never automatically resubmit");
+    const rejectedBeforeSubmission = [400, 401, 403].includes(responseStatus);
+    assert.equal(button.disabled, !rejectedBeforeSubmission);
+    assert.equal(stored.get("dashboardActualImport"), rejectedBeforeSubmission ? undefined : "unknown");
+    assert.match(importView.elements.get("importActualsStatus").textContent,
+      rejectedBeforeSubmission ? /開始されていません/ : /重複実行/);
+  }
   console.log("dashboard hourly display: PASS");
 }
 tests().catch((error) => { console.error(error); process.exitCode = 1; });
