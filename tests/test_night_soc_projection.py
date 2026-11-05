@@ -27,7 +27,7 @@ def test_october_17_charge_reaches_target_by_four_not_seven():
     assert result["hourly_grid_charge_kwh"]["3"] == 3.684
     assert result["hourly_grid_charge_kwh"]["4"] == 0.0
     assert result["target_reached_at"] == "2026-10-17T03:58:30+09:00"
-    assert result["initial_soc_observed_at"] == "2026-10-17T02:00:00+09:00"
+    assert result["initial_soc_observed_at"] == "2026-10-17T02:30:00+09:00"
 
 
 @pytest.mark.parametrize("soc", [None, float("nan"), float("inf"), -1, 101])

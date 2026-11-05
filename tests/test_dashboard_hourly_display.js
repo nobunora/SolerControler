@@ -9,6 +9,36 @@ async function tests() {
   assert.ok(chart.data.datasets[10].data.every((value) => value === null));
   chart.data.datasets.slice(0, 5).forEach((dataset) => assert.deepEqual(Array.from(dataset.borderDash), [2, 4]));
   assert.equal(chart.data.datasets[5].borderDash, undefined);
+  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+    assert.equal(chart.data.datasets[index].pointRadius, 0);
+    assert.equal(chart.data.datasets[index].pointHoverRadius, 0);
+  }
+  assert.equal(chart.data.datasets[5].pointRadius, 3, "instantaneous SOC keeps its observation points");
+  const visible = Array(11).fill(true);
+  chart.isDatasetVisible = (index) => visible[index];
+  chart.setDatasetVisibility = (index, value) => { visible[index] = value; };
+  const legend = chart.options.plugins.legend;
+  const items = legend.labels.generateLabels(chart);
+  assert.deepEqual(Array.from(items, (item) => item.text), [
+    "発電 予測(kWh/h)", "発電 実績(kWh/h)", "家の消費 予測(kWh/h)", "家の消費 実績(kWh/h)",
+    "SOC 計画(%)", "SOC 実績(%)", "PV余剰充電予測(kWh/h)", "夜間系統充電予測(kWh/h)",
+  ]);
+  assert.deepEqual(Array.from(items[0].lineDash), [2, 4]);
+  assert.deepEqual(Array.from(items[1].lineDash), []);
+  legend.onClick(null, items[4], { chart });
+  assert.deepEqual(visible, [true, true, true, true, false, true, false, true, true, true, false]);
+  legend.onClick(null, legend.labels.generateLabels(chart)[4], { chart });
+  assert.ok(visible.every(Boolean), "SOC plan legend controls retained night and connector without hiding actuals");
+  assert.deepEqual(Array.from(items[4].lineDash), [2, 4]);
+  assert.deepEqual(Array.from(items[5].lineDash), []);
+  legend.onClick(null, items[5], { chart });
+  assert.equal(visible[5], false);
+  assert.ok(visible.every((value, index) => index === 5 || value));
+  legend.onClick(null, legend.labels.generateLabels(chart)[5], { chart });
+  legend.onClick(null, items[7], { chart });
+  assert.equal(visible[3], false);
+  assert.equal(visible[7], false);
+  legend.onClick(null, legend.labels.generateLabels(chart)[7], { chart });
   assert.equal(chart.data.labels.length, 24);
   assert.deepEqual(Array.from(soc.data.slice(0, 7)), Array(7).fill(null));
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));
@@ -203,6 +233,61 @@ async function tests() {
   assert.equal(chart.data.datasets[5].data[0], 55, "after midnight show the explicitly imported date");
   assert.ok(chart.data.datasets[4].data.every((value) => value === null), "never reuse yesterday's forecast on the new day");
   assert.equal(h.requests.length, 0);
+  const aligned = fixture();
+  aligned.forecast_hourly.forEach((row) => {
+    const next = String(row.hour + 1).padStart(2, "0");
+    row.actual_soc_points = [
+      { at: `${row.date}T${String(row.hour).padStart(2, "0")}:30:00+09:00`, percent: row.hour === 2 ? 0 : row.hour === 3 ? 20 : null },
+      { at: `${row.date}T${next}:00:00+09:00`, percent: row.hour === 2 ? 0 : row.hour === 3 ? 42 : null },
+    ];
+  });
+  aligned.forecast_hourly.forEach((row) => { row.actual_load_kwh = row.hour === 18 ? 1.183 : null; });
+  const alignedView = await harness(aligned);
+  const alignedChart = alignedView.chart("hourlyForecastChart");
+  assert.equal(alignedChart.data.labels.length, 25);
+  assert.equal(alignedChart.options.normalized, false);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 3).y, 0);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 3.5).y, 20);
+  assert.equal(alignedChart.data.datasets[5].data.find((p) => p.x === 4).y, 42);
+  assert.equal(alignedChart.data.datasets[5].parsing, false);
+  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+    assert.equal(alignedChart.data.datasets[index].stepped, "after");
+    assert.equal(alignedChart.data.datasets[index].data.length, 48);
+  }
+  const measuredLoad = alignedChart.data.datasets[9].data;
+  assert.deepEqual(JSON.parse(JSON.stringify(measuredLoad.slice(36, 40))), [
+    { x: 18, y: 1.183 }, { x: 19, y: 1.183 }, { x: 19, y: null }, { x: 20, y: null },
+  ], "the complete 18-19 interval ends at 19; the missing 19-20 interval stays missing");
+  assert.match(alignedChart.options.plugins.tooltip.callbacks.label({
+    dataset: alignedChart.data.datasets[9], dataIndex: 37, parsed: { y: 1.183 }, chart: alignedChart,
+  }), /18:00〜19:00/, "the ending edge identifies its actual interval, rather than inventing a 19:00 value");
+  assert.match(alignedView.elements.get("hourlyForecastNote").textContent, /正時・半時の合計/);
+  await alignedView.replace(fixture());
+  assert.equal(alignedChart.data.datasets[5].parsing, true);
+  assert.equal(alignedChart.data.datasets[9].parsing, true);
+  for (let lastHour = 0; lastHour < 24; lastHour += 1) {
+    for (const observed of [0, 1.183]) {
+      const terminal = fixture();
+      terminal.forecast_hourly.forEach((row) => {
+        row.actual_soc_points = [];
+        row.actual_load_kwh = row.hour === lastHour ? observed : null;
+        row.actual_pv_kwh = row.hour === lastHour ? observed : null;
+      });
+      const terminalView = await harness(terminal);
+      const terminalChart = terminalView.chart("hourlyForecastChart");
+      for (const index of [8, 9]) {
+        const series = terminalChart.data.datasets[index];
+        assert.equal(series.spanGaps, false);
+        for (let hour = 0; hour < 24; hour += 1) {
+          const expected = hour === lastHour ? observed : null;
+          assert.deepEqual(JSON.parse(JSON.stringify(series.data.slice(hour * 2, hour * 2 + 2))), [
+            { x: hour, y: expected }, { x: hour + 1, y: expected },
+          ], `interval ${hour}-${hour + 1}; final hour ${lastHour}; observed ${observed}`);
+        }
+      }
+      assert.equal(terminalView.requests.length, 0);
+    }
+  }
   for (const explicit of [false, true]) {
     const importView = await harness();
     const posts = [];

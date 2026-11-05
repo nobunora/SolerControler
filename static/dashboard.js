@@ -933,7 +933,9 @@
                 const number = displayFinite(ctx.parsed && ctx.parsed.y);
                 const value = number === null ? "未確認" : formatChartValue(number);
                 const coverage = ctx.chart?.forecastCoverage?.[ctx.dataIndex];
-                return `${label ? `${label}: ` : ""}${value}${coverage ? ` / ${coverage}` : ""}`;
+                const hour = ctx.dataset?.hourlyIntervals ? Math.floor(ctx.dataIndex / 2) : null;
+                const interval = hour === null ? "" : ` / ${String(hour).padStart(2, "0")}:00〜${String(hour + 1).padStart(2, "0")}:00`;
+                return `${label ? `${label}: ` : ""}${value}${coverage ? ` / ${coverage}` : ""}${interval}`;
               },
             },
           },
@@ -947,21 +949,23 @@
         data: {
           labels: [],
           datasets: [
-            { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 3 },
-            { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 3 },
-            { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3 },
-            { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1 },
+            { label: "予想発電量(kWh/h)", data: [], borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
+            { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1, pointRadius: 0, pointHoverRadius: 0 },
             { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: false },
             { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
             { label: "保存済み夜間予測SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
-            { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 3, spanGaps: false },
+            { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
+            { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
+            { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
             { label: "6→7時の予測接続（別計画）", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, borderWidth: 2.5, spanGaps: false },
           ],
         },
         options: {
           ...commonOptions(),
+          // Adjacent intervals share an x boundary; their indices are not unique.
+          normalized: false,
           scales: {
             y: { min: 0, max: 1, title: { display: true, text: "kWh/h" }, grid: { color: "#d8e6f2" } },
             y2: {
@@ -977,6 +981,32 @@
         },
       });
       charts.hourlyForecast.data.datasets.slice(0, 5).forEach((dataset) => { dataset.borderDash = [2, 4]; });
+      const hourlyLegendGroups = [
+        { text: "発電 予測(kWh/h)", indices: [0] },
+        { text: "発電 実績(kWh/h)", indices: [8] },
+        { text: "家の消費 予測(kWh/h)", indices: [2] },
+        { text: "家の消費 実績(kWh/h)", indices: [9] },
+        { text: "SOC 計画(%)", indices: [4, 6, 10] },
+        { text: "SOC 実績(%)", indices: [5] },
+        { text: "PV余剰充電予測(kWh/h)", indices: [1] },
+        { text: "夜間系統充電予測(kWh/h)", indices: [3, 7] },
+      ];
+      charts.hourlyForecast.options.plugins.legend = {
+        labels: {
+          usePointStyle: false, boxWidth: 28, boxHeight: 2,
+          generateLabels: (chart) => hourlyLegendGroups.map((group) => {
+            const dataset = chart.data.datasets[group.indices[0]];
+            return { text: group.text, datasetIndex: group.indices[0], datasetIndices: group.indices,
+              strokeStyle: dataset.borderColor, fillStyle: "transparent", lineWidth: 2,
+              lineDash: dataset.borderDash || [],
+              hidden: group.indices.every((index) => !chart.isDatasetVisible(index)) };
+          }),
+        },
+        onClick: (_event, item, legend) => {
+          for (const index of item.datasetIndices) legend.chart.setDatasetVisibility(index, item.hidden);
+          legend.chart.update();
+        },
+      };
 
       charts.pv = new Chart(document.getElementById("pvChart"), {
         data: {
@@ -1303,7 +1333,8 @@
         .filter(Boolean)
         .sort()
         .pop();
-      chart.data.labels = labels;
+      const timeAligned = rows.some((row) => Array.isArray(row.actual_soc_points));
+      chart.data.labels = timeAligned ? [...labels, "24:00"] : labels;
       chart.data.datasets[0].data = pv;
       chart.data.datasets[1].data = charge;
       chart.data.datasets[2].data = load;
@@ -1313,12 +1344,47 @@
       chart.data.datasets[5].data = actualSoc;
       chart.data.datasets[5].label = rows.some((row) => Object.prototype.hasOwnProperty.call(row, "actual_soc_at_hour_start_percent"))
         ? "実績SOC（時間開始）(%)" : "実績SOC（時間内最終値）(%)";
+      if (timeAligned) {
+        const measuredPoints = rows.flatMap((row) => (row.actual_soc_points || []).map((point) => {
+          const at = String(point.at || "");
+          const hour = Number(at.slice(11, 13));
+          const minute = Number(at.slice(14, 16));
+          const nextMidnight = at.slice(0, 10) !== date && hour === 0 && minute === 0;
+          return { x: nextMidnight ? 24 : hour + minute / 60,
+            y: displayFinite(point.percent), csv_label_at: point.csv_label_at };
+        }));
+        // Recreate the controller when changing from indexed to timestamped data.
+        chart.data.datasets[5] = { ...chart.data.datasets[5], data: measuredPoints, parsing: false };
+        chart.data.datasets[5].label = "実績SOC（CSV区間末換算・暫定）(%)";
+        chart.data.datasets[5].showLine = true;
+        chart.options.interaction = { mode: "nearest", axis: "x", intersect: false };
+        chart.options.plugins.tooltip.callbacks.title = (items) => {
+          const minute = Math.round(Number(items[0]?.parsed?.x) * 60);
+          return Number.isFinite(minute) ? `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")} JST` : "";
+        };
+      } else {
+        chart.data.datasets[5].parsing = true;
+        chart.data.datasets[5].showLine = false;
+        chart.data.datasets[5].label = "実績SOC（元CSVラベル・測定時刻未連携）(%)";
+      }
       chart.data.datasets[6].data = rows.map((row) => row.hour < 7 && energy(row.forecast_soc_percent) === null
         && energy(row.retained_forecast_soc_percent) <= 100 ? energy(row.retained_forecast_soc_percent) : null);
       chart.data.datasets[7].data = rows.map((row) => row.hour < 7 && energy(row.forecast_grid_charge_kwh) === null
         ? energy(row.retained_forecast_grid_charge_kwh) : null);
       chart.data.datasets[8].data = rows.map((row) => energy(row.actual_pv_kwh));
       chart.data.datasets[9].data = rows.map((row) => energy(row.actual_load_kwh));
+      // Apply interval rendering after all energy series have been populated.
+      for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+        const dataset = chart.data.datasets[index];
+        const hidden = chart.isDatasetVisible ? !chart.isDatasetVisible(index) : Boolean(dataset.hidden);
+        if (timeAligned) {
+          // Both edges belong to this interval, even if the next one is missing.
+          chart.data.datasets[index] = { ...dataset, hidden, parsing: false, hourlyIntervals: true, stepped: "after", tension: 0, spanGaps: false,
+            data: dataset.data.flatMap((value, hour) => [{ x: hour, y: value }, { x: hour + 1, y: value }]) };
+        } else if (dataset.parsing === false) {
+          chart.data.datasets[index] = { ...dataset, hidden, parsing: true, hourlyIntervals: false };
+        }
+      }
       const six = rows.findIndex((row) => row.hour === 6);
       const seven = rows.findIndex((row) => row.hour === 7);
       // Display-only boundary segment: retain both originals and never use an
@@ -1367,6 +1433,7 @@
         note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
         note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText
           + (connectNight ? " 6→7時の点線は保存夜間予測と最新日中計画の既存点を接続しています（別計画）。" : "");
+        if (timeAligned) note.textContent += " 電力量は正時・半時の合計を各1時間区間に表示。SOCはサーバー共通時刻契約による瞬時値です。CSV SOCは区間末とのAPI照合に基づく暫定換算で、メーカー仕様は未確定です。";
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");
@@ -1608,7 +1675,7 @@
 
       const dailyKwhTitle = document.getElementById("dailyKwhTitle");
       const dailyKwhDesc = document.getElementById("dailyKwhDesc");
-      if (dailyKwhTitle) dailyKwhTitle.textContent = `2. 自家消費kWh（${isWeekly ? "週" : "日"}）`;
+      if (dailyKwhTitle) dailyKwhTitle.textContent = `5. 自家消費kWh（${isWeekly ? "週" : "日"}）`;
       if (dailyKwhDesc) dailyKwhDesc.textContent = `青の棒: ${bucketLabel}自家消費、緑の折れ線: 累計自家消費。左右で縦軸を分けます。`;
 
       charts.dailyKwh.data.labels = labels;
@@ -1641,7 +1708,7 @@
 
       const dailyYenTitle = document.getElementById("dailyYenTitle");
       const dailyYenDesc = document.getElementById("dailyYenDesc");
-      if (dailyYenTitle) dailyYenTitle.textContent = `3. 節約額（${isWeekly ? "週" : "日"}）`;
+      if (dailyYenTitle) dailyYenTitle.textContent = `6. 節約額（${isWeekly ? "週" : "日"}）`;
       if (dailyYenDesc) dailyYenDesc.textContent = `橙の棒: ${bucketLabel}節約額、赤の折れ線: 累計節約額。左右で縦軸を分けます。`;
 
       charts.dailyYen.data.labels = labels;
@@ -1678,7 +1745,7 @@
 
       const batteryTitle = document.getElementById("batteryTitle");
       const batteryDesc = document.getElementById("batteryDesc");
-      if (batteryTitle) batteryTitle.textContent = `7. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
+      if (batteryTitle) batteryTitle.textContent = `8. 蓄電池計画値と実績（${isWeekly ? "週次" : "日次"}）`;
       if (batteryDesc) {
         batteryDesc.textContent = `左軸はkWh/${perUnit}、右軸はSOC(%)。太陽光充電終了時SOCは、その日にPV発電中の充電が最後に発生した時点のSOCです。`;
       }

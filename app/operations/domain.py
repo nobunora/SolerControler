@@ -13,6 +13,7 @@ from app.domain.tariff import tiered_day_increment_cost
 from app.domain.time_windows import DailyWindow, minute_of_day, parse_hhmm
 from app.configuration.environment import env
 from app.parsing.numbers import to_float, to_int
+from app.domain.measurement_time import hourly_time_contract
 
 
 # readable-code-audit: skip STRUCT-04 — plan values and hourly weather must be combined by hour before rows can preserve the forecast document contract
@@ -92,7 +93,7 @@ def extract_hourly_forecast_from_plan(data: dict[str, Any]) -> list[dict[str, An
                 "forecast_wind_speed_10m": to_float(weather.get("wind_speed_10m")),
             }
         )
-    return rows
+    return [hourly_time_contract(row) for row in rows]
 
 
 def extract_final_pv_totals_from_plan(data: dict[str, Any]) -> dict[str, float | str | None]:

@@ -47,6 +47,9 @@ def test_plan_domain_builds_backend_neutral_hourly_rows() -> None:
             "forecast_relative_humidity_percent": 68.0,
             "forecast_dew_point_c": 24.9,
             "forecast_wind_speed_10m": 3.4,
+            "interval_start": "2026-07-16T10:00:00+09:00",
+            "interval_end": "2026-07-16T11:00:00+09:00",
+            "forecast_soc_at": "2026-07-16T10:00:00+09:00",
         }
     ]
     assert extract_final_pv_totals_from_plan(plan)["total_kwh"] == 2.5

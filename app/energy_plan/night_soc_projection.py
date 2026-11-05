@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from app.parsing.numbers import to_float
 from app.runtime.night_soc_time_contract import FORCED_MONITOR_CUTOFF
 from app.energy_plan.battery_response import BatterySocResponse
+from app.domain.measurement_time import CSV_TIME_BASIS, csv_soc_effective_at
 
 
 def build_night_soc_projection(
@@ -48,7 +49,7 @@ def build_night_soc_projection(
         stamp, soc = row.get("dt"), to_float(row.get("soc"))
         if not isinstance(stamp, datetime) or soc is None or not math.isfinite(soc) or not 0 <= soc <= 100:
             continue
-        stamp = stamp.replace(tzinfo=zone) if stamp.tzinfo is None else stamp.astimezone(zone)
+        stamp = csv_soc_effective_at(stamp).astimezone(zone)
         if midnight - timedelta(hours=1) <= stamp <= min(generated, start):
             observations.append((stamp, soc))
     if not observations:
@@ -81,6 +82,7 @@ def build_night_soc_projection(
     return {
         **projection, "status": "ready", "reason": None,
         "initial_soc_percent": initial_soc, "initial_soc_observed_at": observed_at.isoformat(),
+        "initial_soc_time_basis": CSV_TIME_BASIS,
         "target_soc_percent": target, "target_reachable": arrival <= cutoff,
         "soc_per_kwh_charge": charge_coefficient,
         "target_reached_at": arrival.isoformat() if arrival <= cutoff else None,

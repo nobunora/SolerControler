@@ -1153,7 +1153,10 @@ def test_build_dashboard_slice_preserves_raw_fields() -> None:
     assert sliced.data.energy_daily == raw.energy_daily
     assert sliced.data.latest_schedule == raw.latest_schedule
     assert sliced.data.cost_monthly == raw.cost_monthly
-    assert sliced.data.forecast_hourly == raw.forecast_hourly
+    assert sliced.data.forecast_hourly == [{**raw.forecast_hourly[0],
+        "interval_start": "2026-07-14T12:00:00+09:00",
+        "interval_end": "2026-07-14T13:00:00+09:00",
+        "forecast_soc_at": "2026-07-14T12:00:00+09:00"}]
     assert sliced.meta["global_oldest_date"] == "2026-07-14"
 
 

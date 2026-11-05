@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from app.dashboard.models import DashboardData, DashboardRawData, DashboardSlice
+from app.domain.measurement_time import hourly_time_contract
 
 
 def merge_forecast_hourly_actuals(
@@ -33,6 +34,7 @@ def merge_forecast_hourly_actuals(
                 "energy_slots": {"actual_pv_kwh": {}, "actual_load_kwh": {}},
                 "actual_soc_percent": None,
                 "actual_soc_at_hour_start_percent": None,
+                "actual_soc_at_half_hour_percent": None,
                 "latest_sample_at": None,
                 "first_sample_at": None,
                 "opening_soc_percent": None,
@@ -61,6 +63,8 @@ def merge_forecast_hourly_actuals(
         if soc is not None and math.isfinite(soc) and 0.0 <= soc <= 100.0:
             if stamp.minute == 0:
                 acc["actual_soc_at_hour_start_percent"] = soc
+            else:
+                acc["actual_soc_at_half_hour_percent"] = soc
             opening_soc_at = acc.get("opening_soc_at")
             if opening_soc_at is None or ts < opening_soc_at:
                 acc["opening_soc_percent"] = soc
@@ -86,7 +90,7 @@ def merge_forecast_hourly_actuals(
             key = ("", -1)
         actual = actuals.get(key)
         for field in ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
-                      "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent"):
+                      "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent", "actual_soc_at_half_hour_percent"):
             if item.get(field) is None:
                 item[field] = actual.get(field) if actual else None
         seen.add(key)
@@ -97,7 +101,7 @@ def merge_forecast_hourly_actuals(
                            "forecast_load_kwh": None, "forecast_charge_kwh": None,
                            "forecast_run_id": None, **{field: actual.get(field) for field in
                            ("actual_pv_kwh", "actual_load_kwh", "actual_soc_percent", "first_sample_at",
-                            "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent")}})
+                            "opening_soc_percent", "latest_sample_at", "actual_soc_at_hour_start_percent", "actual_soc_at_half_hour_percent")}})
     merged.sort(key=lambda row: (str(row.get("date", "")), int(row.get("hour") or 0)))
     return merged
 
@@ -113,7 +117,7 @@ def assemble_dashboard_slice(
 ) -> DashboardSlice:
     """Build the stable API model from normalized backend rows."""
     private_markers = {"_raw_plan_sha256", "_control_version_id", "_plan_generated_at"}
-    public_hourly = [{key: value for key, value in row.items() if key not in private_markers}
+    public_hourly = [hourly_time_contract({key: value for key, value in row.items() if key not in private_markers})
                      for row in raw.forecast_hourly]
     public_energy = [{key: value for key, value in row.items() if key not in private_markers}
                      for row in raw.energy_daily]

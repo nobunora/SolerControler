@@ -57,6 +57,7 @@ def test_dashboard_metrics_materialize_review_night_window_and_morning_soc() -> 
         [
             {"ts": "2026-07-15T23:00:00", "charge_kwh": 1.0, "buy_kwh": 2.0, "soc_percent": 20},
             {"ts": "2026-07-16T00:00:00", "charge_kwh": 2.0, "buy_kwh": 3.0, "soc_percent": 30},
+            {"ts": "2026-07-16T06:30:00", "charge_kwh": 0.0, "buy_kwh": 0.0, "soc_percent": 75},
             {"ts": "2026-07-16T07:00:00", "buy_kwh": 4.0, "soc_percent": 80},
             {"ts": "2026-07-16T22:30:00", "buy_kwh": 5.0, "soc_percent": 40},
             # This window fixture contains measured zero buy, rather than an
@@ -71,8 +72,16 @@ def test_dashboard_metrics_materialize_review_night_window_and_morning_soc() -> 
     assert metrics["review_night_charge_kwh"] == pytest.approx(3.0)
     assert metrics["day_buy_kwh"] == pytest.approx(9.0)
     assert metrics["night_buy_kwh"] == pytest.approx(3.0)
-    assert metrics["morning_soc_percent"] == pytest.approx(80.0)
+    assert metrics["morning_soc_percent"] == pytest.approx(75.0)
+    assert metrics["morning_soc_at"] == "2026-07-16T07:00:00+09:00"
     assert metrics["day_soc_max_percent"] == pytest.approx(80.0)
     assert metrics["first_sample_at"] == "2026-07-16T00:00:00"
     assert metrics["latest_sample_at"] == "2026-07-16T23:00:00"
-    assert metrics["sample_count"] == pytest.approx(4.0)
+    assert metrics["sample_count"] == pytest.approx(5.0)
+
+
+def test_missing_exact_morning_state_is_not_replaced_by_later_csv_soc() -> None:
+    client = _Client([{"ts": "2026-07-16T07:00:00", "soc_percent": 80}])
+    recalc_dashboard_daily_metrics(client, updated_at="2026-07-17T00:00:00Z")
+    assert client.writes[("dashboard_daily_metrics", "2026-07-16")]["morning_soc_percent"] is None
+    assert client.writes[("dashboard_daily_metrics", "2026-07-16")]["morning_soc_at"] is None
