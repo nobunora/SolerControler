@@ -6,6 +6,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-05: 利用中本番タブで取込みボタン無効化の申告。新規sessionの実取込みは成功したが、ソースで認証・入力拒否400/401/403も受付不明として永久無効化する経路を確認 | Job送信前の既知拒否だけpendingを解除し、未開始の理由を表示する。502/503や通信断・受付不明は引き続きロックし、自動再送しない。`test_dashboard_hourly_display.js`で5種類の応答とPOST一回を回帰する。申告タブ固有の原因は未再現であり、この経路が原因と断定しない |
 | 2026-11-05: 共通時刻metadataの追加で保存原本のrun ID再構築が変わり、正式gateで直近23日がoriginal:run_mismatch、時間別744行中1248項目の照合失敗となり、本番更新前に停止 | immutable IDは従来の予測値・発行時刻・出典で固定し、派生interval_start/interval_end/forecast_soc_atだけをID入力から除く。`test_derived_time_metadata_preserves_legacy_forecast_identity`で変更前の固定IDと予測値変更時のID変化を回帰する。時刻metadata自体や原本SHA/run照合を削除せず、同commitの正式gateで31日native parityが成立するまでdeployしない |
 | 2026-11-03: 06→07接続の本番mobile画像で凡例最下段が切れた。既存のcanvas描画・page overflow検査はPASSでも、legend bottom=120に対し最下段120+12となっていた | mobileの時間別chartだけ420pxを確保し、legendとplotを収める。`test_browser_rejects_clipped_hourly_legend`で観測座標を回帰し、正規browser checkerで全legend hitboxの上下端を検査する。320/390/768/1440pxの画像と実boundsを確認し、描画数/HTTP成功だけでPASSにしない。表示だけの修正では取込み・機器操作を繰り返さない |
 | 2026-11-03: ボタンの本番一回試験で実績保存後の公開が停止。date refreshも全履歴epochをbootstrapへ渡し、未変更のforecast sourceを巻戻りと誤判定していた | 手動公開もbootstrap recent/history fullを別々に固定し、各uploadのnative scopeと一致させる。月次巻戻り回帰に実際のsource順序guardを組み込み、同じ最大revisionで24/744行の範囲差を検証する。actuals_saved=true・failed終端を保持し、再取込みで直さず保存済み実績を正規修復wrapperで公開する。新sourceのgate/fixture/SDK証跡を揃えるまで再受入しない |
