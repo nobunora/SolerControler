@@ -953,13 +953,13 @@
             { label: "PV余剰充電予測(kWh/h)", data: [], borderColor: "#14b86f", backgroundColor: "#14b86f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
             { label: "家の消費予測(kWh/h)", data: [], borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 0, pointHoverRadius: 0 },
             { type: "line", label: "夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", backgroundColor: "#6f778288", borderWidth: 1, pointRadius: 0, pointHoverRadius: 0 },
-            { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 3, borderWidth: 2.5, spanGaps: false },
+            { label: "予想SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0.25, pointRadius: 0, pointHoverRadius: 0, borderWidth: 2.5, spanGaps: false },
             { label: "実績SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", backgroundColor: "#9a7a00", tension: 0, pointRadius: 3, borderWidth: 2, spanGaps: false },
-            { label: "保存済み夜間予測SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 3, spanGaps: false },
+            { label: "保存済み夜間予測SOC(%)", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
             { label: "保存済み夜間系統充電予測(kWh/h)", data: [], borderColor: "#6f7782", borderDash: [2, 4], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
             { label: "発電実績(kWh/h)", data: [], borderColor: "#147efb", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
             { label: "家の消費実績(kWh/h)", data: [], borderColor: "#e6504f", borderDash: [], tension: 0, pointRadius: 0, pointHoverRadius: 0, spanGaps: false },
-            { label: "6→7時の予測接続（別計画）", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, borderWidth: 2.5, spanGaps: false },
+            { label: "6→7時の予測接続（別計画）", data: [], yAxisID: "y2", borderColor: "#9a7a00", borderDash: [2, 4], tension: 0, pointRadius: 0, pointHoverRadius: 0, borderWidth: 2.5, spanGaps: false },
           ],
         },
         options: {
@@ -1251,6 +1251,7 @@
       const chart = charts.hourlyForecast;
       if (!chart) return;
       const note = document.getElementById("hourlyForecastNote");
+      const grid = document.getElementById("hourlyForecastGrid");
       const date = hourlyForecastDate();
       const rows = date ? (store.hourly.get(date) || []) : [];
       if (!rows.length) {
@@ -1263,6 +1264,7 @@
         chart.data.datasets[5].data = [];
         chart.data.datasets.slice(6).forEach((dataset) => { dataset.data = []; });
         if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
+        if (grid) grid.innerHTML = "";
         ensureVisibleChartRanges(chart);
         chart.update("none");
         return;
@@ -1411,29 +1413,33 @@
         grid: { drawOnChartArea: false },
         border: { color: "#9a7a00" },
       };
-      if (note) {
+      if (note || grid) {
         const sch = state.boundSchedule || {};
-        const retainedIssues = [...new Set(rows.filter((row) => row.hour < 7
-          && (row.retained_forecast_soc_percent != null || row.retained_forecast_grid_charge_kwh != null))
-          .flatMap((row) => [row.retained_forecast_soc_issued_at, row.retained_forecast_grid_charge_issued_at, row.retained_forecast_issued_at]).filter(Boolean))].sort();
-        const retainedText = retainedIssues.length ? ` 保存済み夜間予測の発行時刻: ${retainedIssues.join(" / ")}。` : "";
         const daytimeSaved = state.points.map((point, index) => rows[index].hour >= 7 ? point : null);
         const daytimeSavedCount = daytimeSaved.filter((point) => point !== null).length;
         const socPeak = maxForecastSocPoint(labels, socKind === "計画SOC" ? daytimeSaved
           : soc.map((point, index) => state.pointSources[index] === "observed" ? null : point));
-        const actualText = `実績取得済み分 PV ${state.actualPvSubtotal === null ? "-" : state.actualPvSubtotal.toFixed(2)}kWh（${state.actualPvCount}/24） / 消費 ${state.actualLoadSubtotal === null ? "-" : state.actualLoadSubtotal.toFixed(2)}kWh（${state.actualCount}/24）`;
-        const latestText = latestActual ? ` / 最新実績 ${latestActual.replace("T", " ")}` : " / 実績観測時刻未連携";
         const planUpdated = sch.plan_updated_at ? new Date(sch.plan_updated_at) : null;
-        const planUpdatedText = planUpdated && !Number.isNaN(planUpdated.getTime())
-          ? ` / 計画更新 ${planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false })}`
-          : "";
-        const socText = socPeak ? ` / ${socKind === "計画SOC" ? daytimeSavedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${daytimeSavedCount}/17` : "参考SOC最大"} ${socPeak.label} ${socPeak.value.toFixed(0)}%` : ` / ${socKind}`;
-        const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)}kWh` : `未完 ${count}/24`;
-        const nightText = state.boundSchedule && nightAmount !== null ? ` / 夜間系統充電 ${nightAmount.toFixed(2)}kWh${nightGridCharge.every((value) => value === null) ? "（時間別計画未確定）" : ""}` : " / 夜間系統充電 時間帯未連携";
-        note.textContent = `${date} の時間別表示。全日発電予測 ${totalText(state.forecastPvTotal, state.pvCount)} / PV余剰充電 ${totalText(state.forecastChargeTotal, state.chargeCount)}${nightText} / 全日消費予測 ${totalText(state.forecastLoadTotal, state.loadCount)}${socText}。${actualText}${latestText}${planUpdatedText}。線の消費は実績優先。PV/loadは00〜23時の24区間、日中計画SOCは07開始〜23開始の17点（23時は22区間終了）。夜間SOCも保存計画を表示し、実績SOCは別の線で表示します。${rows.some((row, index) => row.hour < 7 && state.points[index] === null) ? "夜間SOC計画未確定の区間は表示しません。" : ""}夜間系統充電は家の消費とは別の請求対象買電です。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
-        note.textContent = note.textContent.replace("線の消費は実績優先。", "予測は点線、実績は実線。") + retainedText
-          + (connectNight ? " 6→7時の点線は保存夜間予測と最新日中計画の既存点を接続しています（別計画）。" : "");
-        if (timeAligned) note.textContent += " 電力量は正時・半時の合計を各1時間区間に表示。SOCはサーバー共通時刻契約による瞬時値です。CSV SOCは区間末とのAPI照合に基づく暫定換算で、メーカー仕様は未確定です。";
+        const totalText = (value, count) => count === 24 && value !== null ? `${value.toFixed(2)} kWh` : `未完 ${count}/24`;
+        const socLabel = socPeak ? socKind === "計画SOC"
+          ? daytimeSavedCount === 17 ? "計画SOC最大" : `取得済み計画SOC最大 ${daytimeSavedCount}/17`
+          : "参考SOC最大" : "SOC";
+        const nightKnown = state.boundSchedule && nightAmount !== null;
+        const items = [
+          { label: "全日発電予測", value: totalText(state.forecastPvTotal, state.pvCount) },
+          { label: "PV余剰充電予測", value: totalText(state.forecastChargeTotal, state.chargeCount) },
+          { label: "夜間系統充電予測", value: nightKnown ? `${nightAmount.toFixed(2)} kWh` : "時間帯未連携",
+            sub: nightKnown && nightGridCharge.every((value) => value === null) ? "時間別計画未確定" : "" },
+          { label: "全日消費予測", value: totalText(state.forecastLoadTotal, state.loadCount) },
+          { label: socLabel, value: socPeak ? `${socPeak.value.toFixed(0)}%` : socKind, sub: socPeak ? socPeak.label : "" },
+          { label: "発電実績（取得分）", value: state.actualPvSubtotal === null ? "-" : `${state.actualPvSubtotal.toFixed(2)} kWh`, sub: `${state.actualPvCount}/24区間` },
+          { label: "消費実績（取得分）", value: state.actualLoadSubtotal === null ? "-" : `${state.actualLoadSubtotal.toFixed(2)} kWh`, sub: `${state.actualCount}/24区間` },
+          { label: "最新実績", value: latestActual ? latestActual.replace("T", " ") : "観測時刻未連携" },
+          { label: "計画更新", value: planUpdated && !Number.isNaN(planUpdated.getTime())
+            ? planUpdated.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", hour12: false }) : "-" },
+        ];
+        if (grid) grid.innerHTML = items.map((item) => `<div class="diag-kpi"><span class="diag-label">${escapeHtml(item.label)}</span><span class="diag-value">${escapeHtml(item.value)}</span>${item.sub ? `<small class="diag-subvalue">${escapeHtml(item.sub)}</small>` : ""}</div>`).join("");
+        if (note) note.textContent = `${date} の時間別表示。${state.mixedRuns ? " 予測生成元が混在しています。" : ""}`;
       }
       ensureVisibleChartRanges(chart);
       chart.update("none");
@@ -1920,9 +1926,18 @@
       }
       async function monitor(execution) {
         const deadline = Date.now() + 720000;
+        let firstCheck = true;
         while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          const result = await dashboardApi.fetchJson(`/api/dashboard/actual-import?execution=${encodeURIComponent(execution)}`);
+          if (!firstCheck) await new Promise((resolve) => setTimeout(resolve, 5000));
+          firstCheck = false;
+          if (Date.now() >= deadline) break;
+          let result;
+          try {
+            result = await dashboardApi.fetchJson(`/api/dashboard/actual-import?execution=${encodeURIComponent(execution)}`);
+          } catch {
+            status.textContent = "取込み状態の通信確認を待っています。新しい取込みは開始せず、同じ実行を確認します。";
+            continue;
+          }
           if (result.status === "succeeded") {
             window.sessionStorage.removeItem(storageKey);
             status.textContent = "取込み完了。最新データを表示します。";
@@ -1937,18 +1952,29 @@
             return;
           }
           if (["failed", "busy"].includes(result.status)) {
+            const savedOutcomeKnown = result.actuals_saved === true || result.actuals_saved === false;
+            const finished = typeof result.completed_at === "string" && Number.isFinite(Date.parse(result.completed_at));
             status.textContent = result.status === "busy" ? "別の取込みが実行中または結果未確認です。"
-              : result.actuals_saved === null ? "実績の保存結果が未確認です。再取込みせず保存状態の確認が必要です。"
+              : !savedOutcomeKnown || !finished ? "実績の保存結果または終了が未確認です。再取込みせず状態の確認が必要です。"
                 : result.actuals_saved ? "実績は保存済みですが、表示用データの更新に失敗しました。再取込みは行っていません。"
                 : "取込みに失敗しました。予測は保持されています。";
+            // A terminal receipt with a known save outcome allows another explicit
+            // user action. Unknown/busy receipts must never unlock or resubmit.
+            if (result.status === "failed" && savedOutcomeKnown && finished) {
+              window.sessionStorage.removeItem(storageKey);
+              button.disabled = false;
+            }
             return;
           }
+          status.textContent = "取込みは実行中です。新しい取込みは開始せず、現在の実行結果を待っています。";
         }
         throw new Error("import_outcome_unknown");
       }
       async function run(execution) {
         button.disabled = true;
-        status.textContent = "最新実績を取り込んでいます。予測は保存したまま更新します。";
+        status.textContent = execution
+          ? "前回の取込み結果を確認しています。新しい取込みは開始しません。"
+          : "最新実績を取り込んでいます。予測は保存したまま更新します。";
         try {
           if (!execution) {
             window.sessionStorage.setItem(storageKey, "unknown");

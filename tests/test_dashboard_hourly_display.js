@@ -1,6 +1,10 @@
 const assert = require("node:assert/strict");
 const { harness, fixture } = require("./test_dashboard_model_display.js");
 
+function summaryText(view) {
+  return view.elements.get("hourlyForecastGrid").innerHTML.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+}
+
 async function tests() {
   const h = await harness();
   const chart = h.chart("hourlyForecastChart");
@@ -9,11 +13,14 @@ async function tests() {
   assert.ok(chart.data.datasets[10].data.every((value) => value === null));
   chart.data.datasets.slice(0, 5).forEach((dataset) => assert.deepEqual(Array.from(dataset.borderDash), [2, 4]));
   assert.equal(chart.data.datasets[5].borderDash, undefined);
-  for (const index of [0, 1, 2, 3, 7, 8, 9]) {
+  for (const index of [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]) {
     assert.equal(chart.data.datasets[index].pointRadius, 0);
     assert.equal(chart.data.datasets[index].pointHoverRadius, 0);
   }
   assert.equal(chart.data.datasets[5].pointRadius, 3, "instantaneous SOC keeps its observation points");
+  for (const index of [4, 6, 10]) {
+    assert.deepEqual(Array.from(chart.data.datasets[index].borderDash), [2, 4], "SOC forecasts remain dotted without markers");
+  }
   const visible = Array(11).fill(true);
   chart.isDatasetVisible = (index) => visible[index];
   chart.setDatasetVisibility = (index, value) => { visible[index] = value; };
@@ -45,8 +52,12 @@ async function tests() {
   assert.equal(soc.data[23], 99);
   assert.match(soc.label, /計画SOC/);
   assert.equal(soc.spanGaps, false);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /計画SOC最大 23:00 99%/);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /夜間SOC計画未確定/);
+  assert.match(summaryText(h), /計画SOC最大 99% 23:00/);
+  assert.match(summaryText(h), /全日発電予測 0\.20 kWh/);
+  assert.match(summaryText(h), /夜間系統充電予測 2\.00 kWh/);
+  assert.equal((h.elements.get("hourlyForecastGrid").innerHTML.match(/class="diag-kpi"/g) || []).length, 9);
+  assert.equal(h.elements.get("hourlyForecastNote").textContent, "2026-07-20 の時間別表示。");
+  assert.doesNotMatch(h.template, /予測は点線、実績は実線/);
   const retained = fixture();
   retained.forecast_hourly.forEach((row) => {
     if (row.hour < 7) {
@@ -64,7 +75,7 @@ async function tests() {
   assert.deepEqual(Array.from(boundary.borderDash), [2, 4]);
   assert.deepEqual(Array.from(boundary.data), retained.forecast_hourly.map((row) => row.hour === 6 ? 35 : row.hour === 7 ? row.forecast_soc_percent : null));
   assert.equal(chart.data.datasets[6].data[7], null, "the connector must not rewrite the retained source series");
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /6→7時.*別計画/);
+  assert.doesNotMatch(h.elements.get("hourlyForecastNote").textContent, /6→7時.*別計画/);
   retained.forecast_hourly[6].retained_forecast_soc_percent = 0;
   await h.replace(retained);
   assert.equal(boundary.data[6], 0, "a saved zero is a valid endpoint");
@@ -86,7 +97,7 @@ async function tests() {
   assert.equal(chart.data.datasets[7].data[3], 1.2, "imported actuals must not hide saved night grid charging");
   assert.equal(chart.data.datasets[2].data[3], 0.1, "load forecast remains visible beside actual load");
   assert.equal(chart.data.datasets[9].data[3], 0.7);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /保存済み夜間予測の発行時刻/);
+  assert.doesNotMatch(h.elements.get("hourlyForecastNote").textContent, /保存済み夜間予測の発行時刻/);
 
   // HISTORICAL_FAILURE_LOCK (2026-10-17): preserve night observations separately
   // from immutable saved plans, including zero and successive snapshots.
@@ -120,7 +131,7 @@ async function tests() {
   assert.equal(chart.data.datasets[5].data[0], 0);
   assert.equal(chart.data.datasets[5].data[4], 40);
   assert.equal(chart.data.datasets[5].data[7], 38);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /計画SOC最大 23:00 99%/);
+  assert.match(summaryText(h), /計画SOC最大 99% 23:00/);
   for (const bad of [true, "17", NaN, -1, 101]) {
     night.forecast_hourly[4].actual_soc_percent = bad;
     await h.replace(night);
@@ -153,8 +164,8 @@ async function tests() {
   partial.forecast_hourly[8].forecast_pv_kwh = null;
   await h.replace(partial);
   assert.equal(chart.data.datasets[0].data[8], null);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /全日発電予測 未完 23\/24/);
-  assert.equal(h.elements.get("hourlyForecastNote").textContent.includes("全日発電予測 0.20kWh"), false);
+  assert.match(summaryText(h), /全日発電予測 未完 23\/24/);
+  assert.equal(summaryText(h).includes("全日発電予測 0.20 kWh"), false);
 
   for (const bad of [true, "99", NaN, -1, 101]) {
     const p = fixture();
@@ -172,7 +183,7 @@ async function tests() {
   cross.latest_schedule.planned_night_charge_kwh = 9;
   await h.replace(cross);
   assert.ok(chart.data.datasets[3].data.every((value) => value === null));
-  assert.equal(h.elements.get("hourlyForecastNote").textContent.includes("9.00kWh"), false);
+  assert.equal(summaryText(h).includes("9.00 kWh"), false);
   assert.equal(chart.data.datasets[4].data[23], 99);
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));
   cross.forecast_hourly.forEach((row) => { row.actual_soc_percent = null; });
@@ -184,11 +195,11 @@ async function tests() {
   await h.replace(legacy);
   assert.match(chart.data.datasets[4].label, /参考SOC/);
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /参考SOC最大/);
+  assert.match(summaryText(h), /参考SOC最大/);
   legacy.forecast_hourly[0].actual_soc_percent = 100;
   await h.replace(legacy);
   assert.equal(chart.data.datasets[5].data[0], 100);
-  assert.equal(h.elements.get("hourlyForecastNote").textContent.includes("00:00 100%"), false);
+  assert.equal(summaryText(h).includes("100% 00:00"), false);
   legacy.latest_schedule = null;
   h.run("store.latestSchedule=null");
   await h.replace(legacy);
@@ -207,15 +218,26 @@ async function tests() {
   const mixed = fixture();
   mixed.forecast_hourly[8].forecast_run_id = "another-run";
   await h.replace(mixed);
+  assert.match(h.elements.get("hourlyForecastNote").textContent, /予測生成元が混在/);
   assert.deepEqual(Array.from(chart.data.datasets[5].data.slice(0, 7)), Array(7).fill(40));
   assert.ok(chart.data.datasets[4].data.slice(7).every((value) => value === null));
 
   const empty = fixture();
   empty.forecast_hourly.forEach((row) => { row.forecast_pv_kwh = null; row.forecast_load_kwh = null; row.forecast_charge_kwh = null; row.forecast_soc_percent = null; row.forecast_run_id = null; });
   await h.replace(empty);
-  assert.match(h.elements.get("hourlyForecastNote").textContent, /全日発電予測 未完 0\/24/);
+  assert.match(summaryText(h), /全日発電予測 未完 0\/24/);
   assert.ok(chart.data.datasets[0].data.every((value) => value === null));
   assert.equal(chart.data.datasets[9].data[0], 0, "valid observed zero is preserved on the actual series");
+  const escapedSummary = fixture();
+  escapedSummary.forecast_hourly[23].latest_sample_at = '<img src=x onerror="alert(1)">';
+  await h.replace(escapedSummary);
+  assert.equal(h.elements.get("hourlyForecastGrid").innerHTML.includes("<img"), false);
+  assert.match(h.elements.get("hourlyForecastGrid").innerHTML, /&lt;img/);
+  const noRows = fixture();
+  noRows.forecast_hourly = [];
+  h.run("store.hourly.clear()");
+  await h.replace(noRows);
+  assert.equal(h.elements.get("hourlyForecastGrid").innerHTML, "", "missing hourly data clears stale summary cards");
 
   const review = fixture();
   review.daily_review = { date: "2026-07-20", complete_day: false, forecast_available_hour_count: 0,
@@ -261,7 +283,7 @@ async function tests() {
   assert.match(alignedChart.options.plugins.tooltip.callbacks.label({
     dataset: alignedChart.data.datasets[9], dataIndex: 37, parsed: { y: 1.183 }, chart: alignedChart,
   }), /18:00〜19:00/, "the ending edge identifies its actual interval, rather than inventing a 19:00 value");
-  assert.match(alignedView.elements.get("hourlyForecastNote").textContent, /正時・半時の合計/);
+  assert.doesNotMatch(alignedView.elements.get("hourlyForecastNote").textContent, /正時・半時の合計|共通時刻契約|メーカー仕様|請求対象買電/);
   await alignedView.replace(fixture());
   assert.equal(alignedChart.data.datasets[5].parsing, true);
   assert.equal(alignedChart.data.datasets[9].parsing, true);
