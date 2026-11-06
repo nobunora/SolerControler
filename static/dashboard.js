@@ -32,8 +32,9 @@
     function minMaxBounds(values, options = {}) {
       const intervals = Math.max(2, Math.round(n(options.intervals, 5)));
       const paddingRatio = Math.max(0, n(options.paddingRatio, 0.1));
-      const minZero = options.minZero === true;
-      const finite = values.map(Number).filter(Number.isFinite);
+      const candidates = options.compact && options.minZero ? [...values, 0] : values;
+      const finite = candidates.filter((value) => !options.compact || value != null).map(Number).filter(Number.isFinite);
+      const minZero = options.minZero === true && (!options.compact || finite.every((value) => value >= 0));
       if (!finite.length) return { min: 0, max: 1, stepSize: 1 / intervals, intervals };
 
       const dataMin = minZero ? 0 : Math.min(...finite);
@@ -41,7 +42,8 @@
       let paddedMin;
       let paddedMax;
       if (dataMin === dataMax) {
-        const padding = Math.max(1, Math.abs(dataMax) * paddingRatio);
+        const padding = options.compact ? (Math.abs(dataMax) || 1) * paddingRatio
+          : Math.max(1, Math.abs(dataMax) * paddingRatio);
         paddedMin = minZero ? 0 : dataMin - padding;
         paddedMax = dataMax + padding;
       } else {
@@ -50,6 +52,15 @@
         paddedMax = dataMax + padding;
       }
 
+      if (options.compact) {
+        const stepSize = niceCeil((paddedMax - paddedMin) / 10);
+        const axisMin = minZero ? 0 : Math.floor(paddedMin / stepSize) * stepSize;
+        const axisMax = Math.ceil(paddedMax / stepSize) * stepSize;
+        return {
+          min: cleanAxisNumber(axisMin), max: cleanAxisNumber(axisMax),
+          stepSize: cleanAxisNumber(stepSize), intervals: Math.round((axisMax - axisMin) / stepSize),
+        };
+      }
       let stepSize = niceCeil((paddedMax - paddedMin) / intervals);
       let axisMin = minZero ? 0 : Math.floor(paddedMin / stepSize) * stepSize;
       let axisMax = axisMin + stepSize * intervals;
@@ -83,6 +94,7 @@
             intervals,
             minZero: options.minZero === true || options.leftMinZero === true,
             paddingRatio: options.paddingRatio,
+            compact: true,
           })
         : fixedBounds(n(options.leftMax));
       const rightBounds = options.rightMax == null
@@ -90,13 +102,14 @@
             intervals,
             minZero: options.minZero === true || options.rightMinZero === true,
             paddingRatio: options.paddingRatio,
+            compact: true,
           })
         : fixedBounds(n(options.rightMax));
       return {
         y: {
           min: leftBounds.min,
           max: leftBounds.max,
-          ticks: { count: intervals + 1, stepSize: leftBounds.stepSize, callback: (v) => `${v}${leftUnit}` },
+          ticks: { stepSize: leftBounds.stepSize, callback: (v) => `${v}${leftUnit}` },
           title: { display: !!leftUnit, text: leftUnit.replace(/[()]/g, "") },
           grid: { color: "#d8e6f2" },
         },
@@ -104,7 +117,7 @@
           min: rightBounds.min,
           max: rightBounds.max,
           position: "right",
-          ticks: { count: intervals + 1, stepSize: rightBounds.stepSize, callback: (v) => `${v}${rightUnit}` },
+          ticks: { stepSize: rightBounds.stepSize, callback: (v) => `${v}${rightUnit}` },
           title: { display: !!rightUnit, text: rightUnit.replace(/[()]/g, "") },
           grid: { drawOnChartArea: false },
         },
@@ -1068,9 +1081,8 @@
       charts.battery = new Chart(document.getElementById("batteryChart"), {
         type: "line",
         data: { labels: [], datasets: [
-          { label: "設定SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointRadius: 2, pointHoverRadius: 4, borderWidth: 2.5 },
           { label: "夜間充電計画(kWh/日)", data: [], yAxisID: "y", borderColor: "#ef8e1d", backgroundColor: "#ef8e1d", tension: 0.25 },
-          { label: "太陽光充電終了時SOC(%)", data: [], yAxisID: "y2", borderColor: "#e6504f", backgroundColor: "#e6504f", tension: 0.25, pointRadius: 3, pointHoverRadius: 5, borderWidth: 3, spanGaps: true },
+          { label: "太陽光充電終了時SOC(%)", data: [], yAxisID: "y2", borderColor: "#147efb", backgroundColor: "#147efb", tension: 0.25, pointStyle: "triangle", pointRadius: 4, pointHoverRadius: 6, borderWidth: 3, spanGaps: true },
         ]},
         options: {
           ...commonOptions(),
@@ -1162,30 +1174,21 @@
       return n(actual) - n(forecast);
     }
 
-    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit, options = {}) {
+    function updateForecastActualChart(chart, labels, forecast, actual, diff, unit) {
       chart.data.labels = labels;
       chart.data.datasets[0].data = forecast;
       chart.data.datasets[1].data = actual;
       chart.data.datasets[2].data = diff;
       const values = [...forecast, ...actual, ...diff].filter((v) => v != null);
-      const bounds = minMaxBounds(values, { paddingRatio: options.paddingRatio });
-      const axisMax = options.axisMax;
-      const stepSize = axisMax == null
-        ? bounds.stepSize
-        : cleanAxisNumber(axisMax / bounds.intervals);
-      const roundedMin = Math.floor(bounds.min / stepSize) * stepSize;
-      const axisMin = axisMax == null ? bounds.min : (roundedMin < 0 ? roundedMin : 0);
-      const chartMax = axisMax == null ? bounds.max : axisMax;
-      const tickCount = Math.round((chartMax - axisMin) / stepSize) + 1;
-      chart.options.scales.y.min = axisMin;
-      chart.options.scales.y.max = chartMax;
+      const bounds = minMaxBounds([...values, 0], { compact: true });
+      chart.options.scales.y.min = bounds.min;
+      chart.options.scales.y.max = bounds.max;
       chart.options.scales.y.grid = {
         color: (ctx) => (ctx.tick && ctx.tick.value === 0 ? "#6d7f91" : "#d8e6f2"),
         lineWidth: (ctx) => (ctx.tick && ctx.tick.value === 0 ? 2.6 : 1),
       };
       chart.options.scales.y.ticks = {
-        count: tickCount,
-        stepSize,
+        stepSize: bounds.stepSize,
         callback: (v) => `${v}${unit}`,
       };
       ensureVisibleChartRanges(chart);
@@ -1644,7 +1647,6 @@
       const pvForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_pv_kwh"));
       const pvActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_pv_kwh"));
       const pvDiff = labels.map((_d, i) => diffOrNull(pvActual[i], pvForecast[i]));
-      const dynamicWeeklyAxis = isWeekly ? { paddingRatio: 0.15 } : { axisMax: 30 };
       const coverageNotes = buckets.map((bucket) => {
         const counts = bucket.dates.map((day) => store.energy.get(day)?.forecast_available_hour_count);
         const partial = counts.filter((count) => Number.isInteger(count) && count >= 0 && count < 24);
@@ -1653,7 +1655,7 @@
       });
       charts.pv.forecastCoverage = coverageNotes;
       charts.load.forecastCoverage = coverageNotes;
-      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh", dynamicWeeklyAxis);
+      updateForecastActualChart(charts.pv, labels, pvForecast, pvActual, pvDiff, "kWh");
 
       const loadForecast = buckets.map((bucket) => sumBucket(bucket, store.energy, "forecast_load_kwh"));
       const loadActual = buckets.map((bucket) => sumBucket(bucket, store.energy, "actual_load_kwh"));
@@ -1665,7 +1667,6 @@
         loadActual,
         loadDiff,
         "kWh",
-        isWeekly ? { paddingRatio: 0.15 } : { axisMax: 100 },
       );
 
       const dailySelf = buckets.map((bucket) => sumBucket(bucket, store.cost, "self_consumption_kwh"));
@@ -1689,13 +1690,12 @@
       charts.dailyKwh.data.datasets[0].data = dailySelf;
       charts.dailyKwh.data.datasets[1].data = cumKwh.map((value, index) => dailySelf[index] === null ? null : value);
       charts.dailyKwh.data.datasets[1].label = "取得済み累計 自家消費(kWh)";
-      const dailyKwhDual = dualScales(dailySelf, cumKwh, {
+      const dailyKwhDual = dualScales(dailySelf, charts.dailyKwh.data.datasets[1].data, {
         leftUnit: "kWh",
         rightUnit: "kWh",
-        leftMax: isWeekly ? null : 30,
-        rightMinZero: !isWeekly,
+        leftMinZero: true,
         intervals: 6,
-        paddingRatio: isWeekly ? 0.15 : undefined,
+        paddingRatio: 0.1,
       });
       charts.dailyKwh.options.scales.y = {
         ...dailyKwhDual.y,
@@ -1722,13 +1722,12 @@
       charts.dailyYen.data.datasets[0].data = dailyYen;
       charts.dailyYen.data.datasets[1].data = cumYen.map((value, index) => dailyYen[index] === null ? null : value);
       charts.dailyYen.data.datasets[1].label = "取得済み累計 節約額(円)";
-      const dailyYenDual = dualScales(dailyYen, cumYen, {
+      const dailyYenDual = dualScales(dailyYen, charts.dailyYen.data.datasets[1].data, {
         leftUnit: "円",
         rightUnit: "円",
-        leftMax: isWeekly ? null : 1500,
-        rightMinZero: !isWeekly,
+        leftMinZero: true,
         intervals: 6,
-        paddingRatio: isWeekly ? 0.15 : undefined,
+        paddingRatio: 0.1,
       });
       charts.dailyYen.options.scales.y = {
         ...dailyYenDual.y,
@@ -1745,7 +1744,6 @@
       ensureVisibleChartRanges(charts.dailyYen);
       charts.dailyYen.update("none");
 
-      const batteryTarget = buckets.map((bucket) => averageBucket(bucket, store.battery, "setting_soc_target_percent"));
       const batteryNight = buckets.map((bucket) => sumBucket(bucket, store.battery, "night_charge_kwh"));
       const batteryPvChargeEndSoc = buckets.map((bucket) => averageBucket(bucket, store.battery, "pv_charge_end_soc_percent"));
 
@@ -1757,31 +1755,25 @@
       }
 
       charts.battery.data.labels = labels;
-      charts.battery.data.datasets[0].label = isWeekly ? "平均設定SOC(%)" : "設定SOC(%)";
-      charts.battery.data.datasets[1].label = `夜間充電計画(kWh/${perUnit})`;
-      charts.battery.data.datasets[2].label = isWeekly ? "平均太陽光充電終了時SOC(%)" : "太陽光充電終了時SOC(%)";
-      charts.battery.data.datasets[0].data = batteryTarget;
-      charts.battery.data.datasets[1].data = batteryNight;
-      charts.battery.data.datasets[2].data = batteryPvChargeEndSoc;
-      charts.battery.data.datasets[2].hidden = !batteryPvChargeEndSoc.some((v) => v != null);
-      const batterySoc = [
-        ...batteryTarget.filter((v) => v != null),
-        ...batteryPvChargeEndSoc.filter((v) => v != null),
-      ];
+      charts.battery.data.datasets[0].label = `夜間充電計画(kWh/${perUnit})`;
+      charts.battery.data.datasets[1].label = isWeekly ? "平均太陽光充電終了時SOC(%)" : "太陽光充電終了時SOC(%)";
+      charts.battery.data.datasets[0].data = batteryNight;
+      charts.battery.data.datasets[1].data = batteryPvChargeEndSoc;
+      charts.battery.data.datasets[1].hidden = !batteryPvChargeEndSoc.some((v) => v != null);
+      const batterySoc = batteryPvChargeEndSoc.filter((v) => v != null);
       const batteryKwh = batteryNight.filter((v) => v != null);
       const batteryDual = dualScales(batteryKwh, batterySoc, {
         leftUnit: "kWh",
         rightUnit: "%",
-        leftMax: isWeekly ? null : 15,
-        rightMax: isWeekly ? null : 100,
+        rightMax: 100,
         intervals: 5,
-        paddingRatio: isWeekly ? 0.15 : undefined,
+        paddingRatio: 0.1,
       });
       charts.battery.options.scales.y = {
         ...batteryDual.y,
-        ticks: { ...batteryDual.y.ticks, color: "#14b86f" },
-        border: { color: "#14b86f" },
-        title: { display: true, text: "kWh", color: "#14b86f" },
+        ticks: { ...batteryDual.y.ticks, color: "#ef8e1d" },
+        border: { color: "#ef8e1d" },
+        title: { display: true, text: "kWh", color: "#ef8e1d" },
       };
       charts.battery.options.scales.y2 = {
         ...batteryDual.y2,
@@ -1799,7 +1791,6 @@
     }
 
     function renderMonthly() {
-      const isWeekly = periodState.mode === "year";
       const range = currentPeriodRange();
       const rows = range
         ? store.monthly.filter((x) => {
@@ -1817,10 +1808,8 @@
       const scales = dualScales(monthKwh, monthYen, {
         leftUnit: "kWh",
         rightUnit: "円",
-        leftMax: isWeekly ? null : 800,
-        rightMax: isWeekly ? null : 40000,
         intervals: 4,
-        paddingRatio: isWeekly ? 0.15 : undefined,
+        paddingRatio: 0.1,
       });
       charts.monthly.options.scales.y = {
         ...scales.y,

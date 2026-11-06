@@ -40,6 +40,32 @@ class ChartStub {
 }
 ChartStub.instances = [];
 
+function assertCompactAxis(chart, axisName, indexes, zeroBaseline = false, includeZero = false) {
+  const values = indexes.flatMap((index) => chart.data.datasets[index].data)
+    .filter((value) => typeof value === "number" && Number.isFinite(value));
+  if (zeroBaseline || includeZero) values.push(0);
+  assert.ok(values.length > 0);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const padding = (maximum === minimum ? Math.abs(maximum) || 1 : maximum - minimum) * 0.1;
+  const axis = chart.options.scales[axisName];
+  const step = axis.ticks.stepSize;
+  const tolerance = step * 1e-8;
+  assert.ok(Number.isFinite(step) && step > 0);
+  if (zeroBaseline && minimum >= 0) assert.equal(axis.min, 0);
+  else {
+    assert.ok(axis.min <= minimum - padding + tolerance, "lower 10% margin");
+    assert.ok(axis.min > minimum - padding - step - tolerance, "lower rounding stays within one tick");
+  }
+  assert.ok(axis.max >= maximum + padding - tolerance, "upper 10% margin");
+  assert.ok(axis.max < maximum + padding + step + tolerance, "upper rounding stays within one tick");
+  for (const bound of [axis.min, axis.max]) {
+    assert.ok(Math.abs(bound / step - Math.round(bound / step)) < 1e-8, "bounds use neat tick multiples");
+  }
+  assert.equal(axis.ticks.count, undefined, "do not respace neat ticks by forcing a count");
+  assert.equal(axis.ticks.maxTicksLimit, undefined, "leave density reduction to automatic tick skipping");
+}
+
 const context = {
   console,
   URLSearchParams,
@@ -186,32 +212,34 @@ setImmediate(async () => {
   assert.deepEqual(Array.from(pvChart.data.labels), initialDailyLabels);
   assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
-  assert.deepEqual(
-    { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 30, step: 6 },
-  );
   const loadChart = ChartStub.instances[2];
-  assert.deepEqual(
-    { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
-    { min: -20, max: 100, step: 20 },
-  );
-  assert.equal(Number.isInteger(loadChart.options.scales.y.min / loadChart.options.scales.y.ticks.stepSize), true);
   const dailyKwhChart = ChartStub.instances[3];
-  assert.deepEqual({ min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max, step: dailyKwhChart.options.scales.y.ticks.stepSize }, { min: 0, max: 30, step: 5 });
-  assert.deepEqual({ min: dailyKwhChart.options.scales.y2.min, max: dailyKwhChart.options.scales.y2.max, step: dailyKwhChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 12, step: 2 });
-  assert.equal(dailyKwhChart.options.scales.y.ticks.count, dailyKwhChart.options.scales.y2.ticks.count);
   const dailyYenChart = ChartStub.instances[4];
-  assert.deepEqual({ min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max, step: dailyYenChart.options.scales.y.ticks.stepSize }, { min: 0, max: 1500, step: 250 });
-  assert.deepEqual({ min: dailyYenChart.options.scales.y2.min, max: dailyYenChart.options.scales.y2.max, step: dailyYenChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 600, step: 100 });
-  assert.equal(dailyYenChart.options.scales.y.ticks.count, dailyYenChart.options.scales.y2.ticks.count);
   const monthlyChart = ChartStub.instances[5];
-  assert.deepEqual({ min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max, step: monthlyChart.options.scales.y.ticks.stepSize }, { min: 0, max: 800, step: 200 });
-  assert.deepEqual({ min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max, step: monthlyChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 40000, step: 10000 });
-  assert.equal(monthlyChart.options.scales.y.ticks.count, monthlyChart.options.scales.y2.ticks.count);
   const batteryChart = ChartStub.instances.find((chart) => chart.data.datasets.some((dataset) => dataset.label.includes("夜間充電計画")));
-  assert.deepEqual({ min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize }, { min: 0, max: 15, step: 3 });
-  assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize }, { min: 0, max: 100, step: 20 });
-  assert.equal(batteryChart.options.scales.y.ticks.count, batteryChart.options.scales.y2.ticks.count);
+  const checkDisplayAxes = () => {
+    assertCompactAxis(pvChart, "y", [0, 1, 2], false, true);
+    assertCompactAxis(loadChart, "y", [0, 1, 2], false, true);
+    assertCompactAxis(dailyKwhChart, "y", [0], true);
+    assertCompactAxis(dailyKwhChart, "y2", [1]);
+    assertCompactAxis(dailyYenChart, "y", [0], true);
+    assertCompactAxis(dailyYenChart, "y2", [1]);
+    assertCompactAxis(monthlyChart, "y", [0]);
+    assertCompactAxis(monthlyChart, "y2", [1]);
+    assertCompactAxis(batteryChart, "y", [0]);
+    assert.deepEqual({ min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max }, { min: 0, max: 100 });
+    for (const dataset of batteryChart.data.datasets) {
+      assert.equal(dataset.borderColor, batteryChart.options.scales[dataset.yAxisID].ticks.color);
+    }
+    assert.equal(batteryChart.data.datasets.length, 2);
+    assert.ok(batteryChart.data.datasets.every((dataset) => !dataset.label.includes("設定SOC")));
+    assert.equal(batteryChart.data.datasets[0].yAxisID, "y");
+    assert.equal(batteryChart.data.datasets[1].pointStyle, "triangle");
+    assert.equal(batteryChart.options.plugins.legend.labels.usePointStyle, true);
+  };
+  checkDisplayAxes();
+  assert.ok(loadChart.options.scales.y.max < 100, "small loads no longer retain the fixed 100 kWh ceiling");
+  const initialPvRange = pvChart.options.scales.y.max - pvChart.options.scales.y.min;
 
   await elements.get("periodYearBtn").listeners.click();
   assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
@@ -220,70 +248,15 @@ setImmediate(async () => {
     pvChart.data.datasets[0].data.every((value) => value == null || Number(value) < 100),
     "stale overlapping history must not overwrite fresh bootstrap rows",
   );
-  const assertAxisHasPadding = (chart, axisName, datasetIndexes) => {
-    const values = datasetIndexes
-      .flatMap((index) => chart.data.datasets[index].data)
-      .filter((value) => value != null)
-      .map(Number)
-      .filter(Number.isFinite);
-    assert.ok(values.length > 0, `${axisName} should have finite series values`);
-    const dataMin = Math.min(...values);
-    const dataMax = Math.max(...values);
-    const axis = chart.options.scales[axisName];
-    assert.ok(axis.min < dataMin, `${axisName} lower bound should include padding`);
-    assert.ok(axis.max > dataMax, `${axisName} upper bound should include padding`);
-    if (dataMin !== dataMax) {
-      const padding = (dataMax - dataMin) * 0.15;
-      assert.ok(axis.min <= dataMin - padding, `${axisName} lower 15% padding`);
-      assert.ok(axis.max >= dataMax + padding, `${axisName} upper 15% padding`);
-    }
-  };
-  assertAxisHasPadding(pvChart, "y", [0, 1, 2]);
-  assertAxisHasPadding(loadChart, "y", [0, 1, 2]);
-  assertAxisHasPadding(dailyKwhChart, "y", [0]);
-  assertAxisHasPadding(dailyKwhChart, "y2", [1]);
-  assertAxisHasPadding(dailyYenChart, "y", [0]);
-  assertAxisHasPadding(dailyYenChart, "y2", [1]);
-  assertAxisHasPadding(monthlyChart, "y", [0]);
-  assertAxisHasPadding(monthlyChart, "y2", [1]);
-  assertAxisHasPadding(batteryChart, "y", [1]);
-  assertAxisHasPadding(batteryChart, "y2", [0, 2]);
+  checkDisplayAxes();
+  const weeklyPvRange = pvChart.options.scales.y.max - pvChart.options.scales.y.min;
+  assert.ok(weeklyPvRange > initialPvRange, "weekly sums expand the range");
 
   await elements.get("periodAllBtn").listeners.click();
   assert.equal(fetchRequests.filter((url) => url.startsWith("/api/dashboard/history")).length, 1);
   assert.equal(fetchRequests.some((url) => url.startsWith("/api/dashboard?")), false);
-  assert.deepEqual(
-    { min: pvChart.options.scales.y.min, max: pvChart.options.scales.y.max, step: pvChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 30, step: 6 },
-  );
-  assert.deepEqual(
-    { min: loadChart.options.scales.y.min, max: loadChart.options.scales.y.max, step: loadChart.options.scales.y.ticks.stepSize },
-    { min: -20, max: 100, step: 20 },
-  );
-  assert.deepEqual(
-    { min: dailyKwhChart.options.scales.y.min, max: dailyKwhChart.options.scales.y.max, step: dailyKwhChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 30, step: 5 },
-  );
-  assert.deepEqual(
-    { min: dailyYenChart.options.scales.y.min, max: dailyYenChart.options.scales.y.max, step: dailyYenChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 1500, step: 250 },
-  );
-  assert.deepEqual(
-    { min: monthlyChart.options.scales.y.min, max: monthlyChart.options.scales.y.max, step: monthlyChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 800, step: 200 },
-  );
-  assert.deepEqual(
-    { min: monthlyChart.options.scales.y2.min, max: monthlyChart.options.scales.y2.max, step: monthlyChart.options.scales.y2.ticks.stepSize },
-    { min: 0, max: 40000, step: 10000 },
-  );
-  assert.deepEqual(
-    { min: batteryChart.options.scales.y.min, max: batteryChart.options.scales.y.max, step: batteryChart.options.scales.y.ticks.stepSize },
-    { min: 0, max: 15, step: 3 },
-  );
-  assert.deepEqual(
-    { min: batteryChart.options.scales.y2.min, max: batteryChart.options.scales.y2.max, step: batteryChart.options.scales.y2.ticks.stepSize },
-    { min: 0, max: 100, step: 20 },
-  );
+  checkDisplayAxes();
+  assert.equal(pvChart.options.scales.y.max - pvChart.options.scales.y.min, initialPvRange, "returning to daily view shrinks the range again");
 
   const countBeforeNavigation = fetchCount;
   elements.get("dailyReviewPrevBtn").listeners.click();
