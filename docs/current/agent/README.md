@@ -12,3 +12,5 @@
 | 明示的に報告を依頼された場合 | [report_template.md](report_template.md) |
 
 戻る: [文書索引](../../README.md)
+
+ローカルへの最新完全バックアップ更新・隔離復元: [solar-local-recovery Skill](../../../skills/solar-local-recovery/SKILL.md)

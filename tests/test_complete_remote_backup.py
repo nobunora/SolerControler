@@ -40,6 +40,8 @@ def test_missing_ancestor_subcollection_and_typed_values_are_preserved(backup,mo
         if url.endswith('/parents'):yield [{'name':root+'/parents/missing'}]
         else:yield [document]
     monkeypatch.setattr(backup,'items',items);monkeypatch.setattr(backup,'pages',pages)
+    monkeypatch.setattr(backup,'request',lambda *a,**k:SimpleNamespace(
+        json=lambda:[{'readTime':'2026-01-03T00:00:00.000000Z'}]))
     monkeypatch.setattr(backup,'optional',lambda *a,**k:{})
     result=backup.firestore()
     assert result['documents']==1 and result['collections']==2
@@ -47,6 +49,38 @@ def test_missing_ancestor_subcollection_and_typed_values_are_preserved(backup,mo
         assert json.loads(stream.read())==document
     backup.manifest['stages']['firestore']={'result':result}
     assert backup.verify_local_restore()['firestore_documents_rehydrated']==1
+
+
+@pytest.mark.parametrize('stream_array',[False,True])
+def test_snapshot_uses_server_read_time_and_rejects_missing_time(backup,module,monkeypatch,stream_array):
+    root='projects/test-project/databases/(default)/documents'
+    server_time='2026-01-03T00:00:00.000000Z'
+    observed=[]
+    def request(url,**kwargs):
+        assert url.endswith('/documents:runQuery')
+        assert kwargs['method']=='POST'
+        assert kwargs['body']['structuredQuery']['limit']==1
+        assert kwargs['body']['structuredQuery']['from'][0]['collectionId']=='solarBackupClockProbe'
+        value={'readTime':server_time}
+        return SimpleNamespace(json=lambda:[value] if stream_array else value)
+    def items(url,key,**kwargs):
+        if key=='databases':return [{'name':root.removesuffix('/documents')}]
+        observed.append(kwargs['body']['readTime'])
+        return []
+    monkeypatch.setattr(backup,'request',request)
+    monkeypatch.setattr(backup,'items',items)
+    result=backup.firestore()
+    assert observed==[server_time] and result['read_time']==server_time
+    monkeypatch.setattr(backup,'request',lambda *a,**k:SimpleNamespace(json=lambda:[{}]))
+    with pytest.raises(module.ReadFailure,match='server read time unavailable'):
+        backup.firestore()
+
+
+def test_streamed_http_error_remains_a_read_failure(backup,module,monkeypatch):
+    response=SimpleNamespace(status_code=400,ok=False,json=lambda:[{'error':{'status':'INVALID_ARGUMENT'}}])
+    monkeypatch.setattr(backup.session,'request',lambda *a,**k:response)
+    with pytest.raises(module.ReadFailure,match='HTTP 400'):
+        backup.request('https://firestore.googleapis.com/v1/test:runQuery')
 
 
 def test_pagination_never_drops_later_page(backup,monkeypatch):

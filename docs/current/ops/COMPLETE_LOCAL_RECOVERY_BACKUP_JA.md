@@ -1,5 +1,21 @@
 # ローカル完全バックアップと復旧の境界
 
+## 通常運用：最新1コピーを更新しローカルへ復元
+
+2026-11-08の利用者指定により、通常の更新では世代別コピーを保持しない。次の入口を使う。
+
+```powershell
+pwsh -NoProfile -File scripts/refresh_local_recovery_from_env.ps1
+```
+
+`artifacts/backups/local-recovery/refresh.pending`へ正規の完全取得を行い、全必須ステージ・原本ハッシュ・オフライン復元の検証後だけ`latest`に置き換える。置換中だけ直前コピーを保持し、成功後は削除する。失敗時は直前の有効な`latest`を維持する。過去に別の手順で作成したバックアップは自動削除しない。
+
+続いて保存されたGit revisionからソースを展開し、ローカルFirestoreエミュレーターへ全DBの型付き文書を復元・全項目読戻しする。既定のダッシュボードは`http://127.0.0.1:8780/`。本番資格情報・定時制御を持たないローカル環境であり、HTTP書込みは禁止する。Firestore referenceValueはローカルdemo projectへ対応付け、元の値は完全バックアップに保存する。サーバー生成の文書作成・更新時刻は復元時の値になる。
+
+取得だけは`-BackupOnly`、クラウドへアクセスせず既存latestから再構築する場合は`-RestoreOnly`。途中取得はプロセスとmanifest確認後に同じ入口へ`-Resume`を指定する。実行中の取得を重ねず、partial/failed状態を成功化しない。
+
+前提条件・停止・受入条件は[solar-local-recovery Skill](../../../skills/solar-local-recovery/SKILL.md)を参照する。以下の`backup_operational_state_from_env.ps1 -Complete`はこの更新入口が使用する基礎取得ツールであり、単独実行はローカル稼働環境の構築を行わない。
+
 ## 取得
 
 Driveの定時バックアップは履歴データの補助であり、サイト全体の復旧セットではない。運用設定の従来バックアップも秘密値を削除するため単独では復旧できない。全期間のFirestore原本、参照先GCSオブジェクト、実行イメージ、設定・秘密情報をローカルに退避するには次を使う。

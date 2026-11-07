@@ -1,0 +1,4 @@
+interface:
+  display_name: "Solar local recovery"
+  short_description: "Refresh the latest backup and verify isolated local recovery"
+  default_prompt: "Use $solar-local-recovery to copy the latest remote data and verify the local recovery environment."

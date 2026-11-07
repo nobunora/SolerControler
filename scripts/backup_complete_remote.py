@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import subprocess
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -112,7 +113,9 @@ class Backup:
                 except ValueError: details={}
                 self.write('diagnostics/http-'+hashlib.sha256(url.encode()).hexdigest()+'.json',{'url':url,'status':response.status_code,'error':details})
                 failure=ReadFailure(f'HTTP {response.status_code} read failed')
-                reasons=[d.get('reason') for d in details.get('error',{}).get('details',[]) if isinstance(d,dict)]
+                errors=details if isinstance(details,list) else [details]
+                reasons=[d.get('reason') for item in errors if isinstance(item,dict)
+                         for d in item.get('error',{}).get('details',[]) if isinstance(d,dict)]
                 failure.api_reason='SERVICE_DISABLED' if 'SERVICE_DISABLED' in reasons else None
                 raise failure
             return response
@@ -166,7 +169,18 @@ class Backup:
         databases = self.items(base+f'projects/{self.project}/databases','databases')
         self.write('firestore/databases.json',databases)
         total, collections = 0, []
-        read_time = datetime.now(timezone.utc).isoformat(timespec='microseconds').replace('+00:00','Z')
+        # A client clock ahead of Firestore makes every readTime request fail.
+        # Even an empty query returns a server readTime; use that single snapshot
+        # for all subsequent collection/document reads, never a local timestamp.
+        read_time = None
+        if databases:
+            response=self.request(base+databases[0]['name']+'/documents:runQuery',method='POST',body={
+                'structuredQuery':{'from':[{'collectionId':'solarBackupClockProbe'}],
+                                   'select':{'fields':[{'fieldPath':'__name__'}]},'limit':1}}).json()
+            rows=response if isinstance(response,list) else [response]
+            times=[row['readTime'] for row in rows if isinstance(row,dict) and row.get('readTime')]
+            if not times:raise ReadFailure('Firestore server read time unavailable')
+            read_time=times[-1]
         for index, database in enumerate(databases):
             name = database['name']; root = name+'/documents'
             root_ids=self.items(base+root+':listCollectionIds','collectionIds',method='POST',body={'pageSize':1000,'readTime':read_time})
@@ -444,7 +458,9 @@ class Backup:
         for mode,flag in [('unstaged',''),('staged','--cached')]:
             command=['git','diff','--binary']+([flag] if flag else [])
             (directory/(mode+'.patch')).write_bytes(subprocess.run(command,check=True,capture_output=True).stdout)
-        for filename in ['scripts/backup_complete_remote.py','docs/current/ops/COMPLETE_LOCAL_RECOVERY_BACKUP_JA.md','tests/test_complete_remote_backup.py']:
+        for filename in ['scripts/backup_complete_remote.py','docs/current/ops/COMPLETE_LOCAL_RECOVERY_BACKUP_JA.md','tests/test_complete_remote_backup.py',
+                         'scripts/local_recovery.py','scripts/check_local_recovery.py','scripts/refresh_local_recovery_from_env.ps1',
+                         'skills/solar-local-recovery/SKILL.md','tests/test_local_recovery.py']:
             path=directory/'working_source'/filename;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(Path(filename).read_bytes())
         source=sqlite3.connect('file:artifacts/solar_monitor.db?mode=ro',uri=True)
         destination=sqlite3.connect(directory/'solar_monitor.db');source.backup(destination)
@@ -566,6 +582,8 @@ class Backup:
                 for gap in self.manifest['gaps'][gap_start:]:gap['stage']=name
                 self.manifest['stages'][name]={'status':'partial' if len(self.manifest['gaps'])>gap_start else 'success','result':result,'files':files}
             except Exception as exc:
+                self.write('diagnostics/'+name+'-failure.private.json',{
+                    'exception_type':type(exc).__name__,'traceback':traceback.format_exc()})
                 self.manifest['stages'][name]={'status':'failed','error':str(exc) if isinstance(exc,ReadFailure) else type(exc).__name__}
                 self.save();print('Backup stage failed:',name,type(exc).__name__,flush=True);return 1
             self.save()
