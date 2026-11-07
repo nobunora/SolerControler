@@ -8,6 +8,7 @@
       meta: null, pvDaily: new Map(), hourly: new Map(), energy: new Map(), cost: new Map(),
       battery: new Map(), batteryFlow: new Map(), monthly: [], params: [], latestSchedule: null,
       dashboardWarnings: [], pvForecastDiagnostics: {}, dailyReview: {}, dailyReviews: new Map(), latestReviewDate: null,
+      selectedReviewDate: null,
       dates: [], loadingOlder: false, historyLoaded: false,
     };
   }
