@@ -6,7 +6,11 @@
 
 同日の追加指定により、不要な過去版は対象外とし、現行環境の復旧に必要な最新版とその参照先の原本・学習台帳を必須にする。DB全期間と過去日の実績・予測・請求原本は履歴データとして保持する。固定パスから直接読むファイルも確認し、DB参照0件だけでは除外しない。必要な参照が旧世代を指す場合は、その正確な世代を取得する。対象・依存関係・除外理由・不足・ハッシュをmanifestへ記録する。詳細な対象判定は[SkillのRecovery-required scope](../../../skills/solar-local-recovery/SKILL.md)に従う。
 
-現時点の基礎取得ツールは全世代・soft deleteも必須扱いする従来仕様であり、上記の対象選択に未対応。この文書とSkillの更新だけで実装対応・完全取得が完了したと扱わない。次回の取得・公開前に正規ツールを対象判定へ対応させ、従来の失敗証跡を成功へ書き換えない。以下の実行例は対応後の通常入口である。
+通常入口は基礎取得ツールへ`-Complete -RequiredOnly -ExcludeDrive`を渡す。現存GCSファイルと保存参照の有限な依存閉包、固定パスの管理ファイル・学習台帳、稼働中image digestを取得し、未参照旧世代を除外理由付きで記録する。利用者の追加指定によりDrive/Sheetsは対象外とし、通信せず`excluded_by_user`として記録する。Driveにしかないデータの復旧は保証しない。必要な旧世代が参照されていれば取得対象に残し、不足時は完全取得としない。
+
+取得方針が違う旧状態へResumeしてはならない。旧failed/partial証跡を保持し、新しいcaptureを開始する。`-SeedPath`で検証済み旧captureの不変バイトだけを必要時に再利用できる。DB・設定は新規取得し、不要blobを新しいコピーへ混入させない。従来の`-Complete`単独経路は全世代を対象とする互換・調査用であり、最新復旧用の通常入口と混同しない。
+
+参照された旧GCS世代が既に存在しなくても、保存済みの原本SHA256と取得できた内容のSHA256が完全一致する場合に限り、内容同一の復旧対応として記録できる。gzip原本は展開後の原本バイトで照合する。同名だけで代用せず、要求世代・取得世代・原本SHA・旧世代自体は未取得であることを`generation_equivalents`へ保存し、DB原本の参照値は改変しない。SHA不足・不一致は引き続き必須不足である。
 
 ```powershell
 pwsh -NoProfile -File scripts/refresh_local_recovery_from_env.ps1
@@ -36,7 +40,7 @@ pwsh -NoProfile -File scripts/backup_operational_state_from_env.ps1 -Complete
 pwsh -NoProfile -File scripts/backup_operational_state_from_env.ps1 -Complete -ResumePath <保存先>
 ```
 
-成功済みステージのハッシュを照合してから再利用する。未完了ステージを成功と解釈しない。ソースのGit bundle・作業差分、ローカルSQLite、全期間のFirestore型付きREST文書、索引・フィールド設定、GCSの読取可能な全世代、OCIイメージ全manifest/config/layer、Cloud Run/Scheduler/IAM/API/rules設定、秘密値、Driveのバックアップファイル、Cloud Loggingの保持中の全ログを対象にする。
+成功済みステージのハッシュを照合してから再利用する。未完了ステージを成功と解釈しない。ソースのGit bundle・作業差分、ローカルSQLite、全期間のFirestore型付きREST文書、索引・フィールド設定、GCS原本、OCIイメージのmanifest/config/layer、Cloud Run/Scheduler/IAM/API/rules設定、秘密値、Cloud Loggingの保持中の全ログを保存する。GCS・imageの選択範囲とDrive除外は上記の最新復旧用scopeに従う。従来の`-Complete`単独経路だけは読取可能な全世代・Drive補助バックアップも対象とする。
 
 日時によるデータの切り捨てはしない。Firestoreは一つのreadTimeで取得し、存在しない親文書の下のサブコレクションも走査する。全サービスが同一時点の原子的スナップショットになるわけではない。取得時間帯はmanifestに残す。
 

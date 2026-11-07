@@ -1,6 +1,8 @@
 param(
     [string]$OutDir = "artifacts/backups/operational",
     [switch]$Complete,
+    [switch]$RequiredOnly,
+    [switch]$ExcludeDrive,
     [switch]$RecoverRequiredImages,
     [string]$ResumePath = "",
     [string]$SeedPath = ""
@@ -47,6 +49,8 @@ if ($Complete) {
     if ($LASTEXITCODE -ne 0 -or -not $env:SOLAR_BACKUP_READ_TOKEN) { throw 'Backup authentication failed.' }
     try {
         $captureArgs = @('--output', $completeDir)
+        if ($RequiredOnly) { $captureArgs += '--required-only' }
+        if ($ExcludeDrive) { $captureArgs += '--exclude-drive' }
         if ($RecoverRequiredImages) { $captureArgs += '--recover-required-images' }
         if ($SeedPath) { $captureArgs += @('--seed', $SeedPath) }
         & python (Join-Path $PSScriptRoot 'backup_complete_remote.py') @captureArgs
@@ -58,6 +62,7 @@ if ($Complete) {
     return
 }
 if ($ResumePath) { throw 'ResumePath requires Complete.' }
+if ($RequiredOnly -or $ExcludeDrive) { throw 'RequiredOnly/ExcludeDrive require Complete.' }
 if ($SeedPath) { throw 'SeedPath requires Complete.' }
 if ($RecoverRequiredImages) { throw 'RecoverRequiredImages requires Complete.' }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')

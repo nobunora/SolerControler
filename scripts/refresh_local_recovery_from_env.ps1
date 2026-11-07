@@ -3,6 +3,7 @@ param(
     [switch]$Resume,
     [switch]$RestoreOnly,
     [switch]$BackupOnly,
+    [string]$SeedPath = '',
     [int]$Port = 8780,
     [int]$EmulatorPort = 8781
 )
@@ -42,7 +43,8 @@ try {
             throw 'An unfinished capture exists. Inspect its manifest, then use Resume.'
         }
         if ($Resume -and -not (Test-Path -LiteralPath $pending)) { throw 'There is no capture to resume.' }
-        $capture = @{ Complete = $true; ResumePath = $pending }
+        $capture = @{ Complete = $true; RequiredOnly = $true; ExcludeDrive = $true; ResumePath = $pending }
+        if ($SeedPath) { $capture.SeedPath = $SeedPath }
         if (-not $Resume -and (Test-Path -LiteralPath $latest)) {
             python scripts/local_recovery.py verify --root $recoveryPath
             if ($LASTEXITCODE -ne 0) { throw 'Existing latest backup did not verify.' }

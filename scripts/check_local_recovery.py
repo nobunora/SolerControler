@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import importlib
 import json
@@ -39,23 +40,32 @@ class FrozenStorage:
             def blob(self, key: str, generation: int | None = None) -> Any:
                 candidates = store.entries.get((name, key), [])
                 if generation is not None:
-                    candidates = [item for item in candidates if int(item["generation"]) == generation]
+                    candidates = [item for item in candidates if int(item["generation"]) == generation
+                                  or str(generation) in item.get("required_generation_aliases", {})]
                 elif any(not item.get("timeDeleted") for item in candidates):
                     candidates = [item for item in candidates if not item.get("timeDeleted")]
                 if not candidates:
                     raise FileNotFoundError("Original object is absent from the local snapshot")
                 metadata = max(candidates, key=lambda item: int(item["generation"]))
-                return FrozenBlob(store.snapshot, metadata)
+                return FrozenBlob(store.snapshot, metadata, requested_generation=generation)
 
         return Bucket()
 
 
 class FrozenBlob:
-    def __init__(self, snapshot: Path, metadata: dict[str, Any]) -> None:
+    def __init__(self, snapshot: Path, metadata: dict[str, Any], *, requested_generation: int | None = None) -> None:
         self.path = (snapshot / metadata["local_file"]).resolve()
         if not self.path.is_relative_to(snapshot.resolve()):
             raise ValueError("Original object path escapes the snapshot")
         self.generation = int(metadata["generation"])
+        self.source_generation = self.generation
+        if requested_generation is not None and requested_generation != self.generation:
+            expected = metadata.get("required_generation_aliases", {}).get(str(requested_generation))
+            raw = self.path.read_bytes()
+            original = gzip.decompress(raw) if metadata["name"].endswith(".gz") else raw
+            if not expected or hashlib.sha256(original).hexdigest() != expected:
+                raise ValueError("Recovery generation alias lacks exact original-content proof")
+            self.generation = requested_generation
         self.expected = metadata["local_sha256"]
 
     def reload(self, **_kwargs: Any) -> None:

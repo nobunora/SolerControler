@@ -124,3 +124,21 @@ def test_partial_preview_never_becomes_a_complete_backup(recovery, tmp_path):
     (candidate / "data").write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum"):
         recovery.verify_preview(candidate)
+
+
+def test_drive_exclusion_requires_both_scope_and_explicit_receipt(recovery, tmp_path):
+    path = tmp_path / "capture"
+    snapshot(path)
+    manifest_path = path / "manifest.private.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["stages"]["drive"] = {"status": "excluded", "reason": "user_scope_exclusion"}
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError):
+        recovery.verify_snapshot(path)
+    manifest["selection_policy"] = {"drive": "excluded_by_user"}
+    manifest_path.write_text(json.dumps(manifest))
+    assert recovery.verify_snapshot(path)["status"] == "complete"
+    del manifest["stages"]["drive"]["reason"]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Drive exclusion"):
+        recovery.verify_snapshot(path)

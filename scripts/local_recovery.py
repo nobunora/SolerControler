@@ -71,6 +71,10 @@ def verify_snapshot(path: Path) -> dict[str, Any]:
     manifest = cast(dict[str, Any], json.loads((path / "manifest.private.json").read_text(encoding="utf-8")))
     stages = manifest.get("stages", {})
     required = {"local", "firestore", "firestore_settings", "storage", "configuration", "secrets", "drive", "logs", "registry"}
+    if manifest.get("selection_policy", {}).get("drive") == "excluded_by_user":
+        if stages.get("drive", {}).get("status") != "excluded" or stages["drive"].get("reason") != "user_scope_exclusion":
+            raise ValueError("Drive exclusion lacks an explicit scoped receipt")
+        required.remove("drive")
     if (manifest.get("status") != "complete" or manifest.get("gaps") != []
             or not required.issubset(stages)
             or any(stages[key].get("status") != "success" for key in required)):

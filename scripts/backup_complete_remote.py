@@ -17,6 +17,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +28,11 @@ from typing import Any, cast
 from urllib.parse import quote
 
 import requests
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.backup_recovery_scope import ObjectReference, decode_fields, object_references, pointer_references
 
 
 class ReadFailure(RuntimeError):
@@ -43,8 +49,16 @@ def sha256(path: Path) -> str:
 
 
 class Backup:
-    def __init__(self, output: Path, *, recover_required_images: bool=False) -> None:
+    def __init__(self, output: Path, *, recover_required_images: bool=False,
+                 required_only: bool=False, exclude_drive: bool=False) -> None:
         self.recover_required_images=recover_required_images
+        self.required_only=required_only
+        self.exclude_drive=exclude_drive
+        self.seed_source: Path | None=None
+        self.seed_inventory: dict[str, Any]={}
+        policy={'storage':'recovery_required_v1' if required_only else 'all_versions',
+                'images':'deployed' if required_only else 'all',
+                'drive':'excluded_by_user' if exclude_drive else 'included'}
         self.output = output.resolve()
         self.output.mkdir(parents=True, exist_ok=True)
         self.project = os.environ['GCP_PROJECT_ID']
@@ -55,9 +69,13 @@ class Backup:
             self.manifest = json.loads(self.manifest_path.read_text(encoding='utf-8'))
             if self.manifest['project'] != self.project:
                 raise ReadFailure('Resume project mismatch')
+            legacy={'storage':'all_versions','images':'all','drive':'included'}
+            if self.manifest.get('selection_policy',legacy)!=policy:
+                raise ReadFailure('Resume selection policy mismatch; use a new capture')
         else:
             self.manifest = {'schema_version':1, 'project':self.project, 'started_at':datetime.now(timezone.utc).isoformat(),
-                             'remote_writes':0, 'stages':{}, 'gaps':[], 'files':{}}
+                             'remote_writes':0, 'stages':{}, 'gaps':[], 'files':{},
+                             'selection_policy':policy,'excluded':{}}
         self.save()
 
     def seed_immutable_files(self, source: Path) -> None:
@@ -66,6 +84,11 @@ class Backup:
         if source==self.output:raise ReadFailure('Seed must be a different backup generation')
         manifest=json.loads((source/'manifest.private.json').read_text(encoding='utf-8'))
         if manifest['project']!=self.project:raise ReadFailure('Seed project mismatch')
+        if self.required_only:
+            # Reuse immutable bytes on demand; do not copy unused old images or
+            # object generations into the new selected backup.
+            self.seed_source=source;self.seed_inventory=manifest.get('files',{})
+            return
         for relative,metadata in manifest['files'].items():
             parts=Path(relative).parts
             if parts[:2]!=('storage','objects') and parts[:4]!=('registry','oci','blobs','sha256'):continue
@@ -148,6 +171,17 @@ class Backup:
 
     def download(self, url: str, path: Path, *, params: dict[str, Any] | None=None, headers: dict[str, str] | None=None, digest: str | None=None, md5: str | None=None) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if self.seed_source is not None and not path.exists():
+            relative=str(path.relative_to(self.output))
+            parts=Path(relative).parts
+            if parts[:2]==('storage','objects') or parts[:4]==('registry','oci','blobs','sha256'):
+                metadata=self.seed_inventory.get(relative)
+                if metadata:
+                    original=(self.seed_source/relative).resolve()
+                    if not original.is_relative_to(self.seed_source) or sha256(original)!=metadata['sha256']:
+                        raise ReadFailure('Seed immutable checksum/path mismatch')
+                    try:os.link(original,path)
+                    except OSError:shutil.copyfile(original,path)
         if path.exists():
             if digest and sha256(path)==digest:return
             if md5 and base64.b64encode(hashlib.md5(path.read_bytes()).digest()).decode()==md5:return
@@ -221,6 +255,7 @@ class Backup:
         return {'indexes':count,'databases':len(databases)}
 
     def storage(self) -> dict[str, Any]:
+        if self.required_only:return self.storage_required()
         buckets = self.items(f'https://storage.googleapis.com/storage/v1/b?project={self.project}','items')
         self.write('storage/buckets.json',buckets)
         count, size, soft_count = 0,0,0
@@ -251,6 +286,107 @@ class Backup:
             self.write(f'storage/bucket-{i}-soft-deleted.json',soft)
             print('Storage bucket copied; objects',len(objects),'soft-deleted',len(soft),flush=True)
         return {'buckets':len(buckets),'readable_generations':count,'bytes':size,'soft_deleted_generations':soft_count}
+
+    def storage_required(self) -> dict[str, Any]:
+        buckets=self.items(f'https://storage.googleapis.com/storage/v1/b?project={self.project}','items')
+        self.write('storage/buckets.json',buckets)
+        catalogs: dict[str, dict[str, Any]]={}
+        queue: list[ObjectReference]=[]
+        for index,bucket in enumerate(buckets):
+            name=bucket['name'];base=f'https://storage.googleapis.com/storage/v1/b/{quote(name,safe="")}'
+            self.write(f'storage/bucket-{index}-iam.json',self.optional('storage_iam',base+'/iam'))
+            live=self.items(base+'/o','items',params={'maxResults':1000})
+            versions=self.items(base+'/o','items',params={'versions':'true','maxResults':1000})
+            soft=self.items(base+'/o','items',params={'softDeleted':'true','maxResults':1000})
+            catalogs[name]={'index':index,'base':base,'live':{row['name']:row for row in live},
+                            'versions':{(row['name'],str(row['generation'])):row for row in versions},'soft':soft}
+            self.write(f'storage/bucket-{index}-version-inventory.private.json',versions)
+            self.write(f'storage/bucket-{index}-soft-deleted.json',soft)
+            queue.extend(ObjectReference(name,row['name'],str(row['generation']),'live_current_object') for row in live)
+        for path in (self.output/'firestore').glob('database-*-documents.jsonl.gz'):
+            with gzip.open(path,'rt',encoding='utf-8') as stream:
+                for line in stream:
+                    queue.extend(object_references(decode_fields(json.loads(line).get('fields',{})),reason='database_original'))
+        for path in (self.output/'configuration').glob('*.json'):
+            queue.extend(object_references(json.loads(path.read_bytes()),reason='runtime_configuration'))
+        selected: dict[tuple[str,str,str], dict[str, Any]]={}
+        self.manifest['required_missing']={}
+        self.manifest['generation_equivalents']={}
+        size=0
+        while queue:
+            reference=queue.pop()
+            catalog=catalogs.get(reference.bucket)
+            item=(catalog['versions'].get((reference.name,reference.generation)) if reference.generation is not None
+                  else catalog['live'].get(reference.name)) if catalog is not None else None
+            equivalent=False
+            if catalog is not None and item is None and reference.generation is not None and reference.decoded_sha256:
+                candidate=catalog['live'].get(reference.name)
+                if candidate is not None:
+                    key=(reference.bucket,reference.name,str(candidate['generation']))
+                    target=self.output/'storage/objects'/hashlib.sha256('/'.join(key).encode()).hexdigest()
+                    self.download(catalog['base']+'/o/'+quote(reference.name,safe=''),target,
+                                  params={'alt':'media','generation':candidate['generation']},
+                                  headers={'Accept-Encoding':'gzip'},md5=candidate.get('md5Hash'))
+                    raw=target.read_bytes()
+                    original=gzip.decompress(raw) if reference.name.endswith('.gz') else raw
+                    if hashlib.sha256(original).hexdigest()==reference.decoded_sha256:
+                        item=candidate;equivalent=True
+            if catalog is None or item is None:
+                identity=hashlib.sha256(repr(reference).encode()).hexdigest()
+                if identity not in self.manifest['required_missing']:
+                    self.manifest['required_missing'][identity]={'bucket':reference.bucket,'name':reference.name,
+                                                               'generation':reference.generation,'reason':reference.reason}
+                    self.manifest['gaps'].append({'category':'required_gcs_object_missing','reference_hash':identity,
+                                                  'reason':'Required exact object/generation is unavailable'})
+                continue
+            key=(reference.bucket,reference.name,str(item['generation']))
+            identity=hashlib.sha256('/'.join(key).encode()).hexdigest()
+            target=self.output/f'storage/objects/{identity}'
+            if key not in selected:
+                self.download(catalog['base']+'/o/'+quote(reference.name,safe=''),target,
+                              params={'alt':'media','generation':item['generation']},
+                              headers={'Accept-Encoding':'gzip'},md5=item.get('md5Hash'))
+                stored=dict(item,local_file=str(target.relative_to(self.output)),local_sha256=sha256(target),
+                            required_reasons=[reference.reason])
+                selected[key]=stored;size+=target.stat().st_size
+                if reference.name.endswith(('.json','.json.gz')):
+                    raw=target.read_bytes()
+                    value=json.loads(gzip.decompress(raw) if reference.name.endswith('.gz') else raw)
+                    queue.extend(object_references(value,reason='saved_object_dependency'))
+                    queue.extend(pointer_references(reference.bucket,reference.name,value))
+            elif reference.reason not in selected[key]['required_reasons']:
+                selected[key]['required_reasons'].append(reference.reason)
+            if reference.decoded_sha256 is not None:
+                raw=target.read_bytes()
+                original=gzip.decompress(raw) if reference.name.endswith('.gz') else raw
+                if hashlib.sha256(original).hexdigest()!=reference.decoded_sha256:
+                    raise ReadFailure('Required original content checksum mismatch')
+            if equivalent:
+                selected[key].setdefault('required_generation_aliases',{})[reference.generation]=reference.decoded_sha256
+                alias_id=hashlib.sha256((reference.bucket+'/'+reference.name+'/'+str(reference.generation)).encode()).hexdigest()
+                self.manifest['generation_equivalents'][alias_id]={
+                    'bucket':reference.bucket,'name':reference.name,'requested_generation':reference.generation,
+                    'captured_generation':str(item['generation']),'original_sha256':reference.decoded_sha256,
+                    'method':'exact_original_content_sha256','original_generation_fetched':False}
+        exclusions=[]
+        for name,catalog in catalogs.items():
+            saved=[value for key,value in selected.items() if key[0]==name]
+            self.write(f"storage/bucket-{catalog['index']}-objects.json",saved)
+            for row in list(catalog['versions'].values())+catalog['soft']:
+                key=(name,row['name'],str(row['generation']))
+                if key not in selected:
+                    if any(missing['bucket']==name and missing['name']==row['name']
+                           and missing['generation'] in {None,str(row['generation'])}
+                           for missing in self.manifest['required_missing'].values()):continue
+                    identity=hashlib.sha256('/'.join(key).encode()).hexdigest()
+                    excluded={'kind':'gcs','bucket':name,'name':row['name'],'generation':str(row['generation']),
+                              'status':'excluded','reason':'unreferenced_superseded_generation'}
+                    self.manifest['excluded'][identity]=excluded;exclusions.append(excluded)
+        self.write('storage/selection.private.json',{'policy':'recovery_required_v1','required':list(selected.values()),
+                                                   'missing':self.manifest['required_missing'],'excluded':exclusions})
+        return {'buckets':len(buckets),'readable_generations':len(selected),'bytes':size,
+                'excluded_generations':len(exclusions),'missing_required':len(self.manifest['required_missing']),
+                'verified_generation_equivalents':len(self.manifest['generation_equivalents'])}
 
     def recover_cloud_run_image(self, uri: str, repos: list[dict[str, Any]]) -> str:
         """Copy a required cached image into an existing repo, only with opt-in.
@@ -334,17 +470,7 @@ class Backup:
                 blobs.add(value)
             return {'mediaType':manifest.get('mediaType','application/vnd.docker.distribution.manifest.v2+json'),'digest':digest,'size':target.stat().st_size}
         descriptors=[]
-        for repo in repos:
-            if repo.get('format')!='DOCKER':
-                self.manifest['gaps'].append({'category':'non_docker_repository','reason':'Format not covered'});continue
-            rows=self.items('https://artifactregistry.googleapis.com/v1/'+repo['name']+'/dockerImages','dockerImages',params={'pageSize':1000})
-            for image in rows:
-                uri=image['uri']; host,package_digest=uri.split('/',1);package,digest=package_digest.rsplit('@',1)
-                descriptor=capture(host,package,digest)
-                descriptor['annotations']={'org.opencontainers.image.ref.name':uri}
-                descriptors.append(descriptor);images.append(image)
-                print('Container copied and digest verified;',len(images),'images',flush=True)
-        deployed_refs=set()
+        deployed_refs: set[str]=set()
         def collect_refs(value: Any) -> None:
             if isinstance(value,dict):
                 for key,item in value.items():
@@ -355,9 +481,25 @@ class Backup:
         for category in ['cloud_run_jobs','cloud_run_services']:
             path=self.output/'configuration'/f'{category}.json'
             if path.exists():collect_refs(json.loads(path.read_bytes()))
+        for repo in repos:
+            if repo.get('format')!='DOCKER':
+                self.manifest['gaps'].append({'category':'non_docker_repository','reason':'Format not covered'});continue
+            rows=self.items('https://artifactregistry.googleapis.com/v1/'+repo['name']+'/dockerImages','dockerImages',params={'pageSize':1000})
+            for image in rows:
+                if self.required_only and image['uri'] not in deployed_refs:
+                    self.manifest['excluded'][hashlib.sha256(image['uri'].encode()).hexdigest()]={
+                        'kind':'image','uri':image['uri'],'status':'excluded','reason':'not_used_by_deployed_components'}
+                    continue
+                uri=image['uri']; host,package_digest=uri.split('/',1);package,digest=package_digest.rsplit('@',1)
+                descriptor=capture(host,package,digest)
+                descriptor['annotations']={'org.opencontainers.image.ref.name':uri}
+                descriptors.append(descriptor);images.append(image)
+                print('Container copied and digest verified;',len(images),'images',flush=True)
         extra=0
         for uri in sorted(deployed_refs):
-            if '@sha256:' not in uri:continue
+            if '@sha256:' not in uri:
+                if self.required_only:self.manifest['gaps'].append({'category':'unresolved_deployed_digest','reason':'Deployed image is not immutable'})
+                continue
             host,package_digest=uri.split('/',1);package,digest=package_digest.rsplit('@',1)
             if (self.output/'registry/oci/blobs/sha256'/digest.split(':',1)[1]).exists():continue
             try:
@@ -460,6 +602,7 @@ class Backup:
             (directory/(mode+'.patch')).write_bytes(subprocess.run(command,check=True,capture_output=True).stdout)
         for filename in ['scripts/backup_complete_remote.py','docs/current/ops/COMPLETE_LOCAL_RECOVERY_BACKUP_JA.md','tests/test_complete_remote_backup.py',
                          'scripts/local_recovery.py','scripts/check_local_recovery.py','scripts/refresh_local_recovery_from_env.ps1',
+                         'scripts/backup_recovery_scope.py','tests/test_backup_recovery_scope.py',
                          'skills/solar-local-recovery/SKILL.md','tests/test_local_recovery.py']:
             path=directory/'working_source'/filename;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(Path(filename).read_bytes())
         source=sqlite3.connect('file:artifacts/solar_monitor.db?mode=ro',uri=True)
@@ -552,7 +695,15 @@ class Backup:
     def run(self) -> int:
         self.manifest['status']='incomplete'
         self.save()
-        for name in ['local','firestore','firestore_settings','storage','configuration','secrets','drive','logs','registry']:
+        stages=(['local','firestore','firestore_settings','configuration','secrets','storage','drive','logs','registry']
+                if self.required_only else ['local','firestore','firestore_settings','storage','configuration','secrets','drive','logs','registry'])
+        for name in stages:
+            if name=='drive' and self.exclude_drive:
+                self.manifest['stages']['drive']={'status':'excluded','reason':'user_scope_exclusion',
+                                                'result':{'included':False},'files':{}}
+                self.manifest['excluded']['drive']={'kind':'drive','status':'excluded','reason':'user_scope_exclusion'}
+                self.save()
+                continue
             # Failed coverage must remain retryable, even after a stage copied
             # its readable files. Never promote a partial capture to success.
             legacy_categories={'drive':{'drive_archive','drive_native_file'},
@@ -591,7 +742,9 @@ class Backup:
         self.manifest['files']={str(p.relative_to(self.output)):{'bytes':p.stat().st_size,'sha256':sha256(p)} for p in self.output.rglob('*') if p.is_file() and p not in [self.manifest_path,self.output/'summary.safe.json'] and p.suffix!='.partial'}
         self.manifest['status']='complete' if not self.manifest['gaps'] else 'incomplete'
         self.manifest['finished_at']=datetime.now(timezone.utc).isoformat();self.save()
-        summary={'status':self.manifest['status'],'remote_writes':self.manifest.get('remote_writes',0),'files':len(self.manifest['files']),
+        summary={'status':self.manifest['status'],'selection_policy':self.manifest.get('selection_policy'),
+                 'excluded_counts':{kind:sum(row['kind']==kind for row in self.manifest.get('excluded',{}).values()) for kind in ['gcs','image','drive']},
+                 'remote_writes':self.manifest.get('remote_writes',0),'files':len(self.manifest['files']),
                  'bytes':sum(v['bytes'] for v in self.manifest['files'].values()),
                  'gaps':self.manifest['gaps'],'stages':{k:{kk:vv for kk,vv in v.get('result',{}).items() if kk!='source_revision'} for k,v in self.manifest['stages'].items()}}
         self.write('summary.safe.json',summary)
@@ -600,7 +753,8 @@ class Backup:
 
 
 def main() -> int:
-    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--verify-only',action='store_true');parser.add_argument('--recover-required-images',action='store_true');parser.add_argument('--seed',type=Path);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--verify-only',action='store_true');parser.add_argument('--recover-required-images',action='store_true');parser.add_argument('--seed',type=Path)
+    parser.add_argument('--required-only',action='store_true');parser.add_argument('--exclude-drive',action='store_true');args=parser.parse_args()
     if args.verify_only:
         root=args.output.resolve()
         manifest=json.loads((root/'manifest.private.json').read_text(encoding='utf-8'))
@@ -614,7 +768,8 @@ def main() -> int:
         verification['gaps']=len(manifest['gaps'])
         print(json.dumps(verification))
         return 0 if manifest['status']=='complete' else 2
-    backup=Backup(args.output,recover_required_images=args.recover_required_images)
+    backup=Backup(args.output,recover_required_images=args.recover_required_images,
+                  required_only=args.required_only,exclude_drive=args.exclude_drive)
     if args.seed:backup.seed_immutable_files(args.seed)
     return backup.run()
 
