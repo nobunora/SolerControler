@@ -209,8 +209,9 @@
     .period-button.active { background: #16314f; border-color: #16314f; color: #fff; }
     .period-button:disabled { cursor: not-allowed; color: #a1afbd; background: #f1f5f9; }
     .period-label { color: var(--sub); font-size: 13px; font-weight: 700; margin-left: 4px; }
-    .review-nav { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; }
+    .review-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
     .review-nav .period-label { min-width: 7.5em; margin: 0; text-align: center; }
+    .review-nav input[type="date"] { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
     canvas { display: block; width: 100% !important; height: 100% !important; }
     .equation {
       overflow-wrap: anywhere;

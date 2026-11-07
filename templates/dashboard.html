@@ -25,8 +25,9 @@
         <h2>1. 予実レビュー（昨日まで）</h2>
         <div class="review-nav" aria-label="予実レビューの日付切り替え">
           <button id="dailyReviewPrevBtn" class="period-button" type="button">← 前日</button>
-          <span id="dailyReviewDate" class="period-label">読み込み中</span>
+          <input id="dailyReviewDate" class="period-label" type="date" aria-label="予実レビューの表示日">
           <button id="dailyReviewNextBtn" class="period-button" type="button">翌日 →</button>
+          <button id="dailyReviewLatestBtn" class="period-button" type="button">最新の表示</button>
         </div>
         <p id="dailyReviewNote" class="desc">24時間分が揃った前日までの計画値とKP-NET実績、15日開始・14日締めの買電累計と電力量料金予想を表示します。</p>
         <div id="dailyReviewGrid" class="diag-grid" aria-label="予実レビュー"></div>
@@ -34,7 +35,7 @@
       </article>
 
       <article class="card full">
-        <h2>2. 時間別予測（最新計画）</h2>
+        <h2 id="hourlyForecastTitle">2. 時間別予測（最新計画）</h2>
         <p id="hourlyForecastNote" class="desc">時間別予測を読み込んでいます。</p>
         <div id="hourlyForecastGrid" class="diag-grid" aria-label="時間別予測の集計"></div>
         <div class="chart-box hourly-forecast-chart"><canvas id="hourlyForecastChart"></canvas></div>

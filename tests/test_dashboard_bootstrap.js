@@ -259,8 +259,9 @@ setImmediate(async () => {
   assert.equal(pvChart.options.scales.y.max - pvChart.options.scales.y.min, initialPvRange, "returning to daily view shrinks the range again");
 
   const countBeforeNavigation = fetchCount;
-  elements.get("dailyReviewPrevBtn").listeners.click();
-  assert.equal(elements.get("dailyReviewDate").textContent, "2026-07-16");
-  assert.equal(fetchCount, countBeforeNavigation);
+  await elements.get("dailyReviewPrevBtn").listeners.click();
+  assert.equal(elements.get("dailyReviewDate").value, "2026-07-16");
+  assert.equal(fetchCount, countBeforeNavigation + 1);
+  assert.match(fetchRequests.at(-1), /window_days=1&end_date=2026-07-16&include_static=0/);
   await require("./test_dashboard_actual_import.js")();
 });

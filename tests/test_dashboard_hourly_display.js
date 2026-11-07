@@ -351,6 +351,101 @@ async function tests() {
     assert.match(importView.elements.get("importActualsStatus").textContent,
       rejectedBeforeSubmission ? /開始されていません/ : /重複実行/);
   }
+  await reviewNavigationTests();
   console.log("dashboard hourly display: PASS");
 }
+async function reviewNavigationTests() {
+  const payload = fixture();
+  const oldDate = "2026-07-19";
+  const rowsFor = (date, pv) => fixture().forecast_hourly.map((row) => ({
+    ...row, date, forecast_run_id: `saved-${date}`, forecast_pv_kwh: row.hour === 9 ? pv : 0,
+  }));
+  payload.daily_review = { date: oldDate, complete_day: true };
+  payload.daily_reviews = [{ date: oldDate, complete_day: true }, { date: "2026-07-18", complete_day: true }];
+  payload.forecast_hourly.push(...rowsFor(oldDate, 0.75));
+  const h = await harness(payload);
+  const input = h.elements.get("dailyReviewDate");
+  const note = h.elements.get("hourlyForecastNote");
+  const title = h.elements.get("hourlyForecastTitle");
+  const latest = h.elements.get("dailyReviewLatestBtn");
+  const select = (date) => input.listeners.change({ target: { value: date } });
+  const chart = h.chart("hourlyForecastChart");
+  assert.equal(h.requests.length, 0, "date navigation must not add an initial request");
+  assert.equal(input.value, oldDate);
+  assert.equal(input.max, "2026-07-19");
+  assert.match(note.textContent, /2026-07-20/);
+  assert.match(title.textContent, /最新計画/);
+  await select(oldDate);
+  assert.equal(h.requests.length, 0, "a cached day requires no request");
+  assert.equal(note.textContent, "2026-07-19 の時間別表示。");
+  assert.ok(chart.data.datasets[0].data.some((point) => (typeof point === "number" ? point : point?.y) === 0.75));
+  assert.match(title.textContent, /2026-07-19/);
+  const frontier = h.run("store.meta.oldest_loaded_date");
+  const deferred = new Map();
+  let failOnce = true;
+  h.context.fetch = async (url) => {
+    h.requests.push(String(url));
+    const date = new URL(String(url), "http://localhost").searchParams.get("end_date");
+    if (date === "2026-07-15" && failOnce) { failOnce = false; throw new Error("read failed"); }
+    if (["2026-07-17", "2026-07-16", "2026-07-12"].includes(date)) {
+      return await new Promise((resolve) => deferred.set(date, resolve));
+    }
+    return { ok: true, json: async () => ({
+      forecast_hourly: date === "2026-07-10" ? [] : [...rowsFor(date, 1.25), ...rowsFor("2026-07-20", 999)],
+      latest_schedule: { plan_date: date }, meta: { oldest_loaded_date: date, global_newest_date: date },
+      daily_reviews: [],
+    }) };
+  };
+  await select("2026-07-18");
+  assert.equal(h.requests.length, 1);
+  assert.match(h.requests[0], /window_days=1&end_date=2026-07-18&include_static=0/);
+  assert.equal(note.textContent, "2026-07-18 の時間別表示。");
+  assert.equal(h.run("store.latestSchedule.plan_date"), "2026-07-20");
+  assert.equal(h.run("store.meta.oldest_loaded_date"), frontier, "single-day loading must not move the history frontier");
+  assert.equal(h.run("store.hourly.get('2026-07-20')[9].forecast_pv_kwh"), 0.2, "ignore unrelated response dates");
+  await select(oldDate);
+  await select("2026-07-18");
+  assert.equal(h.requests.length, 1, "revisiting a loaded day does not transfer it again");
+
+  const first = select("2026-07-17");
+  const same = select("2026-07-17");
+  const last = select("2026-07-16");
+  assert.equal(h.requests.length, 3, "in-flight duplicate selections share one request");
+  const responseFor = (date) => ({ ok: true, json: async () => ({
+    forecast_hourly: rowsFor(date, 2), daily_review: { date, complete_day: true },
+  }) });
+  deferred.get("2026-07-16")(responseFor("2026-07-16"));
+  await last;
+  deferred.get("2026-07-17")(responseFor("2026-07-17"));
+  await Promise.all([first, same]);
+  assert.equal(input.value, "2026-07-16");
+  assert.match(note.textContent, /2026-07-16/, "a late response cannot change the selected day");
+
+  await select("2026-07-10");
+  assert.match(note.textContent, /2026-07-10.*保存されていません/);
+  assert.match(h.elements.get("dailyReviewNote").textContent, /予実レビューは保存されていません/);
+  assert.equal(chart.data.labels.length, 0, "empty historical data must not fall back to the current plan");
+  const requestsAfterEmpty = h.requests.length;
+  await select("2026-07-10");
+  await select("2026-07-20");
+  await select("2026-06-30");
+  await select("2026-02-31");
+  assert.equal(h.requests.length, requestsAfterEmpty, "empty days are cached and invalid selections make no requests");
+  assert.equal(input.value, "2026-07-10");
+
+  await select("2026-07-15");
+  assert.match(note.textContent, /2026-07-15.*読込に失敗/);
+  await select("2026-07-15");
+  assert.match(note.textContent, /2026-07-15 の時間別表示/);
+  const pending = select("2026-07-12");
+  latest.listeners.click();
+  assert.equal(latest.disabled, true);
+  assert.match(title.textContent, /最新計画/);
+  deferred.get("2026-07-12")(responseFor("2026-07-12"));
+  await pending;
+  assert.match(note.textContent, /2026-07-20/, "returning to latest cancels the old display selection");
+  assert.equal(input.value, oldDate);
+  assert.equal(h.requests.some((url) => url.includes("/history")), false, "date selection must not fetch bulk history");
+}
+
 tests().catch((error) => { console.error(error); process.exitCode = 1; });
