@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -63,7 +64,16 @@ def remove_owned(root: Path, name: str) -> None:
     if path.is_symlink() or path.resolve().parent != root.resolve():
         raise ValueError("Recovery path escapes its owned directory")
     if path.exists():
-        shutil.rmtree(path)
+        def remove_readonly(function: Any, filename: str, error: BaseException) -> None:
+            mode = Path(filename).stat().st_mode
+            if not isinstance(error, PermissionError) or mode & stat.S_IWRITE:
+                raise error
+            # Git marks pack files read-only on Windows. Only this owned
+            # temporary tree may have that attribute cleared for removal.
+            os.chmod(filename, mode | stat.S_IWRITE)
+            function(filename)
+
+        shutil.rmtree(path, onexc=remove_readonly)
 
 
 def verify_snapshot(path: Path) -> dict[str, Any]:
@@ -237,13 +247,21 @@ def stop_runtime(root: Path) -> None:
     token = processes["instance"]
     if not re.fullmatch(r"[0-9a-f]{32}", token):
         raise ValueError("Invalid owned process identity")
-    for pid in processes["pids"]:
-        # Inspect and stop in one native shell. A recycled PID without our unique
-        # instance argument cannot be terminated by this operation.
-        command = (f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}'; "
-                   f"if ($p -and $p.CommandLine.Contains('{token}')) {{ Stop-Process -Id {int(pid)} -ErrorAction Stop }} "
-                   "elseif ($p) { throw 'Process identity differs; refusing to stop it' }")
-        subprocess.run(["pwsh", "-NoProfile", "-Command", command], check=True, capture_output=True)
+    recorded = ",".join(str(int(pid)) for pid in processes["pids"])
+    # A Java launcher may spawn another java.exe with the same instance option.
+    # Match that exact option, including when the recorded launcher has exited.
+    # Recycled recorded PIDs must still be rejected before stopping anything.
+    command = (f"$recorded=@({recorded}); $all=@(Get-CimInstance Win32_Process -ErrorAction Stop); "
+               "foreach($id in $recorded) { $p=$all | Where-Object ProcessId -eq $id; "
+               f"if($p -and (-not $p.CommandLine -or -not $p.CommandLine.Contains('{token}'))) "
+               "{ throw 'Process identity differs; refusing to stop it' } }; "
+               "$owned=@($all | Where-Object { $_.CommandLine -and "
+               f"(($_.ProcessId -in $recorded -and $_.CommandLine.Contains('{token}')) -or "
+               f"($_.Name -eq 'java.exe' -and $_.CommandLine.Contains('-Dsolar.recovery.instance={token} '))) }}); "
+               "foreach($p in $owned) { Stop-Process -Id $p.ProcessId -ErrorAction Stop }; "
+               "foreach($p in $owned) { Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue | "
+               "Wait-Process -Timeout 15 -ErrorAction Stop }; exit 0")
+    subprocess.run(["pwsh", "-NoProfile", "-Command", command], check=True, capture_output=True)
 
 
 def require_free(port: int) -> None:

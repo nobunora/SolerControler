@@ -3,6 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import stat
+import subprocess
+import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -77,6 +81,38 @@ def test_unowned_directory_and_arbitrary_deletion_are_rejected(recovery, tmp_pat
     with pytest.raises(ValueError, match="outside managed"):
         recovery.remove_owned(tmp_path, "../other")
     assert (tmp_path / "unrelated.txt").read_text() == "keep"
+
+
+def test_recreating_runtime_removes_readonly_git_pack_files(recovery, tmp_path):
+    root = recovery.owned_root(tmp_path)
+    pack = root / "runtime/source/.git/objects/pack/pack-example.idx"
+    pack.parent.mkdir(parents=True)
+    pack.write_bytes(b"git pack index")
+    pack.chmod(stat.S_IREAD)
+    (root / "unrelated.txt").write_text("keep")
+    recovery.remove_owned(root, "runtime")
+    assert not (root / "runtime").exists()
+    assert (root / "unrelated.txt").read_text() == "keep"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows native process ownership")
+def test_owned_runtime_stop_waits_and_can_be_repeated_without_stopping_other_work(recovery, tmp_path):
+    token = uuid.uuid4().hex
+    command = [sys.executable, "-c", "import time; time.sleep(60)", "--instance"]
+    owned = subprocess.Popen(command + [token], creationflags=subprocess.CREATE_NO_WINDOW)
+    other = subprocess.Popen(command + [uuid.uuid4().hex], creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        root = recovery.owned_root(tmp_path)
+        recovery.write_json(root / "runtime/processes.private.json", {"instance": token, "pids": [owned.pid]})
+        recovery.stop_runtime(root)
+        assert owned.wait(timeout=15) is not None
+        recovery.stop_runtime(root)
+        assert other.poll() is None
+    finally:
+        for process in (owned, other):
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=15)
 
 
 def test_local_environment_drops_all_production_credentials(recovery, tmp_path, monkeypatch):

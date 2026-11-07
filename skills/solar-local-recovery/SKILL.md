@@ -58,7 +58,7 @@ The restored source comes from the captured Git bundle at its recorded source re
 
 The local dashboard uses the recovered application's Firestore backend. Its HTTP writes are disabled; its launcher strips production environment variables and credentials and blocks external Python network connections. No control/planner scheduler is installed or started. Emulator limitations still apply; local success is not proof of cloud IAM/index/concurrency behavior or real-device operation.
 
-Stop only processes whose recorded PID and unique instance argument match this recovery instance:
+Stop only processes whose recorded PID and unique instance argument match this recovery instance, plus Java launcher children carrying its exact `-Dsolar.recovery.instance=<validated UUID>` option. Reject recycled recorded PIDs, wait for owned processes to exit, and leave other instances/listeners alone. Windows Git pack files can be read-only: clear that attribute only after a deletion failure inside the already validated managed temporary tree; do not bypass ACLs or locks:
 
 ```powershell
 python scripts/local_recovery.py stop --root artifacts/backups/local-recovery
