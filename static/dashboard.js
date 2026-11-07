@@ -270,6 +270,8 @@
     }
 
     const store = window.DashboardStore.createStore();
+    const reviewDateRequests = new Map();
+    const reviewDatesLoaded = new Set();
 
     const periodState = window.DashboardStore.createPeriodState();
 
@@ -366,12 +368,15 @@
         for (const review of payload.daily_reviews || []) {
           if (review && review.date) store.dailyReviews.set(String(review.date), review);
         }
-        store.dailyReview = payload.daily_review || {};
-        if (store.dailyReview.date && !store.dailyReviews.has(String(store.dailyReview.date))) {
-          store.dailyReviews.set(String(store.dailyReview.date), store.dailyReview);
+        const defaultReview = payload.daily_review || {};
+        if (defaultReview.date && !store.dailyReviews.has(String(defaultReview.date))) {
+          store.dailyReviews.set(String(defaultReview.date), defaultReview);
         }
-        if (!store.latestReviewDate && store.dailyReview.date) {
-          store.latestReviewDate = String(store.dailyReview.date);
+        store.dailyReview = store.selectedReviewDate
+          ? store.dailyReviews.get(store.selectedReviewDate) || { date: store.selectedReviewDate }
+          : defaultReview;
+        if (payload.daily_review && payload.daily_review.date) {
+          store.latestReviewDate = String(payload.daily_review.date);
         }
       }
       const previousMeta = store.meta || {};
@@ -534,13 +539,19 @@
     function renderDailyReview() {
       const review = store.dailyReview || {};
       const note = document.getElementById("dailyReviewNote");
-      const dateLabel = document.getElementById("dailyReviewDate");
+      const dateInput = document.getElementById("dailyReviewDate");
       const prevButton = document.getElementById("dailyReviewPrevBtn");
       const nextButton = document.getElementById("dailyReviewNextBtn");
       const grid = document.getElementById("dailyReviewGrid");
       const findings = document.getElementById("dailyReviewFindings");
       if (!note || !grid || !findings) return;
-      if (dateLabel) dateLabel.textContent = review.date || "データなし";
+      if (dateInput) {
+        dateInput.value = store.selectedReviewDate || review.date || "";
+        dateInput.min = oldestAvailableDate() || "";
+        dateInput.max = isoDateAdd(todayIsoJst(), -1);
+      }
+      const latestButton = document.getElementById("dailyReviewLatestBtn");
+      if (latestButton) latestButton.disabled = !store.selectedReviewDate;
       const reviewDates = Array.from(store.dailyReviews.keys()).sort();
       const reviewIndex = review.date ? reviewDates.indexOf(String(review.date)) : -1;
       if (prevButton) prevButton.disabled = reviewIndex <= 0;
@@ -549,6 +560,14 @@
       }
       if (!review.date) {
         note.textContent = "24時間分が揃った予実レビュー対象日がまだありません。";
+        grid.innerHTML = "";
+        findings.innerHTML = "";
+        return;
+      }
+      if (store.selectedReviewDate && !store.dailyReviews.has(store.selectedReviewDate)) {
+        note.textContent = reviewDateRequests.has(store.selectedReviewDate)
+          ? `${store.selectedReviewDate} の予実レビューを読み込んでいます。`
+          : `${store.selectedReviewDate} の予実レビューは保存されていません。`;
         grid.innerHTML = "";
         findings.innerHTML = "";
         return;
@@ -609,8 +628,50 @@
       const currentIndex = reviewDates.indexOf(current);
       const nextIndex = currentIndex + (deltaDays < 0 ? -1 : 1);
       if (currentIndex < 0 || nextIndex < 0 || nextIndex >= reviewDates.length) return;
-      store.dailyReview = store.dailyReviews.get(reviewDates[nextIndex]) || store.dailyReview;
+      return selectDailyReview(reviewDates[nextIndex]);
+    }
+
+    async function selectDailyReview(date) {
+      const oldest = oldestAvailableDate();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isoDateAdd(date, 0) !== date
+        || (oldest && date < oldest) || date > isoDateAdd(todayIsoJst(), -1)) {
+        renderDailyReview();
+        return;
+      }
+      store.selectedReviewDate = date;
+      store.dailyReview = store.dailyReviews.get(date) || { date };
+      let pending = reviewDateRequests.get(date);
+      if (!pending && (!store.hourly.has(date) || (!store.dailyReviews.has(date) && !reviewDatesLoaded.has(date)))) {
+        pending = fetchSlice({ window_days: 1, end_date: date, include_static: !store.dailyReviews.has(date) })
+          .then((payload) => {
+            // A single-day response must not move the history frontier or replace the latest plan.
+            mergeHourlyRows((payload.forecast_hourly || []).filter((row) => row.date === date));
+            mergeRows(store.battery, (payload.battery_daily || []).filter((row) => row.date === date));
+            for (const review of [...(payload.daily_reviews || []), payload.daily_review]) {
+              if (review && review.date === date) store.dailyReviews.set(date, review);
+            }
+            if (!store.hourly.has(date)) store.hourly.set(date, []);
+            reviewDatesLoaded.add(date);
+          }).finally(() => reviewDateRequests.delete(date));
+        reviewDateRequests.set(date, pending);
+      }
       renderDailyReview();
+      renderHourlyForecast();
+      try {
+        await pending;
+      } catch {
+        if (store.selectedReviewDate === date) {
+          renderDailyReview();
+          renderHourlyForecast();
+          const note = document.getElementById("hourlyForecastNote");
+          if (note) note.textContent = `${date} の時間別データの読込に失敗しました。日付を選び直してください。`;
+        }
+        return;
+      }
+      if (store.selectedReviewDate !== date) return;
+      store.dailyReview = store.dailyReviews.get(date) || { date };
+      renderDailyReview();
+      renderHourlyForecast();
     }
 
     function latestAvailableDate() {
@@ -1196,6 +1257,7 @@
     }
 
     function hourlyForecastDate() {
+      if (store.selectedReviewDate) return store.selectedReviewDate;
       const importedDates = (store.meta && store.meta.snapshot_updated_dates) || [];
       const importedDate = importedDates.length === 1 ? String(importedDates[0]) : null;
       if (importedDate && store.hourly.has(importedDate)) return importedDate;
@@ -1256,6 +1318,9 @@
       const note = document.getElementById("hourlyForecastNote");
       const grid = document.getElementById("hourlyForecastGrid");
       const date = hourlyForecastDate();
+      const title = document.getElementById("hourlyForecastTitle");
+      if (title) title.textContent = store.selectedReviewDate
+        ? `2. 時間別予測（${date}）` : "2. 時間別予測（最新計画）";
       const rows = date ? (store.hourly.get(date) || []) : [];
       if (!rows.length) {
         chart.data.labels = [];
@@ -1266,7 +1331,10 @@
         chart.data.datasets[4].data = [];
         chart.data.datasets[5].data = [];
         chart.data.datasets.slice(6).forEach((dataset) => { dataset.data = []; });
-        if (note) note.textContent = "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
+        if (note) note.textContent = store.selectedReviewDate
+          ? reviewDateRequests.has(date) ? `${date} の時間別データを読み込んでいます。`
+            : `${date} の時間別データは保存されていません。`
+          : "時間別予測データがまだ保存されていません。23時ジョブ実行後に表示されます。";
         if (grid) grid.innerHTML = "";
         ensureVisibleChartRanges(chart);
         chart.update("none");
@@ -1889,6 +1957,13 @@
     function bindDailyReviewControls() {
       document.getElementById("dailyReviewPrevBtn")?.addEventListener("click", () => moveDailyReview(-1));
       document.getElementById("dailyReviewNextBtn")?.addEventListener("click", () => moveDailyReview(1));
+      document.getElementById("dailyReviewDate")?.addEventListener("change", (event) => selectDailyReview(event.target.value));
+      document.getElementById("dailyReviewLatestBtn")?.addEventListener("click", () => {
+        store.selectedReviewDate = null;
+        store.dailyReview = store.dailyReviews.get(store.latestReviewDate) || {};
+        renderDailyReview();
+        renderHourlyForecast();
+      });
     }
 
     function bindActualImport() {
