@@ -167,6 +167,45 @@ async function tests() {
   h.context.__rows = extra;
   h.context.__summary = fixture().pv_forecast_diagnostics.pv_model;
   assert.equal(h.run("bindPvModelToForecast(__summary,__rows,'2026-07-20').status"), "valid");
+
+  const native = fixture();
+  native.pv_forecast_diagnostics.pv_model = {
+    schema_version: 1, status: "valid", model_id: "physical_pv_ideal_max_global_v1",
+    basis_version: "noaa_haurwitz_erbs_poa_stc25_1min_v1", plan_date: "2026-07-20",
+    generated_at: "2026-07-19T18:00:00Z", forecast_run_id: "run-1",
+    coefficient: 1.575789910708392, revision: 11, calibration_sha256: "b".repeat(64),
+    training_as_of: "2026-07-18T17:31:58Z", as_of: "2026-07-19T17:55:00Z",
+    retrieved_at: "2026-07-19T17:50:00Z", weather_adjustment_applied: true,
+    pv_bias: { status: "neutral", training_day_count: 35, training_hour_count: 840,
+      lookback_days: 365, minimum_bin_days: 7, prior_pseudo_days: 20,
+      validation_day_count: 28, economic_day_count: 4, comparison_tolerance: 1e-9,
+      regressed_metrics: ["soc_mae"], pv_mae: { baseline: .140070336, candidate: .119749956 },
+      validation_errors: { soc_mae: { baseline: 1.440494668, candidate: 1.451442795 },
+        buy_mae: { baseline: .041576, candidate: .041576 }, fee_mae: { baseline: 1.60968, candidate: 1.60968 } } },
+  };
+  const n = await harness(native);
+  assert.match(n.elements.get("pvModelName").textContent, /太陽高度・設備能力＋天気予報/);
+  assert.match(n.elements.get("pvModelLearningPeriod").textContent, /35日・840時間.*365日窓.*最低7日.*平滑化20/);
+  assert.match(n.elements.get("pvModelTiming").textContent, /1.575790.*11回/);
+  assert.match(n.elements.get("pvModelRepair").textContent, /保留.*SOC誤差の非悪化条件/);
+  assert.match(n.elements.get("pvModelExplanation").textContent, /min\(F\(h\)\/Q\(d,h\),1\)/);
+  assert.ok(n.table().some((row) => row[1] === "SOC誤差" && row[2].includes("1.4405 → 1.4514") && row[4].includes("不成立")));
+  assert.ok(n.table().some((row) => row[1] === "料金誤差" && row[4].includes("成立")));
+  assert.equal(n.table().some((row) => row[0] === "NEW100係数"), false);
+  assert.equal(n.requests.length, 0); // Summary rendering introduces no HTTP or history read.
+  const mismatchedNative = JSON.parse(JSON.stringify(native));
+  mismatchedNative.forecast_hourly[8].forecast_run_id = "different-run";
+  await n.replace(mismatchedNative);
+  assert.match(n.elements.get("pvModelName").textContent, /未確認/);
+  const badNative = JSON.parse(JSON.stringify(native));
+  badNative.pv_forecast_diagnostics.pv_model.coefficient = 0;
+  await n.replace(badNative);
+  assert.match(n.elements.get("pvModelName").textContent, /未確認/);
+  const missingBias = JSON.parse(JSON.stringify(native));
+  delete missingBias.pv_forecast_diagnostics.pv_model.pv_bias;
+  await n.replace(missingBias);
+  assert.match(n.elements.get("pvModelRepair").textContent, /診断未保存/);
+  assert.equal(n.requests.length, 0);
   console.log("dashboard model display: PASS");
 }
 

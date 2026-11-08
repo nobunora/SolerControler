@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import re
@@ -20,12 +21,61 @@ from app.dashboard.warnings import build_dashboard_warnings
 from app.parsing.numbers import to_float
 
 
+def _pv_bias_display(bias: dict[str, Any], *, target_date: str) -> dict[str, Any]:
+    """Summarize saved validation only; never refit or decide adoption on a GET."""
+    def count(value: Any, maximum: int) -> int | None:
+        return value if type(value) is int and 0 <= value <= maximum else None
+
+    def metric(value: Any) -> float | None:
+        try:
+            return float(value) if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+        except OverflowError:
+            return None
+
+    def dates(value: Any) -> list[str] | None:
+        if not isinstance(value, list) or len(value) > 365:
+            return None
+        try:
+            parsed = sorted({date.fromisoformat(v).isoformat() for v in value})
+            return parsed if all(v < target_date for v in parsed) else None
+        except (ValueError, TypeError):
+            return None
+
+    training, validation = dates(bias.get("training_days")), dates(bias.get("validation_days"))
+    errors = bias.get("validation_errors")
+    errors = errors if isinstance(errors, dict) else {}
+    metrics = {}
+    for key in ("soc_mae", "buy_mae", "fee_mae"):
+        pair = errors.get(key)
+        pair = pair if isinstance(pair, dict) else {}
+        metrics[key] = {part: metric(pair.get(part)) for part in ("baseline", "candidate")}
+    pv = bias.get("pv_validation")
+    pv = pv if isinstance(pv, dict) else {}
+    coverage = bias.get("coverage")
+    coverage = coverage if isinstance(coverage, dict) else {}
+    status = bias.get("status")
+    return {"status": status if status in ("accepted", "neutral", "retained_previous") else "unavailable",
+            "minimum_bin_days": count(bias.get("minimum_bin_days"), 365),
+            "prior_pseudo_days": count(bias.get("prior_pseudo_days"), 365),
+            "lookback_days": count(bias.get("lookback_days"), 365),
+            "training_day_count": len(training) if training is not None else None,
+            "training_hour_count": count(coverage.get("accepted_hours"), 365 * 24),
+            "training_start_date": training[0] if training else None, "training_end_date": training[-1] if training else None,
+            "validation_day_count": len(validation) if validation is not None else None,
+            "economic_day_count": count(bias.get("economic_validation_days"), 365),
+            "pv_mae": {"baseline": metric(pv.get("baseline_mae")), "candidate": metric(pv.get("candidate_mae"))},
+            "validation_errors": metrics, "comparison_tolerance": 1e-9,
+            "regressed_metrics": [key for key, pair in metrics.items() if pair["baseline"] is not None
+                                  and pair["candidate"] is not None and pair["candidate"] > pair["baseline"] + 1e-9]}
+
+
 def _build_pv_model_summary(
     data: dict[str, Any], *, producer_identity: dict[str, str] | None = None,
     forecast_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Expose adopted display metadata without importing a forecasting model."""
     new_model = "physical_clear_ghi_annual1"
+    ideal_model = "physical_pv_ideal_max_global_v1"
     new_basis = "noaa_geometric_1min_midpoint_annual1_v1"
     legacy_sources = {"physical_pv_forecast", "corrected_pv_forecast"}
     legacy_methods = {"existing", "physical_unscaled", "physical_global", "physical_daypart", "physical_altitude_shortwave"}
@@ -77,6 +127,10 @@ def _build_pv_model_summary(
     forecast = mapping(data.get("forecast"))
     source = mapping(data.get("result")).get("final_pv_forecast_source")
     selected = physical.get("selected_method")
+    ideal = mapping(rationale.get("pv_ideal_max"))
+    ideal_indicated = ideal_model in (source, selected, ideal.get("model_id"))
+    if ideal_indicated:
+        trace = ideal
     trace_model = trace.get("model_id")
     model = source if source is not None and source != "" else selected if selected is not None and selected != "" else trace_model
     identity = mapping(producer_identity)
@@ -103,12 +157,14 @@ def _build_pv_model_summary(
         return result
 
     # Source selection is an allowlist, never a catch-all legacy fallback.
-    if source is not None and source != "" and (not isinstance(source, str) or source not in legacy_sources | {new_model}):
+    if source is not None and source != "" and (not isinstance(source, str) or source not in legacy_sources | {new_model, ideal_model}):
         return finish("unsupported", "unsupported_model")
     new_indicated = new_model in (source, selected, trace_model)
+    if ideal_indicated and any(value is not None and value != "" and value != ideal_model for value in (source, selected, trace_model)):
+        return finish("invalid", "display_metadata_invalid")
     if new_indicated and any(value is not None and value != "" and value != new_model for value in (source, selected, trace_model)):
         return finish("invalid", "display_metadata_invalid")
-    if not new_indicated:
+    if not new_indicated and not ideal_indicated:
         if ((isinstance(source, str) and source in legacy_sources)
                 or (not source and ((isinstance(selected, str) and selected in legacy_methods) or physical.get("scales") or physical.get("data_quality")))):
             return finish("legacy", None)
@@ -122,7 +178,43 @@ def _build_pv_model_summary(
             or instant(generated) != instant(data.get("generated_at"))):
         return finish("invalid", "plan_identity_mismatch")
     if not trace:
-        return finish("invalid", "clear_ghi_trace_missing")
+        return finish("invalid", "ideal_max_trace_missing" if ideal_indicated else "clear_ghi_trace_missing")
+
+    if ideal_indicated:
+        pack = mapping(trace.get("calibration_pack"))
+        basis = "noaa_haurwitz_erbs_poa_stc25_1min_v1"
+        coefficient, revision = trace.get("coefficient"), trace.get("revision")
+        training, as_of, retrieved = (instant(value) for value in
+            (pack.get("training_as_of"), trace.get("as_of"), trace.get("retrieved_at")))
+        provider, generated_at = instant(trace.get("provider_issued_at")), instant(generated)
+        valid = (trace.get("schema_version") == 1 and type(trace.get("schema_version")) is int
+            and trace_model == ideal_model and pack.get("model_id") == "pv_ideal_max_global_v1"
+            and trace.get("basis_version") == pack.get("basis_version") == basis
+            and day(trace.get("target_date")) == summary["plan_date"]
+            and number(coefficient) and number(pack.get("coefficient")) and coefficient >= 1 and coefficient == pack.get("coefficient")
+            and type(revision) is int and type(pack.get("revision")) is int and revision >= 0 and revision == pack.get("revision")
+            and text(trace.get("calibration_sha256"), 64, pattern=sha) is not None
+            and text(trace.get("forecast_sha256"), 64, pattern=sha) is not None
+            and text(trace.get("site_fingerprint"), 64, pattern=sha) is not None
+            and text(pack.get("geometry_fingerprint"), 64, pattern=sha) is not None
+            and trace.get("weather_adjustment_applied") is True
+            and training is not None and as_of is not None and retrieved is not None and generated_at is not None
+            and training <= as_of <= generated_at and retrieved <= as_of
+            and (trace.get("provider_issued_at") is None or (provider is not None and provider <= retrieved)))
+        if not valid:
+            return finish("invalid", "display_metadata_invalid")
+        try:
+            pack_raw = json.dumps(pack, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        except (ValueError, TypeError, OverflowError):
+            return finish("invalid", "display_metadata_invalid")
+        if hashlib.sha256(pack_raw).hexdigest() != trace["calibration_sha256"]:
+            return finish("invalid", "calibration_sha_mismatch")
+        summary.update({"basis_version": basis, "coefficient": coefficient, "revision": revision,
+            "calibration_sha256": trace["calibration_sha256"], "forecast_sha256": trace["forecast_sha256"],
+            "training_as_of": pack["training_as_of"], "as_of": trace["as_of"], "retrieved_at": trace["retrieved_at"],
+            "provider_issued_at": trace.get("provider_issued_at"), "weather_adjustment_applied": True,
+            "pv_bias": _pv_bias_display(mapping(trace.get("hourly_pv_bias")), target_date=str(summary["plan_date"]))})
+        return finish("valid", None)
 
     pack = mapping(trace.get("calibration_pack"))
     training_dates = pack.get("training_dates")

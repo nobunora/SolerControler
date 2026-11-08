@@ -48,3 +48,9 @@ replay_pv_bias_training.pyは退避済みSQLite・raw原本ディレクトリ・
 forecast_run_id/元発行時刻、過去予測、forecast_recoveryの31日原本回復、実測0と欠測、電力量/SOC時刻、HGB、蓄電池温度・充放電モデル、請求期間/料金契約、23/03/07の制御とAPI待機、表示/取込ボタン、runtime layout、Drive除外は維持する。geometry fingerprintの不一致拒否とfallbackの可視化を緩和しない。
 
 configと新しい計算用依存を正規calculation patch SHAに含め、同commit/digestのSDK proofと保存原本/表示照合を行う。forecast限定リリースをfull/controlへ拡大しない。実機SETは今回のテストへ追加しない。
+
+## モデル説明と残件の判定
+
+画面11は採用済み原本のnativeモデルも扱い、producer identity・24時間のforecast run・calibration pack SHAを確認した要約だけを表示する。能力係数C、天気調整、PV学習の日数/時間、7日/365日/事前強度20日、前向きPV誤差と完全SOC/買電/料金誤差を区別する。非悪化は保存値の`candidate <= baseline + 1e-9`で表示し、非採用を未実装と扱わない。表示側で学習・採用判断・予測値を変更しない。
+
+経路は原本→計算Jobの共通要約→bootstrap保存→HTTP/bootstrap又は日付指定API→画面。要約は4KiB以内で、学習日の全配列や原本private情報を転送しない。GETの追加DB読取・追加HTTP要求は0、初期history 0回と明示遷移後1回、既存のcache契約を維持する。要約を作るforecastと表示dashboardを同一commitで別scope/StatePathにより反映する。夜間終了後の`night_window_already_elapsed`は正常な生成対象外で、朝SOCを捏造しない。

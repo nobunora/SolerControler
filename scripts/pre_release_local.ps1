@@ -88,6 +88,9 @@ if ($LASTEXITCODE -ne 0) { throw "dashboard JavaScript bootstrap test failed" }
 node .\tests\test_dashboard_hourly_display.js
 if ($LASTEXITCODE -ne 0) { throw "dashboard hourly SOC display regression failed" }
 
+node .\tests\test_dashboard_model_display.js
+if ($LASTEXITCODE -ne 0) { throw "dashboard PV model display regression failed" }
+
 python .\scripts\security_check.py
 if ($LASTEXITCODE -ne 0) { throw "security_check failed" }
 
