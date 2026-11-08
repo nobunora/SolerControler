@@ -6,6 +6,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-08: 承認済みの各面1.00→1.08kW/20→19度の設備整合後、同日既存計画とのsite fingerprint相違で公開を拒否し、予測Jobが失敗。旧採用計画は保持された | 設定された同一座標・timezone・その他の面別設定を維持する、この一方向の変更だけを明示識別する。新旧native geometry・site・calibration SHAを全照合し、モデル/basis/取得・学習時刻/CAS保護を残す。`test_pv_geometry_publication.py`で実際の公開guard、偽のsite/geometry/SHA、逆方向、時刻巻戻りを回帰する。失敗executionと旧採用計画の保持を保存し、同executionの再実行や保護無効化で回避しない。修正版の新commit/gate/fixture/Stateでforecast限定反映する |
 | 2026-11-05: 利用中本番タブで取込みボタン無効化の申告。新規sessionの実取込みは成功したが、ソースで認証・入力拒否400/401/403も受付不明として永久無効化する経路を確認 | Job送信前の既知拒否だけpendingを解除し、未開始の理由を表示する。502/503や通信断・受付不明は引き続きロックし、自動再送しない。`test_dashboard_hourly_display.js`で5種類の応答とPOST一回を回帰する。申告タブ固有の原因は未再現であり、この経路が原因と断定しない |
 | 2026-11-05: 共通時刻metadataの追加で保存原本のrun ID再構築が変わり、正式gateで直近23日がoriginal:run_mismatch、時間別744行中1248項目の照合失敗となり、本番更新前に停止 | immutable IDは従来の予測値・発行時刻・出典で固定し、派生interval_start/interval_end/forecast_soc_atだけをID入力から除く。`test_derived_time_metadata_preserves_legacy_forecast_identity`で変更前の固定IDと予測値変更時のID変化を回帰する。時刻metadata自体や原本SHA/run照合を削除せず、同commitの正式gateで31日native parityが成立するまでdeployしない |
 | 2026-11-03: 06→07接続の本番mobile画像で凡例最下段が切れた。既存のcanvas描画・page overflow検査はPASSでも、legend bottom=120に対し最下段120+12となっていた | mobileの時間別chartだけ420pxを確保し、legendとplotを収める。`test_browser_rejects_clipped_hourly_legend`で観測座標を回帰し、正規browser checkerで全legend hitboxの上下端を検査する。320/390/768/1440pxの画像と実boundsを確認し、描画数/HTTP成功だけでPASSにしない。表示だけの修正では取込み・機器操作を繰り返さない |

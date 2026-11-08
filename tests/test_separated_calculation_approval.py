@@ -58,7 +58,8 @@ def test_energy_plan_modules_cannot_bypass_calculation_approval(source_repo):
         verify_calculation_source(baseline)
 
 
-@pytest.mark.parametrize("path", ["app/operations/pv_bias_history.py", "app/operations/pv_ideal_max.py", "config/pv_arrays.json"])
+@pytest.mark.parametrize("path", ["app/operations/pv_bias_history.py", "app/operations/pv_ideal_max.py",
+    "app/operations/pv_geometry_transition.py", "app/separated_runtime/plan_store.py", "config/pv_arrays.json"])
 def test_pv_history_and_geometry_cannot_bypass_calculation_approval(source_repo, path):
     source, baseline = source_repo
     added = source.parents[2] / path

@@ -35,6 +35,8 @@ config/pv_arrays.jsonを図面の1.08kW/19度へ整合する。性能比・影�
 
 InitializeCloudは新namespaceが存在しない場合だけ許可。migration manifestとseed SHA、新旧fingerprint、元台帳のsnapshot/generationが一致することを確認し、正規publishだけで初期化する。旧台帳/元原本を保持。pointerのinitialized_atは新規公開時刻であり、過去観測のavailable_atと混同しない。timeout/既存namespace/世代不一致では再publishせずread-only照合する。
 
+同日既存計画への公開は、site fingerprintに設備も含まれるため、承認済みの各面1.00kW/20度から1.08kW/19度だけを別途識別する。現在設定の座標・timezone・その他面設定で新旧site/native geometry fingerprintを算出し、両calibration pack SHAまで一致する場合だけ移行と認める。逆方向や任意のsite aliasは認めない。モデル/basis・取得時刻・学習時刻・CASの保護は継続する。control fetchの契約/Jobは変更しない。
+
 ## ローカル非適用経路
 
 replay_pv_bias_training.pyは退避済みSQLite・raw原本ディレクトリ・native台帳をread-onlyで読む。指定旧/新配置で同じ純粋計算核を使い、未補正とcandidate_shadowを新規ディレクトリへ出力する。入力の前後SHAを確認し、production_applied=false、remote_calls=0、DB_writes=0を記録する。

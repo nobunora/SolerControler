@@ -39,9 +39,18 @@ def _check_provenance(incoming: PublishedPlan, adopted: PublishedPlan) -> None:
         if not old.get("site_fingerprint") or new.get("site_fingerprint") != old["site_fingerprint"]:
             raise ValueError("plan publication provenance site mismatch")
         return
-    identity = ("model_id", "basis_version", "site_fingerprint")
+    identity = ("model_id", "basis_version")
     if not new or any(not old.get(key) or new.get(key) != old[key] for key in identity):
         raise ValueError("plan publication provenance model/site/basis mismatch")
+    if not old.get("site_fingerprint") or new.get("site_fingerprint") != old["site_fingerprint"]:
+        # This exact equipment correction was approved with the forecast release.
+        # Continue through every vintage guard below; it is not a general bypass.
+        from app.operations.pv_geometry_transition import approved_panel_geometry_transition
+        if not approved_panel_geometry_transition(new, old):
+            raise ValueError("plan publication provenance model/site/basis mismatch")
+        print(json.dumps({"event": "plan_publication_geometry_transition", "stage": "control_cas",
+                          "target_date": incoming.target_date,
+                          "reason_code": "approved_20261108_panel_capacity_and_tilt"}), flush=True)
     old_issued, new_issued = old.get("provider_issued_at"), new.get("provider_issued_at")
     if old_issued is not None:
         if new_issued is None or _provenance_time(new_issued) < _provenance_time(old_issued):
