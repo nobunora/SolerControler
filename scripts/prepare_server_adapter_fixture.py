@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BASELINE = "fd022e7a94abc40d8190b639722d9f5471042d07"
 CALCULATION_PATHS = ("app/energy_model", "app/forecasting", "app/energy_plan",
                      "app/operations/forecast_persistence.py", "app/operations/forecast_recovery.py",
-                     "app/operations/pv_bias_history.py", "app/operations/pv_ideal_max.py", "config/pv_arrays.json")
+                     "app/operations/pv_bias_history.py", "app/operations/pv_ideal_max.py",
+                     "app/operations/pv_geometry_transition.py", "app/separated_runtime/plan_store.py", "config/pv_arrays.json")
 
 
 def canonical(value: Any) -> bytes:
