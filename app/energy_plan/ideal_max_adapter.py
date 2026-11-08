@@ -66,11 +66,19 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
     if loaded is None:
         return None
     maximum, trace = loaded
+    coefficient_history = [(datetime.fromisoformat(t), float(c)) for t, c in trace.pop("_training_coefficient_history", [])]
     maximum = _valid_hourly(maximum)
     hourly_pv, weather = _weather_adjusted_pv(context, maximum, as_of=as_of)
-    bias_days, bias_coverage = collect_pv_bias_days(target_date=context.target_date, as_of=as_of,
-        timezone_name=context.config.timezone,
-        actual_rows=context.consumption_rows)
+    training_days = None
+    if context.billing_rows is not None and coefficient_history:
+        from app.operations.pv_bias_history import load_pv_training_history
+        from app.operations.pv_ideal_max import configured_ideal_max_geometry
+        training_days, bias_days, bias_coverage = load_pv_training_history(
+            target_date=context.target_date, as_of=as_of, geometry=configured_ideal_max_geometry(),
+            existing_actuals=context.billing_rows)
+    else:
+        bias_days, bias_coverage = collect_pv_bias_days(target_date=context.target_date, as_of=as_of,
+            timezone_name=context.config.timezone, actual_rows=context.consumption_rows)
     trace = {**trace, "weather_adjustment_applied": True,
              "capability_retrieved_at": trace.get("retrieved_at"),
              "retrieved_at": weather["retrieved_at"], "provider_issued_at": weather["provider_issued_at"],
@@ -99,4 +107,5 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
         source=str(trace["model_id"]), uncertainty=_selected_pv_uncertainty(physical_pv_selected=True,
             physical_pv_diagnostics=diagnostics, pv_array_forecast=None),
         sunset_hour=estimate_sunset_hour(hourly_pv), ideal_max_provenance=trace, hourly_pv_max_kwh=maximum,
-        hourly_pv_bias_days=bias_days)
+        hourly_pv_bias_days=bias_days, hourly_pv_training_days=training_days,
+        pv_coefficient_history=coefficient_history)

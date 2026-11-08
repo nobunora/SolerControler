@@ -59,6 +59,23 @@ def load_ideal_max_for_forecast(target_date: date, *, as_of: datetime,
                  "coefficient": state.coefficient, "revision": state.revision,
                  "hourly_pv_kwh": {str(h): value for h, value in pv.items()},
                  "weather_adjustment_applied": False}
+        # Read only update events, not issued predictions. This compact timeline
+        # lets residual validation use the coefficient actually available at a fold.
+        events = [json.loads(row[0]) for row in store.connection.execute(
+            "SELECT payload FROM observations WHERE json_extract(payload, '$.exceeded')=1 "
+            "AND json_extract(payload, '$.available_at')<=? "
+            "ORDER BY json_extract(payload, '$.available_at'), interval_start LIMIT ?",
+            (as_of.astimezone(timezone.utc).isoformat(), 366 * 24 + 1))]
+        if len(events) > 366 * 24:
+            raise ValueError("capability history exceeds the validation budget")
+        history = []
+        if events:
+            first = datetime.fromisoformat(events[0]["available_at"]) - timedelta(microseconds=1)
+            history.append((first.isoformat(), events[0]["coefficient_before"]))
+            history.extend((r["available_at"], r["coefficient_after"]) for r in events)
+        else:
+            history.append((state.updated_at.isoformat(), state.coefficient))
+        trace["_training_coefficient_history"] = history
         return pv, trace
 
     if prefix:

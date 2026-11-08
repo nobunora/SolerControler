@@ -43,7 +43,7 @@ def context(tmp_path, weather_factor=1.0):
              "shortwave_radiation_w_m2": weather_factor * 1000 * clear_ghi_hour(
                  start.date(), h, latitude=35, longitude=135, timezone="Asia/Tokyo")}
             for h in range(24)]
-    return SimpleNamespace(target_date="2026-10-31", rows=[], consumption_rows=[],
+    return SimpleNamespace(target_date="2026-10-31", rows=[], consumption_rows=[], billing_rows=None,
         config=SimpleNamespace(artifacts_dir=tmp_path, latitude=35, longitude=135, timezone="Asia/Tokyo"),
         forecast={"weather_code": 95, "pv_radiation_rows": rows,
                   "pv_forecast_retrieved_at": (NOW-timedelta(hours=1)).isoformat(),

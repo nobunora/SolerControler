@@ -100,13 +100,27 @@ def prepare_empirical_planning(
     context = replace(context, battery_response=calibration.response,
                       battery_calibration=calibration.diagnostics, previous_calibration_state=previous)
     if pv.ideal_max_provenance is not None and pv.hourly_pv_max_kwh is not None:
-        corrected, diagnostics, model = select_hourly_pv_bias(
-            days=pv.hourly_pv_bias_days, as_of=as_of, target_date=context.target_date,
-            forecast_pv=pv.hourly_pv_kwh, maximum=pv.hourly_pv_max_kwh,
-            weather_by_hour=forecast_weather_by_hour(context.forecast),
-            evaluate_day=lambda day, values: _pv_replay(day, values, cost),
-            previous_model=_previous_pv_model(previous.get("hourly_pv_bias_model")),
-        )
+        if pv.hourly_pv_training_days is not None:
+            from app.energy_plan.pv_bias_training import MODEL_ID as TRAINING_MODEL_ID, select_training_bias
+            saved = previous.get("hourly_pv_bias_model")
+            fingerprint = pv.ideal_max_provenance.get("calibration_pack", {}).get("geometry_fingerprint")
+            compatible = (isinstance(saved, dict) and saved.get("model_id") == TRAINING_MODEL_ID
+                          and saved.get("geometry_fingerprint") == fingerprint
+                          and saved.get("calibration_sha256") == pv.ideal_max_provenance.get("calibration_sha256"))
+            corrected, diagnostics, model = select_training_bias(
+                days=pv.hourly_pv_training_days, coefficients=pv.pv_coefficient_history,
+                as_of=as_of, target_date=context.target_date, forecast_pv=pv.hourly_pv_kwh,
+                maximum=pv.hourly_pv_max_kwh, weather=forecast_weather_by_hour(context.forecast),
+                economic_days=pv.hourly_pv_bias_days, evaluate_day=lambda day, values: _pv_replay(day, values, cost),
+                previous_model=_previous_pv_model(saved) if compatible else None)
+        else:
+            corrected, diagnostics, model = select_hourly_pv_bias(
+                days=pv.hourly_pv_bias_days, as_of=as_of, target_date=context.target_date,
+                forecast_pv=pv.hourly_pv_kwh, maximum=pv.hourly_pv_max_kwh,
+                weather_by_hour=forecast_weather_by_hour(context.forecast),
+                evaluate_day=lambda day, values: _pv_replay(day, values, cost),
+                previous_model=_previous_pv_model(previous.get("hourly_pv_bias_model")),
+            )
         diagnostics["evaluation"] = "frozen_response_observed_start_soc_uniform_halfhour_current_contract_revaluation"
         old_bias = pv.ideal_max_provenance.get("hourly_pv_bias", {})
         diagnostics["coverage"] = old_bias.get("coverage", {}) if isinstance(old_bias, dict) else {}
@@ -115,6 +129,9 @@ def prepare_empirical_planning(
                        for (hour, weather), value in sorted(model.deltas.items())],
             "training_days": list(model.training_days), "validated_at": model.validated_at.isoformat(),
             "source_sha256": model.source_sha256,
+            "model_id": diagnostics["model_id"],
+            "geometry_fingerprint": pv.ideal_max_provenance.get("calibration_pack", {}).get("geometry_fingerprint"),
+            "calibration_sha256": pv.ideal_max_provenance.get("calibration_sha256"),
         }
         trace = {**pv.ideal_max_provenance, "hourly_pv_bias": diagnostics,
                  "hourly_pv_bias_model": model_payload,
