@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "5ae0509426e2463140186fcab04d1de5d6199701",
-    "indexed_at": "2026-11-06T14:42:44Z",
-    "project": "SolerControler-release-20261105",
-    "nodes": 10417,
-    "edges": 40625,
-    "original_size": 28770304,
-    "compressed_size": 4907959,
+    "commit": "d738c6ce2f85532ba43b99e63cbc91deb0685690",
+    "indexed_at": "2026-11-08T08:34:29Z",
+    "project": "SolerControler-pv-history-20261108",
+    "nodes": 5044,
+    "edges": 29564,
+    "original_size": 20578304,
+    "compressed_size": 3902304,
     "compression_level": 9
 }
