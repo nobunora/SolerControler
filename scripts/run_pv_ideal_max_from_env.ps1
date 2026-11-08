@@ -1,10 +1,12 @@
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('ValidateSeed', 'InitializeCloud', 'Report')][string]$Mode,
+    [Parameter(Mandatory=$true)][ValidateSet('ValidateSeed', 'InitializeCloud', 'PrepareGeometry', 'Report')][string]$Mode,
     [string]$StateDirectory,
     [string]$FromDate,
     [string]$ThroughDate,
     [string]$AsOf,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$SourceArrayConfig,
+    [string]$MigrationManifest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,7 +15,10 @@ Set-Location $repoRoot
 . (Join-Path $PSScriptRoot 'production_env.ps1')
 Import-ProductionEnv
 
-if ($Mode -eq 'Report') {
+if ($Mode -eq 'PrepareGeometry') {
+    if (-not $StateDirectory -or -not $SourceArrayConfig) { throw 'PrepareGeometry requires StateDirectory and SourceArrayConfig.' }
+    python scripts/prepare_pv_geometry_migration.py --source-array-config $SourceArrayConfig --output $StateDirectory
+} elseif ($Mode -eq 'Report') {
     if (-not $FromDate -or -not $ThroughDate -or -not $AsOf -or -not $OutputPath) {
         throw 'Report requires FromDate, ThroughDate, AsOf and OutputPath.'
     }
@@ -21,7 +26,9 @@ if ($Mode -eq 'Report') {
 } else {
     if (-not $StateDirectory) { throw 'Seed validation or initialization requires StateDirectory.' }
     if ($Mode -eq 'InitializeCloud') {
-        python scripts/initialize_pv_ideal_max_cloud.py --state-dir $StateDirectory --publish
+        $migrationArgs = @()
+        if ($MigrationManifest) { $migrationArgs = @('--migration-manifest', $MigrationManifest) }
+        python scripts/initialize_pv_ideal_max_cloud.py --state-dir $StateDirectory --publish @migrationArgs
     } else {
         python scripts/initialize_pv_ideal_max_cloud.py --state-dir $StateDirectory
     }

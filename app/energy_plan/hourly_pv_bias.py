@@ -20,8 +20,9 @@ from zoneinfo import ZoneInfo
 from app.forecasting.correction_calculations import weather_class
 from app.energy_plan.battery_response import BatterySocResponse
 
-LOOKBACK_DAYS = 90
-MIN_BIN_DAYS = 20
+LOOKBACK_DAYS = 365
+MIN_BIN_DAYS = 7
+PRIOR_PSEUDO_DAYS = 20
 MIN_VALIDATION_DAYS = 5
 MAX_SNAPSHOT_ROWS = LOOKBACK_DAYS * 24 * 8
 MODEL_ID = "frozen_hour_weather_bias_v1"
@@ -297,8 +298,8 @@ def _fit(days: tuple[PvBiasDay, ...]) -> tuple[dict[tuple[int, str], float], dic
         count = len(values)
         counts[f"{key[0]}:{key[1]}"] = count
         if count >= MIN_BIN_DAYS:
-            # n/(n+20) times the ordinary mean, with one sample per day/bin.
-            deltas[key] = math.fsum(value / (count + MIN_BIN_DAYS) for value in values.values())
+            # Minimum coverage and regularization are independent contracts.
+            deltas[key] = math.fsum(value / (count + PRIOR_PSEUDO_DAYS) for value in values.values())
     return deltas, counts
 
 

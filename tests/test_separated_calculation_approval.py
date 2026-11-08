@@ -56,3 +56,14 @@ def test_energy_plan_modules_cannot_bypass_calculation_approval(source_repo):
     subprocess.run(["git", "add", "-N", str(history)], check=True)
     with pytest.raises(AssertionError):
         verify_calculation_source(baseline)
+
+
+@pytest.mark.parametrize("path", ["app/operations/pv_bias_history.py", "app/operations/pv_ideal_max.py", "config/pv_arrays.json"])
+def test_pv_history_and_geometry_cannot_bypass_calculation_approval(source_repo, path):
+    source, baseline = source_repo
+    added = source.parents[2] / path
+    added.parent.mkdir(parents=True, exist_ok=True)
+    added.write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-N", str(added)], check=True)
+    with pytest.raises(AssertionError):
+        verify_calculation_source(baseline)

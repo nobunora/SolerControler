@@ -45,15 +45,15 @@ def errors(day, pv):
     return ReplayErrors(error, error, 30 * error)
 
 
-def test_20_days_need_forward_validation_before_any_correction():
-    pv, diagnostics, model = select(history(20), errors)
+def test_7_days_need_forward_validation_before_any_correction():
+    pv, diagnostics, model = select(history(7), errors)
     assert pv == dict.fromkeys(range(24), 2.0)
     assert model is None
     assert diagnostics["reason"] == "insufficient_forward_folds"
 
 
 def test_admitted_after_five_later_folds_uses_exact_distinct_day_shrinkage():
-    days = history(25)
+    days = history(12)
     seen = []
     def evaluator(day, pv):
         seen.append((day.day, pv[12]))
@@ -62,9 +62,9 @@ def test_admitted_after_five_later_folds_uses_exact_distinct_day_shrinkage():
     assert model is not None
     assert diagnostics["status"] == "accepted"
     assert len(diagnostics["validation_days"]) == 5
-    assert pv[12] == pytest.approx(2 - 25 / 45)
-    # Earliest validation has exactly20 earlier days; its own actual is excluded.
-    assert seen[1][1] == pytest.approx(2 - 20 / 40)
+    assert pv[12] == pytest.approx(2 - 12 / 32)
+    # Earliest validation has seven earlier days; its own actual is excluded.
+    assert seen[1][1] == pytest.approx(2 - 7 / 27)
     assert diagnostics["validation_errors"]["soc_mae"]["candidate"] < 1
 
 

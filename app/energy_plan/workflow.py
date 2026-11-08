@@ -270,6 +270,8 @@ class PvForecastBundle:
     ideal_max_provenance: dict[str, Any] | None = None
     hourly_pv_max_kwh: dict[int, float] | None = None
     hourly_pv_bias_days: tuple[Any, ...] = ()
+    hourly_pv_training_days: tuple[Any, ...] | None = None
+    pv_coefficient_history: list[tuple[datetime, float]] = field(default_factory=list)
 
 
 def _latest_kpnet_csv_paths(artifacts_dir: Path) -> list[Path]:

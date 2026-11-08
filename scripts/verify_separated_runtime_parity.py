@@ -23,6 +23,7 @@ from app.runtime import cloud_job
 from app.runtime.soc_reading import SocReading
 from app.separated_runtime import control
 from app.separated_runtime.plan import PublishedPlan
+from scripts.prepare_server_adapter_fixture import CALCULATION_PATHS
 
 
 class ReplayClock:
@@ -58,8 +59,7 @@ def verify_calculation_source(baseline: str, approved_patch_sha256: str = "") ->
         raise ValueError("approved calculation patch must be a SHA-256")
     patch = subprocess.check_output(
         ["git", "diff", "--no-ext-diff", "--no-color", "--binary", baseline, "--",
-         "app/energy_model", "app/forecasting", "app/energy_plan",
-         "app/operations/forecast_persistence.py", "app/operations/forecast_recovery.py"],
+         *CALCULATION_PATHS],
         text=True, encoding="utf-8",
     )
     digest = hashlib.sha256(patch.encode("utf-8")).hexdigest() if patch else ""
