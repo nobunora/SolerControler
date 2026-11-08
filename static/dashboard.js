@@ -891,7 +891,15 @@
       }
       if (summary.plan_date !== date) return { status: "unverified", reason: "対象計画日が一致しません" };
       if (summary.status !== "valid") return { status: summary.status, reason: summary.reason_code || "" };
-      if (summary.model_id !== "physical_clear_ghi_annual1" || !Array.isArray(summary.theta4)
+      const idealMax = summary.model_id === "physical_pv_ideal_max_global_v1";
+      if (idealMax && (summary.basis_version !== "noaa_haurwitz_erbs_poa_stc25_1min_v1"
+          || displayFinite(summary.coefficient) === null || summary.coefficient < 1
+          || !Number.isInteger(summary.revision) || summary.revision < 0
+          || typeof summary.calibration_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(summary.calibration_sha256)
+          || summary.weather_adjustment_applied !== true)) {
+        return { status: "invalid", reason: "モデル要約の値が不正です" };
+      }
+      if (!idealMax && (summary.model_id !== "physical_clear_ghi_annual1" || !Array.isArray(summary.theta4)
           || summary.theta4.length !== 4 || summary.theta4.some((value) => displayFinite(value) === null)
           || !Array.isArray(summary.terms) || summary.terms.length !== 4
           || summary.terms.some((term, index) => term !== ["1", "x", "cos_phi", "sin_phi"][index])
@@ -900,7 +908,7 @@
           || summary.rank !== 4 || displayFinite(summary.condition_number) === null
           || !Array.isArray(summary.repaired_hours) || summary.repaired_hours.length > 24
           || summary.repaired_hours.some((hour, index) => !Number.isInteger(hour) || hour < 0 || hour > 23
-            || (index > 0 && hour <= summary.repaired_hours[index - 1]))) {
+            || (index > 0 && hour <= summary.repaired_hours[index - 1])))) {
         return { status: "invalid", reason: "モデル要約の値が不正です" };
       }
       const forecastRows = rows.filter(isForecastRow);
@@ -923,6 +931,22 @@
       };
       const valid = binding.status === "valid";
       const legacy = binding.status === "legacy";
+      if (valid && summary.model_id === "physical_pv_ideal_max_global_v1") {
+        const bias = summary.pv_bias || {};
+        const shown = (value) => displayFinite(value) === null ? "未保存" : String(value);
+        const labels = { soc_mae: "SOC誤差", buy_mae: "買電誤差", fee_mae: "料金誤差" };
+        const failed = (bias.regressed_metrics || []).map((key) => labels[key] || key);
+        const adoption = bias.status === "accepted" ? "採用"
+          : bias.status === "retained_previous" ? "前回の採用補正を継続"
+            : bias.status === "neutral" ? `保留（${failed.length ? `${failed.join("・")}の非悪化条件を満たさず` : "採用条件を満たさず"}）` : "診断未保存";
+        setText("pvModelName", "PVモデル: 太陽高度・設備能力＋天気予報");
+        setText("pvModelProvenance", `対象計画日: ${summary.plan_date} / 計画生成: ${summary.generated_at} / 係数版: ${summary.calibration_sha256}`);
+        setText("pvModelLearningPeriod", `PV補正の学習: ${shown(bias.training_day_count)}日・${shown(bias.training_hour_count)}時間 / ${shown(bias.lookback_days)}日窓 / 同時刻・同天候で最低${shown(bias.minimum_bin_days)}日 / 平滑化${shown(bias.prior_pseudo_days)}相当日`);
+        setText("pvModelTiming", `能力係数C: ${summary.coefficient.toFixed(6)}（更新${summary.revision}回） / 能力更新: ${summary.training_as_of} / 予報取得: ${summary.retrieved_at} / 計算基準: ${summary.as_of}（原本時刻）`);
+        setText("pvModelRepair", `時間別補正: ${adoption}。PV検証${shown(bias.validation_day_count)}日、蓄電池・料金の完全検証${shown(bias.economic_day_count)}日。料金誤差は請求額削減の実績とは別です。`);
+        setText("pvModelExplanation", "PV(h)=clip(C×B(d,h)×min(F(h)/Q(d,h),1)+δ(h,天候),0,C×B(d,h))。Q=0の区間はPV=0。Bは各日時の太陽高度・設備配置から求める基準量、Fは日射予報、Qは晴天日射。δは検証を通過した時間別補正です。判定と誤差は下表に表示します。");
+        return;
+      }
       setText("pvModelName", valid ? "PVモデル: NEW100（晴天・年周期モデル）"
         : legacy ? "PVモデル: 旧方式（保存モデル）" : `PVモデル: 未確認（${binding.reason || binding.status}）`);
       setText("pvModelProvenance", summary ? `対象計画日: ${summary.plan_date || "不明"} / 計画生成: ${summary.generated_at || "不明"}${valid ? ` / モデル版: ${summary.basis_version} / 係数版: ${summary.calibration_sha256}` : ""}` : "モデル要約が未連携です。");
@@ -940,13 +964,27 @@
       if (!tbody) return;
       tbody.innerHTML = "";
       const newModel = binding.status === "valid";
+      const idealMax = newModel && summary.model_id === "physical_pv_ideal_max_global_v1";
       const legacy = binding.status === "legacy";
       const shownNumber = (value) => displayFinite(value) === null ? "-" : String(value);
-      if (newModel) {
+      if (newModel && !idealMax) {
         addLearningParameterRow(tbody, "NEW100", "認定晴天日数", summary.training_day_count, `${summary.training_day_count} 日`, "校正原本の日数。計画保存回数・誤差学習件数とは別");
         addLearningParameterRow(tbody, "NEW100", "訓練区間数", summary.training_sample_count, `${summary.training_sample_count} 時間区間`, "完全な13時間区間 × 認定日数");
         summary.theta4.forEach((value, index) => addLearningParameterRow(tbody, "NEW100係数", `theta${index} (${summary.terms[index]})`, shownNumber(value), `${summary.training_sample_count} 時間区間`, "同計画の係数原本。符号を保持"));
         addLearningParameterRow(tbody, "NEW100", "rank / condition", `${summary.rank} / ${summary.condition_number}`, `${summary.training_day_count} 日`, "保存された回帰診断。画面で再計算しない");
+      }
+      if (idealMax) {
+        const bias = summary.pv_bias || {};
+        const pairText = (pair, unit) => pair && displayFinite(pair.baseline) !== null && displayFinite(pair.candidate) !== null
+          ? `${pair.baseline.toFixed(4)} → ${pair.candidate.toFixed(4)} ${unit}` : "未保存";
+        addLearningParameterRow(tbody, "発電能力", "最大量の係数C", summary.coefficient.toFixed(6), `${summary.revision} 更新`, "発電見込みは、この能力に日射予報を適用して計算");
+        addLearningParameterRow(tbody, "時間別PV補正", "PV誤差（MAE）", pairText(bias.pv_mae, "kWh/時"), `${shownNumber(bias.validation_day_count)} 前向き評価日`, "基準 → 候補。PV改善だけでは補正を採用しない");
+        for (const [key, label, unit] of [["soc_mae", "SOC誤差", "pt"], ["buy_mae", "買電誤差", "kWh/30分"], ["fee_mae", "料金誤差", "円/30分"]]) {
+          const pair = bias.validation_errors?.[key];
+          const regressed = (bias.regressed_metrics || []).includes(key);
+          addLearningParameterRow(tbody, "補正の採否", label, pairText(pair, unit), `${shownNumber(bias.economic_day_count)} 完全評価日`,
+            `${regressed ? "不成立" : pair && displayFinite(pair.baseline) !== null && displayFinite(pair.candidate) !== null ? "成立" : "未確認"}：候補 ≤ 基準 + 1e-9（誤差の比較。買電ゼロ・料金削減額の指標ではない）`);
+        }
       }
       for (const p of store.params) {
         const name = String(p.name || "");
