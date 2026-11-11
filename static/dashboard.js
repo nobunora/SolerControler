@@ -2026,6 +2026,15 @@
         dateInput.addEventListener("change", () => { dateExplicit = true; });
         dateInput.addEventListener("focus", refreshDateDefault);
       }
+      function missingReviewNotice(review) {
+        if (review && review.status === "unavailable") return "過去の欠損確認はできませんでした。";
+        if (!review || review.status !== "checked") return "";
+        const available = Array.isArray(review.recoverable_dates) ? review.recoverable_dates : [];
+        const unavailable = Array.isArray(review.unavailable_dates) ? review.unavailable_dates : [];
+        const unverified = Array.isArray(review.unverified_dates) ? review.unverified_dates : [];
+        if (!available.length && !unavailable.length && !unverified.length) return "";
+        return `過去の欠損: CSV取得可能 ${available.join("、") || "なし"} / CSV未提供 ${unavailable.join("、") || "なし"} / CSV未確認 ${unverified.join("、") || "なし"}。過去分は日付を指定してください。`;
+      }
       async function monitor(execution) {
         const deadline = Date.now() + 720000;
         let firstCheck = true;
@@ -2042,12 +2051,14 @@
           }
           if (result.status === "succeeded") {
             window.sessionStorage.removeItem(storageKey);
+            const notice = missingReviewNotice(result.missing_review);
+            if (notice) window.sessionStorage.setItem(noticeKey, notice);
             status.textContent = "取込み完了。最新データを表示します。";
             window.location.assign(`/?actual_import=${encodeURIComponent(execution)}`);
             return;
           }
           if (result.status === "partial") {
-            status.textContent = `指定日の保存・表示更新は完了しました。指定外の関連日 ${(result.pending_dates || []).join("、")} は再生成していません。`;
+            status.textContent = `指定日の保存・表示更新は完了しました。指定外の関連日 ${(result.pending_dates || []).join("、")} は再生成していません。${missingReviewNotice(result.missing_review)}`;
             window.sessionStorage.setItem(noticeKey, status.textContent);
             window.sessionStorage.removeItem(storageKey);
             window.location.assign(`/?actual_import=${encodeURIComponent(execution)}`);

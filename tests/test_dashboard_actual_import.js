@@ -128,6 +128,22 @@ async function verifyActualImportRecovery() {
   assert.equal(partial.postCount(), 0);
   checks += 1;
 
+  const missingStorage = new Map([[storageKey, execution]]);
+  const missingPage = openPage(missingStorage, [{ status: "succeeded", missing_review: {
+    status: "checked", recoverable_dates: ["2026-11-01"], unavailable_dates: ["2026-11-02"],
+  } }]);
+  await settle();
+  assert.match(missingStorage.get("dashboardActualImportNotice"), /CSV取得可能 2026-11-01/);
+  assert.match(missingStorage.get("dashboardActualImportNotice"), /CSV未提供 2026-11-02/);
+  assert.equal(missingPage.postCount(), 0);
+  checks += 1;
+
+  const unavailableStorage = new Map([[storageKey, execution]]);
+  openPage(unavailableStorage, [{ status: "succeeded", missing_review: { status: "unavailable" } }]);
+  await settle();
+  assert.match(unavailableStorage.get("dashboardActualImportNotice"), /欠損確認はできませんでした/);
+  checks += 1;
+
   for (const actualsSaved of [false, true]) {
     const known = openPage(new Map([[storageKey, execution]]), [
       { status: "failed", actuals_saved: actualsSaved, completed_at: completedAt },

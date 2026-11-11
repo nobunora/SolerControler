@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+import math
 import os
 from pathlib import Path
 import sys
@@ -15,7 +16,7 @@ from dataclasses import replace
 from app.dashboard.date_snapshots import capture_date_refresh, publish_date_refresh
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.operations import firestore as source
-from app.operations.monitoring_sync import monitoring_sync_window
+from app.operations.monitoring_sync import monitoring_sync_window, prepare_monitoring_csvs
 from app.operations.sqlite import PipelineConfig
 from app.runtime.command_adapter import _run
 
@@ -53,6 +54,7 @@ def main() -> int:
     stage = "baseline_verification"
     actuals_saved: bool | None = False
     pending_dates: list[str] = []
+    missing_review: dict[str, Any] = {"status": "not_run"}
     try:
         captured = capture_date_refresh(client, target_date)
         stage = "actual_download"
@@ -65,6 +67,12 @@ def main() -> int:
                 "KP_DOWNLOAD_LATEST_MONTH": "false", "KP_CSV_TARGET_MONTHS": target_date[:7],
             }
             _run([sys.executable, "kpnet_main.py"], overrides, timeout_seconds=240)
+            try:
+                missing_review = review_missing_actuals(client, target_date, Path(directory))
+            except Exception:
+                # Detection is advisory; never turn an incomplete scan into
+                # evidence that no dates are missing or block today's import.
+                missing_review = {"status": "unavailable"}
             stage = "actual_save"
             actuals_saved = None
             receipt.set({"status": "running", "stage": stage, "actuals_saved": None}, timeout=4, retry=None)
@@ -77,11 +85,44 @@ def main() -> int:
         return 0
     finally:
         result = {"status": status, "stage": stage, "actuals_saved": actuals_saved,
-                  "target_date": target_date, "pending_dates": pending_dates,
+                  "target_date": target_date, "pending_dates": pending_dates, "missing_review": missing_review,
                   "completed_at": datetime.now(timezone.utc).isoformat()}
         receipt.set(result, timeout=4, retry=None)
         client.collection("dashboard_actual_import_runs").document("active").set(
             {"execution": execution, **result}, timeout=4, retry=None)
+
+
+def review_missing_actuals(client: Any, target_date: str, directory: Path) -> dict[str, Any]:
+    """Review the preceding 30 days without downloading or changing older months."""
+    target = date.fromisoformat(target_date)
+    paths = find_latest_kpnet_csv_paths(directory)
+    if not paths:
+        raise ValueError("no actual CSV was downloaded")
+    midnight = datetime.combine(target, time.min, tzinfo=ZoneInfo("Asia/Tokyo"))
+    window = monitoring_sync_window(midnight, days=31)
+    window = replace(window, end_ts=target.isoformat() + "T00:00:00")
+    prepared = prepare_monitoring_csvs(paths, window=window)
+    if prepared.duplicate_conflict:
+        raise ValueError("conflicting CSV records prevent missing-date review")
+    query = (client.collection("monitoring_samples").where("ts", ">=", window.start_ts)
+             .where("ts", "<", window.end_ts).select(["ts"]).limit(1489))
+    snapshots = list(query.stream(timeout=4, retry=None))
+    if len(snapshots) > 1488:
+        raise ValueError("missing-date review exceeded its monthly read budget")
+    stored = {str((snapshot.to_dict() or {}).get("ts") or "") for snapshot in snapshots}
+    expected = {(datetime.combine(window.start_date, time.min) + timedelta(minutes=30*i)).isoformat()
+                for i in range((target - window.start_date).days * 48)}
+    if not stored <= expected:
+        raise ValueError("missing-date review received invalid timestamps")
+    csv_present = {str(row["ts"]) for row in prepared.rows
+                   if any(isinstance(row.get(key), (int, float)) and not isinstance(row[key], bool)
+                          and math.isfinite(row[key]) and row[key] >= 0
+                          for key in ("pv_kwh", "load_kwh", "sell_kwh", "buy_kwh", "charge_kwh", "discharge_kwh", "soc_percent"))}
+    missing = expected - stored
+    return {"status": "checked",
+            "recoverable_dates": sorted({ts[:10] for ts in missing if ts in csv_present}),
+            "unavailable_dates": sorted({ts[:10] for ts in missing if ts[:7] == target_date[:7] and ts not in csv_present}),
+            "unverified_dates": sorted({ts[:10] for ts in missing if ts[:7] != target_date[:7]})}
 
 
 def save_date_actuals(client: Any, target_date: str, directory: Path) -> list[str]:
