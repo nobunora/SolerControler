@@ -3,7 +3,7 @@ from __future__ import annotations
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -117,6 +117,7 @@ def test_worker_only_imports_actuals_and_publishes_after_success(monkeypatch, tm
     monkeypatch.setattr(worker.source, "open_firestore", lambda: client)
     monkeypatch.setattr(worker, "_claim", lambda *_: not busy)
     monkeypatch.setattr(worker, "capture_date_refresh", lambda *_: {})
+    monkeypatch.setattr(worker, "review_missing_actuals", lambda *_: {"status": "checked", "recoverable_dates": [], "unavailable_dates": []})
     saves = []
     monkeypatch.setattr(worker, "save_date_actuals", lambda *_: saves.append(1) or [])
     commands = []
@@ -141,6 +142,53 @@ def test_worker_only_imports_actuals_and_publishes_after_success(monkeypatch, tm
         assert overrides["KP_DOWNLOAD_LATEST_MONTH"] == "false"
     assert len(publications) == (0 if busy or fail else 1)
     assert not any(name in {"forecast_hourly", "forecast_plans", "control_plan_current"} for name, _, _ in writes)
+
+
+def test_missing_month_review_separates_recoverable_zero_and_provider_gap(tmp_path):
+    csv_dir = tmp_path / "20261103-120000" / "csv"
+    csv_dir.mkdir(parents=True)
+    (csv_dir / "sample.csv").write_text("年月日,時刻,発電電力量[kWh]\n2026/11/01,06:00,0\n", encoding="utf-8-sig")
+    missing = {"2026-11-01T06:00:00", "2026-11-02T06:30:00"}
+    stamps = [(datetime(2026, 10, 4) + timedelta(minutes=30*i)).isoformat() for i in range(30 * 48)]
+
+    class Query:
+        def where(self, *_):
+            return self
+
+        def select(self, fields):
+            assert fields == ["ts"]
+            return self
+
+        def limit(self, count):
+            assert count == 1489
+            return self
+
+        def stream(self, **kwargs):
+            assert kwargs == {"timeout": 4, "retry": None}
+            return [SimpleNamespace(to_dict=lambda ts=ts: {"ts": ts}) for ts in stamps if ts not in missing]
+
+    client = SimpleNamespace(collection=lambda name: Query() if name == "monitoring_samples" else None)
+    result = worker.review_missing_actuals(client, "2026-11-03", tmp_path)
+    assert result == {"status": "checked", "recoverable_dates": ["2026-11-01"], "unavailable_dates": ["2026-11-02"], "unverified_dates": []}
+
+
+def test_missing_month_review_marks_earlier_month_csv_unverified(tmp_path):
+    csv_dir = tmp_path / "20261101-120000" / "csv"
+    csv_dir.mkdir(parents=True)
+    (csv_dir / "sample.csv").write_text("年月日,時刻,発電電力量[kWh]\n2026/11/01,06:00,0\n", encoding="utf-8-sig")
+    missing = "2026-10-31T06:00:00"
+    stamps = [(datetime(2026, 10, 2) + timedelta(minutes=30*i)).isoformat() for i in range(30 * 48)]
+
+    class Query:
+        def where(self, *_): return self
+        def select(self, _): return self
+        def limit(self, _): return self
+        def stream(self, **_):
+            return [SimpleNamespace(to_dict=lambda ts=ts: {"ts": ts}) for ts in stamps if ts != missing]
+
+    result = worker.review_missing_actuals(SimpleNamespace(collection=lambda _: Query()), "2026-11-01", tmp_path)
+    assert result == {"status": "checked", "recoverable_dates": [], "unavailable_dates": [],
+                      "unverified_dates": ["2026-10-31"]}
 
 
 def test_retained_night_forecasts_use_existing_read_and_ignore_late_replay():

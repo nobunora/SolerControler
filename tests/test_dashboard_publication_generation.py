@@ -155,20 +155,21 @@ def test_paged_monitoring_revision_includes_all_raw_and_boundary_corrections(cou
     snapshots._check_source_epoch_order(before, after)
 
 
-def test_hourly_forecast_revision_pages_preserve_all_dates_and_boundary_corrections(capsys):
+@pytest.mark.parametrize("source", ["forecast_hourly", "forecast_hourly_snapshots", "forecast_hourly_reconstructed"])
+def test_hourly_forecast_revision_pages_preserve_all_dates_and_boundary_corrections(capsys, source):
     client = RevisionClient()
     stamp = datetime(2026, 10, 11, 3, tzinfo=timezone.utc)
     start = date(2026, 4, 17)
-    client.rows["forecast_hourly"] = [
+    client.rows[source] = [
         RevisionDocument(f"{index:05}", {"date": (start + timedelta(days=index // 24)).isoformat()}, stamp)
         for index in range(3664)
     ]
     before = snapshots._read_dashboard_source_epoch(client, history_scope=True)
-    assert int(before["forecast_hourly"].split("|")[1]) == 3664
+    assert int(before[source].split("|")[1]) == 3664
     assert json.loads(capsys.readouterr().out.strip())["document_reads"] >= 3665
-    client.rows["forecast_hourly"][3660].update_time += timedelta(seconds=1)
+    client.rows[source][3660].update_time += timedelta(seconds=1)
     after = snapshots._read_dashboard_source_epoch(client, history_scope=True)
-    assert after["forecast_hourly"] != before["forecast_hourly"]
+    assert after[source] != before[source]
     snapshots._check_source_epoch_order(before, after)
 
 

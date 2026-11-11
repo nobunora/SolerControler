@@ -790,7 +790,13 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         query = query.select(fields)
         pages: list[list[Any]] = []
         sentinel_reads = 0
-        if name == "forecast_hourly":
+        paged_sources = {
+            "forecast_hourly": (24 * 1096, "hourly forecast"),
+            "forecast_hourly_snapshots": (24 * 1096 * 8, "hourly forecast snapshots"),
+            "forecast_hourly_reconstructed": (24 * 1096, "reconstructed hourly forecast"),
+        }
+        if name in paged_sources:
+            max_documents, source_label = paged_sources[name]
             query = query.order_by("date").order_by("__name__")
             cursor: tuple[str, str] | None = None
             seen: set[str] = set()
@@ -801,12 +807,12 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                 sentinel_reads += max(0, len(page) - 3660)
                 accepted = page[:3660]
                 count += len(accepted)
-                if count > 24 * 1096:
-                    raise ValueError("dashboard hourly forecast source exceeds 26304 documents")
+                if count > max_documents:
+                    raise ValueError(f"dashboard {source_label} source exceeds {max_documents} documents")
                 for snapshot in accepted:
                     current = (str((snapshot.to_dict() or {}).get("date", "")), str(snapshot.id))
                     if not current[0] or (cursor is not None and current <= cursor) or snapshot.id in seen:
-                        raise ValueError("dashboard hourly forecast source cursor did not advance")
+                        raise ValueError(f"dashboard {source_label} source cursor did not advance")
                     cursor = current
                     seen.add(snapshot.id)
                 pages.append(accepted)
