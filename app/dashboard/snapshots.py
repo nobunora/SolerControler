@@ -780,20 +780,48 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             epoch["history_compare_before"] = history_compare_before
     source_names = ("sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
                     "forecast_hourly_reconstructed", "forecast_plans", "dashboard_daily_metrics", "night_charge_plans")
-    def source_rows(name: str) -> tuple[list[Any], list[Any]]:
+    def source_rows(name: str) -> tuple[list[list[Any]], list[Any], int]:
         source_start = monitoring_start if name == "dashboard_daily_metrics" else start
         fields = ["date"]
         if name == "night_charge_plans":
             fields.extend(["decision_rationale.forecast_correction.recent_and_analog_hourly_floor.analog_day",
                            "daytime_soc_optimization.forecast_correction.recent_and_analog_hourly_floor.analog_day"])
         query = client.collection(name).where("date", ">=", source_start.isoformat()).where("date", "<=", end.isoformat())
-        samples = list(query.select(fields).limit(3661).stream(timeout=timeout(), retry=None))
+        query = query.select(fields)
+        pages: list[list[Any]] = []
+        sentinel_reads = 0
+        if name == "forecast_hourly":
+            query = query.order_by("date").order_by("__name__")
+            cursor: tuple[str, str] | None = None
+            seen: set[str] = set()
+            count = 0
+            while True:
+                page = list(query.limit(3661).stream(timeout=timeout(), retry=None))
+                timeout()
+                sentinel_reads += max(0, len(page) - 3660)
+                accepted = page[:3660]
+                count += len(accepted)
+                if count > 24 * 1096:
+                    raise ValueError("dashboard hourly forecast source exceeds 26304 documents")
+                for snapshot in accepted:
+                    current = (str((snapshot.to_dict() or {}).get("date", "")), str(snapshot.id))
+                    if not current[0] or (cursor is not None and current <= cursor) or snapshot.id in seen:
+                        raise ValueError("dashboard hourly forecast source cursor did not advance")
+                    cursor = current
+                    seen.add(snapshot.id)
+                pages.append(accepted)
+                if len(page) <= 3660:
+                    break
+                query = query.start_after(accepted[-1])
+        else:
+            samples = list(query.limit(3661).stream(timeout=timeout(), retry=None))
+            if len(samples) > 3660:
+                raise ValueError("dashboard source revision query exceeds 3660 documents")
+            pages.append(samples)
         analog: list[Any] = []
-        if len(samples) > 3660:
-            raise ValueError("dashboard source revision query exceeds 3660 documents")
         if name == "night_charge_plans":
             analog_dates = set()
-            for snapshot in samples:
+            for snapshot in pages[0]:
                 row = snapshot.to_dict() or {}
                 for section in ("decision_rationale", "daytime_soc_optimization"):
                     correction = (row.get(section) or {}).get("forecast_correction") or {}
@@ -803,7 +831,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             if analog_dates:
                 refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
                 analog = list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None))
-        return samples, analog
+        return pages, analog, sentinel_reads
     def monitoring_rows() -> tuple[list[list[Any]], int]:
         pages: list[list[Any]] = []
         sentinel_reads = 0
@@ -844,8 +872,10 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         lambda: list(client.collection("battery_daily_metrics").select(["date"]).order_by("date").limit_to_last(1).get(timeout=timeout(), retry=None)),
     ])
     results = read_parallel(readers)
-    for name, (samples, analog) in zip(source_names, results[:len(source_names)]):
-        record(name, samples)
+    for name, (source_pages, analog, source_sentinels) in zip(source_names, results[:len(source_names)]):
+        read_count += source_sentinels
+        for page in source_pages:
+            record(name, page)
         source_start = monitoring_start if name == "dashboard_daily_metrics" else start
         epoch[f"scope/{name}"] = source_start.isoformat()
         if analog:
