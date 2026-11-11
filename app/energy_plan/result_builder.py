@@ -120,6 +120,22 @@ def _build_energy_model_output(
         if cost_payload is not None
         else "legacy_peak_soc_objective"
     )
+    night_projection = build_night_soc_projection(
+        target_date=context.target_date, timezone_name=context.config.timezone,
+        generated_at=datetime.now(ZoneInfo(context.config.timezone)),
+        rows=context.billing_rows if context.billing_rows is not None else context.rows,
+        target_soc=result_payload.get("target_soc_7_percent"),
+        soc_per_kwh_charge=context.coefficients.soc_per_kwh_charge,
+        rate_info=night_charge.charge_rate_info or estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
+        battery_response=context.battery_response,
+        hourly_load_kwh=pv_forecast.hourly_load_kwh,
+        hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+    )
+    if night_projection.get("status") == "ready" and result_payload.get("expected_morning_soc_percent") is not None:
+        expected = float(result_payload["expected_morning_soc_percent"])
+        cutoff_soc = float(night_projection["estimated_soc_at_cutoff_percent"])
+        if abs(expected - cutoff_soc) > 0.00011:
+            raise ValueError("night SOC projection and optimizer use different starting observations")
     document = PlanDocumentV1(
         csv_paths=[str(path) for path in context.csv_paths],
         plan_quality=plan_quality,
@@ -135,15 +151,7 @@ def _build_energy_model_output(
         result=result_payload,
         daytime_soc_optimization=optimization_payload,
         decision_rationale={
-            "night_soc_projection": build_night_soc_projection(
-                target_date=context.target_date, timezone_name=context.config.timezone,
-                generated_at=datetime.now(ZoneInfo(context.config.timezone)),
-                rows=context.billing_rows if context.billing_rows is not None else context.rows,
-                target_soc=result_payload.get("target_soc_7_percent"),
-                soc_per_kwh_charge=context.coefficients.soc_per_kwh_charge,
-                rate_info=night_charge.charge_rate_info or estimate_forced_charge_rate_percent_per_hour(context.csv_paths),
-                battery_response=context.battery_response,
-            ),
+            "night_soc_projection": night_projection,
             **({"battery_response": context.battery_response.to_payload(),
                 "battery_calibration": context.battery_calibration}
                if context.battery_response is not None else {}),

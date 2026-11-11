@@ -38,6 +38,78 @@ def test_cheaper_daytime_purchase_wins_over_zero_daytime_purchase():
     assert result.total_expected_cost_yen == 10
 
 
+def test_soc_search_prices_only_attainable_night_charge():
+    load = {3: 4, 4: 2, 5: 0, 6: 5, 18: 10}
+    pv = {3: 0, 4: 0, 5: 0, 6: 0}
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10, soc_now_percent=0, reserve_soc_percent=0,
+        hourly_load_kwh=load, hourly_pv_kwh=pv,
+        uncertainty=PvForecastUncertainty(1, 0, 0, 0, "exact"),
+        cost_model=SocCostModel(40, 20, 1, 0),
+        night_charge_rate_percent_per_hour=40, night_grid_limit_kw=5,
+        night_charge_soc_per_kwh=10,
+        joint_scenarios=(ForecastScenario("exact", 1, 1, 1),))
+    assert result is not None
+    assert result.target_soc_7_percent == pytest.approx(80)
+    assert result.required_night_charge_kwh == pytest.approx(8)
+    assert result.night_charge_cost_yen == pytest.approx(160)
+    assert result.expected_day_buy_kwh == pytest.approx(2)
+
+
+def test_night_pv_surplus_is_not_priced_as_grid_and_lost_export_is_charged():
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=30, soc_now_percent=0, capacity_kwh=10,
+        hourly_load_kwh={3: 5, 4: 5, 5: 5, 6: 1}, hourly_pv_kwh={3: 0, 4: 0, 5: 0, 6: 4},
+        uncertainty=PvForecastUncertainty(1, 0, 0, 0, "exact"),
+        cost_model=SocCostModel(40, 20, 1, 0, export_value_mode="revenue", sell_revenue_yen_per_kwh=10),
+        night_charge_rate_percent_per_hour=40, night_grid_limit_kw=5, night_charge_soc_per_kwh=10,
+        joint_scenarios=(ForecastScenario("exact", 1, 1, 1),))
+    assert candidate.required_night_charge_kwh == pytest.approx(0.75)
+    assert candidate.night_charge_cost_yen == pytest.approx(37.5)
+
+
+def test_stop_target_can_exceed_nominal_arrival_when_low_load_is_economical():
+    result = optimize_soc_by_expected_cost(
+        capacity_kwh=10, soc_now_percent=0, reserve_soc_percent=0,
+        hourly_load_kwh={3: 4, 4: 4, 5: 4, 6: 4, 18: 20},
+        hourly_pv_kwh={3: 0, 4: 0, 5: 0, 6: 0},
+        uncertainty=PvForecastUncertainty(1, 0, 0, 0, "exact"),
+        cost_model=SocCostModel(40, 20, 1, 0),
+        night_charge_rate_percent_per_hour=40, night_grid_limit_kw=5, night_charge_soc_per_kwh=10,
+        joint_scenarios=(ForecastScenario("low", 0.5, 1, 0.25), ForecastScenario("high", 0.5, 1, 1)),
+    )
+    assert result is not None
+    assert result.target_soc_7_percent == pytest.approx(50)
+    assert result.target_energy_kwh == pytest.approx(3.75)
+    assert result.required_night_charge_kwh == pytest.approx(3.75)
+    assert result.night_charge_cost_yen == pytest.approx(87.5)
+
+
+def test_csv_load_reaches_the_night_capacity_and_cost_calculation(tmp_path):
+    from app.energy_plan.forecast_inputs import build_hourly_load_forecast
+    from app.energy_plan.workflow import _read_rows
+
+    csv_path = tmp_path / "night.csv"
+    header = "年月日,時刻,消費電力量[kWh],発電電力量[kWh],買電電力量[kWh],売電電力量[kWh]\n"
+    rows = "".join(f"2026/11/01,{hour:02d}:{minute:02d},2,0,1,0\n"
+                   for hour in range(3, 7) for minute in (0, 30))
+    csv_path.write_text(header + rows, encoding="utf-8-sig")
+    parsed = _read_rows([csv_path])
+    load = build_hourly_load_forecast(parsed, daytime_load_kwh=0, morning_load_kwh=0)
+    assert [load[h] for h in range(3, 7)] == [4, 4, 4, 4]
+    candidate = evaluate_soc_candidate(
+        target_soc_percent=100, soc_now_percent=0, capacity_kwh=10,
+        hourly_load_kwh=load, hourly_pv_kwh={h: 0 for h in range(24)},
+        uncertainty=PvForecastUncertainty(1, 0, 0, 0, "exact"),
+        cost_model=SocCostModel(40, 20, 1, 0),
+        night_charge_rate_percent_per_hour=40, night_grid_limit_kw=5, night_charge_soc_per_kwh=10,
+        joint_scenarios=(ForecastScenario("exact", 1, 1, 1),))
+    assert candidate.target_soc_percent == 100
+    assert candidate.target_energy_kwh == pytest.approx(3.75)
+    assert candidate.required_night_charge_kwh == pytest.approx(3.75)
+    assert candidate.night_charge_cost_yen == pytest.approx(75)
+
+
 def test_equal_cost_does_not_promote_zero_daytime_purchase():
     result = optimize_soc_by_expected_cost(
         capacity_kwh=1, soc_now_percent=0, reserve_soc_percent=0,

@@ -138,8 +138,14 @@ def test_ready_ledger_uses_same_route_for_live_and_frozen_as_of(monkeypatch, as_
     monkeypatch.setattr(workflow, "_build_consumption_forecasts", lambda *_args: object())
     monkeypatch.setattr(workflow, "build_ideal_max_forecast_bundle", lambda *_args, **_kw: selected)
     monkeypatch.setattr(workflow, "load_calibration_for_context", lambda *_args: pytest.fail("weather PV calibration must not gate the ready ledger"))
-    for name in ("_prepare_night_charge_from_hourly", "_build_soc_constraints", "_run_legacy_soc_optimization", "_run_soc_optimization"):
+    for name in ("_prepare_night_charge_from_hourly", "_build_soc_constraints", "_run_legacy_soc_optimization"):
         monkeypatch.setattr(workflow, name, lambda *_args: object())
+    def optimize(*_args, **kwargs):
+        assert kwargs["as_of"].utcoffset() is not None
+        if as_of is not None:
+            assert kwargs["as_of"] == as_of
+        return object()
+    monkeypatch.setattr(workflow, "_run_soc_optimization", optimize)
     monkeypatch.setattr(empirical_planning, "prepare_empirical_planning",
                         lambda context, consumption, pv, night, **kwargs: (context, pv, night))
     def output(*args):

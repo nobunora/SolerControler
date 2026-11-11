@@ -8,6 +8,7 @@ from app.domain.constants import SOCBounds
 from app.domain.tariff import tiered_day_increment_cost
 from app.energy_plan.battery_response import BatterySocResponse
 from app.energy_plan.battery_dispatch import dispatch_soc, night_charge_ac_kwh
+from app.energy_plan.night_charge_capacity import simulate_night_charge_capacity
 
 
 @dataclass(frozen=True)
@@ -261,6 +262,9 @@ class SocOptimizationRequest:
     hourly_pv_max_kwh: dict[int, float] | None = None
     battery_response: BatterySocResponse | None = None
     night_charge_rate_percent_per_hour: float | None = None
+    night_grid_limit_kw: float | None = None
+    night_charge_soc_per_kwh: float | None = None
+    night_charge_start_offset_hours: float = 0.0
 
 
 def to_plain_dict(obj: Any) -> dict[str, Any]:
@@ -591,6 +595,9 @@ def evaluate_soc_candidate(
     hourly_pv_max_kwh: dict[int, float] | None = None,
     battery_response: BatterySocResponse | None = None,
     night_charge_rate_percent_per_hour: float | None = None,
+    night_grid_limit_kw: float | None = None,
+    night_charge_soc_per_kwh: float | None = None,
+    night_charge_start_offset_hours: float = 0.0,
 ) -> SocCandidate:
     """Evaluate one SOC target across all sigma buckets."""
 
@@ -608,11 +615,25 @@ def evaluate_soc_candidate(
     target_energy = capacity_kwh * target_soc / 100.0
     charge_efficiency = max(0.01, cost_model.charge_efficiency)
     required_night_charge_kwh = max(0.0, (target_energy - projected_morning_energy) / charge_efficiency)
+    pv_charge_opportunity_cost = 0.0
     if battery_response is not None:
         required_night_charge_kwh = night_charge_ac_kwh(initial_soc=projected_soc,
             target_soc=target_soc, response=battery_response,
             percent_per_hour=night_charge_rate_percent_per_hour)
-    night_cost = required_night_charge_kwh * cost_model.night_buy_rate_yen_per_kwh
+    if night_grid_limit_kw is not None:
+        if night_charge_rate_percent_per_hour is None or night_charge_soc_per_kwh is None:
+            raise ValueError("night charging capacity inputs are unavailable")
+        schedule = simulate_night_charge_capacity(
+            initial_soc_percent=projected_soc, target_soc_percent=target_soc,
+            rate_percent_per_hour=night_charge_rate_percent_per_hour,
+            charge_soc_per_kwh=night_charge_soc_per_kwh, hourly_load_kwh=hourly_load_kwh,
+            hourly_pv_kwh=hourly_pv_kwh, battery_response=battery_response,
+            grid_limit_kw=night_grid_limit_kw, start_offset_hours=night_charge_start_offset_hours,
+        )
+        required_night_charge_kwh = schedule.charge_kwh
+        target_energy = capacity_kwh * schedule.end_soc_percent / 100.0
+        pv_charge_opportunity_cost = -schedule.pv_charge_kwh * cost_model.sell_opportunity_loss_yen_per_kwh
+    night_cost = required_night_charge_kwh * cost_model.night_buy_rate_yen_per_kwh + pv_charge_opportunity_cost
 
     expected_buy = 0.0
     expected_sell = 0.0
@@ -636,10 +657,33 @@ def evaluate_soc_candidate(
         weather_upside_z=weather_upside_z,
     )
 
+    if night_grid_limit_kw is not None:
+        night_cost = 0.0
+
     for scenario in scenarios:
         probability = max(0.0, scenario.probability)
+        scenario_energy = target_energy
+        if night_grid_limit_kw is not None:
+            assert night_charge_rate_percent_per_hour is not None and night_charge_soc_per_kwh is not None
+            scenario_load = {hour: max(0.0, value * scenario.load_multiplier)
+                             for hour, value in hourly_load_kwh.items()}
+            scenario_pv = {hour: min(max(0.0, value * scenario.pv_multiplier), hourly_pv_max_kwh[hour])
+                           if hourly_pv_max_kwh is not None and hour in hourly_pv_max_kwh
+                           else max(0.0, value * scenario.pv_multiplier)
+                           for hour, value in hourly_pv_kwh.items()}
+            scenario_night = simulate_night_charge_capacity(
+                initial_soc_percent=projected_soc, target_soc_percent=target_soc,
+                rate_percent_per_hour=night_charge_rate_percent_per_hour,
+                charge_soc_per_kwh=night_charge_soc_per_kwh,
+                hourly_load_kwh=scenario_load, hourly_pv_kwh=scenario_pv,
+                battery_response=battery_response, grid_limit_kw=night_grid_limit_kw,
+                start_offset_hours=night_charge_start_offset_hours,
+            )
+            scenario_energy = capacity_kwh * scenario_night.end_soc_percent / 100.0
+            night_cost += probability * (scenario_night.charge_kwh * cost_model.night_buy_rate_yen_per_kwh
+                                         - scenario_night.pv_charge_kwh * cost_model.sell_opportunity_loss_yen_per_kwh)
         buy_kwh, sell_kwh, max_soc, first_full, end_soc = _simulate_day(
-            start_energy_kwh=target_energy,
+            start_energy_kwh=scenario_energy,
             capacity_kwh=capacity_kwh,
             hourly_load_kwh=hourly_load_kwh,
             hourly_pv_kwh=hourly_pv_kwh,
@@ -754,6 +798,9 @@ def optimize_soc_by_expected_cost(
     hourly_pv_max_kwh: dict[int, float] | None = None,
     battery_response: BatterySocResponse | None = None,
     night_charge_rate_percent_per_hour: float | None = None,
+    night_grid_limit_kw: float | None = None,
+    night_charge_soc_per_kwh: float | None = None,
+    night_charge_start_offset_hours: float = 0.0,
 ) -> SocCostOptimizationResult | None:
     """Choose the SOC with the lowest expected monetary cost."""
 
@@ -813,6 +860,9 @@ def optimize_soc_by_expected_cost(
             hourly_pv_max_kwh=hourly_pv_max_kwh,
             battery_response=battery_response,
             night_charge_rate_percent_per_hour=night_charge_rate_percent_per_hour,
+            night_grid_limit_kw=night_grid_limit_kw,
+            night_charge_soc_per_kwh=night_charge_soc_per_kwh,
+            night_charge_start_offset_hours=night_charge_start_offset_hours,
         )
         candidates.append(candidate)
         count += 1
@@ -906,4 +956,7 @@ def optimize_soc_request(request: SocOptimizationRequest) -> SocCostOptimization
         hourly_pv_max_kwh=request.hourly_pv_max_kwh,
         battery_response=request.battery_response,
         night_charge_rate_percent_per_hour=request.night_charge_rate_percent_per_hour,
+        night_grid_limit_kw=request.night_grid_limit_kw,
+        night_charge_soc_per_kwh=request.night_charge_soc_per_kwh,
+        night_charge_start_offset_hours=request.night_charge_start_offset_hours,
     )
