@@ -5,7 +5,9 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass
+from datetime import date, datetime, time
 from typing import Any, Callable, TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from app.energy_plan.energy_model import DaytimeSocOptimizationResult
 from app.energy_plan.energy_model import optimize_target_soc_for_daytime, to_dict
@@ -13,6 +15,8 @@ from app.energy_plan.decision_feedback import load_soc_decision_prior_from_fires
 from app.energy_plan.financial_contract import apply_financial_contract
 from app.energy_plan.soc_cost import SocCostModel, SocOptimizationRequest, optimize_soc_request, to_plain_dict
 from app.energy_plan.soc_cost import DEFAULT_SIGMA_BUCKETS, ForecastScenario, PvForecastUncertainty, SigmaBucket
+from app.energy_plan.night_charge_capacity import NIGHT_GRID_LIMIT_KW, simulate_night_charge_capacity
+from app.runtime.forced_charge_monitor import estimate_forced_charge_rate_percent_per_hour
 
 if TYPE_CHECKING:
     from app.energy_plan.soc_constraints import SocConstraintSet
@@ -248,6 +252,7 @@ def run_current_optimizer(
     optimize_request: Callable[[SocOptimizationRequest], Any] = optimize_soc_request,
     prior_loader: Callable[..., dict[str, object] | None] | None = None,
     target_features_builder: Callable[..., dict[str, object]] | None = None,
+    as_of: datetime | None = None,
 ) -> OptimizationDecision:
     from app.energy_plan.plan_quality import (
         _soc_cost_model_from_env,
@@ -255,6 +260,19 @@ def run_current_optimizer(
         _soc_decision_target_features,
     )
     config = context.config
+    if not night_charge.charge_rate_info:
+        night_charge.charge_rate_info = estimate_forced_charge_rate_percent_per_hour(context.csv_paths)
+    night_rate = _to_optional_float(night_charge.charge_rate_info.get("percent_per_hour"))
+    if night_rate is None or night_rate <= 0:
+        raise ValueError("night charging rate is unavailable")
+    night_coefficient = context.coefficients.soc_per_kwh_charge
+    elapsed = 0.0
+    if as_of is not None:
+        if as_of.utcoffset() is None:
+            raise ValueError("night charging planning time must have a timezone")
+        zone = ZoneInfo(context.config.timezone)
+        start = datetime.combine(date.fromisoformat(context.target_date), time(hour=3), tzinfo=zone)
+        elapsed = min(3.75, max(0.0, (as_of.astimezone(zone) - start).total_seconds() / 3600))
     result_payload = dict(night_charge.result_payload)
     optimization_payload: dict[str, object] | None = None
     cost_payload: dict[str, object] | None = None
@@ -363,7 +381,10 @@ def run_current_optimizer(
             decision_prior_max_penalty_yen=prior_max_penalty,
             hourly_pv_max_kwh=pv_forecast.hourly_pv_max_kwh,
             battery_response=context.battery_response,
-            night_charge_rate_percent_per_hour=_to_optional_float(night_charge.charge_rate_info.get("percent_per_hour")),
+            night_charge_rate_percent_per_hour=night_rate,
+            night_grid_limit_kw=NIGHT_GRID_LIMIT_KW,
+            night_charge_soc_per_kwh=night_coefficient,
+            night_charge_start_offset_hours=elapsed,
         ))
         if optimized is not None:
             cost_payload = {
@@ -391,6 +412,11 @@ def run_current_optimizer(
                     "selected_method": pv_forecast.selected_method,
                 },
                 "max_target_soc_percent_after_guards": cost_max_soc,
+                "night_grid_capacity": {"grid_limit_kw_assuming_unity_power_factor": NIGHT_GRID_LIMIT_KW,
+                                        "forecast_basis": "hourly_average_load_and_pv",
+                                        "elapsed_hours_after_03": elapsed,
+                                        "pv_opportunity_cost": "existing_export_value_contract",
+                                        "initial_soc_source": "existing_planner_input_not_realtime_api"},
                 "forecast_correction": pv_forecast.correction.get("rationale", {}),
                 "pv_physical_forecast": pv_forecast.physical_diagnostics,
                 "hourly_weather_pv_shape": pv_forecast.hourly_weather_shape,
@@ -463,6 +489,7 @@ def run_current_optimizer(
             result_payload.update(
                 {
                     "target_soc_7_percent": optimized.target_soc_7_percent,
+                    "expected_morning_soc_percent": 100.0 * optimized.target_energy_kwh / night_charge.result.effective_capacity_kwh,
                     "required_night_charge_kwh": optimized.required_night_charge_kwh,
                     "target_soc_7_percent_cost_optimized": optimized.target_soc_7_percent,
                     "required_night_charge_kwh_cost_optimized": optimized.required_night_charge_kwh,
@@ -485,6 +512,31 @@ def run_current_optimizer(
         result_payload["target_soc_7_percent"] = legacy.result.target_soc_7_percent
         result_payload["required_night_charge_kwh"] = legacy.result.required_night_charge_kwh
         optimization_payload = legacy.payload
+    if cost_payload is None:
+        # Preserve the device stop target even when its forecast is unreachable.
+        overnight_soc = (max(0.0, night_charge.expected_overnight_discharge_kwh)
+                         * (context.battery_response.discharge_coefficient(23)
+                            if context.battery_response is not None
+                            else 100.0 / night_charge.result.effective_capacity_kwh))
+        initial = max(0.0, min(100.0, context.latest_soc_percent) - overnight_soc)
+        schedule = simulate_night_charge_capacity(
+            initial_soc_percent=initial, target_soc_percent=float(result_payload["target_soc_7_percent"]),
+            rate_percent_per_hour=night_rate, charge_soc_per_kwh=night_coefficient,
+            hourly_load_kwh=pv_forecast.hourly_load_kwh, hourly_pv_kwh=pv_forecast.hourly_pv_kwh,
+            battery_response=context.battery_response,
+            start_offset_hours=elapsed,
+        )
+        result_payload["expected_morning_soc_percent"] = schedule.end_soc_percent
+        result_payload["required_night_charge_kwh"] = schedule.charge_kwh
+        if optimization_payload is not None:
+            optimization_payload["night_grid_capacity"] = {
+                "grid_limit_kw_assuming_unity_power_factor": NIGHT_GRID_LIMIT_KW,
+                "forecast_basis": "hourly_average_load_and_pv",
+                "elapsed_hours_after_03": elapsed,
+                "initial_soc_source": "existing_planner_input_not_realtime_api",
+                "target_soc_before_capacity_limit": legacy.result.target_soc_7_percent if legacy.result else None,
+                "expected_morning_soc_percent": schedule.end_soc_percent,
+            }
     return OptimizationDecision(
         result_payload=result_payload,
         optimization_payload=optimization_payload,

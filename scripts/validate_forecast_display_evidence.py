@@ -362,8 +362,11 @@ def validate_forecast_day_evidence(
                     raise ValueError("battery_response:invalid_payload")
                 battery_response = (BatterySocResponse.from_payload(response_payload)
                                     if isinstance(response_payload, dict) else None)
+                from app.energy_plan.night_charge_capacity import expected_morning_soc
                 expected_soc = simulate_daytime_soc_percent(
-                    target_soc_percent=values["target_soc_7_percent"], capacity_kwh=values["effective_capacity_kwh"],
+                    target_soc_percent=expected_morning_soc(values, values["target_soc_7_percent"],
+                        rationale.get("night_soc_projection") if isinstance(rationale, dict) else None),
+                    capacity_kwh=values["effective_capacity_kwh"],
                     hourly_load_kwh={hour: row["forecast_load_kwh"] for hour, row in expected.items()},
                     hourly_pv_kwh={hour: row["forecast_pv_kwh"] for hour, row in expected.items()},
                     battery_response=battery_response,

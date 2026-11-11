@@ -27,7 +27,7 @@ from scripts.validate_forecast_display_evidence import (
 DAY = "2026-10-11"
 
 
-def fixture(*, new=False, night=None, response=None):
+def fixture(*, new=False, night=None, response=None, morning_soc=None):
     plan = {"generated_at": "2026-10-10T21:00:00+09:00", "forecast": {"date": DAY,
             "hourly_weather": [{"hour": hour} for hour in range(24)]},
         "result": {"target_soc_7_percent": 50.0, "required_night_charge_kwh": 0.0,
@@ -36,11 +36,13 @@ def fixture(*, new=False, night=None, response=None):
                                       "hourly_load_forecast_kwh": {str(hour): 0.1 for hour in range(24)}}}
     if night is not None:
         plan["decision_rationale"] = {"night_soc_projection": night}
+    if morning_soc is not None:
+        plan["result"]["expected_morning_soc_percent"] = morning_soc
     if response is not None:
         plan.setdefault("decision_rationale", {})["battery_response"] = response.to_payload()
     raw = json.dumps(plan, separators=(",", ":"), allow_nan=False).encode()
     stored = build_forecast_snapshot_rows(plan, ingested_at=plan["generated_at"], timezone="UTC")
-    soc = simulate_daytime_soc_percent(target_soc_percent=50.0, capacity_kwh=10.0,
+    soc = simulate_daytime_soc_percent(target_soc_percent=50.0 if morning_soc is None else morning_soc, capacity_kwh=10.0,
         hourly_pv_kwh={hour: 0.4 if 8 <= hour <= 15 else 0.0 for hour in range(24)},
         hourly_load_kwh={hour: 0.1 for hour in range(24)}, battery_response=response)
     if night is not None:
@@ -75,6 +77,15 @@ def fixture(*, new=False, night=None, response=None):
 def check(evidence, rows, daily):
     return validate_forecast_day_evidence(target_date=DAY, evidence=evidence,
                                          displayed_hourly=rows, displayed_battery_daily=daily)
+
+
+def test_morning_prediction_is_checked_separately_from_stop_target():
+    _, evidence, rows, daily = fixture(new=True, morning_soc=30.0)
+    assert check(evidence, rows, daily)["status"] == "PASS"
+    assert rows[7]["forecast_target_soc_percent"] == 50.0
+    assert rows[7]["forecast_soc_percent"] == 30.0
+    rows[7]["forecast_soc_percent"] = 50.0
+    assert check(evidence, rows, daily)["status"] == "FAIL"
 
 
 @pytest.mark.parametrize("response, expected8, expected9", [

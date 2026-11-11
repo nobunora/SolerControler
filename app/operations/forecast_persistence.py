@@ -178,9 +178,12 @@ def _forecast_projection_values(
     if (planned_target_soc_percent is not None and 0.0 <= planned_target_soc_percent <= 100.0
             and planned_capacity_kwh is not None and math.isfinite(planned_capacity_kwh)
             and planned_capacity_kwh > 0.0):
+        from app.energy_plan.night_charge_capacity import expected_morning_soc
+        morning_soc = expected_morning_soc(plan_result, planned_target_soc_percent,
+            rationale.get("night_soc_projection") if isinstance(rationale, dict) else None)
         planned_hourly_soc_percent = {
             str(hour): soc for hour, soc in simulate_daytime_soc_percent(
-                target_soc_percent=planned_target_soc_percent, capacity_kwh=planned_capacity_kwh,
+                target_soc_percent=morning_soc, capacity_kwh=planned_capacity_kwh,
                 hourly_load_kwh={int(row["hour"]): float(row["forecast_load_kwh"]) for row in hourly_rows},
                 hourly_pv_kwh={int(row["hour"]): float(row["forecast_pv_kwh"]) for row in hourly_rows},
                 battery_response=battery_response,

@@ -111,6 +111,25 @@ def test_load_execution_context_preserves_loaded_values(
     assert context.latest_soc_percent == pytest.approx(42.0)
 
 
+def test_context_uses_same_effective_night_soc_as_projection(monkeypatch, tmp_path):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 10, 17, 2, 15, tzinfo=tz)
+
+    rows = [{"dt": datetime(2026, 10, 17, 1, 30), "load": 1.0, "pv": 0.0, "soc": 0.0},
+            {"dt": datetime(2026, 10, 17, 2), "load": 1.0, "pv": 0.0, "soc": 80.0}]
+    monkeypatch.setattr("app.energy_plan.workflow.datetime", FixedDatetime)
+    monkeypatch.setattr("app.energy_plan.workflow._csv_paths_from_env_or_latest", lambda _: [tmp_path / "history.csv"])
+    monkeypatch.setattr("app.energy_plan.workflow._read_rows", lambda _: rows)
+    monkeypatch.setattr("app.energy_plan.workflow.fit_coefficients_from_csv", lambda _: _coefficients())
+    monkeypatch.setattr("app.energy_plan.workflow._historical_profile", lambda _: {})
+    monkeypatch.setattr("app.energy_plan.workflow._forecast_from_env_or_api", lambda **_: {"date": "2026-10-17"})
+    monkeypatch.setattr("app.energy_plan.workflow.load_occupancy_events_from_env", lambda: [])
+    context = _load_execution_context(EnergyModelConfig.from_env(), historical_input=_DefaultHistoricalInputPort())
+    assert context.latest_soc_percent == 0.0
+
+
 def test_load_execution_context_accepts_external_input_ports(tmp_path: Path) -> None:
     csv_path = tmp_path / "history.csv"
     rows = [{"soc": 55.0}]
@@ -445,8 +464,8 @@ def test_cost_optimization_request_preserves_zero_percent_cap(
     )
     pv_forecast = PvForecastBundle(
         array_forecast=None,
-        hourly_load_kwh={},
-        hourly_pv_kwh={},
+        hourly_load_kwh={hour: 0.0 for hour in range(24)},
+        hourly_pv_kwh={hour: 0.0 for hour in range(24)},
         hourly_weather_shape={},
         physical_diagnostics={},
         correction={},
@@ -478,9 +497,11 @@ def test_cost_optimization_request_preserves_zero_percent_cap(
         pv_forecast,
         constraints,
         LegacyOptimizationDecision(result=None, payload=None),
+        as_of=datetime.fromisoformat("2026-07-20T03:30:00+09:00"),
     )
 
     assert captured["request"].max_target_soc_percent == 0.0
+    assert captured["request"].night_charge_start_offset_hours == 0.5
 
 
 def test_build_energy_plan_coordinates_stages_without_persisting(monkeypatch, tmp_path) -> None:

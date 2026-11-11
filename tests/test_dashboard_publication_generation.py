@@ -343,11 +343,13 @@ def test_producer_clears_cache_before_materializing_and_reports_compressed_bytes
     assert result["bootstrap"]["raw_bytes"] > 0
 
 
-def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z", response=None):
+def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z", response=None, morning_soc=None):
     original = {"generated_at": generated, "forecast": {"date": day},
                 "result": {"target_soc_7_percent": 40, "required_night_charge_kwh": 2, "effective_capacity_kwh": 10},
                 "daytime_soc_optimization": {"hourly_pv_forecast_kwh": {str(hour): 0.1 for hour in range(24)},
                                              "hourly_load_forecast_kwh": {str(hour): 0.2 for hour in range(24)}}}
+    if morning_soc is not None:
+        original["result"]["expected_morning_soc_percent"] = morning_soc
     if response is not None:
         original["decision_rationale"] = {"battery_response": response.to_payload()}
     raw = json.dumps(original).encode()
@@ -361,6 +363,29 @@ def adopted_payload(*, day="2026-10-11", generated="2026-10-11T02:00:00Z", respo
     payload = {"forecast_hourly": rows,
                "latest_schedule": {"plan_date": plan.target_date, "planned_target_soc_percent": 40}}
     return plan, payload
+
+
+def test_morning_forecast_can_differ_from_device_stop_target():
+    plan, payload = adopted_payload(morning_soc=25)
+    assert payload["latest_schedule"]["planned_target_soc_percent"] == 40
+    assert payload["forecast_hourly"][7]["forecast_target_soc_percent"] == 40
+    assert payload["forecast_hourly"][7]["forecast_soc_percent"] == 25
+    snapshots._validate_publication_payload(payload, plan)
+    payload["forecast_hourly"][7]["forecast_soc_percent"] = 40
+    with pytest.raises(ValueError, match="dashboard SOC series generation mismatch"):
+        snapshots._validate_publication_payload(payload, plan)
+
+
+def test_morning_forecast_rejects_conflicting_saved_night_projection():
+    plan, _ = adopted_payload(morning_soc=25)
+    original = json.loads(plan.raw_json)
+    original["decision_rationale"] = {"night_soc_projection": {
+        "status": "ready", "target_date": plan.target_date, "estimated_soc_at_cutoff_percent": 30,
+        "hourly_soc_percent": {}, "hourly_grid_charge_kwh": {},
+    }}
+    with pytest.raises(ValueError, match="morning forecast disagree"):
+        _forecast_projection_values(original, target_date=plan.target_date,
+                                    timezone_name="Asia/Tokyo", now=original["generated_at"])
 
 
 @pytest.mark.parametrize("response, expected8", [

@@ -840,6 +840,18 @@ def _load_execution_context(
     else:
         coefficients = history.fit_coefficients(csv_paths)
     historical_profile = history.build_historical_profile(rows)
+    # During the upcoming standby window, do not use a CSV SOC whose effective
+    # timestamp is still in the future. The saved night path uses this same
+    # observation rule; control continues to use the realtime SOC API.
+    from app.energy_plan.night_soc_projection import latest_night_soc_observation
+    zone = ZoneInfo(config.timezone)
+    planning_at = datetime.now(zone)
+    target_start = datetime.combine(date.fromisoformat(target_date), datetime.min.time(), tzinfo=zone) + timedelta(hours=3)
+    if planning_at <= target_start:
+        observation = latest_night_soc_observation(rows=billing_rows if billing_rows is not None else rows,
+            target_date=target_date, timezone_name=config.timezone, generated_at=planning_at)
+        if observation is not None:
+            latest_soc = observation[1]
     return EnergyModelContext(
         config=config,
         csv_paths=csv_paths,
@@ -1113,6 +1125,7 @@ def _run_soc_optimization(
     pv_forecast: PvForecastBundle,
     constraints: SocConstraintSet,
     legacy: LegacyOptimizationDecision,
+    *, as_of: datetime | None = None,
 ) -> OptimizationDecision:
     from app.energy_plan.optimization import run_current_optimizer
 
@@ -1125,6 +1138,7 @@ def _run_soc_optimization(
         optimize_request=optimize_soc_request,
         prior_loader=load_soc_decision_prior_from_firestore,
         target_features_builder=_soc_decision_target_features,
+        as_of=as_of,
     )
 
 # readable-code-audit: skip STRUCT-04 — output sections share one model snapshot and published provenance metadata
@@ -1138,6 +1152,7 @@ def build_energy_plan(
     as_of: datetime | None = None,
 ) -> EnergyModelOutput:
     """Coordinate the planning use case without persisting or reporting output."""
+    explicit_as_of = as_of
     if historical_input is None and forecast_input is None:
         context = _load_execution_context(config)
     else:
@@ -1190,6 +1205,7 @@ def build_energy_plan(
         pv_bundle,
         constraints,
         legacy_decision,
+        as_of=explicit_as_of if explicit_as_of is not None else datetime.now(utc_timezone.utc),
     )
     output = _build_energy_model_output(
         context,
