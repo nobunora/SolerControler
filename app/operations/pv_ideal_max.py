@@ -20,6 +20,9 @@ from app.forecasting.pv_ideal_max import BASIS_VERSION, MODEL_ID, IdealMaxArray,
 from app.forecasting.clear_ghi_observations import site_fingerprint
 from app.forecasting.pv_ideal_max_cloud import IdealMaxCloudArchive
 from app.forecasting.pv_ideal_max_store import IdealMaxStore
+from app.forecasting.pv_local_capacity import (
+    MODEL_ID as LOCAL_MODEL_ID, MAX_OBSERVATIONS, PROJECTION_POLICY, calculate_local_capacity, fit_local_capacity,
+)
 from app.operations.pv_ideal_max_csv import hourly_observations
 
 
@@ -45,37 +48,32 @@ def load_ideal_max_for_forecast(target_date: date, *, as_of: datetime,
 
     def read(store: IdealMaxStore, snapshot_sha: str | None) -> tuple[dict[int, float], dict[str, Any]]:
         state = store.read_current()
-        pv = dict(enumerate(calculate_ideal_max(target_date, geometry, state, as_of=as_of)))
+        # Preserve the ledger's identity/as_of guard; its global multiplier is
+        # historical evidence, not permission to amplify unrelated solar cells.
+        calculate_ideal_max(target_date, geometry, state, as_of=as_of)
+        records = [json.loads(row[0]) for row in store.connection.execute(
+            "SELECT payload FROM observations WHERE json_extract(payload, '$.available_at')<=? "
+            "ORDER BY interval_start LIMIT ?", (as_of.astimezone(timezone.utc).isoformat(), MAX_OBSERVATIONS + 1))]
+        coefficients, projection = fit_local_capacity(records, geometry, as_of=as_of)
+        pv, cells = calculate_local_capacity(target_date, geometry, coefficients)
+        coefficient = max(coefficients.values(), default=1.)
         pack = {"model_id": MODEL_ID, "basis_version": BASIS_VERSION, "geometry_fingerprint": geometry.fingerprint,
-                "coefficient": state.coefficient, "revision": state.revision,
-                "training_as_of": state.updated_at.isoformat(), "snapshot_sha256": snapshot_sha}
+                "coefficient": coefficient, "revision": state.revision, "ledger_coefficient": state.coefficient,
+                "projection_policy": PROJECTION_POLICY, "cell_coefficients": coefficients,
+                "training_as_of": projection["training_as_of"] or state.updated_at.isoformat(), "snapshot_sha256": snapshot_sha}
         raw = json.dumps(pack, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
-        trace = {"schema_version": 1, "model_id": "physical_pv_ideal_max_global_v1", "basis_version": BASIS_VERSION,
+        trace = {"schema_version": 1, "model_id": LOCAL_MODEL_ID, "basis_version": BASIS_VERSION,
                  "site_fingerprint": site_fingerprint(latitude=geometry.latitude, longitude=geometry.longitude,
                     timezone_name=geometry.timezone_name, arrays=[asdict(a) for a in load_pv_array_configs()]),
                  "target_date": target_date.isoformat(), "as_of": as_of.isoformat(),
                  "retrieved_at": datetime.now(timezone.utc).isoformat(), "provider_issued_at": None,
                  "calibration_sha256": hashlib.sha256(raw).hexdigest(), "calibration_pack": pack,
-                 "coefficient": state.coefficient, "revision": state.revision,
+                 "coefficient": coefficient, "revision": state.revision,
+                 "capability_projection": {**projection, "hourly_cells": {str(h): key for h, key in cells.items()}},
                  "hourly_pv_kwh": {str(h): value for h, value in pv.items()},
                  "weather_adjustment_applied": False}
-        # Read only update events, not issued predictions. This compact timeline
-        # lets residual validation use the coefficient actually available at a fold.
-        events = [json.loads(row[0]) for row in store.connection.execute(
-            "SELECT payload FROM observations WHERE json_extract(payload, '$.exceeded')=1 "
-            "AND json_extract(payload, '$.available_at')<=? "
-            "ORDER BY json_extract(payload, '$.available_at'), interval_start LIMIT ?",
-            (as_of.astimezone(timezone.utc).isoformat(), 366 * 24 + 1))]
-        if len(events) > 366 * 24:
-            raise ValueError("capability history exceeds the validation budget")
-        history = []
-        if events:
-            first = datetime.fromisoformat(events[0]["available_at"]) - timedelta(microseconds=1)
-            history.append((first.isoformat(), events[0]["coefficient_before"]))
-            history.extend((r["available_at"], r["coefficient_after"]) for r in events)
-        else:
-            history.append((state.updated_at.isoformat(), state.coefficient))
-        trace["_training_coefficient_history"] = history
+        # Old scalar coefficient histories do not describe local projections.
+        trace["_training_coefficient_history"] = []
         return pv, trace
 
     if prefix:

@@ -34,6 +34,24 @@ def document():
                     "source_sha256": "PRIVATE-DO-NOT-TRANSFER"}}}}
 
 
+@pytest.mark.parametrize("policy,expected", [("solar_position_cells_10x30_v1", "valid"), ("unknown", "invalid")])
+def test_local_projection_summary_requires_the_saved_projection_policy(policy, expected):
+    data = document()
+    model = "physical_pv_ideal_max_local_v1"
+    data["result"]["final_pv_forecast_source"] = model
+    data["decision_rationale"]["pv_physical_forecast"]["selected_method"] = model
+    trace = data["decision_rationale"]["pv_ideal_max"]
+    trace["model_id"] = model
+    trace["calibration_pack"]["projection_policy"] = policy
+    trace["calibration_sha256"] = hashlib.sha256(json.dumps(trace["calibration_pack"], sort_keys=True,
+                                                          separators=(",", ":")).encode()).hexdigest()
+    value = summary(data)
+    assert value["status"] == expected
+    if expected == "valid":
+        assert value["model_id"] == model
+        assert value["capability_projection_policy"] == policy
+
+
 def summary(data):
     return _build_pv_model_summary(data, producer_identity={"target_date": "2026-11-08",
         "generated_at": data["generated_at"], "raw_plan_sha256": "e" * 64, "control_version_id": "f" * 64},

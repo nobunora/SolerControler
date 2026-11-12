@@ -137,6 +137,17 @@ def collect(forecasts, actual):
                                 actual_rows=actual, snapshot_rows=forecasts)
 
 
+def test_local_projection_bias_requires_local_preissued_pairs():
+    forecasts, actual = raw_sources()
+    kwargs = {"target_date": TARGET, "as_of": AS_OF, "timezone_name": "Asia/Tokyo",
+              "actual_rows": actual, "snapshot_rows": forecasts,
+              "required_model_id": "physical_pv_ideal_max_local_v1"}
+    assert collect_pv_bias_days(**kwargs)[0] == ()
+    for row in forecasts:
+        row["pv_forecast_detail"]["hourly_pv_bias"]["model_id"] = "physical_pv_ideal_max_local_v1"
+    assert len(collect_pv_bias_days(**kwargs)[0]) == 1
+
+
 def test_collector_complete_frozen_run_retains_actual_timestamp_and_acquisition():
     forecasts, actual = raw_sources()
     days, provenance = collect(forecasts, actual)

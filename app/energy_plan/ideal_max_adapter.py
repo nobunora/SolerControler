@@ -70,7 +70,15 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
     maximum = _valid_hourly(maximum)
     hourly_pv, weather = _weather_adjusted_pv(context, maximum, as_of=as_of)
     training_days = None
-    if context.billing_rows is not None and coefficient_history:
+    if trace["model_id"] == "physical_pv_ideal_max_local_v1":
+        # A scalar reforecast of global-v1 originals cannot train a local curve.
+        # Use only genuinely preissued local-model pairs and the existing
+        # forward economic gate; remain neutral until those pairs are available.
+        coefficient_history = []
+        bias_days, bias_coverage = collect_pv_bias_days(target_date=context.target_date, as_of=as_of,
+            timezone_name=context.config.timezone, actual_rows=context.consumption_rows,
+            required_model_id="physical_pv_ideal_max_local_v1")
+    elif context.billing_rows is not None and coefficient_history:
         from app.operations.pv_bias_history import load_pv_training_history
         from app.operations.pv_ideal_max import configured_ideal_max_geometry
         training_days, bias_days, bias_coverage = load_pv_training_history(
