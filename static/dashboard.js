@@ -891,7 +891,11 @@
       }
       if (summary.plan_date !== date) return { status: "unverified", reason: "対象計画日が一致しません" };
       if (summary.status !== "valid") return { status: summary.status, reason: summary.reason_code || "" };
-      const idealMax = summary.model_id === "physical_pv_ideal_max_global_v1";
+      const idealMax = ["physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"].includes(summary.model_id);
+      if (summary.model_id === "physical_pv_ideal_max_local_v1"
+          && summary.capability_projection_policy !== "solar_position_cells_10x30_v1") {
+        return { status: "invalid", reason: "太陽位置ごとの能力補正が未確認です" };
+      }
       if (idealMax && (summary.basis_version !== "noaa_haurwitz_erbs_poa_stc25_1min_v1"
           || displayFinite(summary.coefficient) === null || summary.coefficient < 1
           || !Number.isInteger(summary.revision) || summary.revision < 0
@@ -931,7 +935,8 @@
       };
       const valid = binding.status === "valid";
       const legacy = binding.status === "legacy";
-      if (valid && summary.model_id === "physical_pv_ideal_max_global_v1") {
+      if (valid && ["physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"].includes(summary.model_id)) {
+        const local = summary.model_id === "physical_pv_ideal_max_local_v1";
         const bias = summary.pv_bias || {};
         const shown = (value) => displayFinite(value) === null ? "未保存" : String(value);
         const labels = { soc_mae: "SOC誤差", buy_mae: "買電誤差", fee_mae: "料金誤差" };
@@ -942,9 +947,10 @@
         setText("pvModelName", "PVモデル: 太陽高度・設備能力＋天気予報");
         setText("pvModelProvenance", `対象計画日: ${summary.plan_date} / 計画生成: ${summary.generated_at} / 係数版: ${summary.calibration_sha256}`);
         setText("pvModelLearningPeriod", `PV補正の学習: ${shown(bias.training_day_count)}日・${shown(bias.training_hour_count)}時間 / ${shown(bias.lookback_days)}日窓 / 同時刻・同天候で最低${shown(bias.minimum_bin_days)}日 / 平滑化${shown(bias.prior_pseudo_days)}相当日`);
-        setText("pvModelTiming", `能力係数C: ${summary.coefficient.toFixed(6)}（更新${summary.revision}回） / 能力更新: ${summary.training_as_of} / 予報取得: ${summary.retrieved_at} / 計算基準: ${summary.as_of}（原本時刻）`);
+        setText("pvModelTiming", `${local ? "太陽位置ごとの能力係数（区分係数の最大値）" : "能力係数C"}: ${summary.coefficient.toFixed(6)}（${local ? `台帳版${summary.revision}` : `更新${summary.revision}回`}） / 能力更新: ${summary.training_as_of} / 予報取得: ${summary.retrieved_at} / 計算基準: ${summary.as_of}（原本時刻）`);
         setText("pvModelRepair", `時間別補正: ${adoption}。PV検証${shown(bias.validation_day_count)}日、蓄電池・料金の完全検証${shown(bias.economic_day_count)}日。料金誤差は請求額削減の実績とは別です。`);
         setText("pvModelExplanation", "PV(h)=clip(C×B(d,h)×min(F(h)/Q(d,h),1)+δ(h,天候),0,C×B(d,h))。Q=0の区間はPV=0。Bは各日時の太陽高度・設備配置から求める基準量、Fは日射予報、Qは晴天日射。δは検証を通過した時間別補正です。判定と誤差は下表に表示します。");
+        if (local) setText("pvModelExplanation", "実績が基準上限を0.01kWh超えた場合、その太陽高度・方位の区分だけ能力係数を更新します。朝の超過で昼の上限は増やしません。未観測の区分は基準量を使い、天気予報による減額と検証済みの時間別補正を適用します。");
         return;
       }
       setText("pvModelName", valid ? "PVモデル: NEW100（晴天・年周期モデル）"
@@ -964,7 +970,7 @@
       if (!tbody) return;
       tbody.innerHTML = "";
       const newModel = binding.status === "valid";
-      const idealMax = newModel && summary.model_id === "physical_pv_ideal_max_global_v1";
+      const idealMax = newModel && ["physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"].includes(summary.model_id);
       const legacy = binding.status === "legacy";
       const shownNumber = (value) => displayFinite(value) === null ? "-" : String(value);
       if (newModel && !idealMax) {

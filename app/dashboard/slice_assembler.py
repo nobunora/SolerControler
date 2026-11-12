@@ -128,6 +128,9 @@ def _build_pv_model_summary(
     source = mapping(data.get("result")).get("final_pv_forecast_source")
     selected = physical.get("selected_method")
     ideal = mapping(rationale.get("pv_ideal_max"))
+    local_model = "physical_pv_ideal_max_local_v1"
+    if local_model in (source, selected, ideal.get("model_id")):
+        ideal_model = local_model
     ideal_indicated = ideal_model in (source, selected, ideal.get("model_id"))
     if ideal_indicated:
         trace = ideal
@@ -189,6 +192,7 @@ def _build_pv_model_summary(
         provider, generated_at = instant(trace.get("provider_issued_at")), instant(generated)
         valid = (trace.get("schema_version") == 1 and type(trace.get("schema_version")) is int
             and trace_model == ideal_model and pack.get("model_id") == "pv_ideal_max_global_v1"
+            and (ideal_model != local_model or pack.get("projection_policy") == "solar_position_cells_10x30_v1")
             and trace.get("basis_version") == pack.get("basis_version") == basis
             and day(trace.get("target_date")) == summary["plan_date"]
             and number(coefficient) and number(pack.get("coefficient")) and coefficient >= 1 and coefficient == pack.get("coefficient")
@@ -210,6 +214,7 @@ def _build_pv_model_summary(
         if hashlib.sha256(pack_raw).hexdigest() != trace["calibration_sha256"]:
             return finish("invalid", "calibration_sha_mismatch")
         summary.update({"basis_version": basis, "coefficient": coefficient, "revision": revision,
+            "capability_projection_policy": pack.get("projection_policy"),
             "calibration_sha256": trace["calibration_sha256"], "forecast_sha256": trace["forecast_sha256"],
             "training_as_of": pack["training_as_of"], "as_of": trace["as_of"], "retrieved_at": trace["retrieved_at"],
             "provider_issued_at": trace.get("provider_issued_at"), "weather_adjustment_applied": True,

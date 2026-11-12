@@ -35,7 +35,8 @@ def _check_provenance(incoming: PublishedPlan, adopted: PublishedPlan) -> None:
     # The approved planner can select the clear ledger or its existing weather
     # fallback. Provider vintages and calibration bases differ across models.
     models = {new.get("model_id"), old.get("model_id")}
-    if models == {"physical_clear_ghi_annual1", "physical_pv_ideal_max_global_v1"}:
+    supported_models = {"physical_clear_ghi_annual1", "physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"}
+    if len(models) == 2 and models <= supported_models:
         if not old.get("site_fingerprint") or new.get("site_fingerprint") != old["site_fingerprint"]:
             raise ValueError("plan publication provenance site mismatch")
         return

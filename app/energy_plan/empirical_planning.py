@@ -114,12 +114,18 @@ def prepare_empirical_planning(
                 economic_days=pv.hourly_pv_bias_days, evaluate_day=lambda day, values: _pv_replay(day, values, cost),
                 previous_model=_previous_pv_model(saved) if compatible else None)
         else:
+            saved_pv_model = previous.get("hourly_pv_bias_model")
+            if pv.ideal_max_provenance.get("model_id") == "physical_pv_ideal_max_local_v1":
+                if (not isinstance(saved_pv_model, dict)
+                        or saved_pv_model.get("geometry_fingerprint") != pv.ideal_max_provenance.get("calibration_pack", {}).get("geometry_fingerprint")
+                        or saved_pv_model.get("calibration_sha256") != pv.ideal_max_provenance.get("calibration_sha256")):
+                    saved_pv_model = None
             corrected, diagnostics, model = select_hourly_pv_bias(
                 days=pv.hourly_pv_bias_days, as_of=as_of, target_date=context.target_date,
                 forecast_pv=pv.hourly_pv_kwh, maximum=pv.hourly_pv_max_kwh,
                 weather_by_hour=forecast_weather_by_hour(context.forecast),
                 evaluate_day=lambda day, values: _pv_replay(day, values, cost),
-                previous_model=_previous_pv_model(previous.get("hourly_pv_bias_model")),
+                previous_model=_previous_pv_model(saved_pv_model),
             )
         diagnostics["evaluation"] = "frozen_response_observed_start_soc_uniform_halfhour_current_contract_revaluation"
         old_bias = pv.ideal_max_provenance.get("hourly_pv_bias", {})

@@ -11,6 +11,7 @@ from app.energy_plan import ideal_max_adapter as adapter
 from app.forecasting.pv_ideal_max import HourlyPvObservation, IdealMaxArray, IdealMaxGeometry, calculate_ideal_max, ideal_max_base
 from app.forecasting.pv_clear_ghi import clear_ghi_hour
 from app.forecasting.pv_ideal_max_store import IdealMaxStore
+from app.forecasting.pv_local_capacity import MODEL_ID as LOCAL_MODEL, calculate_local_capacity, fit_local_capacity
 from app.operations import pv_ideal_max as operations
 from app.separated_runtime.plan_store import _check_provenance, _validate_incoming_provenance
 
@@ -30,11 +31,16 @@ def test_local_forecast_reads_learned_state_without_issuing_or_writing(monkeypat
         database = store.path
     before = database.read_bytes()
     pv, trace = operations.load_ideal_max_for_forecast(date(2026, 10, 31), as_of=NOW, artifacts_dir=tmp_path)
-    assert tuple(pv.values()) == calculate_ideal_max(date(2026, 10, 31), geometry, state, as_of=NOW)
+    with IdealMaxStore(tmp_path, geometry) as store:
+        records = store.observations_between(NOW-timedelta(days=1), NOW+timedelta(days=1))
+    coefficients, _ = fit_local_capacity(records, geometry, as_of=NOW)
+    assert pv == calculate_local_capacity(date(2026, 10, 31), geometry, coefficients)[0]
+    assert pv[11] < calculate_ideal_max(date(2026, 10, 31), geometry, state, as_of=NOW)[11]
     assert database.read_bytes() == before
     assert trace["revision"] == state.revision
     assert trace["calibration_pack"]["coefficient"] == state.coefficient
     assert trace["weather_adjustment_applied"] is False
+    assert trace["model_id"] == LOCAL_MODEL
 
 
 def context(tmp_path, weather_factor=1.0):
@@ -127,6 +133,16 @@ def test_model_switch_cannot_change_site_or_accept_unknown_model():
         _check_provenance(plan(NEW_MODEL, site="different", key="pv_ideal_max"), old)
     with pytest.raises(ValueError, match="model/site/basis"):
         _check_provenance(plan("unknown_model"), old)
+
+
+@pytest.mark.parametrize("old_model", [NEW_MODEL, "physical_clear_ghi_annual1"])
+def test_local_projection_transition_requires_the_same_site(old_model):
+    old = plan(old_model, key="pv_ideal_max")
+    new = plan(LOCAL_MODEL, key="pv_ideal_max")
+    _validate_incoming_provenance(new)
+    _check_provenance(new, old)
+    with pytest.raises(ValueError, match="site"):
+        _check_provenance(plan(LOCAL_MODEL, site="different", key="pv_ideal_max"), old)
 
 
 @pytest.mark.parametrize("as_of", [None, NOW])

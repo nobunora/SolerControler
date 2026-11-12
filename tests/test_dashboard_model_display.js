@@ -193,6 +193,14 @@ async function tests() {
   assert.ok(n.table().some((row) => row[1] === "料金誤差" && row[4].includes("成立")));
   assert.equal(n.table().some((row) => row[0] === "NEW100係数"), false);
   assert.equal(n.requests.length, 0); // Summary rendering introduces no HTTP or history read.
+  const local = JSON.parse(JSON.stringify(native));
+  local.pv_forecast_diagnostics.pv_model.model_id = "physical_pv_ideal_max_local_v1";
+  local.pv_forecast_diagnostics.pv_model.capability_projection_policy = "solar_position_cells_10x30_v1";
+  await n.replace(local);
+  assert.match(n.elements.get("pvModelTiming").textContent, /太陽位置ごとの能力係数/);
+  assert.match(n.elements.get("pvModelExplanation").textContent, /朝の超過で昼の上限は増やしません/);
+  assert.equal(n.table().some((row) => row[0] === "NEW100係数"), false);
+  assert.equal(n.requests.length, 0);
   const mismatchedNative = JSON.parse(JSON.stringify(native));
   mismatchedNative.forecast_hourly[8].forecast_run_id = "different-run";
   await n.replace(mismatchedNative);

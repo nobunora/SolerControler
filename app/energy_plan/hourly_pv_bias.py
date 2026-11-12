@@ -155,7 +155,8 @@ def _actual_availability(row: dict[str, Any]) -> datetime | None:
 
 
 def _collect_day(day: date, forecasts: list[dict[str, Any]], actuals: list[dict[str, Any]],
-                 *, zone: ZoneInfo, as_of: datetime) -> PvBiasDay | None:
+                 *, zone: ZoneInfo, as_of: datetime,
+                 required_model_id: str = "physical_pv_ideal_max_global_v1") -> PvBiasDay | None:
     by_slot: dict[tuple[int, int], dict[str, Any]] = {}
     available: list[datetime] = []
     for row in actuals:
@@ -199,7 +200,7 @@ def _collect_day(day: date, forecasts: list[dict[str, Any]], actuals: list[dict[
         cls = detail.get("weather_class")
         if (baseline is None or maximum is None or predicted_load is None or baseline > maximum
                 or not isinstance(cls, str) or cls == "unknown"
-                or detail.get("model_id") != "physical_pv_ideal_max_global_v1"):
+                or detail.get("model_id") != required_model_id):
             return None
         run_id = row.get("forecast_run_id")
         if not isinstance(run_id, str) or not run_id:
@@ -238,6 +239,7 @@ def _collect_day(day: date, forecasts: list[dict[str, Any]], actuals: list[dict[
 
 def collect_pv_bias_days(*, target_date: str, as_of: datetime, timezone_name: str,
                          actual_rows: list[dict[str, Any]], snapshot_rows: list[dict[str, Any]] | None = None,
+                         required_model_id: str = "physical_pv_ideal_max_global_v1",
                          ) -> tuple[tuple[PvBiasDay, ...], dict[str, Any]]:
     if as_of.utcoffset() is None:
         raise ValueError("PV bias requires aware as_of")
@@ -275,7 +277,8 @@ def collect_pv_bias_days(*, target_date: str, as_of: datetime, timezone_name: st
         candidates = sorted(runs[day].values(), key=lambda rows:
                             _stamp(rows[0].get("issued_at")) or datetime.max.replace(tzinfo=zone))
         for candidate in candidates:
-            record = _collect_day(day, candidate, actuals[day], zone=zone, as_of=as_of)
+            record = _collect_day(day, candidate, actuals[day], zone=zone, as_of=as_of,
+                                  required_model_id=required_model_id)
             if record is not None:
                 days.append(record)
                 break
