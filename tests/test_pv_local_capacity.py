@@ -67,3 +67,12 @@ def test_profile_does_not_decay_or_use_an_unrelated_cell():
         for hour in range(24):
             expected = ideal_max_base(day, hour, GEOMETRY) * (coefficients[key] if cells[hour] == key else 1.)
             assert values[hour] == expected
+
+
+def test_projection_rejects_overflow_instead_of_publishing_infinity(monkeypatch):
+    from app.forecasting import pv_local_capacity as local
+
+    monkeypatch.setattr(local, "ideal_max_base", lambda *_: 2.)
+    key = capacity_cell(DAY, 11, GEOMETRY)
+    with pytest.raises(ValueError, match="not finite"):
+        calculate_local_capacity(DAY, GEOMETRY, {key: 1e308})

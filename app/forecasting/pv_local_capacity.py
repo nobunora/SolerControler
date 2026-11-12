@@ -86,5 +86,8 @@ def calculate_local_capacity(day: date, geometry: IdealMaxGeometry, coefficients
         coefficient = coefficients.get(cells[hour], 1.)
         if isinstance(coefficient, bool) or not math.isfinite(coefficient) or coefficient < 1:
             raise ValueError("invalid local capacity coefficient")
-        result[hour] = ideal_max_base(day, hour, geometry) * coefficient
+        maximum = ideal_max_base(day, hour, geometry) * coefficient
+        if not math.isfinite(maximum):
+            raise ValueError("local capacity projection is not finite")
+        result[hour] = maximum
     return result, cells
