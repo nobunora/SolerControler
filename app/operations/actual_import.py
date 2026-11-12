@@ -21,6 +21,10 @@ from app.operations.sqlite import PipelineConfig
 from app.runtime.command_adapter import _run
 
 
+class NoActualMeasurementsError(ValueError):
+    """The import has no source measurements and has not written actuals."""
+
+
 def _claim(client: Any, execution: str) -> bool:
     lock = client.collection("dashboard_actual_import_runs").document("active")
 
@@ -83,6 +87,9 @@ def main() -> int:
         publish_date_refresh(client, target_date, captured)
         status = "partial" if pending_dates else "succeeded"
         return 0
+    except NoActualMeasurementsError:
+        actuals_saved = False
+        raise
     finally:
         result = {"status": status, "stage": stage, "actuals_saved": actuals_saved,
                   "target_date": target_date, "pending_dates": pending_dates, "missing_review": missing_review,
@@ -130,14 +137,15 @@ def save_date_actuals(client: Any, target_date: str, directory: Path) -> list[st
     now = datetime.now(timezone.utc).isoformat()
     paths = find_latest_kpnet_csv_paths(directory)
     if not paths:
-        raise ValueError("no actual CSV was downloaded")
+        raise NoActualMeasurementsError("no actual CSV was downloaded")
     day = date.fromisoformat(target_date)
     window = monitoring_sync_window(datetime.combine(day, time.min, tzinfo=ZoneInfo("Asia/Tokyo")), days=1)
     observed_until = datetime.now(ZoneInfo("Asia/Tokyo")).replace(tzinfo=None).isoformat()
     window = replace(window, end_ts=min(window.end_ts, observed_until))
     changes = source.sync_monitoring_csvs(client, csv_paths=paths, ingested_at=now, window=window)
     if not changes.materialization_dates:
-        raise ValueError("requested date has no actual measurements")
+        # With no supplied rows, sync_monitoring_csvs returns without a batch write.
+        raise NoActualMeasurementsError("requested date has no actual measurements")
     source.recalc_monitoring_daily_metrics(client, calendar_dates={target_date}, dashboard_affected_dates={target_date}, updated_at=now)
     month_start = day.replace(day=1).isoformat()
     cost_options = {name: getattr(cfg, name) for name in (

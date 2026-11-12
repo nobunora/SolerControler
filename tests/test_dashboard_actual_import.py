@@ -144,6 +144,55 @@ def test_worker_only_imports_actuals_and_publishes_after_success(monkeypatch, tm
     assert not any(name in {"forecast_hourly", "forecast_plans", "control_plan_current"} for name, _, _ in writes)
 
 
+@pytest.mark.parametrize("failure", ["missing_csv", "missing_date", "write_timeout"])
+def test_worker_distinguishes_no_data_from_an_unknown_write(monkeypatch, tmp_path, failure):
+    monkeypatch.setenv("CLOUD_RUN_EXECUTION", "solar-actual-import-abc12")
+    monkeypatch.setenv("ACTUAL_IMPORT_TARGET_DATE", "2026-11-03")
+    monkeypatch.setenv("ARTIFACTS_DIR", str(tmp_path))
+    receipts = {}
+    write_attempts = []
+
+    def collection(name):
+        def document(key):
+            return SimpleNamespace(set=lambda value, **_: receipts.update({(name, key): value}))
+
+        query = SimpleNamespace(stream=lambda: [])
+        query.where = lambda *_: query
+        return SimpleNamespace(document=document, where=lambda *_: query)
+
+    def commit():
+        raise TimeoutError("write outcome unknown")
+
+    batch = SimpleNamespace(set=lambda *args, **_: write_attempts.append(args), commit=commit)
+    client = SimpleNamespace(collection=collection, batch=lambda: batch)
+    monkeypatch.setattr(worker.source, "open_firestore", lambda: client)
+    monkeypatch.setattr(worker, "_claim", lambda *_: True)
+    monkeypatch.setattr(worker, "capture_date_refresh", lambda *_: {})
+    monkeypatch.setattr(worker, "review_missing_actuals", lambda *_: {"status": "not_run"})
+    publications = []
+    monkeypatch.setattr(worker, "publish_date_refresh", lambda *_: publications.append(1))
+
+    def download(_command, overrides, **_kwargs):
+        if failure == "missing_csv":
+            return
+        csv_dir = worker.Path(overrides["ARTIFACTS_DIR"]) / "20261103-120000" / "csv"
+        csv_dir.mkdir(parents=True)
+        day = "2026/11/02" if failure == "missing_date" else "2026/11/03"
+        (csv_dir / "sample.csv").write_text(
+            f"年月日,時刻,発電電力量[kWh]\n{day},06:00,1\n", encoding="utf-8-sig")
+
+    monkeypatch.setattr(worker, "_run", download)
+    expected_error = TimeoutError if failure == "write_timeout" else ValueError
+    with pytest.raises(expected_error):
+        worker.main()
+    result = receipts[("dashboard_actual_import_runs", "solar-actual-import-abc12")]
+    assert result["status"] == "failed"
+    assert result["completed_at"]
+    assert result["actuals_saved"] is (None if failure == "write_timeout" else False)
+    assert bool(write_attempts) == (failure == "write_timeout")
+    assert publications == []
+
+
 def test_missing_month_review_separates_recoverable_zero_and_provider_gap(tmp_path):
     csv_dir = tmp_path / "20261103-120000" / "csv"
     csv_dir.mkdir(parents=True)
