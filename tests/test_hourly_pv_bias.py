@@ -148,6 +148,46 @@ def test_local_projection_bias_requires_local_preissued_pairs():
     assert len(collect_pv_bias_days(**kwargs)[0]) == 1
 
 
+def test_local_release_does_not_fetch_legacy_history(monkeypatch):
+    from app.energy_plan import hourly_pv_bias as module
+
+    _, actual = raw_sources(date(2026, 11, 11))
+    monkeypatch.setattr(module, "load_pv_bias_snapshots", lambda **_: pytest.fail("legacy history must not be fetched"))
+    days, coverage = module.collect_pv_bias_days(target_date="2026-11-12", as_of=datetime(2026, 11, 12, 12, tzinfo=ZONE),
+        timezone_name="Asia/Tokyo", actual_rows=actual, required_model_id="physical_pv_ideal_max_local_v1")
+    assert days == ()
+    assert coverage["source"] == "not_read_no_prior_actuals"
+
+
+def test_local_history_query_starts_with_compatible_model_release(monkeypatch):
+    from app.energy_plan import hourly_pv_bias as module
+
+    forecasts, actual = raw_sources(date(2026, 11, 12))
+    for row in forecasts:
+        row["pv_forecast_detail"]["hourly_pv_bias"]["model_id"] = "physical_pv_ideal_max_local_v1"
+    calls = []
+    monkeypatch.setattr(module, "load_pv_bias_snapshots", lambda **kwargs: (calls.append(kwargs) or forecasts, "fixture"))
+    days, _ = module.collect_pv_bias_days(target_date="2026-11-14", as_of=datetime(2026, 11, 14, 2, 30, tzinfo=ZONE),
+        timezone_name="Asia/Tokyo", actual_rows=actual, required_model_id="physical_pv_ideal_max_local_v1")
+    assert calls == [{"target_date": "2026-11-14", "earliest_date": date(2026, 11, 12)}]
+    assert len(days) == 1
+
+
+def test_snapshot_reader_bounds_dates_before_reading_rows(monkeypatch, tmp_path):
+    import sqlite3
+    from app.energy_plan.hourly_pv_bias import load_pv_bias_snapshots
+
+    path = tmp_path / "snapshots.db"
+    with sqlite3.connect(path) as db:
+        db.execute("CREATE TABLE forecast_hourly_snapshots (date TEXT)")
+        db.executemany("INSERT INTO forecast_hourly_snapshots VALUES (?)", [("2026-11-11",), ("2026-11-12",)])
+    monkeypatch.setenv("DATA_BACKEND", "sqlite")
+    monkeypatch.setenv("DATA_DB_PATH", str(path))
+    rows, source = load_pv_bias_snapshots(target_date="2026-11-14", earliest_date=date(2026, 11, 12))
+    assert source == "sqlite_forecast_hourly_snapshots" and [r["date"] for r in rows] == ["2026-11-12"]
+    assert len(load_pv_bias_snapshots(target_date="2026-11-14")[0]) == 2
+
+
 def test_collector_complete_frozen_run_retains_actual_timestamp_and_acquisition():
     forecasts, actual = raw_sources()
     days, provenance = collect(forecasts, actual)
