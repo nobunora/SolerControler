@@ -102,9 +102,13 @@ def forecast_weather_by_hour(forecast: dict[str, object]) -> dict[int, str]:
     return out
 
 
-def load_pv_bias_snapshots(*, target_date: str) -> tuple[list[dict[str, Any]], str]:
+def load_pv_bias_snapshots(*, target_date: str, earliest_date: date | None = None) -> tuple[list[dict[str, Any]], str]:
     """One bounded existing snapshot collection read, no canonical/rebuilt forecasts."""
     start = (date.fromisoformat(target_date) - timedelta(days=LOOKBACK_DAYS)).isoformat()
+    if earliest_date is not None:
+        start = max(start, earliest_date.isoformat())
+    if start >= target_date:
+        return [], "not_read_no_prior_compatible_forecasts"
     try:
         if os.getenv("DATA_BACKEND", "").strip().lower() == "firestore":
             from google.cloud import firestore
@@ -245,6 +249,12 @@ def collect_pv_bias_days(*, target_date: str, as_of: datetime, timezone_name: st
         raise ValueError("PV bias requires aware as_of")
     target, zone = date.fromisoformat(target_date), ZoneInfo(timezone_name)
     start = target - timedelta(days=LOOKBACK_DAYS)
+    # Production local-v1 forecasts begin with this release. Do not fetch a year
+    # of global-v1 history only to reject it after transfer. Explicit supplied
+    # snapshots remain usable for isolated retrospective simulations.
+    earliest = date(2026, 11, 12) if required_model_id == "physical_pv_ideal_max_local_v1" and snapshot_rows is None else None
+    if earliest is not None:
+        start = max(start, earliest)
     actuals: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for row in actual_rows:
         stamp = row.get("dt")
@@ -260,7 +270,10 @@ def collect_pv_bias_days(*, target_date: str, as_of: datetime, timezone_name: st
                     "rejected_days": len(actuals), "reason": "missing_actual_acquisition_provenance"}
     source = "supplied_frozen_snapshots"
     if snapshot_rows is None:
-        snapshot_rows, source = load_pv_bias_snapshots(target_date=target_date)
+        if earliest is None:
+            snapshot_rows, source = load_pv_bias_snapshots(target_date=target_date)
+        else:
+            snapshot_rows, source = load_pv_bias_snapshots(target_date=target_date, earliest_date=earliest)
     if len(snapshot_rows) > MAX_SNAPSHOT_ROWS:
         return (), {"source": source, "accepted_days": 0, "rejected_days": len(actuals),
                     "reason": "snapshot_read_budget"}
