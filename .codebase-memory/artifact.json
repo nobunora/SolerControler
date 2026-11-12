@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "e484342b5d8a267d32c2753d927abd6a4a028a37",
-    "indexed_at": "2026-11-12T00:09:25Z",
+    "commit": "5563a710c77938b182c175e25706cc2a1e4cd669",
+    "indexed_at": "2026-11-12T00:30:34Z",
     "project": "SolerControler-import-recovery-20261112",
-    "nodes": 5104,
-    "edges": 29582,
+    "nodes": 5107,
+    "edges": 29604,
     "original_size": 15532032,
-    "compressed_size": 1793965,
+    "compressed_size": 1795003,
     "compression_level": 9
 }
