@@ -9,7 +9,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone as utc_timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -384,7 +384,6 @@ def _fetch_open_meteo_previous_day1_forecast(
     target_date: str,
 ) -> dict[str, object]:
     model = os.getenv("OPEN_METEO_PREVIOUS_RUNS_MODEL", "jma_seamless").strip() or "jma_seamless"
-    suffix = "_previous_day1"
     url = "https://previous-runs-api.open-meteo.com/v1/forecast"
     params: dict[str, str | float] = {
         "latitude": lat,
@@ -406,6 +405,16 @@ def _fetch_open_meteo_previous_day1_forecast(
     hourly = resp.json().get("hourly", {})
     if not isinstance(hourly, dict):
         raise RuntimeError("Open-Meteo previous runs response has no hourly data")
+    forecast = _previous_day1_forecast_day(hourly, timezone=timezone, target_date=target_date, model=model)
+    _cache_forecast_pair(forecast, lambda day: _previous_day1_forecast_day(
+        hourly, timezone=timezone, target_date=day, model=model),
+        lat=lat, lon=lon, timezone=timezone, source="open-meteo-previous-runs-day1")
+    return forecast
+
+
+def _previous_day1_forecast_day(hourly: dict[str, Any], *, timezone: str, target_date: str,
+                               model: str) -> dict[str, object]:
+    suffix = "_previous_day1"
     hourly_weather = hourly_weather_records_from_open_meteo(hourly, target_date=target_date, suffix=suffix)
     if not hourly_weather:
         raise RuntimeError(f"Open-Meteo previous runs hourly forecast is empty: {target_date}")
@@ -438,6 +447,21 @@ def _fetch_open_meteo_previous_day1_forecast(
             "endpoint": "previous-runs-api.open-meteo.com",
         },
     }
+
+
+def _cache_forecast_pair(forecast: dict[str, object], next_day: Callable[[str], dict[str, object]], *,
+                         lat: float, lon: float, timezone: str, source: str) -> None:
+    from app.energy_plan.weather_cache import log_failure, save_forecast
+
+    target = str(forecast["date"])
+    for day in (target, (date.fromisoformat(target) + timedelta(days=1)).isoformat()):
+        try:
+            value = forecast if day == target else next_day(day)
+            # Both dates came from the same HTTP response, not a later acquisition.
+            saved = {**value, "source": source, "pv_forecast_retrieved_at": forecast["pv_forecast_retrieved_at"]}
+            save_forecast(saved, latitude=lat, longitude=lon, timezone=timezone)
+        except Exception as error:
+            log_failure("forecast_cache_save", error)
 
 
 # readable-code-audit: skip STRUCT-04 — provider response normalization and date selection must retain one weather-request contract
@@ -480,14 +504,10 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         raise RuntimeError("forecast API request failed") from last_error
     obj = resp.json()
     forecast = _forecast_day(obj, timezone=timezone, target_date=target_date)
-    from app.energy_plan.weather_cache import log_failure, save_forecast, validate_forecast
+    from app.energy_plan.weather_cache import validate_forecast
     validate_forecast(forecast, target=str(forecast["date"]), latitude=lat, longitude=lon, timezone=timezone)
-    for day in (str(forecast["date"]), (date.fromisoformat(str(forecast["date"])) + timedelta(days=1)).isoformat()):
-        try:
-            saved = forecast if day == forecast["date"] else _forecast_day(obj, timezone=timezone, target_date=day)
-            save_forecast({**saved, "source": "open-meteo-forecast"}, latitude=lat, longitude=lon, timezone=timezone)
-        except Exception as error:
-            log_failure("forecast_cache_save", error)
+    _cache_forecast_pair(forecast, lambda day: _forecast_day(obj, timezone=timezone, target_date=day),
+        lat=lat, lon=lon, timezone=timezone, source="open-meteo-forecast")
     return forecast
 
 
