@@ -99,7 +99,8 @@ def prepare_empirical_planning(
     )
     context = replace(context, battery_response=calibration.response,
                       battery_calibration=calibration.diagnostics, previous_calibration_state=previous)
-    if pv.ideal_max_provenance is not None and pv.hourly_pv_max_kwh is not None:
+    if (pv.ideal_max_provenance is not None and pv.hourly_pv_max_kwh is not None
+            and pv.ideal_max_provenance.get("weather_training_eligible") is not False):
         if pv.hourly_pv_training_days is not None:
             from app.energy_plan.pv_bias_training import MODEL_ID as TRAINING_MODEL_ID, select_training_bias
             saved = previous.get("hourly_pv_bias_model")

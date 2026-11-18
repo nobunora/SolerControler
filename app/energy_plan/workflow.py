@@ -457,7 +457,7 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
         "timezone": timezone,
         "forecast_days": 7,
     }
-    attempts = max(1, int(os.getenv("FORECAST_API_RETRIES", "4").strip() or "4"))
+    attempts = max(1, int(os.getenv("FORECAST_API_RETRIES", "1").strip() or "1"))
     backoff_seconds = max(0.0, float(os.getenv("FORECAST_API_RETRY_BACKOFF_SECONDS", "5").strip() or "5"))
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -479,6 +479,19 @@ def _forecast_for_date(lat: float, lon: float, timezone: str, *, target_date: st
     else:
         raise RuntimeError("forecast API request failed") from last_error
     obj = resp.json()
+    forecast = _forecast_day(obj, timezone=timezone, target_date=target_date)
+    from app.energy_plan.weather_cache import log_failure, save_forecast, validate_forecast
+    validate_forecast(forecast, target=str(forecast["date"]), latitude=lat, longitude=lon, timezone=timezone)
+    for day in (str(forecast["date"]), (date.fromisoformat(str(forecast["date"])) + timedelta(days=1)).isoformat()):
+        try:
+            saved = forecast if day == forecast["date"] else _forecast_day(obj, timezone=timezone, target_date=day)
+            save_forecast({**saved, "source": "open-meteo-forecast"}, latitude=lat, longitude=lon, timezone=timezone)
+        except Exception as error:
+            log_failure("forecast_cache_save", error)
+    return forecast
+
+
+def _forecast_day(obj: dict[str, Any], *, timezone: str, target_date: str | None) -> dict[str, object]:
     times = obj["daily"]["time"]
     sunshine = obj["daily"]["sunshine_duration"]
     temp = obj["daily"]["temperature_2m_mean"]
@@ -590,14 +603,29 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
                 fallback_date = (datetime.now(ZoneInfo(timezone)).date() + timedelta(days=1)).isoformat()
             except Exception:
                 fallback_date = (datetime.now().date() + timedelta(days=1)).isoformat()
-        print(
-            f"[energy_model] daily forecast API failed; continue with date-only fallback for PV providers: {exc}",
-            flush=True,
-        )
+        from app.energy_plan.weather_cache import load_forecast, log_failure, validate_forecast
+        log_failure("primary_forecast", exc)
+        saved = load_forecast(target=fallback_date, latitude=lat, longitude=lon, timezone=timezone)
+        if saved is not None:
+            print(json.dumps({"event": "weather_fallback_selected", "mode": "saved_same_target_forecast",
+                "target_date": fallback_date, "retrieved_at": saved["pv_forecast_retrieved_at"]}), flush=True)
+            return {**saved, "source": "saved-same-target-forecast", "weather_fallback": "saved_forecast"}
+        try:
+            previous = _fetch_open_meteo_previous_day1_forecast(lat=lat, lon=lon, timezone=timezone, target_date=fallback_date)
+            validate_forecast(previous, target=fallback_date, latitude=lat, longitude=lon, timezone=timezone)
+            previous["source"] = "open-meteo-previous-runs-day1"
+            previous["weather_fallback"] = "previous_day_provider"
+            print(json.dumps({"event": "weather_fallback_selected", "mode": "previous_day_provider",
+                              "target_date": fallback_date}), flush=True)
+            return previous
+        except Exception as error:
+            log_failure("previous_day_provider", error)
+        print(json.dumps({"event": "weather_fallback_selected", "mode": "historical_or_low_pv_estimate",
+                          "target_date": fallback_date}), flush=True)
         return {
             "date": fallback_date,
-            "sun_hours": 0.0,
-            "temp_c": 20.0,
+            "sun_hours": None,
+            "temp_c": None,
             "weather_code": None,
             "weather_class": "unknown",
             "precipitation_sum_mm": None,
@@ -605,8 +633,9 @@ def _forecast_from_env_or_api(*, lat: float, lon: float, timezone: str) -> dict[
             "shortwave_radiation_sum_mj_m2": None,
             "hourly_weather": [],
             "hourly_weather_summary": {},
-            "source": "date-only-fallback",
-            "daily_forecast_error": str(exc),
+            "source": "weather-unavailable",
+            "weather_unavailable": True,
+            "daily_forecast_error": type(exc).__name__,
         }
 
 

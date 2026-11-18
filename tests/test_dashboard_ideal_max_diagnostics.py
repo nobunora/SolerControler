@@ -90,6 +90,21 @@ def test_missing_bias_metadata_is_not_reported_as_zero_training():
     assert value["pv_bias"]["training_hour_count"] is None
 
 
+@pytest.mark.parametrize("method", ["historical_pv_estimate", "low_pv_scenario"])
+def test_explicit_weather_outage_has_bound_planning_estimate_summary(method):
+    data = document()
+    data["forecast"].update({"source": "weather-unavailable", "weather_unavailable": True})
+    trace = data["decision_rationale"]["pv_ideal_max"]
+    trace.update({"weather_adjustment_applied": False, "weather_training_eligible": False,
+        "input_kind": "planning_estimate_not_weather",
+        "weather_forecast": {"input_kind": "planning_estimate_not_weather", "method": method}})
+    value = summary(data)
+    assert value["status"] == "valid" and value["weather_adjustment_applied"] is False
+    assert value["fallback_method"] == method
+    trace["weather_training_eligible"] = True
+    assert summary(data)["status"] == "invalid"
+
+
 @pytest.mark.parametrize("field,value", [("coefficient", True), ("revision", False)])
 def test_pack_booleans_cannot_pass_numeric_equality(field, value):
     data = document()

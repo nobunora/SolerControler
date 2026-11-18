@@ -892,6 +892,9 @@
       if (summary.plan_date !== date) return { status: "unverified", reason: "対象計画日が一致しません" };
       if (summary.status !== "valid") return { status: summary.status, reason: summary.reason_code || "" };
       const idealMax = ["physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"].includes(summary.model_id);
+      const estimate = summary.weather_adjustment_applied === false
+        && summary.input_kind === "planning_estimate_not_weather"
+        && ["historical_pv_estimate", "low_pv_scenario"].includes(summary.fallback_method);
       if (summary.model_id === "physical_pv_ideal_max_local_v1"
           && summary.capability_projection_policy !== "solar_position_cells_10x30_v1") {
         return { status: "invalid", reason: "太陽位置ごとの能力補正が未確認です" };
@@ -900,7 +903,7 @@
           || displayFinite(summary.coefficient) === null || summary.coefficient < 1
           || !Number.isInteger(summary.revision) || summary.revision < 0
           || typeof summary.calibration_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(summary.calibration_sha256)
-          || summary.weather_adjustment_applied !== true)) {
+          || (summary.weather_adjustment_applied !== true && !estimate))) {
         return { status: "invalid", reason: "モデル要約の値が不正です" };
       }
       if (!idealMax && (summary.model_id !== "physical_clear_ghi_annual1" || !Array.isArray(summary.theta4)
@@ -937,6 +940,16 @@
       const legacy = binding.status === "legacy";
       if (valid && ["physical_pv_ideal_max_global_v1", "physical_pv_ideal_max_local_v1"].includes(summary.model_id)) {
         const local = summary.model_id === "physical_pv_ideal_max_local_v1";
+        if (summary.weather_adjustment_applied === false) {
+          const method = summary.fallback_method === "historical_pv_estimate" ? "実績による発電推定" : "低発電想定";
+          setText("pvModelName", `PVモデル: 天気予報未取得（${method}）`);
+          setText("pvModelProvenance", `対象計画日: ${summary.plan_date} / 計画生成: ${summary.generated_at}`);
+          setText("pvModelLearningPeriod", "推定値は天気予報・能力補正の学習対象にしません。");
+          setText("pvModelTiming", `推定入力の確定: ${summary.retrieved_at} / 計算基準: ${summary.as_of}`);
+          setText("pvModelRepair", "天気予報による補正・時間別残差補正は適用しません。");
+          setText("pvModelExplanation", "保存済みの同日対象予報と代替APIを取得できなかったため、過去実績の発電量を設備能力上限内で推定します。実績のない時間は低発電を想定し、負荷・SOC・料金から運転計画を計算します。");
+          return;
+        }
         const bias = summary.pv_bias || {};
         const shown = (value) => displayFinite(value) === null ? "未保存" : String(value);
         const labels = { soc_mae: "SOC誤差", buy_mae: "買電誤差", fee_mae: "料金誤差" };

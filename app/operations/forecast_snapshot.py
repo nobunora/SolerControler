@@ -270,6 +270,8 @@ def build_forecast_snapshot_rows(
                     "basis_version": ideal.get("basis_version"),
                     "capability_revision": ideal.get("revision"),
                 }
+                if ideal.get("weather_training_eligible") is False:
+                    pv_evidence["hourly_pv_bias"]["training_eligible"] = False
                 # One frozen response per day, not tomorrow's refit during replay.
                 if hour == 7:
                     pv_evidence["hourly_pv_bias"]["battery_response"] = rationale.get("battery_response")
