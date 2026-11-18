@@ -137,6 +137,16 @@ def collect(forecasts, actual):
                                 actual_rows=actual, snapshot_rows=forecasts)
 
 
+def test_planning_estimate_cannot_become_weather_training_data():
+    forecasts, actual = raw_sources()
+    accepted, _ = collect(forecasts, actual)
+    assert len(accepted) == 1
+    for row in forecasts:
+        row["pv_forecast_detail"]["hourly_pv_bias"]["training_eligible"] = False
+    rejected, _ = collect(forecasts, actual)
+    assert rejected == ()
+
+
 def test_local_projection_bias_requires_local_preissued_pairs():
     forecasts, actual = raw_sources()
     kwargs = {"target_date": TARGET, "as_of": AS_OF, "timezone_name": "Asia/Tokyo",

@@ -214,6 +214,16 @@ async function tests() {
   await n.replace(missingBias);
   assert.match(n.elements.get("pvModelRepair").textContent, /診断未保存/);
   assert.equal(n.requests.length, 0);
+  for (const method of ["historical_pv_estimate", "low_pv_scenario"]) {
+    const degraded = JSON.parse(JSON.stringify(native));
+    Object.assign(degraded.pv_forecast_diagnostics.pv_model, {
+      weather_adjustment_applied: false, input_kind: "planning_estimate_not_weather", fallback_method: method,
+    });
+    await n.replace(degraded);
+    assert.match(n.elements.get("pvModelName").textContent, /天気予報未取得/);
+    assert.match(n.elements.get("pvModelLearningPeriod").textContent, /学習対象にしません/);
+    assert.equal(n.requests.length, 0);
+  }
   console.log("dashboard model display: PASS");
 }
 

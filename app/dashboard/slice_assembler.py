@@ -185,6 +185,12 @@ def _build_pv_model_summary(
 
     if ideal_indicated:
         pack = mapping(trace.get("calibration_pack"))
+        weather = mapping(trace.get("weather_forecast"))
+        estimate = (forecast.get("weather_unavailable") is True and forecast.get("source") == "weather-unavailable"
+            and trace.get("weather_adjustment_applied") is False and trace.get("weather_training_eligible") is False
+            and trace.get("input_kind") == weather.get("input_kind") == "planning_estimate_not_weather"
+            and weather.get("method") in {"historical_pv_estimate", "low_pv_scenario"}
+            and trace.get("provider_issued_at") is None)
         basis = "noaa_haurwitz_erbs_poa_stc25_1min_v1"
         coefficient, revision = trace.get("coefficient"), trace.get("revision")
         training, as_of, retrieved = (instant(value) for value in
@@ -201,7 +207,7 @@ def _build_pv_model_summary(
             and text(trace.get("forecast_sha256"), 64, pattern=sha) is not None
             and text(trace.get("site_fingerprint"), 64, pattern=sha) is not None
             and text(pack.get("geometry_fingerprint"), 64, pattern=sha) is not None
-            and trace.get("weather_adjustment_applied") is True
+            and (trace.get("weather_adjustment_applied") is True or estimate)
             and training is not None and as_of is not None and retrieved is not None and generated_at is not None
             and training <= as_of <= generated_at and retrieved <= as_of
             and (trace.get("provider_issued_at") is None or (provider is not None and provider <= retrieved)))
@@ -217,8 +223,10 @@ def _build_pv_model_summary(
             "capability_projection_policy": pack.get("projection_policy"),
             "calibration_sha256": trace["calibration_sha256"], "forecast_sha256": trace["forecast_sha256"],
             "training_as_of": pack["training_as_of"], "as_of": trace["as_of"], "retrieved_at": trace["retrieved_at"],
-            "provider_issued_at": trace.get("provider_issued_at"), "weather_adjustment_applied": True,
+            "provider_issued_at": trace.get("provider_issued_at"), "weather_adjustment_applied": not estimate,
             "pv_bias": _pv_bias_display(mapping(trace.get("hourly_pv_bias")), target_date=str(summary["plan_date"]))})
+        if estimate:
+            summary.update({"input_kind": "planning_estimate_not_weather", "fallback_method": weather["method"]})
         return finish("valid", None)
 
     pack = mapping(trace.get("calibration_pack"))

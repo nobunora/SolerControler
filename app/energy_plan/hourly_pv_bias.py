@@ -198,6 +198,8 @@ def _collect_day(day: date, forecasts: list[dict[str, Any]], actuals: list[dict[
                 or issue > datetime.combine(day, datetime.min.time(), zone) + timedelta(hours=7)):
             return None
         detail = _detail(row)
+        if detail.get("training_eligible") is False:
+            return None
         baseline, maximum, predicted_load = (_number(detail.get("uncorrected_pv_kwh")),
                                               _number(detail.get("maximum_kwh")),
                                               _number(row.get("forecast_load_kwh")))

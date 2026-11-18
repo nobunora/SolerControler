@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from app.energy_plan import estimate_sunset_hour
 from app.energy_plan.clear_ghi_adapter import _valid_hourly
-from app.energy_plan.forecast_inputs import build_hourly_load_forecast
-from app.energy_plan.hourly_pv_bias import collect_pv_bias_days, forecast_weather_by_hour
+from app.energy_plan.forecast_inputs import build_hourly_load_forecast, historical_hourly_profile
+from app.energy_plan.hourly_pv_bias import PvBiasDay, collect_pv_bias_days, forecast_weather_by_hour
 from app.energy_plan.plan_quality import _selected_pv_uncertainty
 from app.forecasting.correction import ForecastCorrectionPolicy, build_load_forecast_correction
 from app.forecasting.pv_clear_ghi import clear_ghi_hour, normalize_radiation_intervals, _repair_short_gaps
@@ -20,6 +22,27 @@ if TYPE_CHECKING:
 def _weather_adjusted_pv(context: EnergyModelContext, maximum: dict[int, float], *, as_of: datetime
                          ) -> tuple[dict[int, float], dict[str, Any]]:
     forecast, config = context.forecast, context.config
+    if as_of.utcoffset() is None:
+        raise ValueError("ideal maximum weather input requires aware as_of")
+    if forecast.get("weather_unavailable") is True and forecast.get("source") == "weather-unavailable":
+        # These are planning estimates, never synthetic weather observations.
+        rows = [row for row in context.rows if isinstance(row.get("pv"), (int, float))
+                and not isinstance(row.get("pv"), bool) and math.isfinite(row["pv"]) and row["pv"] >= 0
+                and isinstance(row.get("dt"), datetime) and row["dt"].date() < date.fromisoformat(context.target_date)]
+        slots: dict[tuple[date, int], set[int]] = {}
+        for row in rows:
+            stamp = row.get("dt")
+            if isinstance(stamp, datetime) and stamp.minute in (0, 30):
+                slots.setdefault((stamp.date(), stamp.hour), set()).add(stamp.minute)
+        covered = sorted({hour for (_, hour), minutes in slots.items() if minutes == {0, 30}})
+        profile = historical_hourly_profile(rows, key="pv", start_hour=0, end_hour_exclusive=24)
+        pv = {hour: min(maximum[hour], profile[hour]) if hour in covered else 0.0 for hour in range(24)}
+        method = "historical_pv_estimate" if covered else "low_pv_scenario"
+        evidence = {"target_date": context.target_date, "method": method, "covered_hours": covered,
+                    "hourly_pv_kwh": pv, "input_kind": "planning_estimate_not_weather"}
+        estimate_digest = hashlib.sha256(json.dumps(evidence, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        return pv, {**evidence, "forecast_sha256": estimate_digest, "retrieved_at": as_of.isoformat(),
+                    "provider_issued_at": None, "repaired_hours": [], "training_eligible": False}
     source = forecast.get("pv_radiation_rows")
     retrieved = forecast.get("pv_forecast_retrieved_at")
     digest = forecast.get("pv_forecast_input_sha256")
@@ -70,7 +93,10 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
     maximum = _valid_hourly(maximum)
     hourly_pv, weather = _weather_adjusted_pv(context, maximum, as_of=as_of)
     training_days = None
-    if trace["model_id"] == "physical_pv_ideal_max_local_v1":
+    bias_days: tuple[PvBiasDay, ...]
+    if weather.get("training_eligible") is False:
+        bias_days, bias_coverage = (), {"status": "weather_unavailable"}
+    elif trace["model_id"] == "physical_pv_ideal_max_local_v1":
         # A scalar reforecast of global-v1 originals cannot train a local curve.
         # Use only genuinely preissued local-model pairs and the existing
         # forward economic gate; remain neutral until those pairs are available.
@@ -96,6 +122,12 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
              "hourly_uncorrected_pv_kwh": {str(h): v for h, v in hourly_pv.items()},
              "hourly_weather_class": {str(h): v for h, v in forecast_weather_by_hour(context.forecast).items()},
              "hourly_pv_bias": {"status": "pending_replay", "enabled": False, "coverage": bias_coverage}}
+    if weather.get("training_eligible") is False:
+        trace["weather_training_eligible"] = False
+        trace["weather_adjustment_applied"] = False
+        trace["input_kind"] = weather["input_kind"]
+        trace["hourly_pv_bias"]["status"] = "weather_unavailable"
+        bias_days, training_days, coefficient_history = (), None, []
     raw_load = build_hourly_load_forecast(context.rows, daytime_load_kwh=consumption.daily.daytime_load_kwh,
         morning_load_kwh=consumption.daily.morning_load_kwh, overnight_load_by_hour=None)
     correction = build_load_forecast_correction(rows=context.consumption_rows, hourly_load_forecast=raw_load,
@@ -106,11 +138,13 @@ def build_ideal_max_forecast_bundle(context: EnergyModelContext, consumption: Co
         "basis_version": trace["basis_version"], "calibration_sha256": trace["calibration_sha256"],
         "coefficient": trace["coefficient"], "revision": trace["revision"], "weather_adjustment_applied": True,
         "forecast_sha256": weather["forecast_sha256"], "repaired_hours": weather["repaired_hours"]}
+    if weather.get("training_eligible") is False:
+        diagnostics.update({"weather_adjustment_applied": False, "fallback_method": weather["method"]})
     print(json.dumps({"event": "pv_ideal_max_forecast", "status": "selected",
         "target_date": context.target_date, "daytime_pv_kwh": sum(hourly_pv[h] for h in range(7, 23)),
         "coefficient": trace["coefficient"], "revision": trace["revision"]}), flush=True)
     return PvForecastBundle(array_forecast=None, hourly_load_kwh=_valid_hourly(correction.get("hourly_load_kwh")),
-        hourly_pv_kwh=hourly_pv, hourly_weather_shape={"enabled": True, **weather},
+        hourly_pv_kwh=hourly_pv, hourly_weather_shape={"enabled": weather.get("training_eligible") is not False, **weather},
         physical_diagnostics=diagnostics, correction=correction, selected_method=str(trace["model_id"]),
         source=str(trace["model_id"]), uncertainty=_selected_pv_uncertainty(physical_pv_selected=True,
             physical_pv_diagnostics=diagnostics, pv_array_forecast=None),
