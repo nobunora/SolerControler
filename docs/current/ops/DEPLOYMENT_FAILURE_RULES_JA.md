@@ -6,6 +6,8 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-18: 実績保存後の履歴revision streamがDeadlineExceededとなり、SDKのretry=NoneでAttributeErrorに隠された。続く取込みは古いbootstrapで保存前に停止 | 512件の安定cursorと固定read_timeで完全なpageだけ採用し、明示Retry方針と共有期限内の最大3回に限定する。保存前checkpointをreceiptへ保持し、actuals_saved=trueの同日公開失敗はCSV取得・実績再保存なしで再開する。未知の保存結果・他日source変更・採用計画変更のguardは維持する。`test_dashboard_revision_recovery.py`で部分stream破棄、同一時点、永久障害、有限試行、保存済み公開再開を回帰する |
+| 同日: 天気API失敗後の日付だけのfallbackに日射出典がなく、理想最大adapterで予測Jobが停止 | 同じ対象日の最新保存予報（前日取得を含む）→previous-runs API→実績推定/低発電想定を選ぶ。対象日・取得時刻・checksum・日射区間を検証し、取得時刻を現在へ偽装しない。保存はnative version付きCASと4秒RPC、cache失敗は新鮮な予報を捨てない。推定を天気・能力/時間別補正の学習に入れず画面へ明示する。`test_weather_fallback.py`で実績あり/なしのSOC・料金・JSON出力まで通し、通常の原本・料金・機器時刻契約を緩めない |
 | 2026-11-12: 日の出時の0.147kWhだけで共通能力係数が29.0954%増え、翌日の昼ピークが2.72749kWhへ過剰拡張 | 保存実績から太陽高度10度・方位30度ごとの能力を再構成し、別区分へ伝播させない。`test_sunrise_excess_does_not_raise_midday_and_preserves_midday_evidence`で朝・昼を分離し、未来実績除外・原本保持・新旧model provenanceと中立補正を回帰する。保存98観測の原式再生と当日24時間を照合し、global台帳の削除・currentの直接修正で回避しない |
 | 同日: データなしで未書込みの取込みもactuals_saved=nullで終了し、旧実行を持つ画面が操作を再開できない | 未書込みと確定する専用例外だけfalseを記録する。`test_worker_distinguishes_no_data_from_an_unknown_write`でCSVなし・対象日なし・実書込みtimeoutを区別する。未知の書込み結果や受付不明のロック、自動再送禁止は維持する |
 | 2026-11-11: 日時別予測が3,664件となり、実績取込み前の全履歴revision確認が3,660件上限で停止 | `forecast_hourly`は日付と文書IDの安定順で最大3,660件ずつ読み、境界と旧日のrevisionもdigestに含める。最大26,304件、期限、重複・非前進cursorを停止条件として保持し、途切れた履歴を公開しない。実行receiptで保存前・保存後を区別し、状態不明や保存済みの実行を再送しない |
