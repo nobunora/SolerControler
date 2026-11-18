@@ -79,6 +79,28 @@ def test_unknown_submission_is_not_retried(monkeypatch):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize('saved', [True, False, None])
+def test_status_poll_projects_small_fields_and_preserves_unknown_save(monkeypatch, saved):
+    monkeypatch.setenv("DASHBOARD_ACTUAL_IMPORT_JOB", "projects/example/locations/asia-northeast1/jobs/solar-actual-import")
+    stored = {'status': 'failed', 'actuals_saved': saved, 'completed_at': '2026-11-03T03:00:00Z',
+              'publication_resume': {'gzip_base64': 'x' * 700_000}}
+    reads = []
+
+    def read(**kwargs):
+        reads.append(kwargs)
+        assert kwargs['timeout'] == 4 and kwargs['retry'] is None
+        assert 'publication_resume' not in kwargs['field_paths']
+        value = {key: stored[key] for key in kwargs['field_paths'] if key in stored}
+        assert len(json.dumps(value)) < 256
+        return SimpleNamespace(to_dict=lambda: value)
+
+    client = SimpleNamespace(collection=lambda _: SimpleNamespace(document=lambda _: SimpleNamespace(get=read)))
+    monkeypatch.setattr(actual_import, '_open_dashboard_firestore_client', lambda: client)
+    assert actual_import.actual_import_status('solar-actual-import-abc12') == {
+        'status': 'failed', 'actuals_saved': saved, 'completed_at': stored['completed_at']}
+    assert len(reads) == 1
+
+
 @pytest.mark.parametrize("headers,authorized,expected", [
     ({}, True, 403),
     ({"Content-Type": "application/json", "X-Dashboard-Action": "import-actuals", "Sec-Fetch-Site": "cross-site"}, True, 403),
