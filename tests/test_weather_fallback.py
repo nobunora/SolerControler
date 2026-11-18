@@ -95,6 +95,41 @@ def test_corrupt_cache_uses_other_forecast_with_real_radiation_provenance(monkey
     weather_cache.validate_forecast(result, target='2026-11-18', latitude=35.0, longitude=139.0, timezone='Asia/Tokyo')
 
 
+@pytest.mark.parametrize('next_day_complete', [True, False])
+def test_previous_runs_caches_available_days_from_one_response(monkeypatch, setup_weather, next_day_complete):
+    raw = workflow.requests.get('synthetic').json()['hourly']
+    size = len(raw['time']) if next_day_complete else 25
+    hourly = {('time' if key == 'time' else key + '_previous_day1'): values[:size]
+              for key, values in raw.items()}
+    calls = []
+
+    def get(url, **_):
+        calls.append(url)
+        if 'previous-runs-api' not in url:
+            return offline()
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {'hourly': hourly})
+
+    monkeypatch.setattr(workflow.requests, 'get', get)
+    selected = acquire()
+    assert selected['weather_fallback'] == 'previous_day_provider'
+    assert len(calls) == 2  # One primary failure and one two-day alternative response.
+    paths = list((setup_weather / 'weather_forecast_cache').glob('*.json'))
+    assert len(paths) == (2 if next_day_complete else 1)
+    assert {json.loads(path.read_text())['forecast']['pv_forecast_retrieved_at'] for path in paths} == {
+        selected['pv_forecast_retrieved_at']}
+    monkeypatch.setattr(workflow.requests, 'get', offline)
+    recovered = acquire()
+    assert recovered['weather_fallback'] == 'saved_forecast'
+    for key in ('date', 'pv_radiation_rows', 'pv_forecast_input_sha256', 'pv_forecast_retrieved_at'):
+        assert recovered[key] == selected[key]
+    if next_day_complete:
+        monkeypatch.setenv('FORECAST_DATE_OVERRIDE', '2026-11-19')
+        tomorrow = acquire()
+        assert tomorrow['weather_fallback'] == 'saved_forecast'
+        assert tomorrow['date'] == '2026-11-19'
+        assert tomorrow['pv_forecast_retrieved_at'] == selected['pv_forecast_retrieved_at']
+
+
 @pytest.mark.parametrize('history_available', [True, False])
 def test_total_weather_outage_uses_explicit_estimate_without_fabricating_weather(monkeypatch, setup_weather, history_available):
     monkeypatch.setattr(workflow.requests, 'get', offline)
