@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.retry import Retry
 from google.auth.credentials import AnonymousCredentials
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 from google.cloud.storage import Client as StorageClient
@@ -29,12 +30,13 @@ class RevisionDocument:
     def __init__(self, key, value, revision):
         self.id, self.value, self.update_time = key, value, revision
         self.exists = value is not None
+        self.read_time = datetime(2030, 1, 1, tzinfo=timezone.utc)
 
     def to_dict(self):
         return copy.deepcopy(self.value)
 
     def get(self, **kwargs):
-        assert kwargs["timeout"] <= 4 and kwargs["retry"] is None
+        assert kwargs["timeout"] <= 4 and (kwargs["retry"] is None or isinstance(kwargs["retry"], Retry))
         return self
 
 
@@ -64,11 +66,11 @@ class RevisionQuery:
 
     def stream(self, **kwargs):
         if kwargs:
-            assert kwargs["timeout"] <= 4 and kwargs["retry"] is None
+            assert kwargs["timeout"] <= 4 and isinstance(kwargs["retry"], Retry)
         return iter(self._selected())
 
     def get(self, **kwargs):
-        assert kwargs["timeout"] <= 4 and kwargs["retry"] is None
+        assert kwargs["timeout"] <= 4 and isinstance(kwargs["retry"], Retry)
         return self._selected()
 
     def document(self, key):
@@ -293,7 +295,7 @@ def test_native_nanosecond_revision_and_source_delete_cannot_be_hidden(capsys):
     with pytest.raises(ValueError, match="missing"):
         snapshots._check_source_epoch_order(after, deleted)
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert [event["document_reads"] for event in events] == [9, 9, 6]
+    assert [event["document_reads"] for event in events] == [10, 10, 7]
     assert all(event["event"] == "dashboard_source_revisions_read" for event in events)
 
 

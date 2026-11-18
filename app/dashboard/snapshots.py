@@ -679,6 +679,10 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             raise RuntimeError("dashboard source revision deadline exceeded")
         return min(4.0, remaining)
 
+    from app.dashboard.revision_reader import PAGE_SIZE, RevisionReader
+    reader = RevisionReader(client, timeout)
+    read_count += 1
+
     def read_parallel(readers: list[Callable[[], Any]]) -> list[Any]:
         executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dashboard-epoch")
         futures = []
@@ -760,7 +764,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                      ("forecast_hourly", "date"), ("monitoring_samples", "ts"), ("forecast_hourly_reconstructed", "date"))
     def bound_rows(collection: str, field: str) -> list[Any]:
         query = client.collection(collection).select([field]).order_by(field)
-        return list(query.limit(1).stream(timeout=timeout(), retry=None)) + list(query.limit_to_last(1).get(timeout=timeout(), retry=None))
+        return reader.query(query.limit(1)) + reader.query(query.limit_to_last(1), last=True)
     bound_results = read_parallel([partial(bound_rows, collection, field)
                                    for collection, field in bound_sources])
     for (collection, field), samples in zip(bound_sources, bound_results):
@@ -802,10 +806,10 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             seen: set[str] = set()
             count = 0
             while True:
-                page = list(query.limit(3661).stream(timeout=timeout(), retry=None))
+                page = reader.query(query.limit(PAGE_SIZE + 1))
                 timeout()
-                sentinel_reads += max(0, len(page) - 3660)
-                accepted = page[:3660]
+                sentinel_reads += max(0, len(page) - PAGE_SIZE)
+                accepted = page[:PAGE_SIZE]
                 count += len(accepted)
                 if count > max_documents:
                     raise ValueError(f"dashboard {source_label} source exceeds {max_documents} documents")
@@ -816,11 +820,11 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                     cursor = current
                     seen.add(snapshot.id)
                 pages.append(accepted)
-                if len(page) <= 3660:
+                if len(page) <= PAGE_SIZE:
                     break
                 query = query.start_after(accepted[-1])
         else:
-            samples = list(query.limit(3661).stream(timeout=timeout(), retry=None))
+            samples = reader.query(query.limit(3661))
             if len(samples) > 3660:
                 raise ValueError("dashboard source revision query exceeds 3660 documents")
             pages.append(samples)
@@ -836,7 +840,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                         analog_dates.add(date.fromisoformat(str(analog_day)).isoformat())
             if analog_dates:
                 refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
-                analog = list(client.get_all(refs, field_paths=["date"], timeout=timeout(), retry=None))
+                analog = reader.documents(client, refs, ["date"])
         return pages, analog, sentinel_reads
     def monitoring_rows() -> tuple[list[list[Any]], int]:
         pages: list[list[Any]] = []
@@ -849,11 +853,11 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         monitoring_cursor: tuple[str, str] | None = None
         monitoring_ids: set[str] = set()
         while True:
-            page = list(monitoring_query.limit(3661).stream(timeout=timeout(), retry=None))
+            page = reader.query(monitoring_query.limit(PAGE_SIZE + 1))
             timeout()
             # Sentinels are read again by the following query and counted as reads.
-            sentinel_reads += max(0, len(page) - 3660)
-            accepted = page[:3660]
+            sentinel_reads += max(0, len(page) - PAGE_SIZE)
+            accepted = page[:PAGE_SIZE]
             monitoring_count += len(accepted)
             if monitoring_count > monitoring_max_documents:
                 raise ValueError("dashboard monitoring source exceeds 52608 documents")
@@ -864,18 +868,18 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                 monitoring_cursor = cursor
                 monitoring_ids.add(snapshot.id)
             pages.append(accepted)
-            if len(page) <= 3660:
+            if len(page) <= PAGE_SIZE:
                 break
             monitoring_query = monitoring_query.start_after(accepted[-1])
         return pages, sentinel_reads
     readers: list[Callable[[], Any]] = [partial(source_rows, name) for name in source_names]
     readers.extend([
         monitoring_rows,
-        lambda: list(client.collection("cost_daily").select(["date"]).limit(3661).stream(timeout=timeout(), retry=None)),
-        lambda: list(client.collection("model_parameters").select(["name"]).limit(3661).stream(timeout=timeout(), retry=None)),
-        lambda: list(client.collection("settings_events").select(["recorded_at"]).order_by("recorded_at").limit_to_last(40).get(timeout=timeout(), retry=None)),
-        lambda: list(client.get_all([client.collection("night_charge_plans").document("latest")], field_paths=["date"], timeout=timeout(), retry=None)),
-        lambda: list(client.collection("battery_daily_metrics").select(["date"]).order_by("date").limit_to_last(1).get(timeout=timeout(), retry=None)),
+        lambda: reader.query(client.collection("cost_daily").select(["date"]).limit(3661)),
+        lambda: reader.query(client.collection("model_parameters").select(["name"]).limit(3661)),
+        lambda: reader.query(client.collection("settings_events").select(["recorded_at"]).order_by("recorded_at").limit_to_last(40), last=True),
+        lambda: reader.documents(client, [client.collection("night_charge_plans").document("latest")], ["date"]),
+        lambda: reader.query(client.collection("battery_daily_metrics").select(["date"]).order_by("date").limit_to_last(1), last=True),
     ])
     results = read_parallel(readers)
     for name, (source_pages, analog, source_sentinels) in zip(source_names, results[:len(source_names)]):

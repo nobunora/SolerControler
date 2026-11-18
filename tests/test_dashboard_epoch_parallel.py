@@ -10,6 +10,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from google.api_core.retry import Retry
 
 from app.dashboard import snapshots
 from test_dashboard_publication_generation import (
@@ -80,7 +81,7 @@ class ObservedClient(RevisionClient):
         return ObservedQuery(self, name, self.rows.get(name, []))
 
     def read(self, query, kwargs):
-        assert 0 < kwargs['timeout'] <= 4 and kwargs['retry'] is None
+        assert 0 < kwargs['timeout'] <= 4 and isinstance(kwargs['retry'], Retry)
         shape = (query.name, query.filters, query.field, query.cap, query.tail, query.after, query.mask)
         with self.lock:
             self.calls.append(shape)
@@ -104,7 +105,7 @@ class ObservedClient(RevisionClient):
                 self.per_source[query.name] -= 1
 
     def get_all(self, refs, **kwargs):
-        assert 0 < kwargs['timeout'] <= 4 and kwargs['retry'] is None and kwargs['field_paths'] == ['date']
+        assert 0 < kwargs['timeout'] <= 4 and isinstance(kwargs['retry'], Retry) and kwargs['field_paths'] == ['date']
         ids = tuple(ref.id for ref in refs)
         if '2026-03-01' in ids:
             assert any(call[0] == 'night_charge_plans' and call[1] for call in self.calls)

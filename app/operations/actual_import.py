@@ -19,26 +19,37 @@ from app.operations import firestore as source
 from app.operations.monitoring_sync import monitoring_sync_window, prepare_monitoring_csvs
 from app.operations.sqlite import PipelineConfig
 from app.runtime.command_adapter import _run
+from app.operations.actual_publication_resume import decode_checkpoint, encode_checkpoint
 
 
 class NoActualMeasurementsError(ValueError):
     """The import has no source measurements and has not written actuals."""
 
 
-def _claim(client: Any, execution: str) -> bool:
+def _claim(client: Any, execution: str) -> bool | str:
     lock = client.collection("dashboard_actual_import_runs").document("active")
 
     @firestore.transactional
-    def claim(transaction: Any) -> bool:
+    def claim(transaction: Any) -> bool | str:
         current = lock.get(transaction=transaction, timeout=4, retry=None).to_dict() or {}
         # A killed worker stays unresolved until read-only reconciliation. There
         # is no expiry that can start another import while the first is unknown.
-        if current.get("status") == "running":
+        if current.get("status") == "running" or ("actuals_saved" in current and current["actuals_saved"] is None):
             return False
-        transaction.set(lock, {"execution": execution, "status": "running"})
-        return True
+        resume_from = None
+        target_date = os.environ.get("ACTUAL_IMPORT_TARGET_DATE")
+        if (target_date and current.get("target_date") == target_date and current.get("actuals_saved") is True
+                and current.get("stage") == "display_publication" and current.get("status") == "failed"):
+            parent_id = current.get("resume_from") or current["execution"]
+            parent = client.collection("dashboard_actual_import_runs").document(parent_id)
+            saved = parent.get(transaction=transaction, timeout=4, retry=None).to_dict() or {}
+            if saved.get("publication_resume") and saved.get("actuals_saved") is True and saved.get("target_date") == target_date:
+                resume_from = parent_id
+        transaction.set(lock, {"execution": execution, "status": "running", "target_date": target_date})
+        return resume_from or True
 
-    return bool(claim(client.transaction(max_attempts=1)))
+    result = claim(client.transaction(max_attempts=1))
+    return result if isinstance(result, str) else bool(result)
 
 
 def main() -> int:
@@ -50,7 +61,8 @@ def main() -> int:
         raise ValueError("future actual import is forbidden")
     client = source.open_firestore()
     receipt = client.collection("dashboard_actual_import_runs").document(execution)
-    if not _claim(client, execution):
+    claimed = _claim(client, execution)
+    if not claimed:
         receipt.set({"status": "busy", "reason": "another_import_is_unresolved"}, timeout=4, retry=None)
         return 1
     receipt.set({"status": "running", "target_date": target_date}, timeout=4, retry=None)
@@ -59,8 +71,28 @@ def main() -> int:
     actuals_saved: bool | None = False
     pending_dates: list[str] = []
     missing_review: dict[str, Any] = {"status": "not_run"}
+    checkpoint: dict[str, str] | None = None
     try:
+        if isinstance(claimed, str):
+            # A successful actual commit remains successful even if checkpoint
+            # verification or the subsequent publication cannot finish.
+            actuals_saved = True
+            stage = "display_publication"
+            previous = client.collection("dashboard_actual_import_runs").document(claimed).get(timeout=4, retry=None).to_dict() or {}
+            checkpoint = previous["publication_resume"]
+            captured = decode_checkpoint(checkpoint, target_date)
+            from google.cloud import storage
+            captured["storage"] = storage.Client()
+            pending_dates = previous.get("pending_dates", [])
+            missing_review = previous.get("missing_review", {"status": "not_run"})
+            receipt.set({"status": "running", "target_date": target_date, "stage": stage,
+                         "actuals_saved": True, "publication_resume": checkpoint}, timeout=4, retry=None)
+            publish_date_refresh(client, target_date, captured)
+            status = "partial" if pending_dates else "succeeded"
+            return 0
         captured = capture_date_refresh(client, target_date)
+        checkpoint = encode_checkpoint(captured, target_date)
+        receipt.set({"status": "running", "target_date": target_date, "publication_resume": checkpoint}, timeout=4, retry=None)
         stage = "actual_download"
         root = Path(os.getenv("ARTIFACTS_DIR", "artifacts"))
         root.mkdir(parents=True, exist_ok=True)
@@ -94,7 +126,9 @@ def main() -> int:
         result = {"status": status, "stage": stage, "actuals_saved": actuals_saved,
                   "target_date": target_date, "pending_dates": pending_dates, "missing_review": missing_review,
                   "completed_at": datetime.now(timezone.utc).isoformat()}
-        receipt.set(result, timeout=4, retry=None)
+        if isinstance(claimed, str):
+            result["resume_from"] = claimed
+        receipt.set({**result, **({"publication_resume": checkpoint} if checkpoint is not None else {})}, timeout=4, retry=None)
         client.collection("dashboard_actual_import_runs").document("active").set(
             {"execution": execution, **result}, timeout=4, retry=None)
 
