@@ -54,6 +54,7 @@ def actual_import_status(execution: str) -> dict[str, Any]:
     _, _, job = import_job()
     if not re.fullmatch(job + r"-[a-z0-9]+", execution):
         raise ValueError("invalid import execution")
+    fields = ("status", "completed_at", "reason", "stage", "actuals_saved", "target_date", "pending_dates", "missing_review")
     row = (_open_dashboard_firestore_client().collection("dashboard_actual_import_runs")
-           .document(execution).get(timeout=4, retry=None).to_dict() or {})
-    return {key: row[key] for key in ("status", "completed_at", "reason", "stage", "actuals_saved", "target_date", "pending_dates", "missing_review") if key in row} or {"status": "pending"}
+           .document(execution).get(field_paths=fields, timeout=4, retry=None).to_dict() or {})
+    return {key: row[key] for key in fields if key in row} or {"status": "pending"}
