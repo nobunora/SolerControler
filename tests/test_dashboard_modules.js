@@ -41,6 +41,35 @@ assert.deepEqual(store.createPeriodState(), { mode: "month", month: null, year: 
     options: { credentials: "include" },
   });
 
+  let earlyRequests = 0;
+  const earlyFetch = async () => {
+    earlyRequests += 1;
+    return { ok: true, json: async () => ({ meta: { early: true } }) };
+  };
+  api.preloadBootstrap({ energy_daily: [{ date: "2026-07-16" }] }, earlyFetch);
+  assert.equal(earlyRequests, 0, "embedded bootstrap data must not be downloaded again");
+  api.preloadBootstrap({}, earlyFetch);
+  api.preloadBootstrap({}, earlyFetch);
+  assert.equal(earlyRequests, 1, "early loading starts once while chart scripts load");
+  assert.deepEqual(await api.fetchBootstrap(earlyFetch), { meta: { early: true } });
+  assert.equal(earlyRequests, 1, "renderer consumes the existing request");
+  await api.fetchBootstrap(earlyFetch);
+  assert.equal(earlyRequests, 2, "later explicit refreshes can fetch fresh data");
+  api.preloadBootstrap({}, async () => { throw new Error("early_load_failure"); });
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(() => api.fetchBootstrap(earlyFetch), /early_load_failure/);
+  assert.equal(earlyRequests, 2, "a failed early request is reported without a duplicate request");
+
+  global.window = { location: { search: "?actual_import=solar-actual-import-abc12" } };
+  let importedPath;
+  api.preloadBootstrap({}, async (url) => {
+    importedPath = url;
+    return { ok: true, json: async () => ({}) };
+  });
+  await api.fetchBootstrap();
+  delete global.window;
+  assert.equal(importedPath, "/api/dashboard/bootstrap?actual_import=solar-actual-import-abc12", "early loading preserves receipt-based cache refresh");
+
   let historyRequest = null;
   await api.fetchHistory(async (url, options) => {
     historyRequest = { url, options };

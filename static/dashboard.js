@@ -2023,6 +2023,122 @@
       });
     }
 
+    function scheduleActualImport(run, blocked, initialPending) {
+      const interval = 30 * 60 * 1000;
+      const key = "dashboardActualImportSchedule";
+      let timer;
+      let active = false;
+      let storage;
+      try { storage = window.localStorage; } catch { /* Manual import remains available. */ }
+      const locks = window.navigator?.locks;
+      function pausedNotice() {
+        const notice = document.getElementById("autoActualsStatus");
+        if (notice) notice.textContent = "取込みに失敗したため自動取込みを一時停止しています。状態を確認し、手動で再開してください。";
+      }
+      function read() {
+        const state = JSON.parse(storage.getItem(key) || "null");
+        if (state !== null) {
+          if (!Number.isFinite(state.nextAt) || !(state.pending === null || typeof state.pending === "string")
+              || typeof state.paused !== "boolean") throw new Error("invalid_import_schedule");
+          return state;
+        }
+        const initial = { nextAt: Date.now() + interval, pending: initialPending || null, paused: false };
+        storage.setItem(key, JSON.stringify(initial));
+        return initial;
+      }
+      function write(state) { storage.setItem(key, JSON.stringify(state)); }
+      function complete(result) {
+        if (result?.status === "completed") {
+          window.location.assign(`/?actual_import=${encodeURIComponent(result.execution)}`);
+        }
+      }
+      function arm() {
+        clearTimeout(timer);
+        if (!storage || !locks) return;
+        try {
+          const state = read();
+          if (state.paused) pausedNotice();
+          else timer = setTimeout(() => start(true), Math.min(interval, Math.max(60000, state.nextAt - Date.now())));
+        } catch {
+          const notice = document.getElementById("autoActualsStatus");
+          if (notice) notice.textContent = "自動取込みを利用できません。最新値の取込みは手動で行えます。";
+        }
+      }
+      async function start(automatic = false, resume = null) {
+        if (active || (!resume && blocked())) return;
+        active = true;
+        try {
+          if (!storage || !locks) {
+            if (!automatic) complete(await run(resume, false));
+            return;
+          }
+          await locks.request(key, { ifAvailable: true }, async (lock) => {
+            if (!lock) {
+              const notice = document.getElementById("autoActualsStatus");
+              if (!automatic && notice) notice.textContent = "別のタブが取込み中です。完了すると画面が更新されます。";
+              return;
+            }
+            let state = read();
+            if (automatic && (state.paused || Date.now() < state.nextAt)) return;
+            if (resume && state.pending && state.pending !== resume) return;
+            const execution = state.pending || resume;
+            if (execution === "unknown") {
+              const notice = document.getElementById("autoActualsStatus");
+              if (notice) notice.textContent = "取込み受付結果が未確認のため、自動再送せず確認を待っています。";
+              return;
+            }
+            state = { ...state, pending: execution || "unknown", nextAt: Date.now() + interval, paused: false };
+            write(state);
+            const result = await run(execution, automatic, (accepted) => {
+              state = { ...state, pending: accepted };
+              // Receipt polling must continue even if browser storage fills up
+              // after submission. The durable "unknown" still prevents resends.
+              try { write(state); } catch { /* Keep monitoring the accepted execution. */ }
+            });
+            if (result?.status === "completed") {
+              try { write({ ...state, pending: null, completed: result.execution }); }
+              finally { complete(result); }
+            } else if (["failed", "rejected"].includes(result?.status)) {
+              write({ ...state, pending: null, paused: true });
+              pausedNotice();
+            }
+          });
+        } catch {
+          const notice = document.getElementById("autoActualsStatus");
+          if (notice) notice.textContent = "自動取込みの状態を確認できません。重複を避けるため自動再送していません。";
+        } finally {
+          active = false;
+          arm();
+        }
+      }
+      let completed;
+      try {
+        if (storage && locks) {
+          const state = read();
+          completed = state.completed;
+          if (initialPending && !state.pending) write({ ...state, pending: initialPending });
+        }
+      } catch { storage = null; }
+      window.addEventListener("storage", (event) => {
+        if (event.key !== key) return;
+        try {
+          const state = read();
+          if (state.completed && state.completed !== completed) {
+            completed = state.completed;
+            complete({ status: "completed", execution: completed });
+          }
+        } catch { /* A storage failure never starts another import. */ }
+        arm();
+      });
+      document.addEventListener?.("visibilitychange", () => {
+        if (document.visibilityState === "visible") start(true);
+      });
+      const notice = document.getElementById("autoActualsStatus");
+      if (notice && (!storage || !locks)) notice.textContent = "このブラウザでは自動取込みを利用できません。最新値の取込みは手動で行えます。";
+      arm();
+      return { start, resume: (execution) => start(false, execution) };
+    }
+
     function bindActualImport() {
       const button = document.getElementById("importActualsBtn");
       const status = document.getElementById("importActualsStatus");
@@ -2073,15 +2189,13 @@
             const notice = missingReviewNotice(result.missing_review);
             if (notice) window.sessionStorage.setItem(noticeKey, notice);
             status.textContent = "取込み完了。最新データを表示します。";
-            window.location.assign(`/?actual_import=${encodeURIComponent(execution)}`);
-            return;
+            return { status: "completed", execution };
           }
           if (result.status === "partial") {
             status.textContent = `指定日の保存・表示更新は完了しました。指定外の関連日 ${(result.pending_dates || []).join("、")} は再生成していません。${missingReviewNotice(result.missing_review)}`;
             window.sessionStorage.setItem(noticeKey, status.textContent);
             window.sessionStorage.removeItem(storageKey);
-            window.location.assign(`/?actual_import=${encodeURIComponent(execution)}`);
-            return;
+            return { status: "completed", execution };
           }
           if (["failed", "busy"].includes(result.status)) {
             const savedOutcomeKnown = result.actuals_saved === true || result.actuals_saved === false;
@@ -2095,6 +2209,7 @@
             if (result.status === "failed" && savedOutcomeKnown && finished) {
               window.sessionStorage.removeItem(storageKey);
               button.disabled = false;
+              return { status: "failed" };
             }
             return;
           }
@@ -2102,7 +2217,7 @@
         }
         throw new Error("import_outcome_unknown");
       }
-      async function run(execution) {
+      async function run(execution, automatic = false, accepted = () => {}) {
         button.disabled = true;
         status.textContent = execution
           ? "前回の取込み結果を確認しています。新しい取込みは開始しません。"
@@ -2114,7 +2229,7 @@
             const response = await fetch("/api/dashboard/actual-import", {
               method: "POST", credentials: "same-origin",
               headers: { "Content-Type": "application/json", "X-Dashboard-Action": "import-actuals" },
-              body: JSON.stringify(dateExplicit && dateInput ? { target_date: dateInput.value } : {}),
+              body: JSON.stringify(!automatic && dateExplicit && dateInput ? { target_date: dateInput.value } : {}),
             });
             // These server responses are returned before a job is submitted.
             // Let the user correct the request; an unknown submission stays locked.
@@ -2124,24 +2239,26 @@
               status.textContent = response.status === 401
                 ? "認証が必要です。画面を再読込みしてログインしてください。取込みは開始されていません。"
                 : "取込みは開始されていません。日付と画面の認証状態を確認してください。";
-              return;
+              return { status: "rejected" };
             }
             if (!response.ok) throw new Error("import_submission_unknown");
             execution = (await response.json()).execution;
             if (typeof execution !== "string") throw new Error("import_submission_unknown");
             window.sessionStorage.setItem(storageKey, execution);
+            accepted(execution);
           }
-          await monitor(execution);
+          return await monitor(execution);
         } catch {
           status.textContent = "取込み結果を確認できません。重複実行を避けるため再送していません。";
         }
       }
-      button.addEventListener("click", () => { if (!button.disabled) run(null); });
       const pending = window.sessionStorage ? window.sessionStorage.getItem(storageKey) : null;
+      const schedule = scheduleActualImport(run, () => button.disabled, pending);
+      button.addEventListener("click", () => { if (!button.disabled) schedule.start(); });
       if (pending === "unknown") {
         button.disabled = true;
         status.textContent = "前回の取込み受付結果が未確認です。再送せず実行状況の確認が必要です。";
-      } else if (pending) run(pending);
+      } else if (pending) schedule.resume(pending);
     }
 
     async function main() {
@@ -2151,11 +2268,7 @@
       bindActualImport();
 
       const initialPayload = window.__DASHBOARD_DATA__ || {};
-      const hasInitialRows =
-        (initialPayload.pv_daily && initialPayload.pv_daily.length) ||
-        (initialPayload.energy_daily && initialPayload.energy_daily.length) ||
-        (initialPayload.cost_daily && initialPayload.cost_daily.length) ||
-        (initialPayload.battery_daily && initialPayload.battery_daily.length);
+      const hasInitialRows = dashboardApi.hasBootstrapRows(initialPayload);
       if (hasInitialRows) {
         absorbSlice(initialPayload, true);
       }

@@ -18,7 +18,26 @@
     return await response.json();
   }
 
+  let bootstrapRequest = null;
+
+  function hasBootstrapRows(payload) {
+    return ["pv_daily", "energy_daily", "cost_daily", "battery_daily"].some((key) => payload[key]?.length);
+  }
+
+  function preloadBootstrap(initialPayload, fetchImpl = fetch) {
+    if (hasBootstrapRows(initialPayload) || bootstrapRequest) return;
+    // Handle rejection immediately: chart scripts may still be downloading.
+    bootstrapRequest = fetchJson(afterImport("/api/dashboard/bootstrap"), fetchImpl)
+      .then((payload) => ({ payload }), (error) => ({ error }));
+  }
+
   async function fetchBootstrap(fetchImpl = fetch) {
+    if (bootstrapRequest) {
+      const result = await bootstrapRequest;
+      bootstrapRequest = null;
+      if (result.error) throw result.error;
+      return result.payload;
+    }
     return await fetchJson(afterImport("/api/dashboard/bootstrap"), fetchImpl);
   }
 
@@ -43,5 +62,5 @@
     return await response.json();
   }
 
-  return { queryString, fetchJson, fetchBootstrap, fetchHistory, fetchSlice };
+  return { queryString, fetchJson, fetchBootstrap, preloadBootstrap, hasBootstrapRows, fetchHistory, fetchSlice };
 });

@@ -16,6 +16,7 @@
       <button id="importActualsBtn" class="period-button" type="button">最新値を取り込み</button>
       <p class="desc">既定は当日だけ。過去分は日付を指定した場合だけ更新します。</p>
       <p id="importActualsStatus" class="desc" role="status" aria-live="polite"></p>
+      <p id="autoActualsStatus" class="desc">開いている間は30分ごとに当日の最新実績を自動で取り込みます。</p>
     </section>
 
     <section id="dashboardWarnings" class="warning-panel" aria-live="polite"></section>
@@ -140,13 +141,14 @@
     </section>
   </div>
 
-  <script nonce="__NONCE__" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script nonce="__NONCE__">
     window.__DASHBOARD_DATA__ = __DASHBOARD_DATA_PLACEHOLDER__;
   </script>
+<script nonce="__NONCE__" src="/static/dashboard_api.js?v=__STATIC_VERSION__"></script>
+<script nonce="__NONCE__">window.DashboardApi.preloadBootstrap(window.__DASHBOARD_DATA__);</script>
+  <script nonce="__NONCE__" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script nonce="__NONCE__" src="/static/dashboard_calculations.js?v=__STATIC_VERSION__"></script>
 <script nonce="__NONCE__" src="/static/dashboard_dates.js?v=__STATIC_VERSION__"></script>
-<script nonce="__NONCE__" src="/static/dashboard_api.js?v=__STATIC_VERSION__"></script>
 <script nonce="__NONCE__" src="/static/dashboard_store.js?v=__STATIC_VERSION__"></script>
 <script nonce="__NONCE__" src="/static/dashboard.js?v=__STATIC_VERSION__"></script>
 </body>

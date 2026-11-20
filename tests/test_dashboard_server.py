@@ -42,6 +42,8 @@ def test_dashboard_template_keeps_critical_dom_and_nonce() -> None:
         assert html.index(f'src="/static/{dependency}?v={static_version}"') < html.index(
             f'src="/static/dashboard.js?v={static_version}"'
         )
+    assert html.index('src="/static/dashboard_api.js') < html.index("DashboardApi.preloadBootstrap")
+    assert html.index("DashboardApi.preloadBootstrap") < html.index('src="https://cdn.jsdelivr.net/npm/chart.js"')
 
 
 def test_dashboard_static_assets_are_available() -> None:
