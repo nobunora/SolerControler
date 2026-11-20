@@ -9,11 +9,17 @@ const completedAt = "2026-11-05T06:00:00Z";
 const sources = ["dashboard_calculations.js", "dashboard_dates.js", "dashboard_api.js", "dashboard_store.js", "dashboard.js"]
   .map((filename) => [filename, fs.readFileSync(path.join(__dirname, "..", "static", filename), "utf8")]);
 
-function openPage(storage = new Map(), statuses = [], postStatus = 200) {
+function browserGroup() {
+  return { storage: new Map(), listeners: [], held: false, now: Date.parse("2026-11-05T07:00:00Z") };
+}
+
+function openPage(storage = new Map(), statuses = [], postStatus = 200, group = null) {
   const elements = new Map();
   const requests = [];
   const timers = [];
   const navigations = [];
+  const bodies = [];
+  const documentListeners = {};
   let now = Date.parse("2026-11-05T07:00:00Z");
   function element(id = "") {
     if (!elements.has(id)) elements.set(id, {
@@ -24,15 +30,19 @@ function openPage(storage = new Map(), statuses = [], postStatus = 200) {
     });
     return elements.get(id);
   }
-  class Clock extends Date { static now() { return now; } }
+  class Clock extends Date {
+    constructor(...args) { super(...(args.length ? args : [Clock.now()])); }
+    static now() { return group ? group.now : now; }
+  }
   class Chart {
     constructor(_target, config) { this.data = config.data || { labels: [], datasets: [] }; this.options = config.options || {}; }
     update() {} resize() {} destroy() {}
   }
   const context = {
     console, URLSearchParams, Intl, Date: Clock, Chart,
-    setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
-    clearTimeout() {}, addEventListener() {},
+    setTimeout(callback, delay) { timers.push({ callback, delay, at: Clock.now() + delay }); return timers.length; },
+    clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cancelled = true; },
+    addEventListener(type, handler) { if (group && type === "storage") group.listeners.push({ owner: context, handler }); },
     sessionStorage: {
       getItem(key) { return storage.get(key) ?? null; },
       setItem(key, value) { storage.set(key, String(value)); },
@@ -42,12 +52,14 @@ function openPage(storage = new Map(), statuses = [], postStatus = 200) {
     document: {
       getElementById: element, createElement: (tag) => element(`created-${tag}-${elements.size}`),
       querySelector: element, querySelectorAll: () => [],
+      addEventListener(type, handler) { documentListeners[type] = handler; }, visibilityState: "visible",
     },
     fetch: async (url, options = {}) => {
       requests.push({ url: String(url), method: options.method || "GET" });
       let status = 200;
       let payload = {};
       if (String(url) === "/api/dashboard/actual-import" && options.method === "POST") {
+        bodies.push(JSON.parse(options.body));
         status = postStatus;
         payload = { execution };
       } else if (String(url).startsWith("/api/dashboard/actual-import?")) {
@@ -59,23 +71,48 @@ function openPage(storage = new Map(), statuses = [], postStatus = 200) {
     },
     __DASHBOARD_DATA__: {},
   };
+  if (group) {
+    context.localStorage = {
+      getItem: (key) => group.storage.get(key) ?? null,
+      setItem(key, value) {
+        group.storage.set(key, String(value));
+        for (const listener of group.listeners) if (listener.owner !== context) listener.handler({ key });
+      },
+    };
+    context.navigator = { locks: {
+      async request(_name, _options, callback) {
+        if (group.held) return await callback(null);
+        group.held = true;
+        try { return await callback({}); } finally { group.held = false; }
+      },
+    } };
+  }
   context.window = context;
   context.globalThis = context;
   vm.createContext(context);
   for (const [filename, source] of sources) vm.runInContext(source, context, { filename });
   return {
-    elements, requests, timers, navigations, storage,
+    elements, requests, timers, navigations, storage, bodies, context,
     button: element("importActualsBtn"), status: element("importActualsStatus"),
     postCount() { return requests.filter((r) => r.method === "POST").length; },
     polls() { return requests.filter((r) => r.url.startsWith("/api/dashboard/actual-import?")); },
     async tick(milliseconds = 5000) {
-      const timer = timers.shift();
+      const timer = timers.find((item) => !item.cancelled && item.delay === 5000);
       assert.ok(timer, "expected a scheduled status check");
       assert.equal(timer.delay, 5000, "polling cadence remains five seconds");
-      now += milliseconds;
+      timer.cancelled = true;
+      if (group) group.now += milliseconds;
+      else now += milliseconds;
       timer.callback();
       await settle();
     },
+    async advance(milliseconds) {
+      group.now += milliseconds;
+      const due = timers.filter((timer) => !timer.cancelled && timer.at <= group.now);
+      for (const timer of due) { timer.cancelled = true; timer.callback(); }
+      await settle();
+    },
+    async becomeVisible() { documentListeners.visibilitychange(); await settle(); },
   };
 }
 
@@ -219,6 +256,133 @@ async function verifyActualImportRecovery() {
       assert.equal(reloadUnknown.postCount(), 0, "unknown submission is never re-sent after reload");
       assert.equal(reloadUnknown.button.disabled, true);
     }
+    checks += 1;
+  }
+
+  const interval = 1800000;
+  const scheduleKey = "dashboardActualImportSchedule";
+  const timedGroup = browserGroup();
+  const timed = openPage(new Map(), [{ status: "succeeded" }], 200, timedGroup);
+  await settle();
+  await timed.advance(interval - 1);
+  assert.equal(timed.postCount(), 0, "opening and early timer wakeups do not import");
+  await timed.advance(1);
+  assert.equal(timed.postCount(), 1);
+  assert.equal(timed.navigations.length, 1);
+  assert.equal(JSON.parse(timedGroup.storage.get(scheduleKey)).pending, null);
+  checks += 1;
+
+  const tabs = browserGroup();
+  const firstTab = openPage(new Map(), [{ status: "succeeded" }], 200, tabs);
+  const secondTab = openPage(new Map(), [], 200, tabs);
+  await settle();
+  await firstTab.advance(interval);
+  await secondTab.advance(0);
+  assert.equal(firstTab.postCount() + secondTab.postCount(), 1, "tabs share one import per interval");
+  assert.equal(secondTab.navigations.length, 1, "other tabs display the newly published data too");
+  checks += 1;
+
+  const unknownGroup = browserGroup();
+  const autoUnknown = openPage(new Map(), [], 502, unknownGroup);
+  await autoUnknown.advance(interval);
+  assert.equal(autoUnknown.postCount(), 1);
+  await autoUnknown.advance(interval);
+  const newUnknownTab = openPage(new Map(), [], 200, unknownGroup);
+  await newUnknownTab.advance(interval);
+  newUnknownTab.button.listeners.click();
+  await settle();
+  assert.equal(newUnknownTab.postCount(), 0, "an unknown submission is not repeated even in another tab");
+  assert.equal(JSON.parse(unknownGroup.storage.get(scheduleKey)).pending, "unknown");
+  checks += 1;
+
+  const failureGroup = browserGroup();
+  const autoFailed = openPage(new Map(), [{ status: "failed", actuals_saved: false, completed_at: completedAt }, { status: "succeeded" }], 200, failureGroup);
+  await autoFailed.advance(interval);
+  await autoFailed.advance(interval);
+  assert.equal(autoFailed.postCount(), 1, "a confirmed failure pauses recurring submissions for review");
+  assert.equal(autoFailed.button.disabled, false);
+  autoFailed.button.listeners.click();
+  await settle();
+  assert.equal(autoFailed.postCount(), 2, "explicit manual recovery remains possible");
+  assert.equal(autoFailed.navigations.length, 1);
+  checks += 1;
+
+  const dateGroup = browserGroup();
+  dateGroup.now = Date.parse("2026-11-05T14:55:00Z");
+  const autoDate = openPage(new Map(), [{ status: "succeeded" }], 200, dateGroup);
+  autoDate.elements.get("importActualsDate").value = "2026-10-01";
+  autoDate.elements.get("importActualsDate").listeners.change();
+  await autoDate.advance(interval);
+  assert.deepEqual(autoDate.bodies, [{}], "automatic import delegates today's date to the server after midnight, ignoring a past manual selection");
+  checks += 1;
+
+  const asleepGroup = browserGroup();
+  const asleep = openPage(new Map(), [{ status: "running" }], 200, asleepGroup);
+  await asleep.advance(interval * 8);
+  await asleep.becomeVisible();
+  await asleep.becomeVisible();
+  assert.equal(asleep.postCount(), 1, "waking after missed intervals submits only once");
+  assert.equal(asleep.button.disabled, true);
+  checks += 1;
+
+  const busyGroup = browserGroup();
+  const waiting = openPage(new Map(), [{ status: "succeeded" }], 200, busyGroup);
+  busyGroup.held = true;
+  await waiting.advance(interval);
+  assert.equal(waiting.postCount(), 0);
+  busyGroup.held = false;
+  await waiting.advance(60000);
+  assert.equal(waiting.postCount(), 1, "another tab's lock defers work without queuing a duplicate submission");
+  checks += 1;
+
+  const resumeGroup = browserGroup();
+  resumeGroup.storage.set(scheduleKey, JSON.stringify({ nextAt: resumeGroup.now, pending: execution, paused: false }));
+  const sharedResume = openPage(new Map(), [{ status: "succeeded" }], 200, resumeGroup);
+  await sharedResume.becomeVisible();
+  assert.equal(sharedResume.postCount(), 0, "a known shared execution is polled, never resubmitted");
+  assert.equal(sharedResume.polls().length, 1);
+  assert.equal(sharedResume.navigations.length, 1);
+  checks += 1;
+
+  const storageFailureGroup = browserGroup();
+  const storageFailure = openPage(new Map(), [{ status: "succeeded" }], 200, storageFailureGroup);
+  const originalSet = storageFailure.context.localStorage.setItem;
+  storageFailure.context.localStorage.setItem = (key, value) => {
+    if (JSON.parse(value).pending === execution) throw new Error("storage_full_after_submission");
+    originalSet(key, value);
+  };
+  await storageFailure.advance(interval);
+  assert.equal(storageFailure.postCount(), 1);
+  assert.equal(storageFailure.polls().length, 1, "a storage error after acceptance must not stop receipt polling");
+  assert.equal(storageFailure.navigations.length, 1);
+  checks += 1;
+
+  const corruptGroup = browserGroup();
+  corruptGroup.storage.set(scheduleKey, JSON.stringify({ nextAt: "invalid", pending: "unknown", paused: false }));
+  const corrupt = openPage(new Map(), [], 200, corruptGroup);
+  await corrupt.advance(interval);
+  await corrupt.becomeVisible();
+  assert.equal(corrupt.postCount(), 0, "corrupted scheduling state never resets an unknown submission and auto-resends");
+  assert.equal(JSON.parse(corruptGroup.storage.get(scheduleKey)).pending, "unknown");
+  checks += 1;
+
+  const manualGroup = browserGroup();
+  const manualDate = openPage(new Map(), [{ status: "succeeded" }], 200, manualGroup);
+  manualDate.elements.get("importActualsDate").value = "2026-10-01";
+  manualDate.elements.get("importActualsDate").listeners.change();
+  manualDate.button.listeners.click();
+  await settle();
+  assert.deepEqual(manualDate.bodies, [{ target_date: "2026-10-01" }], "manual imports retain the explicitly selected date");
+  checks += 1;
+
+  for (const initialized of [false, true]) {
+    const legacyGroup = browserGroup();
+    if (initialized) legacyGroup.storage.set(scheduleKey, JSON.stringify({ nextAt: legacyGroup.now + interval, pending: null, paused: false }));
+    openPage(new Map([[storageKey, "unknown"]]), [], 200, legacyGroup);
+    const legacyOtherTab = openPage(new Map(), [], 200, legacyGroup);
+    await legacyOtherTab.advance(interval);
+    assert.equal(legacyOtherTab.postCount(), 0, "an existing tab's legacy unknown submission must also block automatic submission in new tabs");
+    assert.equal(JSON.parse(legacyGroup.storage.get(scheduleKey)).pending, "unknown");
     checks += 1;
   }
   console.log(`dashboard actual import reload: PASS (${checks} scenarios)`);

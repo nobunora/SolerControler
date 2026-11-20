@@ -6,6 +6,7 @@ production gateは文書のSHA-256をstateに保存する。これは適用し�
 
 | 実際に起きた失敗 | 固定する対策・停止条件 |
 | --- | --- |
+| 2026-11-20: 30分自動取込みのローカル受入で、従来のsessionStorageに受付不明が残っていても別タブからPOSTが1件発生 | 既存タブの保留状態も共有スケジュールへ引き継ぎ、受付不明は他タブからも再送しない。`test_dashboard_actual_import.js`で共有状態の初期化前後・日跨ぎ・スリープ復帰・複数タブ・送信後storage障害を回帰する。ローカル実ブラウザでも旧受付不明の追加POST 0件を確認し、受領票未確認を理由に共有状態を初期化しない。自動取込みの本番受入はPOSTを1回に制限し、同executionの保存・公開完了まで確認する |
 | 2026-11-19: 本番で主APIがReadTimeoutとなり、代替previous-runs予報で採用・公開は成功したが、代替予報がcacheへ残らないことをnative照合で確認 | 主・代替APIとも取得済みの同じresponseから対象日と翌日を同じ取得日時で保存する。追加HTTP要求は行わない。翌日の区間不足やcache障害で有効な対象日を捨てない。`test_previous_runs_caches_available_days_from_one_response`で2日保存・翌日不足・全API停止後の再利用を回帰し、実行成功だけでcacheの検証をPASSにしない |
 | 2026-11-19: source確認で、公開再開checkpointを持つreceiptの全fieldを状態pollが読み出す経路を確認 | 状態APIは返却対象8fieldをFirestore側でprojectし、checkpointを転送しない。`test_status_poll_projects_small_fields_and_preserves_unknown_save`で上限サイズのcheckpoint、読取1回、true/false/nullの保存状態保持を回帰する。返却JSONの後段filterだけでbackend転送削減とみなさない |
 | 2026-11-18: 実績保存後の履歴revision streamがDeadlineExceededとなり、SDKのretry=NoneでAttributeErrorに隠された。続く取込みは古いbootstrapで保存前に停止 | 512件の安定cursorと固定read_timeで完全なpageだけ採用し、明示Retry方針と共有期限内の最大3回に限定する。保存前checkpointをreceiptへ保持し、actuals_saved=trueの同日公開失敗はCSV取得・実績再保存なしで再開する。未知の保存結果・他日source変更・採用計画変更のguardは維持する。`test_dashboard_revision_recovery.py`で部分stream破棄、同一時点、永久障害、有限試行、保存済み公開再開を回帰する |

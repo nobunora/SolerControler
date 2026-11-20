@@ -75,7 +75,7 @@ async function harness(payload = fixture()) {
   }
   const requests = [];
   const context = {
-    console, URLSearchParams, Intl, Date: Clock, Chart, setTimeout: () => 0,
+    console, URLSearchParams, Intl, Date: Clock, Chart, setTimeout: () => 0, clearTimeout() {},
     fetch: async (url) => { requests.push(String(url)); throw new Error("unexpected HTTP"); },
     document: {
       getElementById: (id) => ids.has(id) ? element(id) : null,
@@ -117,7 +117,8 @@ async function tests() {
   assert.equal(h.requests.length, 0);
   assert.equal((h.template.match(/<canvas\b/g) || []).length, 8);
   assert.equal((h.template.match(/<table\b/g) || []).length, 1);
-  assert.equal((h.template.match(/\bid="/g) || []).length, 49);
+  assert.equal((h.template.match(/\bid="/g) || []).length, 50);
+  assert.ok(h.elements.has("autoActualsStatus"));
   assert.deepEqual(Array.from(h.template.matchAll(/<h2\b[^>]*>(\d+)\./g), (match) => Number(match[1])),
     Array.from({ length: 11 }, (_, index) => index + 1));
   for (const [id, number] of [["dailyKwhTitle", 5], ["dailyYenTitle", 6], ["batteryTitle", 8]]) {
