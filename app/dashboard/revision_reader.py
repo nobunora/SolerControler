@@ -71,6 +71,7 @@ class RevisionSnapshot:
 
     def __init__(self) -> None:
         self.read_time: datetime | None = None
+        self.source_client: Any = None
         self.ranges: dict[tuple[str, str, bool], tuple[str, str, list[Any]]] = {}
 
     def find(self, name: str, field: str, start: str, end: str, *, inclusive: bool = True) -> list[list[Any]] | None:

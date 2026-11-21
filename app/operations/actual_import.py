@@ -14,6 +14,7 @@ from google.cloud import firestore
 from dataclasses import replace
 
 from app.dashboard.date_snapshots import capture_date_refresh, publish_date_refresh
+from app.dashboard.incremental_revisions import IncrementalRevisionClient
 from app.kpnet.monitoring_history import find_latest_kpnet_csv_paths
 from app.operations import firestore as source
 from app.operations.monitoring_sync import monitoring_sync_window, prepare_monitoring_csvs
@@ -59,7 +60,7 @@ def main() -> int:
     target_date = date.fromisoformat(os.environ["ACTUAL_IMPORT_TARGET_DATE"]).isoformat()
     if target_date > datetime.now(ZoneInfo("Asia/Tokyo")).date().isoformat():
         raise ValueError("future actual import is forbidden")
-    client = source.open_firestore()
+    client = IncrementalRevisionClient(source.open_firestore())
     receipt = client.collection("dashboard_actual_import_runs").document(execution)
     claimed = _claim(client, execution)
     if not claimed:
@@ -131,6 +132,8 @@ def main() -> int:
         receipt.set({**result, **({"publication_resume": checkpoint} if checkpoint is not None else {})}, timeout=4, retry=None)
         client.collection("dashboard_actual_import_runs").document("active").set(
             {"execution": execution, **result}, timeout=4, retry=None)
+        if status in ("succeeded", "partial"):
+            client.save_checkpoint()
 
 
 def review_missing_actuals(client: Any, target_date: str, directory: Path) -> dict[str, Any]:
@@ -145,7 +148,8 @@ def review_missing_actuals(client: Any, target_date: str, directory: Path) -> di
     prepared = prepare_monitoring_csvs(paths, window=window)
     if prepared.duplicate_conflict:
         raise ValueError("conflicting CSV records prevent missing-date review")
-    query = (client.collection("monitoring_samples").where("ts", ">=", window.start_ts)
+    review_client = client.metadata_for_review() if isinstance(client, IncrementalRevisionClient) else client
+    query = (review_client.collection("monitoring_samples").where("ts", ">=", window.start_ts)
              .where("ts", "<", window.end_ts).select(["ts"]).limit(1489))
     snapshots = list(query.stream(timeout=4, retry=None))
     if len(snapshots) > 1488:
