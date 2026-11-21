@@ -211,7 +211,7 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
         references[1].delete(option=client.write_option(last_update_time=versions[references[1].path]), timeout=4, retry=None)
         versions.pop(references[1].path)
         state, deleted = changes.refresh(state, delta_deadline)
-        assert second_key not in state.rows[collection] and deleted['deleted_documents'] >= 1
+        assert second_key not in state.rows[collection] and deleted['deleted_documents'] + deleted['removed_documents'] >= 1
         result = references[1].create({'operation_id': fixture['operation_id'], 'count': 0,
                                        'date': fixture['target_date']}, timeout=4, retry=None)
         versions[references[1].path] = result.update_time
@@ -219,7 +219,8 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
         assert state.rows[collection][second_key]['updated'] == timestamp(result.update_time)
         cases.append({'name': 'firestore_native_revision_delta_resume_update_delete_recreate', 'status': 'PASS',
                       'bootstrap_document_reads': bootstrap_reads, 'update_document_reads': updated['document_reads'],
-                      'delete_events': deleted['deleted_documents'], 'insert_document_reads': inserted['document_reads'],
+                      'delete_events': deleted['deleted_documents'], 'removed_documents': deleted['removed_documents'],
+                      'insert_document_reads': inserted['document_reads'],
                       'listen_targets': inserted['listen_targets']})
         return cases
     except Exception as error:

@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import grpc
 import pytest
-from google.cloud.firestore_v1.types import ListenResponse
+from google.cloud.firestore_v1.types import BloomFilter, ListenResponse
 
 from app.dashboard import snapshots
 from app.dashboard.incremental_revisions import IncrementalRevisionClient, decode_state, encode_state
-from app.dashboard.revision_changes import NativeRevisionChanges, RevisionResetRequired, RevisionState, SOURCES, projected_fields, timestamp
+from app.dashboard.revision_changes import NativeRevisionChanges, RevisionResetRequired, RevisionState, SOURCES, _absent_names, projected_fields, timestamp
 from app.dashboard.revision_manifest import ManifestClient, parse_timestamp, wire_timestamp
 from app.dashboard.revision_reader import RevisionSnapshot
 from test_dashboard_epoch_parallel import ObservedClient
@@ -159,6 +159,54 @@ def test_existence_mismatch_rejects_incomplete_cached_set():
     with pytest.raises(RevisionResetRequired, match='existence'):
         NativeRevisionChanges(client).refresh(state, time.monotonic() + 10)
     assert state.read_time == OLD
+
+
+def test_native_existence_filter_reconciles_removed_documents_without_full_query():
+    _, state = baseline()
+    state.rows['sunshine_daily'] = {key: {'fields': {'date': '2026-01-01'}, 'updated': OLD}
+                                    for key in ('keep', 'removed')}
+    before = deepcopy(state.rows)
+    # Fixed wire vector: the full native name ending /sunshine_daily/keep;
+    # 97 bits, 7 hashes, little-endian double hashing with uint64 wrap.
+    response = ListenResponse(filter={'target_id': 1, 'count': 1, 'unchanged_names': {
+        'bits': {'bitmap': bytes.fromhex('004001000a0040000002001000'), 'padding': 7}, 'hash_count': 7}})
+    client = ChangeClient([[response] + barrier()])
+    result, stats = NativeRevisionChanges(client).refresh(state, time.monotonic() + 10)
+    assert set(result.rows['sunshine_daily']) == {'keep'} and state.rows == before
+    assert stats['document_reads'] == 0 and stats['bloom_removed_documents'] == stats['removed_documents'] == 1
+    assert stats['reset_targets'] == 0 and client.streams[0].cancelled
+
+
+def test_existence_filter_zero_count_proves_last_cached_document_absent():
+    _, state = baseline()
+    state.rows['sunshine_daily'] = {'last': {'fields': {}, 'updated': OLD}}
+    client = ChangeClient([[ListenResponse(filter={'target_id': 1, 'count': 0})] + barrier()])
+    result, stats = NativeRevisionChanges(client).refresh(state, time.monotonic() + 10)
+    assert not result.rows['sunshine_daily'] and 'last' in state.rows['sunshine_daily']
+    assert stats['document_reads'] == 0 and stats['removed_documents'] == 1
+
+
+def test_existence_false_positive_does_not_accept_incomplete_cached_set():
+    _, state = baseline()
+    state.rows['sunshine_daily'] = {'keep': {}, 'deleted': {}}
+    response = ListenResponse(filter={'target_id': 1, 'count': 1, 'unchanged_names': {
+        'bits': {'bitmap': b'\xff', 'padding': 0}, 'hash_count': 7}})
+    client = ChangeClient([[response] + barrier()])
+    with pytest.raises(RevisionResetRequired, match='existence'):
+        NativeRevisionChanges(client).refresh(state, time.monotonic() + 10)
+    assert set(state.rows['sunshine_daily']) == {'keep', 'deleted'} and client.streams[0].cancelled
+
+
+def test_native_bloom_unicode_wire_vector_keeps_uint64_wrap_and_padding():
+    # Firebase SDK's published Unicode wire vector, independent of this helper.
+    bloom = BloomFilter(bits={'bitmap': bytes([237, 5]), 'padding': 5}, hash_count=8)
+    assert _absent_names(['ÀÒ∑', 'Ò∑À'], bloom) == ['Ò∑À']
+
+
+@pytest.mark.parametrize('bitmap,padding,hashes', [(b'', 1, 0), (b'x', 8, 1), (b'x', 0, 0), (b'x', 0, 65)])
+def test_invalid_existence_filter_never_changes_successful_position(bitmap, padding, hashes):
+    with pytest.raises(RevisionResetRequired, match='invalid'):
+        _absent_names(['name'], BloomFilter(bits={'bitmap': bitmap, 'padding': padding}, hash_count=hashes))
 
 
 def test_reset_discards_deleted_rows_before_accepting_new_initial_set():
