@@ -25,6 +25,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from app.dashboard.data import clear_dashboard_cache, load_dashboard_slice
 from app.dashboard.aggregation import _monitoring_history_start
 from app.dashboard.models import DashboardSlice
+from app.dashboard.revision_reader import RevisionSnapshot
 from app.dashboard.slice_assembler import extract_pv_forecast_diagnostics
 from app.separated_runtime.plan import PublishedPlan
 
@@ -652,7 +653,8 @@ def _check_source_epoch_order(previous: dict[str, str], incoming: dict[str, str]
 
 def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: float | None = None,
                                 history_compare_before: str | None = None,
-                                excluded_dates: frozenset[str] = frozenset()) -> dict[str, str]:
+                                excluded_dates: frozenset[str] = frozenset(),
+                                revision_snapshot: RevisionSnapshot | None = None) -> dict[str, str]:
     """Producer-only bounded revision map of every Firestore payload source.
 
     Native update_time owns ordering; stored ingestion timestamps are not
@@ -680,7 +682,8 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         return min(4.0, remaining)
 
     from app.dashboard.revision_reader import PAGE_SIZE, RevisionReader
-    reader = RevisionReader(client, timeout)
+    cached_reads = int(revision_snapshot is not None and revision_snapshot.read_time is not None)
+    reader = RevisionReader(client, timeout, revision_snapshot)
     read_count += 1
 
     def read_parallel(readers: list[Callable[[], Any]]) -> list[Any]:
@@ -784,7 +787,7 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             epoch["history_compare_before"] = history_compare_before
     source_names = ("sunshine_daily", "battery_daily_metrics", "forecast_hourly", "forecast_hourly_snapshots",
                     "forecast_hourly_reconstructed", "forecast_plans", "dashboard_daily_metrics", "night_charge_plans")
-    def source_rows(name: str) -> tuple[list[list[Any]], list[Any], int]:
+    def source_rows(name: str) -> tuple[list[list[Any]], list[Any], int, int]:
         source_start = monitoring_start if name == "dashboard_daily_metrics" else start
         fields = ["date"]
         if name == "night_charge_plans":
@@ -792,14 +795,15 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                            "daytime_soc_optimization.forecast_correction.recent_and_analog_hourly_floor.analog_day"])
         query = client.collection(name).where("date", ">=", source_start.isoformat()).where("date", "<=", end.isoformat())
         query = query.select(fields)
-        pages: list[list[Any]] = []
+        cached = revision_snapshot.find(name, "date", source_start.isoformat(), end.isoformat()) if revision_snapshot else None
+        pages: list[list[Any]] = cached if cached is not None else []
         sentinel_reads = 0
         paged_sources = {
             "forecast_hourly": (24 * 1096, "hourly forecast"),
             "forecast_hourly_snapshots": (24 * 1096 * 8, "hourly forecast snapshots"),
             "forecast_hourly_reconstructed": (24 * 1096, "reconstructed hourly forecast"),
         }
-        if name in paged_sources:
+        if cached is None and name in paged_sources:
             max_documents, source_label = paged_sources[name]
             query = query.order_by("date").order_by("__name__")
             cursor: tuple[str, str] | None = None
@@ -823,30 +827,38 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
                 if len(page) <= PAGE_SIZE:
                     break
                 query = query.start_after(accepted[-1])
-        else:
+        elif cached is None:
             samples = reader.query(query.limit(3661))
             if len(samples) > 3660:
                 raise ValueError("dashboard source revision query exceeds 3660 documents")
             pages.append(samples)
+        if revision_snapshot is not None and cached is None:
+            revision_snapshot.remember(name, "date", source_start.isoformat(), end.isoformat(), pages)
         analog: list[Any] = []
         if name == "night_charge_plans":
             analog_dates = set()
-            for snapshot in pages[0]:
-                row = snapshot.to_dict() or {}
-                for section in ("decision_rationale", "daytime_soc_optimization"):
-                    correction = (row.get(section) or {}).get("forecast_correction") or {}
-                    analog_day = (correction.get("recent_and_analog_hourly_floor") or {}).get("analog_day")
-                    if analog_day:
-                        analog_dates.add(date.fromisoformat(str(analog_day)).isoformat())
+            for page in pages:
+                for snapshot in page:
+                    row = snapshot.to_dict() or {}
+                    for section in ("decision_rationale", "daytime_soc_optimization"):
+                        correction = (row.get(section) or {}).get("forecast_correction") or {}
+                        analog_day = (correction.get("recent_and_analog_hourly_floor") or {}).get("analog_day")
+                        if analog_day:
+                            analog_dates.add(date.fromisoformat(str(analog_day)).isoformat())
             if analog_dates:
                 refs = [client.collection(name).document(day) for day in sorted(analog_dates)]
                 analog = reader.documents(client, refs, ["date"])
-        return pages, analog, sentinel_reads
-    def monitoring_rows() -> tuple[list[list[Any]], int]:
+        return pages, analog, sentinel_reads, sum(map(len, cached)) if cached is not None else 0
+    def monitoring_rows() -> tuple[list[list[Any]], int, int]:
         pages: list[list[Any]] = []
         sentinel_reads = 0
         monitoring_max_documents = 48 * 1096
         monitoring_count = 0
+        monitoring_end = (end + timedelta(days=1)).isoformat()
+        if revision_snapshot is not None:
+            cached = revision_snapshot.find("monitoring_samples", "ts", monitoring_start.isoformat(), monitoring_end, inclusive=False)
+            if cached is not None:
+                return cached, 0, sum(map(len, cached))
         monitoring_query = (client.collection("monitoring_samples").where("ts", ">=", monitoring_start.isoformat())
                             .where("ts", "<", (end + timedelta(days=1)).isoformat())
                             .order_by("ts").order_by("__name__").select(["ts"]))
@@ -871,7 +883,9 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
             if len(page) <= PAGE_SIZE:
                 break
             monitoring_query = monitoring_query.start_after(accepted[-1])
-        return pages, sentinel_reads
+        if revision_snapshot is not None:
+            revision_snapshot.remember("monitoring_samples", "ts", monitoring_start.isoformat(), monitoring_end, pages, inclusive=False)
+        return pages, sentinel_reads, 0
     readers: list[Callable[[], Any]] = [partial(source_rows, name) for name in source_names]
     readers.extend([
         monitoring_rows,
@@ -882,16 +896,18 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         lambda: reader.query(client.collection("battery_daily_metrics").select(["date"]).order_by("date").limit_to_last(1), last=True),
     ])
     results = read_parallel(readers)
-    for name, (source_pages, analog, source_sentinels) in zip(source_names, results[:len(source_names)]):
+    for name, (source_pages, analog, source_sentinels, cache_hits) in zip(source_names, results[:len(source_names)]):
         read_count += source_sentinels
+        cached_reads += cache_hits
         for page in source_pages:
             record(name, page)
         source_start = monitoring_start if name == "dashboard_daily_metrics" else start
         epoch[f"scope/{name}"] = source_start.isoformat()
         if analog:
             record("analog_plans", analog)
-    pages, sentinel_reads = results[len(source_names)]
+    pages, sentinel_reads, cache_hits = results[len(source_names)]
     read_count += sentinel_reads
+    cached_reads += cache_hits
     for page in pages:
         record("monitoring_samples", page, stamp_field="ts")
     epoch["scope/monitoring_samples"] = monitoring_start.isoformat()
@@ -904,7 +920,8 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         epoch[key] = f"{max(stamp for _, stamp in unique)}|{len(unique)}|{digest}"
     timeout()
     print(json.dumps({"event": "dashboard_source_revisions_read", "stage": "snapshot_producer",
-                      "document_reads": read_count, "components": len(epoch), "history_scope": history_scope}), flush=True)
+                      "document_reads": read_count - cached_reads, "components": len(epoch), "history_scope": history_scope,
+                      **({"cached_documents": cached_reads} if revision_snapshot is not None else {})}), flush=True)
     return epoch
 
 
