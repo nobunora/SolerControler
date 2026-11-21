@@ -187,6 +187,40 @@ result=b.commit(timeout=4,retry=None);print(json.dumps({"writes":len(result)}),f
         cases.append({"name": "native_transaction_deadline_and_rpc_counts", "status": "PASS",
                       "rpc_calls": recorder.calls, "rpc_count": len(recorder.calls),
                       "payload_bytes": payload_bytes})
+        step = "revision_delta_resume"
+        # Actual application change transport, bounded to this proof. Writes
+        # remain confined to the same two approved future fixture documents.
+        client._firestore_api_internal = recorder.transport
+        from app.dashboard.revision_changes import NativeRevisionChanges, timestamp
+        from app.dashboard.incremental_revisions import encode_state, decode_state
+        changes = NativeRevisionChanges(client)
+        delta_deadline = time.monotonic() + 60
+        state, bootstrap_reads = changes.bootstrap(delta_deadline)
+        state, _ = changes.refresh(state, delta_deadline)
+        collection = paths[0].split('/')[0]
+        first_key, second_key = (ref.id for ref in references)
+        previous_revision = state.rows[collection][first_key]['updated']
+        result = references[0].update({'revision_probe': True},
+            option=client.write_option(last_update_time=versions[references[0].path]), timeout=4, retry=None)
+        versions[references[0].path] = result.update_time
+        # Simulate another process loading the prior successful position.
+        state = decode_state(encode_state(state, 'owned-native-proof'), 'owned-native-proof')
+        state, updated = NativeRevisionChanges(client).refresh(state, delta_deadline)
+        assert state.rows[collection][first_key]['updated'] == timestamp(result.update_time)
+        assert state.rows[collection][first_key]['updated'] != previous_revision
+        references[1].delete(option=client.write_option(last_update_time=versions[references[1].path]), timeout=4, retry=None)
+        versions.pop(references[1].path)
+        state, deleted = changes.refresh(state, delta_deadline)
+        assert second_key not in state.rows[collection] and deleted['deleted_documents'] >= 1
+        result = references[1].create({'operation_id': fixture['operation_id'], 'count': 0,
+                                       'date': fixture['target_date']}, timeout=4, retry=None)
+        versions[references[1].path] = result.update_time
+        state, inserted = changes.refresh(state, delta_deadline)
+        assert state.rows[collection][second_key]['updated'] == timestamp(result.update_time)
+        cases.append({'name': 'firestore_native_revision_delta_resume_update_delete_recreate', 'status': 'PASS',
+                      'bootstrap_document_reads': bootstrap_reads, 'update_document_reads': updated['document_reads'],
+                      'delete_events': deleted['deleted_documents'], 'insert_document_reads': inserted['document_reads'],
+                      'listen_targets': inserted['listen_targets']})
         return cases
     except Exception as error:
         error.add_note(f"native proof step=firestore.{step}")

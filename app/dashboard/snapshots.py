@@ -654,7 +654,8 @@ def _check_source_epoch_order(previous: dict[str, str], incoming: dict[str, str]
 def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: float | None = None,
                                 history_compare_before: str | None = None,
                                 excluded_dates: frozenset[str] = frozenset(),
-                                revision_snapshot: RevisionSnapshot | None = None) -> dict[str, str]:
+                                revision_snapshot: RevisionSnapshot | None = None,
+                                emit_metrics: bool = True) -> dict[str, str]:
     """Producer-only bounded revision map of every Firestore payload source.
 
     Native update_time owns ordering; stored ingestion timestamps are not
@@ -662,6 +663,10 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
     excluded_dates omits only actual-import-owned sources. Forecast/settings/
     model revisions remain binding even on the date whose actuals are saved.
     """
+    from app.dashboard.incremental_revisions import IncrementalRevisionClient
+    if isinstance(client, IncrementalRevisionClient):
+        return client.read_epoch(history_scope=history_scope, deadline=deadline, history_compare_before=history_compare_before,
+                                 excluded_dates=excluded_dates, revision_snapshot=revision_snapshot)
     stop_event = Event()
     groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
     retained_before: str | None = None
@@ -919,9 +924,10 @@ def _read_dashboard_source_epoch(client: Any, *, history_scope: bool, deadline: 
         digest = hashlib.sha256(json.dumps(unique, separators=(",", ":")).encode()).hexdigest()
         epoch[key] = f"{max(stamp for _, stamp in unique)}|{len(unique)}|{digest}"
     timeout()
-    print(json.dumps({"event": "dashboard_source_revisions_read", "stage": "snapshot_producer",
-                      "document_reads": read_count - cached_reads, "components": len(epoch), "history_scope": history_scope,
-                      **({"cached_documents": cached_reads} if revision_snapshot is not None else {})}), flush=True)
+    if emit_metrics:
+        print(json.dumps({"event": "dashboard_source_revisions_read", "stage": "snapshot_producer",
+                          "document_reads": read_count - cached_reads, "components": len(epoch), "history_scope": history_scope,
+                          **({"cached_documents": cached_reads} if revision_snapshot is not None else {})}), flush=True)
     return epoch
 
 
