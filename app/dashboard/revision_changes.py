@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import md5
 import json
 from threading import Event
 import time
@@ -11,7 +12,7 @@ from typing import Any
 # Firestore already depends on grpcio; this environment has no separate stubs.
 import grpc  # type: ignore[import-untyped]
 from google.cloud.firestore_v1 import _helpers
-from google.cloud.firestore_v1.types import ListenRequest, Target
+from google.cloud.firestore_v1.types import BloomFilter, ListenRequest, Target
 
 from app.dashboard.revision_reader import PAGE_SIZE, RevisionReader
 from app.dashboard.revision_manifest import timestamp_key, wire_timestamp
@@ -28,6 +29,30 @@ SOURCES = {
     "monitoring_samples": (["ts"], 48 * 1096), "cost_daily": (["date"], 3660),
     "model_parameters": (["name"], 3660), "settings_events": (["recorded_at"], 40),
 }
+
+
+def _absent_names(names: list[str], bloom: BloomFilter) -> list[str]:
+    """Return only names the native existence filter proves absent.
+
+    Firestore uses little-endian MD5 halves and unsigned 64-bit double hashing.
+    A possible member is never removed: false positives require a full rebuild.
+    """
+    bitmap, padding, hashes = bytes(bloom.bits.bitmap), bloom.bits.padding, bloom.hash_count
+    if not 0 <= padding < 8 or not 0 <= hashes <= 64 or (bitmap and not hashes) or (not bitmap and padding):
+        raise RevisionResetRequired("invalid revision existence filter")
+    bit_count = len(bitmap) * 8 - padding
+    if not bit_count:
+        return names
+    absent = []
+    for name in names:
+        digest = md5(name.encode("utf-8"), usedforsecurity=False).digest()
+        first, second = int.from_bytes(digest[:8], "little"), int.from_bytes(digest[8:], "little")
+        for index in range(hashes):
+            bit = ((first + index * second) & ((1 << 64) - 1)) % bit_count
+            if not bitmap[bit // 8] & (1 << (bit % 8)):
+                absent.append(name)
+                break
+    return absent
 
 
 def timestamp(value: datetime) -> str:
@@ -134,6 +159,7 @@ class NativeRevisionChanges:
         current: set[int] = set()
         stopped = Event()
         stats = {"document_reads": 0, "deleted_documents": 0, "removed_documents": 0,
+                 "bloom_removed_documents": 0,
                  "reset_targets": 0, "bounded_reset_targets": 0, "settings_document_reads": 0,
                  "listen_targets": len(targets)}
         requests = []
@@ -182,6 +208,19 @@ class NativeRevisionChanges:
                         return RevisionState(rows, read_time, bytes(change.resume_token)), stats
                 elif kind == "filter":
                     filtered_name = targets.get(event.filter.target_id)
+                    if filtered_name is not None and event.filter.count != len(rows[filtered_name]):
+                        prefix = self.client._database_string + "/documents/" + filtered_name + "/"
+                        names = [prefix + key for key in rows[filtered_name]]
+                        absent = (names if event.filter.count == 0 else
+                                  _absent_names(names, event.filter.unchanged_names)
+                                  if event.filter._pb.HasField("unchanged_names") else [])
+                        # Accept only a completely reconciled set. Missing filters
+                        # or false positives retain the existing rebuild boundary.
+                        if len(rows[filtered_name]) - len(absent) == event.filter.count:
+                            for document_name in absent:
+                                rows[filtered_name].pop(document_name[len(prefix):])
+                            stats["removed_documents"] += len(absent)
+                            stats["bloom_removed_documents"] += len(absent)
                     if filtered_name is None or event.filter.count != len(rows[filtered_name]):
                         print(json.dumps({"event": "dashboard_revision_existence_mismatch", "source": filtered_name,
                                           "observed": event.filter.count,
