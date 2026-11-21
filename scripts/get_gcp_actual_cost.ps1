@@ -91,7 +91,7 @@ Include total net cost, total credits, and top services by absolute subtotal (in
 Include an account-level total row with columns subtotal, total_credit, and currency_code.
 "@,
 @"
-For billing account $BillingAccount, what is the total net cost and total credits for $firstDayUtc to $todayUtc?
+For billing account $BillingAccount, what is the total net cost and total credits for $firstDayUtc to ${todayUtc}?
 Also return top services by absolute subtotal across all services.
 "@,
 @"
