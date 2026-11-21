@@ -17,6 +17,7 @@ from google.cloud import storage
 
 from app.dashboard.aggregation import _build_cost_monthly
 from app.dashboard.data import clear_dashboard_cache, load_dashboard_slice
+from app.dashboard.revision_reader import RevisionSnapshot
 from app.dashboard.snapshots import (
     BOOTSTRAP_KIND, HISTORY_KIND, _DAILY_SERIES, _parse_gs_uri,
     _payload_from_slice, _read_dashboard_source_epoch, _upload_artifact,
@@ -25,8 +26,9 @@ from app.dashboard.snapshots import (
 from app.separated_runtime.plan import PublishedPlan
 
 
-def _outside_epoch(client: Any, target_date: str) -> dict[str, str]:
-    epoch = _read_dashboard_source_epoch(client, history_scope=True, excluded_dates=frozenset({target_date}))
+def _outside_epoch(client: Any, target_date: str, *, revision_snapshot: RevisionSnapshot | None = None) -> dict[str, str]:
+    epoch = _read_dashboard_source_epoch(client, history_scope=True, excluded_dates=frozenset({target_date}),
+                                         revision_snapshot=revision_snapshot)
     # The full battery_daily_metrics group above proves every unselected row.
     # A latest-row selector changes naturally when a new target day is inserted.
     return {key: value for key, value in epoch.items()
@@ -80,16 +82,21 @@ def capture_date_refresh(client: Any, target_date: str) -> dict[str, Any]:
         if kind == BOOTSTRAP_KIND:
             identity = {key: metadata[key] for key in ("target_date", "generated_at", "control_version_id", "raw_plan_sha256")}
     target_plan_version = _capture_refresh_plans(client, target_date, identity)
-    baseline = epochs[BOOTSTRAP_KIND]
-    observed = _read_dashboard_source_epoch(client, history_scope=bool(baseline.get("history_retained_before")),
-                                            history_compare_before=baseline.get("history_compare_before"))
-    if observed != baseline:
-        raise ValueError("existing bootstrap is stale; reconcile dates explicitly before import")
     history = epochs[HISTORY_KIND]
     boundary = history.get("history_retained_before")
     if not boundary:
         raise ValueError("history provenance is missing; explicit history repair required")
-    full = _read_dashboard_source_epoch(client, history_scope=True, history_compare_before=boundary)
+    # These three views describe one baseline, not three points in time. Read
+    # the widest ranges first; discard this snapshot before any import writes.
+    revision_snapshot = RevisionSnapshot()
+    full = _read_dashboard_source_epoch(client, history_scope=True, history_compare_before=boundary,
+                                         revision_snapshot=revision_snapshot)
+    baseline = epochs[BOOTSTRAP_KIND]
+    observed = _read_dashboard_source_epoch(client, history_scope=bool(baseline.get("history_retained_before")),
+                                            history_compare_before=baseline.get("history_compare_before"),
+                                            revision_snapshot=revision_snapshot)
+    if observed != baseline:
+        raise ValueError("existing bootstrap is stale; reconcile dates explicitly before import")
     old = {key.removeprefix("retained/"): value for key, value in history.items() if key.startswith("retained/")}
     current = {key.removeprefix("compare_retained/"): value for key, value in full.items() if key.startswith("compare_retained/")}
     if old != current:
@@ -99,7 +106,7 @@ def capture_date_refresh(client: Any, target_date: str) -> dict[str, Any]:
     # Never rebuild those unselected recent rows as a side effect of this import.
     return {"storage": remote, "payloads": payloads, "identity": identity,
             "target_plan_version": target_plan_version,
-            "outside_epoch": _outside_epoch(client, target_date)}
+            "outside_epoch": _outside_epoch(client, target_date, revision_snapshot=revision_snapshot)}
 
 
 def merge_date_payload(previous: dict[str, Any], fresh: dict[str, Any], target_date: str) -> dict[str, Any]:
@@ -154,9 +161,13 @@ def publish_date_refresh(client: Any, target_date: str, captured: dict[str, Any]
     _validate_publication_payload(payloads[BOOTSTRAP_KIND], plan)
     # Bootstrap and history have different native query scopes. Keep each one
     # stable so unchanged forecast revisions are not mistaken for a rollback.
-    epochs = {kind: _read_dashboard_source_epoch(client, history_scope=kind == HISTORY_KIND)
-              for kind in payloads}
-    if _outside_epoch(client, target_date) != captured["outside_epoch"]:
+    # New read_time after materialization. Never reuse the pre-save baseline or
+    # these rows in the upload's fresh pre/post checks (including CAS retries).
+    revision_snapshot = RevisionSnapshot()
+    epochs = {kind: _read_dashboard_source_epoch(client, history_scope=kind == HISTORY_KIND,
+                                                 revision_snapshot=revision_snapshot)
+              for kind in (HISTORY_KIND, BOOTSTRAP_KIND)}
+    if _outside_epoch(client, target_date, revision_snapshot=revision_snapshot) != captured["outside_epoch"]:
         raise ValueError("another source date changed during date materialization")
     for kind, payload in payloads.items():
         _assert_refresh_plans(client, target_date, captured)

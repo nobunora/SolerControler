@@ -394,7 +394,7 @@ def test_date_publication_does_not_roll_back_monthly_totals_to_stale_history(mon
     from app.dashboard.snapshots import _check_source_epoch_order
 
     monkeypatch.setattr(date_snapshots, "_assert_refresh_plans", lambda *_: None)
-    monkeypatch.setattr(date_snapshots, "_outside_epoch", lambda *_: {})
+    monkeypatch.setattr(date_snapshots, "_outside_epoch", lambda *_, **__: {})
     monkeypatch.setattr(date_snapshots, "clear_dashboard_cache", lambda: None)
     monkeypatch.setattr(date_snapshots, "load_dashboard_slice", lambda *_, **__: object())
     monkeypatch.setattr(date_snapshots, "_payload_from_slice", lambda _: {"cost_daily": [
