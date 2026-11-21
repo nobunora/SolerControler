@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "c2190ed88bfee710df724d135b8f26250e3be711",
-    "indexed_at": "2026-11-21T03:55:41Z",
+    "commit": "64bb727817c1af28b369a06d119ddae82c72ef9f",
+    "indexed_at": "2026-11-21T04:30:10Z",
     "project": "solar-resilience-release-20261118",
-    "nodes": 10783,
-    "edges": 43969,
-    "original_size": 30670848,
-    "compressed_size": 5156003,
+    "nodes": 10789,
+    "edges": 44049,
+    "original_size": 30801920,
+    "compressed_size": 5169300,
     "compression_level": 9
 }
